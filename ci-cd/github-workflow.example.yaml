@@ -1,0 +1,41 @@
+name: Dependency Scan
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  scan-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Syft
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM
+        run: syft . -o json > sbom.json
+
+      - name: Upload to Dependency Control
+        env:
+          # Configure these secrets in your GitHub Repository Settings
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          PROJECT_NAME: "your-project-name"
+        run: |
+          # Prepare JSON payload
+          jq -n \
+            --arg pn "$PROJECT_NAME" \
+            --arg br "${{ github.ref_name }}" \
+            --arg ch "${{ github.sha }}" \
+            --slurpfile sbom sbom.json \
+            '{project_name: $pn, branch: $br, commit_hash: $ch, sbom: $sbom[0]}' > payload.json
+
+          # Send to Backend
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $DEP_CONTROL_API_KEY" \
+            -d @payload.json \
+            "$DEP_CONTROL_URL/api/v1/ingest"

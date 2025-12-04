@@ -1,0 +1,26 @@
+tls:
+  options:
+    modern:
+      minVersion: VersionTLS13
+      sniStrict: false
+      curvePreferences:
+        - CurveP256
+        - CurveP384
+http:
+  middlewares:
+    secure-headers-backend:
+      headers:
+        stsSeconds: 63072000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        customResponseHeaders:
+          Server: ""
+    secure-headers-frontend:
+      headers:
+        stsSeconds: 63072000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        contentTypeNosniff: true
+        customResponseHeaders:
+          Server: ""

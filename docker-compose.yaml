@@ -1,0 +1,139 @@
+services:
+
+  traefik:
+    image: traefik:v3.6.2
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=dependencycontrol
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --entrypoints.websecure.http.tls.options=modern@file
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --accesslog=true
+      - --log.level=INFO
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik_dynamic.yml:/etc/traefik/dynamic.yml:ro
+    networks:
+      - dependencycontrol
+  mongodb:
+    image: mongo:8.0.16
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=secret
+    networks:
+      - dependencycontrol
+
+  backend:
+    build: ./backend
+    depends_on:
+      - mongodb
+    environment:
+      - MONGODB_URL=mongodb://admin:secret@mongodb:27017
+      - SECRET_KEY=changethis_secret_key_for_jwt_tokens
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - OPEN_SOURCE_MALWARE_API_KEY=${OPEN_SOURCE_MALWARE_API_KEY:-}
+      - BACKEND_CORS_ORIGINS=["https://appsmith.local"]
+      # Notification Settings
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL:-info@dependencycontrol.local}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.backend.rule: "Host(`api.dependencycontrol.local`)"
+      traefik.http.routers.backend.entrypoints: websecure
+      traefik.http.routers.backend.tls: "true"
+      traefik.http.routers.backend.tls.options: modern@file
+      traefik.http.services.backend.loadbalancer.server.port: "8000"
+      traefik.http.routers.backend.middlewares: secure-headers-backend@file
+    networks:
+      - dependencycontrol
+
+  appsmith:
+    image: index.docker.io/appsmith/appsmith-ce
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: dependencycontrol
+      traefik.http.routers.frontend.rule: "Host(`appsmith.local`)"
+      traefik.http.routers.frontend.entrypoints: websecure
+      traefik.http.routers.frontend.tls: "true"
+      traefik.http.routers.frontend.tls.options: modern@file
+      traefik.http.services.frontend.loadbalancer.server.port: "80"
+      traefik.http.routers.frontend.middlewares: secure-headers-frontend@file
+    volumes:
+        - appsmith_stacks:/appsmith-stacks
+    restart: unless-stopped
+    networks:
+      - dependencycontrol
+    #deploy:
+    #  resources:
+    #    limits:
+    #      cpus: '2.5'
+    #      memory: 1.5g
+    #    reservations:
+    #      cpus: '1.25'
+    #      memory: 750m
+  metabase:
+    image: metabase/metabase:latest
+    volumes:
+      - /dev/urandom:/dev/random:ro
+    depends_on:
+      - postgres
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: dependencycontrol
+      traefik.http.routers.metabase.rule: "Host(`metabase.local`)"
+      traefik.http.routers.metabase.entrypoints: websecure
+      traefik.http.routers.metabase.tls: "true"
+      traefik.http.routers.metabase.tls.options: modern@file
+      traefik.http.services.metabase.loadbalancer.server.port: "3000"
+      traefik.http.routers.metabase.middlewares: secure-headers-frontend@file
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase_db
+      MB_DB_PORT: 5432
+      MB_DB_USER: metabase
+      MB_DB_PASS: metabase_password
+      MB_DB_HOST: postgres
+    healthcheck:
+      test: curl --fail -I http://localhost:3000/api/health || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dependencycontrol
+
+  postgres:
+    image: postgres:18
+    environment:
+      - POSTGRES_USER=metabase
+      - POSTGRES_PASSWORD=metabase_password
+      - POSTGRES_DB=metabase_db
+    volumes:
+      - pg_data:/var/lib/postgresql
+    networks:
+      - dependencycontrol
+
+networks:
+  dependencycontrol:
+    name: dependencycontrol
+
+volumes:
+  mongodb_data:
+  appsmith_stacks:
+  pg_data:
