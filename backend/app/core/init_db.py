@@ -1,13 +1,57 @@
 import logging
 import secrets
+import pymongo
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.core.security import get_password_hash
 
 logger = logging.getLogger(__name__)
 
+async def create_indexes(db):
+    """Creates indexes for all collections to ensure performance."""
+    logger.info("Creating database indexes...")
+    
+    # Users
+    await db["users"].create_index("username", unique=True)
+    await db["users"].create_index("email", unique=True)
+
+    # Projects
+    await db["projects"].create_index("owner_id")
+    await db["projects"].create_index("team_id")
+    await db["projects"].create_index("name")
+    await db["projects"].create_index("members.user_id")
+
+    # Teams
+    await db["teams"].create_index("members.user_id")
+
+    # Scans
+    await db["scans"].create_index("project_id")
+    await db["scans"].create_index([("created_at", pymongo.DESCENDING)])
+    # Compound index for efficient retrieval of project scans sorted by date
+    await db["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    
+    # Indexes for SBOM analysis (finding components across projects)
+    # These are crucial for the "Who uses X?" queries
+    await db["scans"].create_index("sbom.components.name")
+    await db["scans"].create_index("sbom.components.purl")
+    await db["scans"].create_index("sbom.components.version")
+
+    # Analysis Results
+    await db["analysis_results"].create_index("scan_id")
+    await db["analysis_results"].create_index([("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)])
+
+    # Invitations
+    await db["project_invitations"].create_index("token", unique=True)
+    await db["project_invitations"].create_index("email")
+    
+    logger.info("Database indexes created successfully.")
+
 async def init_db():
     db = await get_database()
+    
+    # Create indexes
+    await create_indexes(db)
+    
     user_collection = db["users"]
     
     # Check if any user exists

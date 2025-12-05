@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
 from app.core.init_db import init_db
+from app.core.worker import worker_manager
 from app.api.v1.endpoints import auth, ingest, projects, users, teams
 
 app = FastAPI(
@@ -40,9 +41,16 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_headers=["*"],
     )
 
-app.add_event_handler("startup", connect_to_mongo)
-app.add_event_handler("startup", init_db)
-app.add_event_handler("shutdown", close_mongo_connection)
+@app.on_event("startup")
+async def startup_event():
+    await connect_to_mongo()
+    await init_db()
+    await worker_manager.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await worker_manager.stop()
+    await close_mongo_connection()
 
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}", tags=["auth"])
 app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest"])

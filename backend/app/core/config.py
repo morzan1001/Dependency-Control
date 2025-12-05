@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # External APIs
     OPEN_SOURCE_MALWARE_API_KEY: str = ""
 
+    # Worker Settings
+    WORKER_COUNT: int = 2
+
     # Notifications
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
