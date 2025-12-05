@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-backend
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dependency-control.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Ensure pods are spread across nodes for HA
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - "{{ include "dependency-control.name" . }}"
+                  - key: app.kubernetes.io/component
+                    operator: In
+                    values:
+                      - backend
+              topologyKey: "kubernetes.io/hostname"
+      securityContext:
+        fsGroup: {{ .Values.backend.securityContext.fsGroup }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            runAsUser: {{ .Values.backend.securityContext.runAsUser }}
+            runAsGroup: {{ .Values.backend.securityContext.runAsGroup }}
+            runAsNonRoot: {{ .Values.backend.securityContext.runAsNonRoot }}
+            readOnlyRootFilesystem: {{ .Values.backend.securityContext.readOnlyRootFilesystem }}
+            allowPrivilegeEscalation: {{ .Values.backend.securityContext.allowPrivilegeEscalation }}
+            capabilities:
+              drop:
+                {{- toYaml .Values.backend.securityContext.capabilities.drop | nindent 16 }}
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: {{ .Values.backend.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.backend.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: {{ .Values.backend.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.backend.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.backend.probes.readiness.failureThreshold }}
+          env:
+            - name: MONGODB_URL
+              value: "mongodb://{{ .Values.mongodb.cluster.auth.username }}:{{ .Values.mongodb.cluster.auth.password }}@{{ .Values.mongodb.cluster.name }}-svc.{{ .Release.Namespace }}.svc.cluster.local:27017/{{ .Values.mongodb.cluster.auth.database }}?replicaSet={{ .Values.mongodb.cluster.name }}"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "dependency-control.fullname" . }}-secrets
+                  key: secret-key
+            - name: WORKER_COUNT
+              value: "{{ .Values.backend.env.workerCount }}"
+            - name: OPEN_SOURCE_MALWARE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "dependency-control.fullname" . }}-secrets
+                  key: malware-api-key
+          # Temporary volume for /tmp because of ReadOnlyRootFilesystem
+          # Trivy/Grype need to write temp files
+          volumeMounts:
+            - mountPath: /tmp
+              name: tmp-volume
+            - mountPath: /app/.cache
+              name: cache-volume
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+        - name: cache-volume
+          emptyDir: {}
+        - name: cache-volume
+          emptyDir: {}

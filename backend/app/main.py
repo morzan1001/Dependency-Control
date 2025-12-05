@@ -5,6 +5,7 @@ from app.db.mongodb import connect_to_mongo, close_mongo_connection
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
 from app.api.v1.endpoints import auth, ingest, projects, users, teams
+from app.api import health
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -52,6 +53,7 @@ async def shutdown_event():
     await worker_manager.stop()
     await close_mongo_connection()
 
+app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}", tags=["auth"])
 app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest"])
 app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"])

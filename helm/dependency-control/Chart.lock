@@ -1,0 +1,9 @@
+dependencies:
+- name: community-operator
+  repository: https://mongodb.github.io/helm-charts
+  version: 0.11.0
+- name: traefik
+  repository: https://traefik.github.io/charts
+  version: 26.0.0
+digest: sha256:94e9e425ff3058592eb2ea3c780bdbae92ef0cfb5e38681e0a6625134800d0de
+generated: "2025-12-05T14:34:04.786582+01:00"

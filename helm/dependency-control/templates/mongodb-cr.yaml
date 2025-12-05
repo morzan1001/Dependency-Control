@@ -1,0 +1,63 @@
+{{- if .Values.mongodb.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.mongodb.cluster.name }}-user-password
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+stringData:
+  password: {{ .Values.mongodb.cluster.auth.password | quote }}
+---
+apiVersion: mongodbcommunity.mongodb.com/v1
+kind: MongoDBCommunity
+metadata:
+  name: {{ .Values.mongodb.cluster.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  members: {{ .Values.mongodb.cluster.members }}
+  type: ReplicaSet
+  version: {{ .Values.mongodb.cluster.version }}
+  security:
+    authentication:
+      modes: ["SCRAM"]
+  users:
+    - name: {{ .Values.mongodb.cluster.auth.username }}
+      db: {{ .Values.mongodb.cluster.auth.database }}
+      passwordSecretRef:
+        name: {{ .Values.mongodb.cluster.name }}-user-password
+      roles:
+        - name: readWrite
+          db: {{ .Values.mongodb.cluster.auth.database }}
+      scramCredentialsSecretName: {{ .Values.mongodb.cluster.name }}-scram
+  statefulSet:
+    spec:
+      template:
+        spec:
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                      - key: app
+                        operator: In
+                        values:
+                          - "{{ .Values.mongodb.cluster.name }}-svc"
+                  topologyKey: "kubernetes.io/hostname"
+          containers:
+            - name: mongod
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 2000 # MongoDB Community images often use 2000 or 999
+  persistence:
+    volumeClaimTemplates:
+      - metadata:
+          name: data-volume
+        spec:
+          accessModes: [ "ReadWriteOnce" ]
+          resources:
+            requests:
+              storage: {{ .Values.mongodb.cluster.persistence.size }}
+          {{- if .Values.mongodb.cluster.persistence.storageClass }}
+          storageClassName: {{ .Values.mongodb.cluster.persistence.storageClass }}
+          {{- end }}
+{{- end }}

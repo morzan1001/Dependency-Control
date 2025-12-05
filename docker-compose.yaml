@@ -32,11 +32,23 @@ services:
       - MONGO_INITDB_ROOT_PASSWORD=secret
     networks:
       - dependencycontrol
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: ./backend
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: curl --fail http://localhost:8000/health/live || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     environment:
       - MONGODB_URL=mongodb://admin:secret@mongodb:27017
       - SECRET_KEY=changethis_secret_key_for_jwt_tokens
@@ -128,6 +140,11 @@ services:
       - pg_data:/var/lib/postgresql
     networks:
       - dependencycontrol
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metabase -d metabase_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   dependencycontrol:

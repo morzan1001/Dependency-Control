@@ -58,10 +58,19 @@ class AnalysisWorkerManager:
                 
                 db = await get_database()
                 
-                # Fetch scan data
-                scan = await db.scans.find_one({"_id": scan_id})
+                # Atomic Claim: Try to set status to 'processing' ONLY IF it is currently 'pending'
+                # This prevents multiple workers (across different pods) from processing the same scan.
+                scan = await db.scans.find_one_and_update(
+                    {"_id": scan_id, "status": "pending"},
+                    {"$set": {"status": "processing", "worker_id": name}},
+                    return_document=True
+                )
+                
                 if not scan:
-                    logger.error(f"Scan {scan_id} not found in DB, skipping.")
+                    # If scan is None, it means either:
+                    # 1. It doesn't exist (deleted)
+                    # 2. It's already being processed by another worker (status != pending)
+                    logger.info(f"Scan {scan_id} already claimed or not found. Skipping.")
                     self.queue.task_done()
                     continue
                 
@@ -69,30 +78,24 @@ class AnalysisWorkerManager:
                 project = await db.projects.find_one({"_id": scan["project_id"]})
                 if not project:
                     logger.error(f"Project for scan {scan_id} not found, skipping.")
-                    # Mark scan as failed?
                     await db.scans.update_one(
                         {"_id": scan_id},
                         {"$set": {"status": "failed", "error": "Project not found"}}
                     )
                     self.queue.task_done()
                     continue
-                
-                # Update status to processing (optional, but good for UI)
-                await db.scans.update_one(
-                    {"_id": scan_id},
-                    {"$set": {"status": "processing"}}
-                )
 
                 try:
                     # Run the actual analysis
-                    # Note: run_analysis is async and handles its own DB operations mostly,
-                    # but we pass the db instance we have.
                     await run_analysis(
                         scan_id=scan_id,
                         sbom=scan["sbom"],
                         active_analyzers=project.get("active_analyzers", []),
                         db=db
                     )
+                    # Note: run_analysis should ideally update status to 'completed'
+                    # If it doesn't, we should do it here. Assuming run_analysis handles it for now based on previous code.
+                    
                 except Exception as e:
                     logger.error(f"Error processing scan {scan_id}: {e}")
                     await db.scans.update_one(
