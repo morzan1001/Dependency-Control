@@ -4,6 +4,7 @@ description: A Helm chart for Dependency Control with HA MongoDB and Traefik
 type: application
 version: 0.1.7
 appVersion: "0.1.7"
+icon: file://logo.png
 annotations:
   artifacthub.io/license: MIT
 dependencies:
@@ -12,6 +13,6 @@ dependencies:
     repository: https://mongodb.github.io/helm-charts
     alias: mongodb-operator
   - name: traefik
-    version: 33.1.0
+    version: 37.4.0
     repository: https://traefik.github.io/charts
     condition: traefik.enabled

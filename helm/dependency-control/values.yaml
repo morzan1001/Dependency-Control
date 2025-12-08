@@ -109,8 +109,11 @@ traefik:
           topologyKey: kubernetes.io/hostname
   ports:
     web:
-      redirectTo:
-        port: websecure
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
     websecure:
       tls:
         enabled: true
