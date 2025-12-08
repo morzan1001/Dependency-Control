@@ -1,0 +1,79 @@
+name: Release Manager
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'VERSION'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read Version
+        id: get_version
+        run: echo "VERSION=$(cat VERSION | tr -d '[:space:]')" >> $GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Propagate Version
+        run: python scripts/propagate_version.py
+
+      - name: Generate Changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v4
+        with:
+          configuration: ".github/changelog-config.json"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update CHANGELOG.md
+        run: |
+          # Prepend new changelog to existing file
+          echo "# Release ${{ steps.get_version.outputs.VERSION }}" > new_changelog.md
+          echo "" >> new_changelog.md
+          echo "${{ steps.changelog.outputs.changelog }}" >> new_changelog.md
+          echo "" >> new_changelog.md
+          
+          if [ -f CHANGELOG.md ]; then
+            cat CHANGELOG.md >> new_changelog.md
+          fi
+          mv new_changelog.md CHANGELOG.md
+
+      - name: Commit & Push Changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add Dependency\ Control/backend/pyproject.toml
+          git add Dependency\ Control/helm/dependency-control/Chart.yaml
+          git add CHANGELOG.md
+          
+          git commit -m "chore: release v${{ steps.get_version.outputs.VERSION }} [skip ci]"
+          git push
+
+      - name: Create Tag
+        run: |
+          git tag v${{ steps.get_version.outputs.VERSION }}
+          git push origin v${{ steps.get_version.outputs.VERSION }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: |
+            CHANGELOG.md

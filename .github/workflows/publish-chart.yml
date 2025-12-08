@@ -1,0 +1,60 @@
+name: Publish Helm Chart
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'Dependency Control/helm/**'
+      - '.github/workflows/publish-chart.yml'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish-chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+
+      - name: Log into registry ${{ env.REGISTRY }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Chart Dependencies
+        run: |
+          cd "Dependency Control/helm/dependency-control"
+          helm dependency update
+
+      - name: Lint Chart
+        run: |
+          cd "Dependency Control/helm/dependency-control"
+          helm lint .
+
+      - name: Render Chart (Template Check)
+        run: |
+          cd "Dependency Control/helm/dependency-control"
+          # Renders the chart locally to verify templates are valid
+          helm template . > /dev/null
+
+      - name: Package Chart
+        run: |
+          cd "Dependency Control/helm/dependency-control"
+          helm package .
+
+      - name: Push Chart to GHCR
+        run: |
+          cd "Dependency Control/helm/dependency-control"
+          # Pushes the chart as an OCI artifact to GitHub Container Registry
+          # It will be available at ghcr.io/<owner>/dependency-control:<version>
+          helm push $(ls *.tgz) oci://${{ env.REGISTRY }}/${{ github.repository_owner }}
