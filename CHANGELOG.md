@@ -1,3 +1,11 @@
+# Release 0.1.6
+
+## 📦 Build & CI
+
+- chore: bump version to 0.1.6 and update Helm chart dependencies (#0)
+
+
+
 # Release 0.1.5
 
 ## 📦 Build & CI
