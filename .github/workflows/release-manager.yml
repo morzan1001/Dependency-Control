@@ -47,6 +47,7 @@ jobs:
         with:
           configuration: ".github/changelog-config.json"
           fromTag: ${{ steps.range.outputs.FROM_TAG }}
+          toTag: ${{ github.sha }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
