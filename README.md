@@ -46,18 +46,13 @@ A Helm chart is provided for deploying to Kubernetes.
 
 ### Installation
 
-1.  **Add the repository:**
-    ```bash
-    helm repo add dependency-control https://morzan1001.github.io/Dependency-Control/
-    helm repo update
-    ```
+The chart is hosted as an OCI artifact on GitHub Container Registry.
 
-2.  **Install the chart:**
-    ```bash
-    helm upgrade --install dependency-control dependency-control/dependency-control \
-      --namespace dependency-control --create-namespace \
-      --set backend.secrets.secretKey="YOUR_SECURE_KEY"
-    ```
+```bash
+helm upgrade --install dependency-control oci://ghcr.io/morzan1001/charts/dependency-control \
+  --namespace dependency-control --create-namespace \
+  --set backend.secrets.secretKey="YOUR_SECURE_KEY"
+```
 
 ## CI/CD Integration
 
