@@ -6,11 +6,11 @@ def read_version(version_file):
     with open(version_file, 'r') as f:
         return f.read().strip()
 
-def update_file(file_path, pattern, replacement):
+def update_file(file_path, pattern, replacement, flags=0):
     with open(file_path, 'r') as f:
         content = f.read()
     
-    new_content = re.sub(pattern, replacement, content)
+    new_content = re.sub(pattern, replacement, content, flags=flags)
     
     if content != new_content:
         with open(file_path, 'w') as f:
@@ -45,8 +45,9 @@ def main():
     chart_path = os.path.join(root_dir, 'helm', 'dependency-control', 'Chart.yaml')
     update_file(
         chart_path,
-        r'version: [0-9]+\.[0-9]+\.[0-9]+',
-        f'version: {new_version}'
+        r'^version: [0-9]+\.[0-9]+\.[0-9]+',
+        f'version: {new_version}',
+        flags=re.MULTILINE
     )
     update_file(
         chart_path,

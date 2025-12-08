@@ -57,6 +57,8 @@ jobs:
       - name: Push Chart to GHCR
         run: |
           cd "helm/dependency-control"
+          # Convert owner to lowercase
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           # Pushes the chart as an OCI artifact to GitHub Container Registry
-          helm push dependency-control-*.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+          helm push dependency-control-*.tgz oci://${{ env.REGISTRY }}/${OWNER_LOWER}/charts
           helm push $(ls *.tgz) oci://${{ env.REGISTRY }}/${{ github.repository_owner }}
