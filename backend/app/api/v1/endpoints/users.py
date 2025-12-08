@@ -164,13 +164,16 @@ async def enable_2fa(
     Verify OTP and enable 2FA.
     """
     user = await db.users.find_one({"_id": current_user.id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     secret = user.get("totp_secret")
     
     if not secret:
         raise HTTPException(status_code=400, detail="2FA setup not initiated")
         
     totp = pyotp.TOTP(secret)
-    if not totp.verify(verify_in.code):
+    if not totp.verify(verify_in.code, valid_window=1):
         raise HTTPException(status_code=400, detail="Invalid OTP code")
         
     await db.users.update_one(
