@@ -54,9 +54,10 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ env.REPO_NAME }}
           tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
             type=semver,pattern={{version}}
-            type=sha,format=long
+            type=sha,format=short
 
       - name: Build and push Docker image
         id: build-and-push
