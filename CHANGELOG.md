@@ -1,3 +1,11 @@
+# Release 0.1.9
+
+## 🚀 Features
+
+- feat: implement email verification and signup status management (#0)
+
+
+
 # Release 0.1.8
 
 ## 📦 Build & CI
