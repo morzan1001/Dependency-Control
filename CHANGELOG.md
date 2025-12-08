@@ -1,3 +1,7 @@
+# Release 0.2.0
+
+- No changes found
+
 # Release 0.1.9
 
 - No changes found
