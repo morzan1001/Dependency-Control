@@ -2,8 +2,8 @@ apiVersion: v2
 name: dependency-control
 description: A Helm chart for Dependency Control with HA MongoDB and Traefik
 type: application
-version: 0.1.6
-appVersion: "0.1.6"
+version: 0.1.7
+appVersion: "0.1.7"
 annotations:
   artifacthub.io/license: MIT
 dependencies:

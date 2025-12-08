@@ -1,3 +1,11 @@
+# Release 0.1.7
+
+## 📦 Build & CI
+
+- chore: bump version to 0.1.7 and update community-operator dependency (#0)
+
+
+
 # Release 0.1.6
 
 ## 📦 Build & CI
