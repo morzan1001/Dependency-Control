@@ -9,7 +9,26 @@ from app.models.team import Team, TeamMember
 from app.schemas.team import TeamCreate, TeamUpdate, TeamResponse, TeamMemberAdd, TeamMemberUpdate
 from app.db.mongodb import get_database
 
+from bson import ObjectId
+
 router = APIRouter()
+
+async def enrich_team_with_usernames(team_data: dict, db: AsyncIOMotorDatabase) -> dict:
+    members = team_data.get("members", [])
+    user_ids = []
+    for m in members:
+        try:
+            user_ids.append(ObjectId(m["user_id"]))
+        except:
+            pass
+            
+    users = await db.users.find({"_id": {"$in": user_ids}}).to_list(None)
+    user_map = {str(u["_id"]): u["username"] for u in users}
+    
+    for member in members:
+        member["username"] = user_map.get(member["user_id"])
+        
+    return team_data
 
 async def check_team_access(team_id: str, user: User, db: AsyncIOMotorDatabase, required_role: str = None) -> Team:
     team_data = await db.teams.find_one({"_id": team_id})
@@ -56,7 +75,12 @@ async def create_team(
     )
     
     await db.teams.insert_one(team.dict(by_alias=True))
-    return team
+    
+    # Enrich with username for response
+    team_dict = team.dict(by_alias=True)
+    team_dict["members"][0]["username"] = current_user.username
+    
+    return team_dict
 
 @router.get("/", response_model=List[TeamResponse])
 async def read_teams(
@@ -70,6 +94,10 @@ async def read_teams(
         teams = await db.teams.find().to_list(1000)
     else:
         teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
+        
+    for team in teams:
+        await enrich_team_with_usernames(team, db)
+        
     return teams
 
 @router.get("/{team_id}", response_model=TeamResponse)
@@ -81,8 +109,10 @@ async def read_team(
     """
     Get team details.
     """
-    team = await check_team_access(team_id, current_user, db)
-    return team
+    await check_team_access(team_id, current_user, db)
+    team_data = await db.teams.find_one({"_id": team_id})
+    await enrich_team_with_usernames(team_data, db)
+    return team_data
 
 @router.put("/{team_id}", response_model=TeamResponse)
 async def update_team(
@@ -102,7 +132,8 @@ async def update_team(
     await db.teams.update_one({"_id": team_id}, {"$set": update_data})
     
     updated_team = await db.teams.find_one({"_id": team_id})
-    return TeamResponse(**updated_team)
+    await enrich_team_with_usernames(updated_team, db)
+    return updated_team
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_team(
@@ -148,6 +179,7 @@ async def add_team_member(
     )
     
     updated_team = await db.teams.find_one({"_id": team_id})
+    await enrich_team_with_usernames(updated_team, db)
     return TeamResponse(**updated_team)
 
 @router.put("/{team_id}/members/{user_id}", response_model=TeamResponse)
@@ -186,6 +218,7 @@ async def update_team_member(
     )
     
     updated_team = await db.teams.find_one({"_id": team_id})
+    await enrich_team_with_usernames(updated_team, db)
     return TeamResponse(**updated_team)
 
 @router.delete("/{team_id}/members/{user_id}", response_model=TeamResponse)
@@ -221,4 +254,5 @@ async def remove_team_member(
     )
     
     updated_team = await db.teams.find_one({"_id": team_id})
+    await enrich_team_with_usernames(updated_team, db)
     return TeamResponse(**updated_team)

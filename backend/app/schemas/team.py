@@ -4,6 +4,7 @@ from datetime import datetime
 
 class TeamMemberSchema(BaseModel):
     user_id: str
+    username: Optional[str] = None
     role: str
 
 class TeamBase(BaseModel):
