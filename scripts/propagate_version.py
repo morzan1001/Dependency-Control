@@ -32,7 +32,7 @@ def main():
 
     # 1. Update Backend (pyproject.toml)
     # version = "0.1.0"
-    pyproject_path = os.path.join(root_dir, 'Dependency Control', 'backend', 'pyproject.toml')
+    pyproject_path = os.path.join(root_dir, 'backend', 'pyproject.toml')
     update_file(
         pyproject_path,
         r'version = "[0-9]+\.[0-9]+\.[0-9]+"',
@@ -42,7 +42,7 @@ def main():
     # 2. Update Helm Chart (Chart.yaml)
     # version: 0.1.0
     # appVersion: "0.1.0"
-    chart_path = os.path.join(root_dir, 'Dependency Control', 'helm', 'dependency-control', 'Chart.yaml')
+    chart_path = os.path.join(root_dir, 'helm', 'dependency-control', 'Chart.yaml')
     update_file(
         chart_path,
         r'version: [0-9]+\.[0-9]+\.[0-9]+',
