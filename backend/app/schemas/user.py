@@ -84,4 +84,8 @@ class User2FASetup(BaseModel):
 
 class User2FAVerify(BaseModel):
     code: str
+    password: str
+
+class User2FADisable(BaseModel):
+    password: str
 

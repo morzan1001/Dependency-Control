@@ -9,7 +9,7 @@ import base64
 from app.api import deps
 from app.core import security
 from app.models.user import User
-from app.schemas.user import User as UserSchema, UserUpdate, UserCreate, UserPasswordUpdate, User2FASetup, User2FAVerify, UserUpdateMe
+from app.schemas.user import User as UserSchema, UserUpdate, UserCreate, UserPasswordUpdate, User2FASetup, User2FAVerify, UserUpdateMe, User2FADisable
 from app.db.mongodb import get_database
 from app.services.notifications.service import notification_service
 from app.services.notifications import templates
@@ -211,6 +211,9 @@ async def enable_2fa(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    if not security.verify_password(verify_in.password, user["hashed_password"]):
+        raise HTTPException(status_code=400, detail="Invalid password")
+
     secret = user.get("totp_secret")
     
     if not secret:
@@ -241,12 +244,20 @@ async def enable_2fa(
 
 @router.post("/me/2fa/disable", response_model=UserSchema)
 async def disable_2fa(
+    disable_in: User2FADisable,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     Disable 2FA.
     """
+    user = await db.users.find_one({"_id": current_user.id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if not security.verify_password(disable_in.password, user["hashed_password"]):
+        raise HTTPException(status_code=400, detail="Invalid password")
+
     await db.users.update_one(
         {"_id": current_user.id},
         {"$set": {"totp_enabled": False, "totp_secret": None}}
