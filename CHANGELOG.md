@@ -1,3 +1,16 @@
+# Release 0.1.4
+
+## 🐛 Fixes
+
+- fix: correct indentation for volumeClaimTemplates in mongodb-cr.yaml (#0)
+- fix: update checkout step to use SSH key for authentication (#0)
+
+## 📦 Build & CI
+
+- chore: bump version to 0.1.4 (#0)
+
+
+
 # Release 0.1.2
 
 ## 🚀 Features
