@@ -1,3 +1,22 @@
+# Release 0.2.0
+
+## 🚀 Features
+
+- feat: enrich team data with usernames and update TeamMemberSchema to include username (#0)
+- feat: add user profile update endpoint and email notifications for security changes (#0)
+
+## 🐛 Fixes
+
+- fix: add missing Field import and set alias for user ID in UserInDBBase (#0)
+- fix: add user not found check in enable_2fa endpoint (#0)
+
+## 📦 Build & CI
+
+- chore: update poetry.lock to reflect new package versions and dependencies (#0)
+- chore: update version to 0.2.0 (#0)
+
+
+
 # Release 0.1.9
 
 ## 🚀 Features
