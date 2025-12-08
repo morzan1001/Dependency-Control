@@ -1,3 +1,11 @@
+# Release 0.1.5
+
+## 📦 Build & CI
+
+- chore: bump version to 0.1.5 and update Helm chart dependencies and network policies (#0)
+
+
+
 # Release 0.1.4
 
 ## 🐛 Fixes
