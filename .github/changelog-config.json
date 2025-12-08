@@ -20,6 +20,13 @@
   "ignore_labels": [
     "ignore"
   ],
+  "label_extractor": [
+    {
+      "pattern": "^(feat|feature|fix|bug|docs|style|refactor|perf|test|tests|chore|build|ci|revert)(?:\\(.+\\))?: .+$",
+      "target": "$1",
+      "flags": "gu"
+    }
+  ],
   "sort": "PR_TITLE",
   "template": "${{CHANGELOG}}",
   "pr_template": "- ${{TITLE}} (#${{NUMBER}})",

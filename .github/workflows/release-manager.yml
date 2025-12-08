@@ -45,11 +45,12 @@ jobs:
 
       - name: Generate Changelog
         id: changelog
-        uses: mikepenz/release-changelog-builder-action@v4
+        uses: mikepenz/release-changelog-builder-action@v5
         with:
           configuration: ".github/changelog-config.json"
           fromTag: ${{ steps.range.outputs.FROM_TAG }}
           toTag: ${{ github.sha }}
+          mode: "HYBRID"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
