@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, Field
 from typing import Optional
 import re
 
@@ -51,12 +51,13 @@ class UserPasswordUpdate(BaseModel):
         return v
 
 class UserInDBBase(UserBase):
-    id: str
+    id: str = Field(alias="_id")
     totp_enabled: bool = False
     is_verified: bool = False
 
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 class User(UserInDBBase):
     pass
