@@ -48,16 +48,15 @@ spec:
               securityContext:
                 runAsNonRoot: true
                 runAsUser: 2000 # MongoDB Community images often use 2000 or 999
-  persistence:
-    volumeClaimTemplates:
-      - metadata:
-          name: data-volume
-        spec:
-          accessModes: [ "ReadWriteOnce" ]
-          resources:
-            requests:
-              storage: {{ .Values.mongodb.cluster.persistence.size }}
-          {{- if .Values.mongodb.cluster.persistence.storageClass }}
-          storageClassName: {{ .Values.mongodb.cluster.persistence.storageClass }}
-          {{- end }}
+      volumeClaimTemplates:
+        - metadata:
+            name: data-volume
+          spec:
+            accessModes: [ "ReadWriteOnce" ]
+            resources:
+              requests:
+                storage: {{ .Values.mongodb.cluster.persistence.size }}
+            {{- if .Values.mongodb.cluster.persistence.storageClass }}
+            storageClassName: {{ .Values.mongodb.cluster.persistence.storageClass }}
+            {{- end }}
 {{- end }}
