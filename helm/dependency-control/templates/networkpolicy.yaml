@@ -77,3 +77,76 @@ spec:
     - protocol: TCP
       port: 8000
 {{- end }}
+
+---
+# Allow MongoDB to receive traffic from Backend, Operator, and other Mongo nodes
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-mongo-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: "{{ .Values.mongodb.cluster.name }}-svc"
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    # Allow Backend
+    - podSelector:
+        matchLabels:
+          {{- include "dependency-control.selectorLabels" . | nindent 10 }}
+    # Allow other Mongo nodes (Replication)
+    - podSelector:
+        matchLabels:
+          app: "{{ .Values.mongodb.cluster.name }}-svc"
+    # Allow Operator
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: mongodb-kubernetes-operator
+    ports:
+    - protocol: TCP
+      port: 27017
+
+---
+# Allow MongoDB to talk to other Mongo nodes (Replication)
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-mongo-egress
+spec:
+  podSelector:
+    matchLabels:
+      app: "{{ .Values.mongodb.cluster.name }}-svc"
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: "{{ .Values.mongodb.cluster.name }}-svc"
+    ports:
+    - protocol: TCP
+      port: 27017
+  # Allow DNS
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+---
+# Allow Operator to talk to K8s API and MongoDB
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-operator-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb-kubernetes-operator
+  policyTypes:
+  - Egress
+  egress:
+  # Allow everything for Operator to ensure it can manage resources and talk to K8s API
+  - {}

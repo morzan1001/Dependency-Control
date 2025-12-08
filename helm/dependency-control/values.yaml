@@ -69,10 +69,13 @@ backend:
     slackBotToken: ""
 
 # MongoDB Community Operator Settings
+mongodb-crd:
+  enabled: true
+
 mongodb-operator:
   enabled: true
   operator:
-    watchNamespace: "*" # Watch all namespaces or set to specific
+    watchNamespace: "dependency-control" # Watch all namespaces or set to specific
 
 # MongoDB Cluster Configuration (Custom Resource)
 mongodb:
