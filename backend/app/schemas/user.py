@@ -32,6 +32,13 @@ class UserUpdate(UserBase):
     password: Optional[str] = None
     permissions: Optional[list[str]] = None
 
+class UserUpdateMe(BaseModel):
+    email: Optional[EmailStr] = None
+    username: Optional[str] = None
+    slack_username: Optional[str] = None
+    mattermost_username: Optional[str] = None
+    notification_preferences: Optional[dict[str, list[str]]] = None
+
 class UserPasswordUpdate(BaseModel):
     current_password: str
     new_password: str

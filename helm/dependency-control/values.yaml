@@ -38,6 +38,10 @@ backend:
   env:
     workerCount: 2
     logLevel: "INFO"
+    smtpHost: ""
+    smtpPort: 587
+    smtpUser: ""
+    fromEmail: ""
 
   autoscaling:
     enabled: true

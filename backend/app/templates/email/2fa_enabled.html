@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}2FA Enabled - {{ project_name }}{% endblock %}
+
+{% block content %}
+<h2>Two-Factor Authentication Enabled</h2>
+<p>Hello {{ username }},</p>
+<p>Two-Factor Authentication (2FA) has been successfully <strong>enabled</strong> for your account on <strong>{{ project_name }}</strong>.</p>
+<div class="alert alert-success">
+    Your account is now more secure. You will need to provide a verification code from your authenticator app when logging in.
+</div>
+<p>If you did not initiate this change, please contact your administrator immediately.</p>
+{% endblock %}

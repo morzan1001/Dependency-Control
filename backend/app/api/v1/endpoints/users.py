@@ -9,8 +9,11 @@ import base64
 from app.api import deps
 from app.core import security
 from app.models.user import User
-from app.schemas.user import User as UserSchema, UserUpdate, UserCreate, UserPasswordUpdate, User2FASetup, User2FAVerify
+from app.schemas.user import User as UserSchema, UserUpdate, UserCreate, UserPasswordUpdate, User2FASetup, User2FAVerify, UserUpdateMe
 from app.db.mongodb import get_database
+from app.services.notifications.service import notification_service
+from app.services.notifications import templates
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -61,6 +64,35 @@ async def read_user_me(
     Get current user.
     """
     return current_user
+
+@router.patch("/me", response_model=UserSchema)
+async def update_user_me(
+    user_in: UserUpdateMe,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Update own profile.
+    """
+    # Check if email is being updated and if it's unique
+    if user_in.email and user_in.email != current_user.email:
+        existing_user = await db.users.find_one({"email": user_in.email})
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+            
+    # Check if username is being updated and if it's unique
+    if user_in.username and user_in.username != current_user.username:
+        existing_user = await db.users.find_one({"username": user_in.username})
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Username already taken")
+
+    update_data = user_in.dict(exclude_unset=True)
+    
+    if update_data:
+        await db.users.update_one({"_id": current_user.id}, {"$set": update_data})
+        
+    updated_user = await db.users.find_one({"_id": current_user.id})
+    return updated_user
 
 @router.get("/{user_id}", response_model=UserSchema)
 async def read_user_by_id(
@@ -122,6 +154,18 @@ async def update_password_me(
         {"$set": {"hashed_password": hashed_password}}
     )
     
+    # Send notification
+    await notification_service.email_provider.send(
+        destination=current_user.email,
+        subject="Security Alert: Password Changed",
+        message=f"Hello {current_user.username},\n\nYour password for Dependency Control was successfully changed.\n\nIf you did not initiate this change, please contact your administrator immediately.",
+        html_message=templates.get_password_changed_template(
+            username=current_user.username,
+            login_link=f"{settings.FRONTEND_BASE_URL}/login",
+            project_name=settings.PROJECT_NAME
+        )
+    )
+
     updated_user = await db.users.find_one({"_id": current_user.id})
     return updated_user
 
@@ -181,6 +225,17 @@ async def enable_2fa(
         {"$set": {"totp_enabled": True}}
     )
     
+    # Send notification
+    await notification_service.email_provider.send(
+        destination=current_user.email,
+        subject="Security Alert: 2FA Enabled",
+        message=f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) has been enabled for your account.\n\nIf you did not initiate this change, please contact your administrator immediately.",
+        html_message=templates.get_2fa_enabled_template(
+            username=current_user.username,
+            project_name=settings.PROJECT_NAME
+        )
+    )
+
     updated_user = await db.users.find_one({"_id": current_user.id})
     return updated_user
 
@@ -197,6 +252,17 @@ async def disable_2fa(
         {"$set": {"totp_enabled": False, "totp_secret": None}}
     )
     
+    # Send notification
+    await notification_service.email_provider.send(
+        destination=current_user.email,
+        subject="Security Alert: 2FA Disabled",
+        message=f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) has been disabled for your account.\n\nIf you did not initiate this change, please contact your administrator immediately.",
+        html_message=templates.get_2fa_disabled_template(
+            username=current_user.username,
+            project_name=settings.PROJECT_NAME
+        )
+    )
+
     updated_user = await db.users.find_one({"_id": current_user.id})
     return updated_user
 

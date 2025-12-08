@@ -81,6 +81,19 @@ spec:
                   key: secret-key
             - name: WORKER_COUNT
               value: "{{ .Values.backend.env.workerCount }}"
+            - name: SMTP_HOST
+              value: "{{ .Values.backend.env.smtpHost }}"
+            - name: SMTP_PORT
+              value: "{{ .Values.backend.env.smtpPort }}"
+            - name: SMTP_USER
+              value: "{{ .Values.backend.env.smtpUser }}"
+            - name: EMAILS_FROM_EMAIL
+              value: "{{ .Values.backend.env.fromEmail }}"
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "dependency-control.fullname" . }}-secrets
+                  key: smtp-password
             - name: OPEN_SOURCE_MALWARE_API_KEY
               valueFrom:
                 secretKeyRef:

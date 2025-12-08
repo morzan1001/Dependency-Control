@@ -47,3 +47,22 @@ def get_analysis_completed_template(analysis_link: str, project_name: str, proje
         "project_name_scanned": project_name_scanned,
         "stats": stats
     })
+
+def get_password_changed_template(username: str, login_link: str, project_name: str) -> str:
+    return render_template("password_changed.html", {
+        "username": username,
+        "login_link": login_link,
+        "project_name": project_name
+    })
+
+def get_2fa_enabled_template(username: str, project_name: str) -> str:
+    return render_template("2fa_enabled.html", {
+        "username": username,
+        "project_name": project_name
+    })
+
+def get_2fa_disabled_template(username: str, project_name: str) -> str:
+    return render_template("2fa_disabled.html", {
+        "username": username,
+        "project_name": project_name
+    })
