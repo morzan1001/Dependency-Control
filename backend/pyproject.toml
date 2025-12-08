@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "dependency-checks"
-version = "0.1.5"
+version = "0.1.6"
 description = "Backend for Dependency Control System"
 authors = ["Admin <admin@example.com>"]
 packages = [{ include = "app" }]
