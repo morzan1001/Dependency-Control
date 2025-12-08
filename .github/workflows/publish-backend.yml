@@ -17,6 +17,7 @@ env:
   REGISTRY: ghcr.io
   # github.repository as <account>/<repo>
   IMAGE_NAME: ${{ github.repository }}-backend
+  REPO_NAME: ${{ github.repository }}
 
 jobs:
   build:
@@ -31,7 +32,9 @@ jobs:
 
       - name: Lowercase Image Name
         run: |
-          echo "IMAGE_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')-backend" >> $GITHUB_ENV
+          REPO_LOWER=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME=${REPO_LOWER}-backend" >> $GITHUB_ENV
+          echo "REPO_NAME=${REPO_LOWER}" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -48,7 +51,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            ${{ env.REGISTRY }}/${{ env.REPO_NAME }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -61,5 +66,7 @@ jobs:
           context: "./backend"
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           provenance: false

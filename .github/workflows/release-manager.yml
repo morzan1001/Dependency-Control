@@ -97,7 +97,7 @@ jobs:
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           
-          echo "DOCKER_IMAGE=ghcr.io/${REPO_LOWER}-backend" >> $GITHUB_OUTPUT
+          echo "DOCKER_IMAGE=ghcr.io/${REPO_LOWER}" >> $GITHUB_OUTPUT
           echo "HELM_CHART=oci://ghcr.io/${OWNER_LOWER}/charts/dependency-control" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
