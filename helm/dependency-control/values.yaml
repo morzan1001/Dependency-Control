@@ -69,9 +69,6 @@ backend:
     slackBotToken: ""
 
 # MongoDB Community Operator Settings
-mongodb-crd:
-  enabled: true
-
 mongodb-operator:
   enabled: true
   operator:

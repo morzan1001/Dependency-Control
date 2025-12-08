@@ -1,12 +1,9 @@
 dependencies:
-- name: community-operator-crds
-  repository: https://mongodb.github.io/helm-charts
-  version: 0.11.0
 - name: community-operator
   repository: https://mongodb.github.io/helm-charts
-  version: 0.11.0
+  version: 0.13.0
 - name: traefik
   repository: https://traefik.github.io/charts
   version: 33.1.0
-digest: sha256:a3cdc28bcff86088b3c3449f17d2d840cba29d4b50ae8b872deb473da8a74b13
-generated: "2025-12-08T18:29:59.375228+01:00"
+digest: sha256:a57134a291337015e2d80dd4e15537e1fb38e272db08956db57942f7e507b497
+generated: "2025-12-08T18:48:25.534096+01:00"
