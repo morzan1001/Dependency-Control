@@ -32,3 +32,40 @@ dependency-scan:
         -H "x-api-key: $DEP_CONTROL_API_KEY" \
         -d @payload.json \
         "$DEP_CONTROL_URL/api/v1/ingest"
+
+secret-scan:
+  stage: dependency-scan
+  image: alpine:latest
+  variables:
+    # DEP_CONTROL_URL, DEP_CONTROL_API_KEY, PROJECT_NAME defined in CI/CD settings
+  before_script:
+    - apk add --no-cache curl jq bash git
+    - curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+  script:
+    - echo "Running TruffleHog..."
+    # TruffleHog needs git history
+    - git fetch --unshallow || true
+    - trufflehog git file://. --json > trufflehog.json || true
+    
+    - echo "Preparing payload..."
+    - |
+      echo '{"project_name": "'"$PROJECT_NAME"'", "branch": "'"$CI_COMMIT_REF_NAME"'", "commit_hash": "'"$CI_COMMIT_SHA"'", "findings": [' > payload.json
+      if [ -s trufflehog.json ]; then
+        sed 's/$/,/' trufflehog.json | sed '$ s/,$//' >> payload.json
+      fi
+      echo ']}' >> payload.json
+      
+    - echo "Uploading results..."
+    - |
+      response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog" \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: $DEP_CONTROL_API_KEY" \
+        -d @payload.json)
+      
+      echo "Response: $response"
+      
+      status=$(echo $response | jq -r '.status')
+      if [ "$status" == "failed" ]; then
+        echo "CRITICAL: Unwaived secrets found!"
+        exit 1
+      fi

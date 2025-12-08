@@ -39,3 +39,48 @@ jobs:
             -H "x-api-key: $DEP_CONTROL_API_KEY" \
             -d @payload.json \
             "$DEP_CONTROL_URL/api/v1/ingest"
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Important for TruffleHog to see history
+      
+      - name: Install TruffleHog
+        run: curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+          
+      - name: Run TruffleHog
+        run: |
+          # Run TruffleHog and output JSON. We ignore exit code to process results ourselves.
+          trufflehog git file://. --json > trufflehog.json || true
+          
+      - name: Upload Secrets to Dependency Control
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          PROJECT_NAME: "your-project-name"
+        run: |
+          # Convert JSON lines to JSON array
+          echo '{"project_name": "'"$PROJECT_NAME"'", "branch": "${{ github.ref_name }}", "commit_hash": "${{ github.sha }}", "findings": [' > payload.json
+          # Add comma to end of each line, remove last comma, then append
+          if [ -s trufflehog.json ]; then
+            sed 's/$/,/' trufflehog.json | sed '$ s/,$//' >> payload.json
+          fi
+          echo ']}' >> payload.json
+          
+          # Send to Backend
+          response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $DEP_CONTROL_API_KEY" \
+            -d @payload.json)
+            
+          echo "Response: $response"
+          
+          # Fail if status is failed (unwaived secrets found)
+          # Requires jq to be installed (standard on ubuntu-latest)
+          status=$(echo $response | jq -r '.status')
+          if [ "$status" == "failed" ]; then
+            echo "CRITICAL: Unwaived secrets found!"
+            exit 1
+          fi

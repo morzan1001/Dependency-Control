@@ -8,6 +8,7 @@ class UserBase(BaseModel):
     is_active: Optional[bool] = True
     permissions: list[str] = []
     slack_username: Optional[str] = None
+    mattermost_username: Optional[str] = None
     notification_preferences: Optional[dict[str, list[str]]] = None
 
 class UserCreate(UserBase):

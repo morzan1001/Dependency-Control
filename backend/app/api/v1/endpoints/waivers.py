@@ -1,0 +1,87 @@
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import List, Optional
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from datetime import datetime
+
+from app.api import deps
+from app.models.user import User
+from app.models.waiver import Waiver
+from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
+from app.db.mongodb import get_database
+from app.api.v1.endpoints.projects import check_project_access
+
+router = APIRouter()
+
+@router.post("/", response_model=WaiverResponse, status_code=201)
+async def create_waiver(
+    waiver_in: WaiverCreate,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Create a new waiver/exception for a vulnerability.
+    """
+    if waiver_in.project_id:
+        # Check if user has access to the project (editor or admin)
+        await check_project_access(waiver_in.project_id, current_user, db, required_role="editor")
+    else:
+        # Global waiver requires superuser or specific permission
+        if not current_user.is_superuser:
+             raise HTTPException(status_code=403, detail="Only admins can create global waivers")
+
+    waiver = Waiver(
+        **waiver_in.dict(),
+        created_by=current_user.username
+    )
+    
+    await db.waivers.insert_one(waiver.dict(by_alias=True))
+    return waiver
+
+@router.get("/", response_model=List[WaiverResponse])
+async def list_waivers(
+    project_id: Optional[str] = None,
+    finding_id: Optional[str] = None,
+    package_name: Optional[str] = None,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    List waivers.
+    """
+    query = {}
+    if project_id:
+        # Check access
+        await check_project_access(project_id, current_user, db, required_role="viewer")
+        query["project_id"] = project_id
+    elif not current_user.is_superuser:
+        # If no project_id, return global waivers only (unless superuser)
+        query["project_id"] = None
+    
+    if finding_id:
+        query["finding_id"] = finding_id
+        
+    if package_name:
+        query["package_name"] = package_name
+
+    waivers = await db.waivers.find(query).to_list(1000)
+    return [Waiver(**w) for w in waivers]
+
+@router.delete("/{waiver_id}", status_code=204)
+async def delete_waiver(
+    waiver_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    waiver_data = await db.waivers.find_one({"_id": waiver_id})
+    if not waiver_data:
+        raise HTTPException(status_code=404, detail="Waiver not found")
+    
+    waiver = Waiver(**waiver_data)
+    
+    if waiver.project_id:
+        await check_project_access(waiver.project_id, current_user, db, required_role="admin")
+    else:
+        if not current_user.is_superuser:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+            
+    await db.waivers.delete_one({"_id": waiver_id})

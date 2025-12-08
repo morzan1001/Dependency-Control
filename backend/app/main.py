@@ -4,7 +4,7 @@ from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
-from app.api.v1.endpoints import auth, ingest, projects, users, teams
+from app.api.v1.endpoints import auth, ingest, projects, users, teams, waivers, webhooks, search, system
 from app.api import health
 
 app = FastAPI(
@@ -59,6 +59,10 @@ app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest
 app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(teams.router, prefix=f"{settings.API_V1_STR}/teams", tags=["teams"])
+app.include_router(waivers.router, prefix=f"{settings.API_V1_STR}/waivers", tags=["waivers"])
+app.include_router(webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["webhooks"])
+app.include_router(search.router, prefix=f"{settings.API_V1_STR}/search", tags=["search"])
+app.include_router(system.router, prefix=f"{settings.API_V1_STR}/system", tags=["system"])
 
 @app.get("/")
 async def root():

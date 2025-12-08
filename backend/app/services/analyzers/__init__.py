@@ -7,6 +7,7 @@ from .deps_dev import DepsDevAnalyzer
 from .license import LicenseAnalyzer
 from .grype import GrypeAnalyzer
 from .outdated import OutdatedAnalyzer
+from .typosquatting import TyposquattingAnalyzer
 
 
 

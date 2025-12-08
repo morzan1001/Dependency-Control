@@ -18,6 +18,7 @@ class User(BaseModel):
 
     # Notification settings
     slack_username: Optional[str] = None
+    mattermost_username: Optional[str] = None
     notification_preferences: dict[str, list[str]] = Field(
         default_factory=lambda: {
             "analysis_completed": ["email"],

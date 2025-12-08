@@ -4,6 +4,7 @@ from app.models.user import User
 from app.models.project import Project
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.slack_provider import SlackProvider
+from app.services.notifications.mattermost_provider import MattermostProvider
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,7 @@ class NotificationService:
     def __init__(self):
         self.email_provider = EmailProvider()
         self.slack_provider = SlackProvider()
+        self.mattermost_provider = MattermostProvider()
 
     async def _send_based_on_prefs(self, user: User, prefs: Dict[str, List[str]], event_type: str, subject: str, message: str):
         channels = prefs.get(event_type, [])
@@ -20,6 +22,9 @@ class NotificationService:
         
         if "slack" in channels and user.slack_username:
             await self.slack_provider.send(user.slack_username, subject, message)
+            
+        if "mattermost" in channels and user.mattermost_username:
+            await self.mattermost_provider.send(user.mattermost_username, subject, message)
 
     async def notify_user(self, user: User, event_type: str, subject: str, message: str):
         """

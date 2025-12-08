@@ -3,6 +3,7 @@ import logging
 from app.db.mongodb import get_database
 from app.services.analysis import run_analysis
 from app.core.config import settings
+from app.core.housekeeping import housekeeping_loop
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,7 @@ class AnalysisWorkerManager:
         self.queue = asyncio.Queue()
         self.num_workers = num_workers
         self.workers = []
+        self.housekeeping_task = None
 
     async def start(self):
         """Starts the worker tasks and recovers pending jobs from DB."""
@@ -20,6 +22,10 @@ class AnalysisWorkerManager:
         for i in range(self.num_workers):
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
+            
+        # Start housekeeping task
+        self.housekeeping_task = asyncio.create_task(housekeeping_loop())
+        logger.info("Housekeeping task started.")
             
         # Recover pending jobs from DB
         try:
@@ -41,6 +47,11 @@ class AnalysisWorkerManager:
         logger.info("Stopping analysis workers...")
         for task in self.workers:
             task.cancel()
+            
+        if self.housekeeping_task:
+            self.housekeeping_task.cancel()
+            logger.info("Housekeeping task stopped.")
+            
         # Wait for tasks to cancel? usually not needed in shutdown
 
     async def add_job(self, scan_id: str):

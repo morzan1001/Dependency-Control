@@ -1,0 +1,21 @@
+from pydantic import BaseModel, HttpUrl
+from typing import List, Optional
+from datetime import datetime
+
+class WebhookCreate(BaseModel):
+    url: str
+    events: List[str]
+    secret: Optional[str] = None
+
+class WebhookUpdate(BaseModel):
+    url: Optional[str] = None
+    events: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    secret: Optional[str] = None
+
+class WebhookResponse(WebhookCreate):
+    id: str
+    project_id: str
+    is_active: bool
+    created_at: datetime
+    last_triggered_at: Optional[datetime] = None

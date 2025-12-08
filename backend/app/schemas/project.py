@@ -9,18 +9,22 @@ class ProjectCreate(BaseModel):
         description="List of analyzers to run on this project",
         example=["end_of_life", "os_malware"]
     )
+    retention_days: Optional[int] = Field(90, description="Number of days to keep scan history", ge=1)
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = Field(None, description="New name for the project")
     team_id: Optional[str] = Field(None, description="Transfer project to a team")
     active_analyzers: Optional[List[str]] = Field(None, description="Updated list of active analyzers")
+    retention_days: Optional[int] = Field(None, description="Number of days to keep scan history", ge=1)
+    owner_notification_preferences: Optional[Dict[str, List[str]]] = Field(None, description="Notification preferences for the owner")
 
 class ProjectMemberInvite(BaseModel):
     email: str = Field(..., description="Email address of the user to invite", example="colleague@example.com")
     role: str = Field("viewer", description="Role to assign (viewer, editor, admin)", example="editor")
 
 class ProjectMemberUpdate(BaseModel):
-    role: str = Field(..., description="New role to assign (viewer, editor, admin)", example="admin")
+    role: Optional[str] = Field(None, description="New role to assign (viewer, editor, admin)", example="admin")
+    notification_preferences: Optional[Dict[str, List[str]]] = Field(None, description="Notification preferences for the member")
 
 class ProjectNotificationSettings(BaseModel):
     notification_preferences: Dict[str, List[str]] = Field(

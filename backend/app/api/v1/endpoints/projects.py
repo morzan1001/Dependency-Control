@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from typing import List
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import secrets
+import csv
+import io
+import json
 from datetime import datetime, timedelta
 
 from app.api import deps
@@ -366,10 +369,17 @@ async def update_project_member(
     if project.owner_id == user_id:
         raise HTTPException(status_code=400, detail="Cannot change role of project owner")
 
-    await db.projects.update_one(
-        {"_id": project_id, "members.user_id": user_id},
-        {"$set": {f"members.{member_index}.role": member_in.role}}
-    )
+    update_fields = {}
+    if member_in.role:
+        update_fields[f"members.{member_index}.role"] = member_in.role
+    if member_in.notification_preferences:
+        update_fields[f"members.{member_index}.notification_preferences"] = member_in.notification_preferences
+
+    if update_fields:
+        await db.projects.update_one(
+            {"_id": project_id, "members.user_id": user_id},
+            {"$set": update_fields}
+        )
     
     updated_project_data = await db.projects.find_one({"_id": project_id})
     return Project(**updated_project_data)
@@ -407,3 +417,73 @@ async def remove_project_member(
     
     updated_project_data = await db.projects.find_one({"_id": project_id})
     return Project(**updated_project_data)
+
+@router.get("/{project_id}/export/csv", summary="Export latest scan results as CSV")
+async def export_project_csv(
+    project_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+    
+    # Get latest scan
+    scan_data = await db.scans.find_one(
+        {"project_id": project_id, "status": "completed"},
+        sort=[("created_at", -1)]
+    )
+    
+    if not scan_data:
+        raise HTTPException(status_code=404, detail="No completed scans found for this project")
+        
+    scan = Scan(**scan_data)
+    
+    # Prepare CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Header
+    writer.writerow(["Component", "Version", "Type", "Vulnerability ID", "Severity", "Description", "Fixed Version"])
+    
+    # Iterate findings
+    # Assuming findings_summary structure. Adjust based on actual data.
+    if scan.findings_summary:
+        for finding in scan.findings_summary:
+            writer.writerow([
+                finding.get("pkg_name", ""),
+                finding.get("installed_version", ""),
+                finding.get("pkg_type", ""),
+                finding.get("vulnerability_id", ""),
+                finding.get("severity", ""),
+                finding.get("description", ""),
+                finding.get("fixed_version", "")
+            ])
+            
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_scan.csv"}
+    )
+
+@router.get("/{project_id}/export/sbom", summary="Export latest SBOM")
+async def export_project_sbom(
+    project_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+    
+    scan_data = await db.scans.find_one(
+        {"project_id": project_id, "status": "completed"},
+        sort=[("created_at", -1)]
+    )
+    
+    if not scan_data:
+        raise HTTPException(status_code=404, detail="No completed scans found for this project")
+        
+    scan = Scan(**scan_data)
+    
+    return Response(
+        content=json.dumps(scan.sbom, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"}
+    )

@@ -100,5 +100,3 @@ spec:
           emptyDir: {}
         - name: cache-volume
           emptyDir: {}
-        - name: cache-volume
-          emptyDir: {}

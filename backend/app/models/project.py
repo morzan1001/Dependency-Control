@@ -20,6 +20,7 @@ class Project(BaseModel):
     active_analyzers: List[str] = []
     stats: Optional[Dict[str, int]] = None
     last_scan_at: Optional[datetime] = None
+    retention_days: int = 90  # Default retention period in days
 
     class Config:
         populate_by_name = True
@@ -30,7 +31,7 @@ class Scan(BaseModel):
     project_id: str
     branch: str
     commit_hash: Optional[str] = None
-    sbom: Dict[str, Any]
+    sbom: Optional[Dict[str, Any]] = None # Made optional for secret-only scans
     created_at: datetime = Field(default_factory=datetime.utcnow)
     status: str = "pending"
     findings_summary: Optional[List[Dict[str, Any]]] = None

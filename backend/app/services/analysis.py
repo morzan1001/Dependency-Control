@@ -10,7 +10,8 @@ from app.services.analyzers import (
     DepsDevAnalyzer,
     LicenseAnalyzer,
     GrypeAnalyzer,
-    OutdatedAnalyzer
+    OutdatedAnalyzer,
+    TyposquattingAnalyzer
 )
 from app.services.notifications import notification_service
 from app.models.project import Project
@@ -24,7 +25,8 @@ analyzers: Dict[str, Analyzer] = {
     "deps_dev": DepsDevAnalyzer(),
     "license_compliance": LicenseAnalyzer(),
     "grype": GrypeAnalyzer(),
-    "outdated_packages": OutdatedAnalyzer()
+    "outdated_packages": OutdatedAnalyzer(),
+    "typosquatting": TyposquattingAnalyzer()
 }
 
 async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: List[str], db):

@@ -1,12 +1,125 @@
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api import deps
 from app.schemas.ingest import SBOMIngest
-from app.models.project import Project, Scan
+from app.schemas.trufflehog import TruffleHogIngest
+from app.models.project import Project, Scan, AnalysisResult
 from app.db.mongodb import get_database
 from app.core.worker import worker_manager
+from app.services.aggregator import ResultAggregator
+from datetime import datetime
+import uuid
 
 router = APIRouter()
+
+@router.post("/ingest/trufflehog", summary="Ingest TruffleHog Results", status_code=200)
+async def ingest_trufflehog(
+    data: TruffleHogIngest,
+    project: Project = Depends(deps.get_project_by_api_key),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Ingest TruffleHog secret scan results.
+    Returns a summary of findings and whether the pipeline should fail.
+    """
+    # 1. Create or Update Scan
+    # We try to find a pending scan for this commit, or create a new one.
+    # Since this is a specific "secret scan", we might just create a new completed scan entry 
+    # to store the results history.
+    
+    scan = Scan(
+        project_id=str(project.id),
+        branch=data.branch,
+        commit_hash=data.commit_hash,
+        sbom=None, # Secret scan doesn't have SBOM
+        status="completed", # We process it immediately
+        created_at=datetime.utcnow(),
+        completed_at=datetime.utcnow()
+    )
+    
+    # 2. Normalize Findings
+    aggregator = ResultAggregator()
+    # Convert Pydantic models to dicts
+    trufflehog_result = {"findings": [f.dict() for f in data.findings]}
+    
+    aggregator.aggregate("trufflehog", trufflehog_result)
+    findings = aggregator.get_findings()
+    
+    # 3. Apply Waivers
+    # Fetch active waivers for this project
+    waivers_cursor = db.waivers.find({
+        "$or": [
+            {"project_id": str(project.id)},
+            {"project_id": None} # Global waivers
+        ],
+        "expiration_date": {"$gt": datetime.utcnow()}
+    })
+    waivers = await waivers_cursor.to_list(length=1000)
+    
+    final_findings = []
+    waived_count = 0
+    
+    for finding in findings:
+        is_waived = False
+        for waiver in waivers:
+            # Check if waiver matches finding
+            # Match by ID (e.g. SECRET-AWS-...)
+            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
+                is_waived = True
+                break
+            
+            # Match by Type (e.g. "secret")
+            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
+                # Could be too broad, but supported
+                is_waived = True
+                break
+                
+            # Match by Package Name (mapped to file path for secrets)
+            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
+                is_waived = True
+                break
+        
+        if is_waived:
+            waived_count += 1
+            # We can optionally store it but mark as waived
+            finding["waived"] = True
+        else:
+            final_findings.append(finding)
+
+    # 4. Store Results
+    # Store raw result
+    await db.analysis_results.insert_one({
+        "_id": str(uuid.uuid4()),
+        "scan_id": scan.id,
+        "analyzer_name": "trufflehog",
+        "result": trufflehog_result,
+        "created_at": datetime.utcnow()
+    })
+    
+    # Update Scan with summary
+    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
+    for f in final_findings:
+        severity = f.get("severity", "UNKNOWN").lower()
+        if severity in stats:
+            stats[severity] += 1
+            
+    scan.findings_summary = final_findings
+    scan.findings_count = len(final_findings)
+    scan.stats = stats
+    
+    await db.scans.insert_one(scan.dict(by_alias=True))
+    
+    # 5. Return Status
+    # Fail if any critical findings remain
+    failed = len(final_findings) > 0
+    
+    return {
+        "status": "failed" if failed else "success",
+        "scan_id": scan.id,
+        "findings_count": len(final_findings),
+        "waived_count": waived_count,
+        "message": f"Found {len(final_findings)} secrets (Waived: {waived_count})"
+    }
 
 @router.post("/ingest", summary="Ingest SBOM", status_code=202)
 async def ingest_sbom(
