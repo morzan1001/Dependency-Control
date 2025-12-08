@@ -44,9 +44,7 @@ class OutdatedAnalyzer(Analyzer):
         if system == "npm" and "/" in name:
             encoded_name = name.replace("/", "%2F")
         
-        # Deps.dev API expects 'pypi' to be lowercase, but package names might need to be handled carefully.
-        # However, for PyPI, deps.dev usually expects the canonical name.
-        # Let's try to follow redirects if needed, but httpx does that by default.
+        # Deps.dev API expects 'pypi' to be lowercase
         
         url = f"{self.base_url}/{system}/packages/{encoded_name}"
         
@@ -63,7 +61,7 @@ class OutdatedAnalyzer(Analyzer):
                         default_version = v.get("versionKey", {}).get("version")
                         break
                 
-                # If we found a default version and it's different from ours
+                # If a default version is found and differs from the current one
                 if default_version and default_version != version:
                     return {
                         "component": name,

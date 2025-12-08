@@ -2,9 +2,7 @@ name: Dependency Scan
 
 on:
   push:
-    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main", "master" ]
 
 jobs:
   scan-and-upload:
@@ -52,7 +50,7 @@ jobs:
           
       - name: Run TruffleHog
         run: |
-          # Run TruffleHog and output JSON. We ignore exit code to process results ourselves.
+          # Run TruffleHog and output JSON. Exit code is ignored to process results manually.
           trufflehog git file://. --json > trufflehog.json || true
           
       - name: Upload Secrets to Dependency Control

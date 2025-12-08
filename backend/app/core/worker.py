@@ -51,8 +51,6 @@ class AnalysisWorkerManager:
         if self.housekeeping_task:
             self.housekeeping_task.cancel()
             logger.info("Housekeeping task stopped.")
-            
-        # Wait for tasks to cancel? usually not needed in shutdown
 
     async def add_job(self, scan_id: str):
         """Adds a new scan job to the queue."""
@@ -104,8 +102,7 @@ class AnalysisWorkerManager:
                         active_analyzers=project.get("active_analyzers", []),
                         db=db
                     )
-                    # Note: run_analysis should ideally update status to 'completed'
-                    # If it doesn't, we should do it here. Assuming run_analysis handles it for now based on previous code.
+                    # run_analysis updates the status to 'completed' upon success.
                     
                 except Exception as e:
                     logger.error(f"Error processing scan {scan_id}: {e}")

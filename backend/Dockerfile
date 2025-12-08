@@ -5,6 +5,7 @@ ENV PYTHONUNBUFFERED=1
 LABEL org.opencontainers.image.source="https://github.com/morzan1001/Dependency-Control"
 LABEL org.opencontainers.image.description="Backend for Dependency Control System"
 LABEL org.opencontainers.image.authors="Matthias Duve <morzan1001@gmail.com>"
+LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 

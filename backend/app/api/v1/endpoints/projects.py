@@ -43,18 +43,16 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
         team = await db.teams.find_one({"_id": project.team_id, "members.user_id": str(user.id)})
         if team:
             is_team_member = True
-            # Determine role from team membership? 
-            # For simplicity, team members get 'viewer' access by default, 
-            # team admins/owners get 'admin' access on project?
-            # Let's say team members are viewers, team admins are admins.
+            # Team members get 'viewer' access by default, 
+            # Team admins/owners get 'admin' access on project.
             for tm in team["members"]:
                 if tm["user_id"] == str(user.id):
                     if tm["role"] in ["admin", "owner"]:
                         member_role = "admin"
                     else:
-                        member_role = "viewer" # Default for team member
+                        member_role = "viewer"
                     break
-            is_member = True # Treat as member for access check
+            is_member = True
 
     if not (is_owner or is_member):
         raise HTTPException(status_code=403, detail="Not enough permissions")
@@ -62,9 +60,9 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
     if required_role:
         if is_owner:
             return project
-        # Simple role hierarchy: admin > editor > viewer
+        # Role hierarchy: admin > editor > viewer
         roles = ["viewer", "editor", "admin"]
-        # If member_role is None (shouldn't happen if is_member is True), default to viewer
+        # If member_role is None, default to viewer
         current_role = member_role or "viewer"
         if roles.index(current_role) < roles.index(required_role):
              raise HTTPException(status_code=403, detail="Not enough permissions")
@@ -82,10 +80,6 @@ async def create_project(
     
     **Important**: The API Key is only returned once. Save it securely.
     """
-    # Check if user has permission to create projects (optional, based on requirements)
-    # if "project:create" not in current_user.permissions and not current_user.is_superuser:
-    #     raise HTTPException(status_code=403, detail="Not allowed to create projects")
-
     # If team_id is provided, check if user is member of that team
     if project_in.team_id:
         team = await db.teams.find_one({"_id": project_in.team_id, "members.user_id": str(current_user.id)})
@@ -94,7 +88,7 @@ async def create_project(
 
     # Generate API Key
     # Format: project_id.secret
-    # We need the project ID first.
+    # The project ID is required first.
     import uuid
     project_id = str(uuid.uuid4())
     secret = secrets.token_urlsafe(32)
@@ -242,11 +236,9 @@ async def update_notification_settings(
                 break
         
         if not member_found:
-             # Should not happen if check_project_access passed, unless superuser who is not a member
+             # Occurs if superuser is not a member
              if "*" in current_user.permissions:
-                 # Superuser can't set preferences if they are not a member/owner?
-                 # Or maybe we should add them as member?
-                 # For now, let's just say 400
+                 # Superusers must be members to set preferences.
                  raise HTTPException(status_code=400, detail="You must be a member or owner to set notification preferences")
              else:
                  raise HTTPException(status_code=403, detail="Not a member of this project")
@@ -273,8 +265,7 @@ async def invite_user(
     # Check if user already exists
     existing_user = await db.users.find_one({"email": invite_in.email})
     if existing_user:
-        # If user exists, add directly to project? Or still send invite?
-        # For simplicity, let's add them directly if they exist
+        # If user exists, add directly to project
         member = ProjectMember(user_id=str(existing_user["_id"]), role=invite_in.role)
         
         # Check if already member

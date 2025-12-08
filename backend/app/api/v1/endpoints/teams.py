@@ -174,8 +174,7 @@ async def update_team_member(
         raise HTTPException(status_code=404, detail="User not in team")
         
     # Prevent modifying owner if you are not owner (admins can't demote owners)
-    # Actually, only owners should be able to manage other owners/admins fully?
-    # For simplicity: Admins can manage members. Owners can manage everyone.
+    # Admins can manage members. Owners can manage everyone.
     
     # If target is owner, only owner can modify
     if team.members[member_index].role == "owner":

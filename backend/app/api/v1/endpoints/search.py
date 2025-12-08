@@ -25,13 +25,17 @@ async def search_dependencies(
     match_stage = {}
     
     if not current_user.is_superuser:
-        # Find projects where user is member or owner
+        # Find teams where user is a member
+        user_teams = await db.teams.find({"members.user_id": str(current_user.id)}, {"_id": 1}).to_list(1000)
+        user_team_ids = [str(t["_id"]) for t in user_teams]
+
+        # Find projects where user is member or owner OR project is assigned to one of user's teams
         user_projects = await db.projects.find(
             {
                 "$or": [
                     {"owner_id": str(current_user.id)},
                     {"members.user_id": str(current_user.id)},
-                    # Team logic omitted for brevity, but should be here
+                    {"team_id": {"$in": user_team_ids}}
                 ]
             },
             {"_id": 1}
@@ -40,8 +44,7 @@ async def search_dependencies(
         match_stage["project_id"] = {"$in": project_ids}
 
     # 2. Aggregate to find latest scan for each project and search in SBOM
-    # Note: This assumes SBOM structure. Adjust based on actual SBOM format (CycloneDX/SPDX)
-    # Assuming SBOM is stored in 'sbom' field and has 'components' list.
+    # SBOM is stored in 'sbom' field and has 'components' list.
     
     pipeline = [
         {"$match": match_stage},

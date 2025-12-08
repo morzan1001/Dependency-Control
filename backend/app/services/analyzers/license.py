@@ -4,7 +4,7 @@ from .base import Analyzer
 class LicenseAnalyzer(Analyzer):
     name = "license_compliance"
     
-    # Simple policy for demonstration
+    # Default policy
     DENY_LIST = ["GPL-2.0", "GPL-3.0", "AGPL-3.0", "WTFPL"]
     WARN_LIST = ["LGPL-2.1", "LGPL-3.0", "MPL-2.0"]
 

@@ -1,0 +1,14 @@
+# This file defines who owns which parts of the codebase.
+# Code owners are automatically requested for review when someone opens a pull request.
+
+# Default owner for everything
+*       @morzan1001
+
+# Backend specific
+/backend/ @morzan1001
+
+# Helm charts
+/helm/    @morzan1001
+
+# CI/CD workflows
+/.github/ @morzan1001

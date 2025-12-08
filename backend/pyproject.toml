@@ -3,6 +3,7 @@ name = "dependency-checks"
 version = "0.1.1"
 description = "Backend for Dependency Control System"
 authors = ["Matthias Duve <morzan1001@gmail.com>"]
+license = "MIT"
 repository = "https://github.com/morzan1001/Dependency-Control"
 packages = [{ include = "app" }]
 

@@ -20,11 +20,11 @@ async def ingest_trufflehog(
 ):
     """
     Ingest TruffleHog secret scan results.
-    Returns a summary of findings and whether the pipeline should fail.
+    Returns a summary of findings and pipeline failure status.
     """
     # 1. Create or Update Scan
-    # We try to find a pending scan for this commit, or create a new one.
-    # Since this is a specific "secret scan", we might just create a new completed scan entry 
+    # Attempts to find a pending scan for this commit, or create a new one.
+    # Since this is a specific "secret scan", a new completed scan entry is created
     # to store the results history.
     
     scan = Scan(
@@ -32,7 +32,7 @@ async def ingest_trufflehog(
         branch=data.branch,
         commit_hash=data.commit_hash,
         sbom=None, # Secret scan doesn't have SBOM
-        status="completed", # We process it immediately
+        status="completed", # Processed immediately
         created_at=datetime.utcnow(),
         completed_at=datetime.utcnow()
     )
@@ -70,7 +70,7 @@ async def ingest_trufflehog(
             
             # Match by Type (e.g. "secret")
             if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
-                # Could be too broad, but supported
+                # Broad matching supported
                 is_waived = True
                 break
                 
@@ -81,7 +81,7 @@ async def ingest_trufflehog(
         
         if is_waived:
             waived_count += 1
-            # We can optionally store it but mark as waived
+            # It can be optionally stored but marked as waived
             finding["waived"] = True
         else:
             final_findings.append(finding)

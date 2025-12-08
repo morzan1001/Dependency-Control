@@ -21,9 +21,7 @@ class EmailProvider(NotificationProvider):
 
             msg.attach(MIMEText(message, "plain"))
 
-            # Note: This is a blocking call. In a high-throughput production app, 
-            # this should be run in a background task or thread pool.
-            # For now, we'll keep it simple.
+            # Send email
             with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
                 if settings.SMTP_USER and settings.SMTP_PASSWORD:
                     server.starttls()

@@ -44,8 +44,7 @@ class TyposquattingAnalyzer(Analyzer):
                     self._popular_packages_cache["pypi"] = self._get_static_pypi()
 
             # 2. NPM
-            # NPM doesn't have a clean "top list" API. 
-            # We use a larger static list for now, but this structure allows adding a fetcher later.
+            # Use static list for NPM as no clean top list API is available
             if not self._popular_packages_cache["npm"]:
                  self._popular_packages_cache["npm"] = self._get_static_npm()
 
@@ -117,7 +116,7 @@ class TyposquattingAnalyzer(Analyzer):
         return {"typosquatting_issues": issues}
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
-        # Simple heuristic:
+        # Heuristic:
         # 1. Length difference is small
         if abs(len(name) - len(popular)) > 2:
             return False

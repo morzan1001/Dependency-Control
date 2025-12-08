@@ -11,10 +11,7 @@ class SlackProvider(NotificationProvider):
             logger.warning("SLACK_BOT_TOKEN not configured. Skipping Slack notification.")
             return False
 
-        # If destination is a username (starts with @) or channel (#), we might need to resolve it 
-        # or just pass it to channel. Slack API 'chat.postMessage' accepts channel IDs, names, or user IDs.
-        # Ideally, we should store the Slack User ID (U123456) instead of username, 
-        # but for simplicity we'll try to use what is provided.
+        # Slack API 'chat.postMessage' accepts channel IDs, names, or user IDs.
         
         url = "https://slack.com/api/chat.postMessage"
         headers = {

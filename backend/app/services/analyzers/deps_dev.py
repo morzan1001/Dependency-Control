@@ -57,11 +57,7 @@ class DepsDevAnalyzer(Analyzer):
                 if projects:
                     # Usually the first one is the source repo
                     project_key = projects[0] 
-                    # Now fetch project details for scorecard
-                    # https://api.deps.dev/v1/projects/{type}/{name}
-                    # But wait, the version endpoint often has 'links' to the repo.
-                    # Let's try to get the scorecard directly if possible or infer it.
-                    # Actually deps.dev returns scorecard in the project endpoint.
+                    # Fetch project details for scorecard
                     
                     proj_type = project_key.get("projectKey", {}).get("id", {}).get("type")
                     proj_id = project_key.get("projectKey", {}).get("id", {}).get("name")

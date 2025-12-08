@@ -1,56 +1,86 @@
-# Dependency Control System
+# Dependency Control
 
-## Overview
-This is a backend system for managing software dependencies, ingesting SBOMs, and performing analyses (e.g., End-of-Life checks).
+**Dependency Control** is a centralized security and compliance platform for managing software dependencies. It ingests SBOMs (Software Bill of Materials) and Secret Scan results from your CI/CD pipelines, analyzes them for vulnerabilities, license issues, and malware, and provides a unified dashboard for risk management.
 
-## Tech Stack
-- Python 3.11
-- FastAPI
-- MongoDB (Motor)
-- Poetry
-- Docker & Docker Compose
+## Features
 
-## Setup & Run
+*   **Centralized Ingestion:** Accepts SBOMs (CycloneDX/SPDX) and TruffleHog secret scans via API.
+*   **Multi-Scanner Analysis:** Aggregates results from **Trivy**, **Grype**, **OSV**, **Deps.dev**, **End-of-Life**, **Malware**, and **Typosquatting** analyzers.
+*   **Secret Management:** Tracks leaked secrets and allows marking them as false positives (Waivers).
+*   **Waiver System:** Define exceptions for vulnerabilities or secrets (e.g., "Accepted Risk" or "False Positive") to keep pipelines green.
+*   **Notifications:** Alerts via Email, Slack, or Mattermost when critical issues are found.
+*   **Housekeeping:** Automatically cleans up old scan data based on retention policies.
+
+## Quick Start (Docker Compose)
+
+Ideal for testing and local development.
+
+### 1. Configure Hosts
+Since Traefik is used for routing with custom domains, add the following to your `/etc/hosts` file:
+```
+127.0.0.1 api.dependencycontrol.local appsmith.local metabase.local
+```
+
+### 2. Start the Stack
+```bash
+docker compose up -d --build
+```
+
+### 3. Access Services
+*   **Backend API:** `https://api.dependencycontrol.local/docs`
+*   **Appsmith (Frontend):** `https://appsmith.local`
+    *   Used for managing projects, waivers, and viewing findings.
+*   **Metabase (Analytics):** `https://metabase.local`
+    *   Used for advanced dashboards and reporting.
+
+*Note: You may need to accept the self-signed certificate warning in your browser.*
+
+## Production Deployment (Kubernetes)
+
+A Helm chart is provided for deploying to Kubernetes.
 
 ### Prerequisites
-- Docker and Docker Compose installed.
+*   Kubernetes Cluster (v1.24+)
+*   Helm (v3.0+)
+*   MongoDB (or use the included operator)
 
-### Running with Docker Compose
-1. Build and start the services:
-   ```bash
-   docker-compose up --build
-   ```
-2. The API will be available at `http://localhost:8000`.
-3. API Documentation (Swagger UI) at `http://localhost:8000/docs`.
+### Installation
 
-## Usage
+1.  **Add the repository:**
+    ```bash
+    helm repo add dependency-control https://morzan1001.github.io/Dependency-Control/
+    helm repo update
+    ```
 
-### 1. Create a User
-Use the `/api/v1/signup` endpoint to create a user.
+2.  **Install the chart:**
+    ```bash
+    helm upgrade --install dependency-control dependency-control/dependency-control \
+      --namespace dependency-control --create-namespace \
+      --set backend.secrets.secretKey="YOUR_SECURE_KEY"
+    ```
 
-### 2. Login
-Use the `/api/v1/login/access-token` endpoint to get a JWT token.
+## CI/CD Integration
 
-### 3. Create a Project
-Use the `/api/v1/projects/` endpoint (authenticated) to create a project. This will return an `api_key`.
+Integrate Dependency Control into your pipelines to block builds on critical findings.
 
-### 4. Ingest SBOM (CI Pipeline)
-Use the `/api/v1/ingest` endpoint with the `x-api-key` header.
-Payload example:
-```json
-{
-  "project_name": "My Project",
-  "branch": "main",
-  "commit_hash": "abc1234",
-  "sbom": {
-    "components": [
-      {"name": "python", "version": "3.6.0"},
-      {"name": "django", "version": "1.11"}
-    ]
-  }
-}
+### GitHub Actions
+```yaml
+- name: Upload SBOM
+  run: |
+    curl -X POST "$DEP_CONTROL_URL/api/v1/ingest" \
+      -H "x-api-key: ${{ secrets.DEP_CONTROL_API_KEY }}" \
+      -d @payload.json
 ```
-See `examples/ci-cd/` for GitLab CI and GitHub Actions configuration examples.
 
-### 5. View Results
-Use the `/api/v1/projects/{project_id}/scans` and `/api/v1/projects/scans/{scan_id}/results` endpoints to view analysis results.
+### GitLab CI
+```yaml
+dependency-scan:
+  script:
+    - curl -X POST "$DEP_CONTROL_URL/api/v1/ingest" ...
+```
+
+See `ci-cd/` for full examples including TruffleHog integration.
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.

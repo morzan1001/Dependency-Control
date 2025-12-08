@@ -13,8 +13,6 @@ class OSVAnalyzer(Analyzer):
         
         async with httpx.AsyncClient() as client:
             tasks = []
-            # OSV supports batch queries, but let's do concurrent single queries for simplicity 
-            # or check if batch is better. Batch is definitely better for rate limits.
             # OSV Batch API: POST https://api.osv.dev/v1/querybatch
             
             batch_payload = {"queries": []}

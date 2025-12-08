@@ -16,7 +16,7 @@ class EndOfLifeAnalyzer(Analyzer):
                 name = component.get("name", "").lower()
                 version = component.get("version", "")
                 
-                # Simple mapping/check - in reality this needs CPE matching
+                # Basic mapping/check - CPE matching would be more accurate
                 try:
                     response = await client.get(f"{self.api_url}/{name}.json")
                     if response.status_code == 200:
@@ -36,7 +36,7 @@ class EndOfLifeAnalyzer(Analyzer):
         return {"eol_issues": results}
 
     def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        # Very naive version check - just checking if version starts with cycle
+        # Basic version check - checking if version starts with cycle
         # In production, use semantic versioning comparison
         for cycle in cycles:
             if version.startswith(cycle["cycle"]):

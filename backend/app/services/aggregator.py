@@ -53,7 +53,7 @@ class ResultAggregator:
 
     def _normalize_trufflehog(self, result: Dict[str, Any]):
         # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
-        # We expect the result dict to contain a list of findings under "findings" key
+        # The result dict is expected to contain a list of findings under "findings" key
         for finding in result.get("findings", []):
             # finding is a dict (from Pydantic model dump)
             
@@ -69,8 +69,8 @@ class ResultAggregator:
             
             detector = finding.get("DetectorType", "Generic Secret")
             
-            # Create a unique ID based on detector and file path (and maybe a hash of the secret if available safely)
-            # We avoid storing the raw secret in the ID.
+            # Create a unique ID based on detector, file path, and secret hash
+            # Storing the raw secret in the ID is avoided.
             # Using Raw secret hash for deduplication is good.
             raw_secret = finding.get("Raw", "")
             secret_hash = hashlib.md5(raw_secret.encode()).hexdigest() if raw_secret else "nohash"
@@ -100,8 +100,7 @@ class ResultAggregator:
         Adds a finding to the map, merging if it already exists.
         Key for deduplication: type + id + component + version
         """
-        # Normalize ID: If it's a GHSA/GO ID but we have a CVE alias, use CVE?
-        # This logic is better handled in the specific normalizers (like OSV) before calling this.
+        # ID normalization (e.g. preferring CVE over GHSA) is handled in specific normalizers.
         
         key = f"{finding['type']}:{finding['id']}:{finding['component']}:{finding['version']}"
         
@@ -176,7 +175,7 @@ class ResultAggregator:
             comp_version = item.get("version")
             
             for vuln in item.get("vulnerabilities", []):
-                # OSV severity is often CVSS vector, we might need to map it. 
+                # OSV severity is often CVSS vector, mapping might be required. 
                 # For simplicity, let's default to UNKNOWN or parse if available.
                 severity = "UNKNOWN"
                 # Try to extract severity from database_specific or ecosystem_specific
@@ -187,11 +186,11 @@ class ResultAggregator:
                 vuln_id = vuln.get("id")
                 aliases = vuln.get("aliases", [])
                 
-                # If current ID is GHSA/GO/etc and we have a CVE in aliases, use CVE as primary ID
+                # If current ID is GHSA/GO/etc and a CVE exists in aliases, use CVE as primary ID
                 # This helps deduplicate with Trivy/Grype which usually report CVEs
                 cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
                 if cve_alias and not vuln_id.startswith("CVE-"):
-                    # Add original ID to aliases list so we don't lose it
+                    # Add original ID to aliases list to preserve it
                     if vuln_id not in aliases:
                         aliases.append(vuln_id)
                     vuln_id = cve_alias

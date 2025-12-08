@@ -16,7 +16,7 @@ class TrivyAnalyzer(Analyzer):
 
         try:
             # Run Trivy asynchronously
-            # We scan the SBOM file
+            # The SBOM file is scanned
             process = await asyncio.create_subprocess_exec(
                 "trivy", 
                 "sbom", 

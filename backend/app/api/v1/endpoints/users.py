@@ -94,9 +94,8 @@ async def update_user(
         
     update_data = user_in.dict(exclude_unset=True)
     if "password" in update_data:
-        # Handle password update logic here (hashing)
-        # For brevity, assuming password update is handled separately or added here
-        pass
+        hashed_password = security.get_password_hash(update_data.pop("password"))
+        update_data["hashed_password"] = hashed_password
 
     if update_data:
         await db.users.update_one({"_id": user_id}, {"$set": update_data})

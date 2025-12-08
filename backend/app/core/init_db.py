@@ -31,7 +31,7 @@ async def create_indexes(db):
     await db["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
     
     # Indexes for SBOM analysis (finding components across projects)
-    # These are crucial for the "Who uses X?" queries
+    # Required for dependency usage queries.
     await db["scans"].create_index("sbom.components.name")
     await db["scans"].create_index("sbom.components.purl")
     await db["scans"].create_index("sbom.components.version")
