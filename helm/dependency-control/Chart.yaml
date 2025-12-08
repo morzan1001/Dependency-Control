@@ -2,14 +2,14 @@ apiVersion: v2
 name: dependency-control
 description: A Helm chart for Dependency Control with HA MongoDB and Traefik
 type: application
-version: 0.1.4
-appVersion: "0.1.4"
+version: 0.1.5
+appVersion: "0.1.5"
 dependencies:
   - name: community-operator
-    version: 0.1.4
+    version: 0.1.5
     repository: https://mongodb.github.io/helm-charts
     alias: mongodb-operator
   - name: traefik
-    version: 0.1.4
+    version: 0.1.5
     repository: https://traefik.github.io/charts
     condition: traefik.enabled
