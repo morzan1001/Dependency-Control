@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Analysis Completed{% endblock %}
+
+{% block content %}
+<div class="alert alert-success">
+    <strong>Success:</strong> Analysis completed for {{ project_name_scanned }}
+</div>
+
+<p>The dependency analysis for project <strong>{{ project_name_scanned }}</strong> has finished successfully.</p>
+
+<p><strong>Summary:</strong></p>
+<ul>
+    <li>Total Dependencies: {{ stats.total_dependencies }}</li>
+    <li>Vulnerabilities: {{ stats.vulnerabilities }}</li>
+    <li>Policy Violations: {{ stats.policy_violations }}</li>
+</ul>
+
+<div style="text-align: center;">
+    <a href="{{ link }}" class="button">View Analysis</a>
+</div>
+{% endblock %}

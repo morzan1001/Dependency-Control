@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Worker Settings
     WORKER_COUNT: int = 2
 
+    # Frontend
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
+
     # Notifications
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587

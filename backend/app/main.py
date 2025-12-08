@@ -10,24 +10,23 @@ from app.api import health
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="""
-    Dependency Control API manages software dependencies, analyzes SBOMs, and tracks vulnerabilities.
+    Dependency Control API for managing software dependencies, analyzing SBOMs, and tracking vulnerabilities.
     
     ## Features
-    * **Projects**: Manage projects, API keys, and team members.
-    * **Ingest**: Upload SBOMs (Software Bill of Materials) for analysis.
-    * **Analysis**: Comprehensive scanning using multiple engines:
-        * **Trivy & Grype**: Vulnerability scanning.
-        * **OSV.dev**: Open Source Vulnerability database checks.
-        * **Deps.dev**: OpenSSF Scorecard and project health.
-        * **License Compliance**: Check for restricted licenses (e.g. GPL).
-        * **Malware**: Detect known malicious packages.
-        * **End-of-Life**: Identify outdated and unsupported components.
-    * **Notifications**: Get alerted via Email or Slack when issues are found.
+    * **Project & Team Management**: Organize projects and manage access with teams.
+    * **SBOM Ingestion**: Upload and analyze Software Bill of Materials.
+    * **Comprehensive Analysis**: Vulnerabilities (Trivy, Grype, OSV), Secrets (TruffleHog), License Compliance, Malware, End-of-Life, and Typosquatting.
+    * **Risk Management**: Handle false positives with waivers.
+    * **Integrations**: Webhooks and Notifications (Email, Slack, Mattermost).
+    * **User Management**: Secure authentication with 2FA and email verification.
+
+    ## Repository
+    [https://github.com/morzan1001/Dependency-Control](https://github.com/morzan1001/Dependency-Control)
     """,
-    version="0.1.0",
-    contact={
-        "name": "Dependency Control Team",
-        "email": "info@dependencycontrol.com",
+    version="0.1.8",
+    license_info={
+        "name": "MIT License",
+        "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",
     },
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )

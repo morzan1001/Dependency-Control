@@ -73,6 +73,8 @@ mongodb-operator:
   enabled: true
   operator:
     watchNamespace: "dependency-control" # Watch all namespaces or set to specific
+    podLabels:
+      app.kubernetes.io/name: mongodb-kubernetes-operator
 
 # MongoDB Cluster Configuration (Custom Resource)
 mongodb:
@@ -131,3 +133,8 @@ ingress:
 
 networkPolicy:
   enabled: true
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik

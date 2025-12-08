@@ -53,6 +53,7 @@ class UserPasswordUpdate(BaseModel):
 class UserInDBBase(UserBase):
     id: str
     totp_enabled: bool = False
+    is_verified: bool = False
 
     class Config:
         from_attributes = True

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Verify your email{% endblock %}
+
+{% block content %}
+<h2>Verify your email address</h2>
+<p>Thanks for signing up for {{ project_name }}! We're excited to have you on board.</p>
+<p>Please verify your email address by clicking the button below:</p>
+<div style="text-align: center;">
+    <a href="{{ link }}" class="button">Verify Email</a>
+</div>
+<p style="margin-top: 30px; font-size: 14px; color: #666;">
+    If you didn't create an account with {{ project_name }}, you can safely ignore this email.
+</p>
+{% endblock %}

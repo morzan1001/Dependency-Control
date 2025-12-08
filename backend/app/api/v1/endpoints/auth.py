@@ -14,6 +14,9 @@ from app.schemas.token import Token, TokenPayload
 from app.models.user import User
 from app.schemas.user import UserCreate, User as UserSchema
 from app.api import deps
+from app.services.notifications.email_provider import EmailProvider
+from app.services.notifications.templates import get_verification_email_template
+import os
 
 router = APIRouter()
 
@@ -147,6 +150,16 @@ async def create_user(
     """
     Create a new user in the system.
     """
+    # Check if signup is enabled
+    config = await db.system_settings.find_one({"_id": "signup_config"})
+    signup_enabled = config.get("enabled", True) if config else True
+    
+    if not signup_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Signup is currently disabled.",
+        )
+
     user = await db.users.find_one({"username": user_in.username})
     if user:
         raise HTTPException(
@@ -156,9 +169,31 @@ async def create_user(
     user_dict = user_in.dict()
     hashed_password = security.get_password_hash(user_dict.pop("password"))
     user_dict["hashed_password"] = hashed_password
+    user_dict["is_verified"] = False
     
     new_user = User(**user_dict)
     await db.users.insert_one(new_user.dict(by_alias=True))
+    
+    # Send verification email if SMTP is configured
+    if settings.SMTP_HOST:
+        token = security.create_email_verification_token(new_user.email)
+        
+        email_provider = EmailProvider()
+        link = f"{settings.FRONTEND_BASE_URL}/verify-email?token={token}"
+        
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
+        logo_path = os.path.join(project_root, "assets", "logo.png")
+        
+        html_content = get_verification_email_template(link, settings.PROJECT_NAME)
+        await email_provider.send(
+            destination=new_user.email,
+            subject=f"Verify your email for {settings.PROJECT_NAME}",
+            message=f"Please verify your email by clicking this link: {link}",
+            html_message=html_content,
+            logo_path=logo_path
+        )
+
     return new_user
 
 @router.post("/logout", summary="Logout user")
@@ -175,4 +210,75 @@ async def logout(
         {"$set": {"last_logout_at": datetime.utcnow()}}
     )
     return {"message": "Successfully logged out"}
+
+@router.post("/send-verification-email", summary="Send verification email")
+async def send_verification_email(
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+) -> Any:
+    """
+    Send a new verification email to the current user.
+    """
+    if current_user.is_verified:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already verified",
+        )
+        
+    if not settings.SMTP_HOST:
+        raise HTTPException(
+            status_code=501,
+            detail="Email server not configured",
+        )
+        
+    token = security.create_email_verification_token(current_user.email)
+    link = f"{settings.FRONTEND_BASE_URL}/verify-email?token={token}"
+    
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
+    logo_path = os.path.join(project_root, "assets", "logo.png")
+    
+    html_content = get_verification_email_template(link, settings.PROJECT_NAME)
+    email_provider = EmailProvider()
+    await email_provider.send(
+        destination=current_user.email,
+        subject=f"Verify your email for {settings.PROJECT_NAME}",
+        message=f"Please verify your email by clicking this link: {link}",
+        html_message=html_content,
+        logo_path=logo_path
+    )
+    
+    return {"message": "Verification email sent"}
+
+@router.get("/verify-email", summary="Verify email address")
+async def verify_email(
+    token: str,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+) -> Any:
+    """
+    Verify email address using the token sent via email.
+    """
+    email = security.verify_email_verification_token(token)
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired verification token",
+        )
+        
+    user = await db.users.find_one({"email": email})
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found",
+        )
+        
+    if user.get("is_verified"):
+        return {"message": "Email already verified"}
+        
+    await db.users.update_one(
+        {"email": email},
+        {"$set": {"is_verified": True}}
+    )
+    
+    return {"message": "Email successfully verified"}
 

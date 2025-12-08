@@ -60,5 +60,13 @@ def main():
         f'appVersion: "{new_version}"'
     )
 
+    # 3. Update Backend (main.py)
+    main_py_path = os.path.join(root_dir, 'backend', 'app', 'main.py')
+    update_file(
+        main_py_path,
+        r'version="[0-9]+\.[0-9]+\.[0-9]+"',
+        f'version="{new_version}"'
+    )
+
 if __name__ == "__main__":
     main()

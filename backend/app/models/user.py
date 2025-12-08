@@ -9,6 +9,7 @@ class User(BaseModel):
     email: EmailStr
     hashed_password: str
     is_active: bool = True
+    is_verified: bool = False
     permissions: list[str] = []  # e.g. "project:create", "user:manage"
     last_logout_at: Optional[datetime] = None
     
