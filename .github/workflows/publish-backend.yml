@@ -5,12 +5,12 @@ on:
     branches: [ "main" ]
     tags: [ 'v*.*.*' ]
     paths:
-      - 'Dependency Control/backend/**'
+      - 'backend/**'
       - '.github/workflows/publish-backend.yml'
   pull_request:
     branches: [ "main" ]
     paths:
-      - 'Dependency Control/backend/**'
+      - 'backend/**'
 
 env:
   REGISTRY: ghcr.io

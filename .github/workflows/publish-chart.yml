@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - 'Dependency Control/helm/**'
+      - 'helm/**'
       - '.github/workflows/publish-chart.yml'
 
 env:
@@ -33,28 +33,28 @@ jobs:
 
       - name: Update Chart Dependencies
         run: |
-          cd "Dependency Control/helm/dependency-control"
+          cd "helm/dependency-control"
           helm dependency update
 
       - name: Lint Chart
         run: |
-          cd "Dependency Control/helm/dependency-control"
+          cd "helm/dependency-control"
           helm lint .
 
       - name: Render Chart (Template Check)
         run: |
-          cd "Dependency Control/helm/dependency-control"
+          cd "helm/dependency-control"
           # Renders the chart locally to verify templates are valid
           helm template . > /dev/null
 
       - name: Package Chart
         run: |
-          cd "Dependency Control/helm/dependency-control"
+          cd "helm/dependency-control"
           helm package .
 
       - name: Push Chart to GHCR
         run: |
-          cd "Dependency Control/helm/dependency-control"
+          cd "helm/dependency-control"
           # Pushes the chart as an OCI artifact to GitHub Container Registry
           # It will be available at ghcr.io/<owner>/dependency-control:<version>
           helm push $(ls *.tgz) oci://${{ env.REGISTRY }}/${{ github.repository_owner }}
