@@ -8,6 +8,10 @@ tls:
         - CurveP384
 http:
   middlewares:
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
     secure-headers-backend:
       headers:
         stsSeconds: 63072000
@@ -22,5 +26,8 @@ http:
         stsIncludeSubdomains: true
         stsPreload: true
         contentTypeNosniff: true
+        frameDeny: true
+        browserXssFilter: true
+        contentSecurityPolicy: "default-src 'self'"
         customResponseHeaders:
           Server: ""

@@ -33,4 +33,14 @@ COPY . .
 # Install the project itself
 RUN poetry install --no-interaction --no-ansi
 
+# Create a non-root user
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 --gid 1001 --no-create-home appuser
+
+# Change ownership of the application directory
+RUN chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

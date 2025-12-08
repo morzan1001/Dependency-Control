@@ -8,8 +8,7 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    # Secure Headers Middleware (assuming it's created via Traefik CRD or default)
-    # traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-secure-headers@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "dependency-control.fullname" . }}-rate-limit@kubernetescrd,{{ .Release.Namespace }}-{{ include "dependency-control.fullname" . }}-secure-headers-backend@kubernetescrd
 spec:
   ingressClassName: traefik
   rules:

@@ -1,0 +1,28 @@
+{{- if .Values.traefik.enabled -}}
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-rate-limit
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  rateLimit:
+    average: 100
+    burst: 50
+
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-secure-headers-backend
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  headers:
+    stsSeconds: 63072000
+    stsIncludeSubdomains: true
+    stsPreload: true
+    contentTypeNosniff: true
+    customResponseHeaders:
+      Server: ""
+{{- end }}
