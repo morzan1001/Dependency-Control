@@ -1,3 +1,11 @@
+# Release 0.1.8
+
+## 📦 Build & CI
+
+- chore: bump version to 0.1.8 and update traefik dependency to 37.4.0 (#0)
+
+
+
 # Release 0.1.7
 
 ## 📦 Build & CI
