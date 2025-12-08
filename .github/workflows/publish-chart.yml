@@ -57,5 +57,5 @@ jobs:
         run: |
           cd "helm/dependency-control"
           # Pushes the chart as an OCI artifact to GitHub Container Registry
-          # It will be available at ghcr.io/<owner>/dependency-control:<version>
+          helm push dependency-control-*.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
           helm push $(ls *.tgz) oci://${{ env.REGISTRY }}/${{ github.repository_owner }}

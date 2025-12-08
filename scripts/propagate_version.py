@@ -53,6 +53,11 @@ def main():
         r'appVersion: "[0-9]+\.[0-9]+\.[0-9]+"',
         f'appVersion: "{new_version}"'
     )
+    update_file(
+        chart_path,
+        r'appVersion: "[0-9]+\.[0-9]+\.[0-9]+"',
+        f'appVersion: "{new_version}"'
+    )
 
 if __name__ == "__main__":
     main()
