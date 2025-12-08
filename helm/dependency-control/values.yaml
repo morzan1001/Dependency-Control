@@ -6,7 +6,7 @@ global:
 # Backend Application Settings
 backend:
   image:
-    repository: ghcr.io/morzan1001/dependency-control-backend
+    repository: ghcr.io/morzan1001/dependency-control
     pullPolicy: IfNotPresent
     tag: "latest"
   
