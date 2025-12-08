@@ -61,4 +61,3 @@ jobs:
           OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           # Pushes the chart as an OCI artifact to GitHub Container Registry
           helm push dependency-control-*.tgz oci://${{ env.REGISTRY }}/${OWNER_LOWER}/charts
-          helm push $(ls *.tgz) oci://${{ env.REGISTRY }}/${{ github.repository_owner }}
