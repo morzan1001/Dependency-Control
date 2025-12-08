@@ -32,11 +32,21 @@ jobs:
       - name: Propagate Version
         run: python scripts/propagate_version.py
 
+      - name: Determine Changelog Range
+        id: range
+        run: |
+          if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+            echo "FROM_TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_OUTPUT
+          else
+            echo "FROM_TAG=$(git rev-list --max-parents=0 HEAD | head -n 1)" >> $GITHUB_OUTPUT
+          fi
+
       - name: Generate Changelog
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v4
         with:
           configuration: ".github/changelog-config.json"
+          fromTag: ${{ steps.range.outputs.FROM_TAG }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -70,10 +80,33 @@ jobs:
           git tag v${{ steps.get_version.outputs.VERSION }}
           git push origin v${{ steps.get_version.outputs.VERSION }}
 
+      - name: Prepare Artifact Links
+        id: artifacts
+        run: |
+          # Convert to lowercase for registry compatibility
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          
+          echo "DOCKER_IMAGE=ghcr.io/${REPO_LOWER}-backend" >> $GITHUB_OUTPUT
+          echo "HELM_CHART=oci://ghcr.io/${OWNER_LOWER}/charts/dependency-control" >> $GITHUB_OUTPUT
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
-          body: ${{ steps.changelog.outputs.changelog }}
+          body: |
+            ${{ steps.changelog.outputs.changelog }}
+
+            ## 📦 Artifacts
+
+            ### Docker Image
+            ```bash
+            docker pull ${{ steps.artifacts.outputs.DOCKER_IMAGE }}:${{ steps.get_version.outputs.VERSION }}
+            ```
+
+            ### Helm Chart
+            ```bash
+            helm install dependency-control ${{ steps.artifacts.outputs.HELM_CHART }} --version ${{ steps.get_version.outputs.VERSION }}
+            ```
           files: |
             CHANGELOG.md
