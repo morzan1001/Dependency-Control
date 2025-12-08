@@ -68,6 +68,9 @@ async def create_team(
     """
     Create a new team. The creator becomes the owner.
     """
+    if "*" not in current_user.permissions and "team:create" not in current_user.permissions:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
     team = Team(
         name=team_in.name,
         description=team_in.description,
@@ -90,7 +93,7 @@ async def read_teams(
     """
     List teams the current user is a member of.
     """
-    if "*" in current_user.permissions:
+    if "*" in current_user.permissions or "team:list" in current_user.permissions:
         teams = await db.teams.find().to_list(1000)
     else:
         teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
@@ -124,7 +127,8 @@ async def update_team(
     """
     Update team details. Requires 'admin' or 'owner' role.
     """
-    await check_team_access(team_id, current_user, db, required_role="admin")
+    if "*" not in current_user.permissions and "team:update" not in current_user.permissions:
+        await check_team_access(team_id, current_user, db, required_role="admin")
     
     update_data = team_in.dict(exclude_unset=True)
     update_data["updated_at"] = datetime.utcnow()
@@ -144,7 +148,8 @@ async def delete_team(
     """
     Delete a team. Requires 'owner' role.
     """
-    await check_team_access(team_id, current_user, db, required_role="owner")
+    if "*" not in current_user.permissions and "team:delete" not in current_user.permissions:
+        await check_team_access(team_id, current_user, db, required_role="owner")
     await db.teams.delete_one({"_id": team_id})
     return None
 
@@ -158,7 +163,13 @@ async def add_team_member(
     """
     Add a member to the team. Requires 'admin' role.
     """
-    team = await check_team_access(team_id, current_user, db, required_role="admin")
+    if "*" in current_user.permissions or "team:update" in current_user.permissions:
+        team_data = await db.teams.find_one({"_id": team_id})
+        if not team_data:
+            raise HTTPException(status_code=404, detail="Team not found")
+        team = Team(**team_data)
+    else:
+        team = await check_team_access(team_id, current_user, db, required_role="admin")
     
     user_to_add = await db.users.find_one({"email": member_in.email})
     if not user_to_add:
@@ -193,7 +204,13 @@ async def update_team_member(
     """
     Update a member's role. Requires 'admin' role.
     """
-    team = await check_team_access(team_id, current_user, db, required_role="admin")
+    if "*" in current_user.permissions or "team:update" in current_user.permissions:
+        team_data = await db.teams.find_one({"_id": team_id})
+        if not team_data:
+            raise HTTPException(status_code=404, detail="Team not found")
+        team = Team(**team_data)
+    else:
+        team = await check_team_access(team_id, current_user, db, required_role="admin")
     
     # Check if target user is in team
     member_index = -1
@@ -231,7 +248,13 @@ async def remove_team_member(
     """
     Remove a member from the team. Requires 'admin' role.
     """
-    team = await check_team_access(team_id, current_user, db, required_role="admin")
+    if "*" in current_user.permissions or "team:update" in current_user.permissions:
+        team_data = await db.teams.find_one({"_id": team_id})
+        if not team_data:
+            raise HTTPException(status_code=404, detail="Team not found")
+        team = Team(**team_data)
+    else:
+        team = await check_team_access(team_id, current_user, db, required_role="admin")
     
     # Check if target user is in team
     member_exists = False

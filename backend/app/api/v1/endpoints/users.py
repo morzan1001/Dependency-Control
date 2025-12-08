@@ -24,9 +24,9 @@ async def create_user(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
-    Create a new user. Requires 'user:manage' permissions.
+    Create a new user. Requires 'user:manage' or 'user:create' permissions.
     """
-    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions:
+    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions and "user:create" not in current_user.permissions:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     user = await db.users.find_one({"username": user_in.username})
@@ -51,7 +51,7 @@ async def read_users(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
-    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions:
+    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions and "user:list" not in current_user.permissions:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     users = await db.users.find().skip(skip).limit(limit).to_list(limit)
     return users
@@ -100,7 +100,7 @@ async def read_user_by_id(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
-    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions
+    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:read" in current_user.permissions
     if not has_admin_perm and str(current_user.id) != user_id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
         
@@ -116,7 +116,7 @@ async def update_user(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
-    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions
+    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:update" in current_user.permissions
     if not has_admin_perm and str(current_user.id) != user_id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
         
@@ -273,9 +273,9 @@ async def delete_user(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
-    Delete a user. Requires 'user:manage' permissions.
+    Delete a user. Requires 'user:manage' or 'user:delete' permissions.
     """
-    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions:
+    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions and "user:delete" not in current_user.permissions:
         raise HTTPException(status_code=403, detail="Not enough permissions")
         
     if user_id == str(current_user.id):

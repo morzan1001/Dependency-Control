@@ -37,6 +37,9 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
     if "*" in user.permissions:
         return project
 
+    if required_role is None and "project:read" in user.permissions:
+        return project
+
     # Check team membership if project belongs to a team
     is_team_member = False
     if project.team_id:
@@ -80,6 +83,9 @@ async def create_project(
     
     **Important**: The API Key is only returned once. Save it securely.
     """
+    if "*" not in current_user.permissions and "project:create" not in current_user.permissions:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
     # If team_id is provided, check if user is member of that team
     if project_in.team_id:
         team = await db.teams.find_one({"_id": project_in.team_id, "members.user_id": str(current_user.id)})
@@ -122,7 +128,13 @@ async def rotate_api_key(
     
     Requires 'admin' role on the project.
     """
-    project = await check_project_access(project_id, current_user, db, required_role="admin")
+    if "*" in current_user.permissions or "project:update" in current_user.permissions:
+        project_data = await db.projects.find_one({"_id": project_id})
+        if not project_data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project = Project(**project_data)
+    else:
+        project = await check_project_access(project_id, current_user, db, required_role="admin")
     
     # Generate new key
     secret = secrets.token_urlsafe(32)
@@ -150,7 +162,7 @@ async def read_projects(
     - **Superusers** see all projects.
     - **Regular users** see projects they own or are members of.
     """
-    if "*" in current_user.permissions:
+    if "*" in current_user.permissions or "project:list" in current_user.permissions:
         projects = await db.projects.find().to_list(1000)
     else:
         # Get teams user is member of
@@ -190,7 +202,13 @@ async def update_project(
     Update project details (name, team, active analyzers).
     Requires 'admin' role on the project.
     """
-    project = await check_project_access(project_id, current_user, db, required_role="admin")
+    if "*" in current_user.permissions or "project:update" in current_user.permissions:
+        project_data = await db.projects.find_one({"_id": project_id})
+        if not project_data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project = Project(**project_data)
+    else:
+        project = await check_project_access(project_id, current_user, db, required_role="admin")
     
     update_data = {k: v for k, v in project_in.dict(exclude_unset=True).items()}
     

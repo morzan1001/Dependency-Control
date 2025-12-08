@@ -28,9 +28,15 @@ class UserCreate(UserBase):
             raise ValueError('Password must contain at least one special character')
         return v
 
-class UserUpdate(UserBase):
-    password: Optional[str] = None
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    username: Optional[str] = None
+    is_active: Optional[bool] = None
     permissions: Optional[list[str]] = None
+    slack_username: Optional[str] = None
+    mattermost_username: Optional[str] = None
+    notification_preferences: Optional[dict[str, list[str]]] = None
+    password: Optional[str] = None
 
 class UserUpdateMe(BaseModel):
     email: Optional[EmailStr] = None

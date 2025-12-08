@@ -40,6 +40,12 @@ async def login_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user",
+        )
     
     # Check 2FA
     if user.get("totp_enabled", False):
@@ -108,6 +114,12 @@ async def refresh_token(
         raise HTTPException(
             status_code=404,
             detail="User not found",
+        )
+
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user",
         )
         
     # Check if refresh token was issued before last logout

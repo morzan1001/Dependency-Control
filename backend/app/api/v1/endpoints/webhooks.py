@@ -21,7 +21,8 @@ async def create_webhook(
     """
     Create a webhook for a project.
     """
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    if "*" not in current_user.permissions and "webhook:create" not in current_user.permissions:
+        await check_project_access(project_id, current_user, db, required_role="admin")
     
     webhook = Webhook(
         project_id=project_id,
@@ -53,6 +54,8 @@ async def delete_webhook(
         raise HTTPException(status_code=404, detail="Webhook not found")
         
     webhook = Webhook(**webhook_data)
-    await check_project_access(webhook.project_id, current_user, db, required_role="admin")
+    
+    if "*" not in current_user.permissions and "webhook:delete" not in current_user.permissions:
+        await check_project_access(webhook.project_id, current_user, db, required_role="admin")
     
     await db.webhooks.delete_one({"_id": webhook_id})

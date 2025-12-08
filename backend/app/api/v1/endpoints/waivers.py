@@ -26,7 +26,7 @@ async def create_waiver(
         await check_project_access(waiver_in.project_id, current_user, db, required_role="editor")
     else:
         # Global waiver requires superuser or specific permission
-        if not current_user.is_superuser:
+        if "*" not in current_user.permissions and "waiver:manage" not in current_user.permissions:
              raise HTTPException(status_code=403, detail="Only admins can create global waivers")
 
     waiver = Waiver(
@@ -79,9 +79,10 @@ async def delete_waiver(
     waiver = Waiver(**waiver_data)
     
     if waiver.project_id:
-        await check_project_access(waiver.project_id, current_user, db, required_role="admin")
+        if "*" not in current_user.permissions and "waiver:delete" not in current_user.permissions:
+            await check_project_access(waiver.project_id, current_user, db, required_role="admin")
     else:
-        if not current_user.is_superuser:
+        if "*" not in current_user.permissions and "waiver:manage" not in current_user.permissions and "waiver:delete" not in current_user.permissions:
             raise HTTPException(status_code=403, detail="Not enough permissions")
             
     await db.waivers.delete_one({"_id": waiver_id})
