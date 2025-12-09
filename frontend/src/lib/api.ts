@@ -89,6 +89,7 @@ export const getMe = async () => {
 export interface ProjectMember {
   user_id: string;
   role: string;
+  notification_preferences?: Record<string, string[]>;
 }
 
 export interface Project {
@@ -108,6 +109,7 @@ export interface Project {
   } | null;
   last_scan_at?: string | null;
   retention_days: number;
+  owner_notification_preferences?: Record<string, string[]>;
 }
 
 export interface Scan {
@@ -172,6 +174,15 @@ export const updateProject = async (id: string, data: ProjectUpdate) => {
 
 export const rotateProjectApiKey = async (id: string) => {
   const response = await api.post<ProjectApiKeyResponse>(`/projects/${id}/rotate-key`);
+  return response.data;
+};
+
+export interface ProjectNotificationSettings {
+  notification_preferences: Record<string, string[]>;
+}
+
+export const updateProjectNotificationSettings = async (projectId: string, settings: ProjectNotificationSettings) => {
+  const response = await api.put<Project>(`/projects/${projectId}/notifications`, settings);
   return response.data;
 };
 

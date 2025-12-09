@@ -1,6 +1,6 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getProject, getProjectScans, updateProject, rotateProjectApiKey, getTeams, getWaivers, deleteWaiver } from '@/lib/api'
+import { getProject, getProjectScans, updateProject, rotateProjectApiKey, getTeams, getWaivers, deleteWaiver, getMe, updateProjectNotificationSettings, ProjectNotificationSettings } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -79,6 +79,39 @@ export default function ProjectDetails() {
     queryKey: ['waivers', id],
     queryFn: () => getWaivers(id!),
     enabled: !!id
+  })
+
+  const { data: user } = useQuery({
+    queryKey: ['me'],
+    queryFn: getMe,
+  })
+
+  const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>({})
+
+  useEffect(() => {
+    if (project && user) {
+      let prefs: Record<string, string[]> = {}
+      if (project.owner_id === user.id) {
+        prefs = project.owner_notification_preferences || {}
+      } else if (project.members) {
+        const member = project.members.find(m => m.user_id === user.id)
+        if (member) {
+          prefs = member.notification_preferences || {}
+        }
+      }
+      setNotificationPrefs(prefs)
+    }
+  }, [project, user])
+
+  const updateNotificationSettingsMutation = useMutation({
+    mutationFn: (settings: ProjectNotificationSettings) => updateProjectNotificationSettings(id!, settings),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', id] })
+      toast.success("Notification settings updated")
+    },
+    onError: () => {
+      toast.error("Failed to update notification settings")
+    }
   })
 
   useEffect(() => {
@@ -329,6 +362,20 @@ export default function ProjectDetails() {
       Compliance: '#3b82f6',
       Quality: '#10b981'
   };
+
+  const toggleNotification = (event: string, channel: string) => {
+    setNotificationPrefs(prev => {
+      const currentChannels = prev[event] || []
+      const newChannels = currentChannels.includes(channel)
+        ? currentChannels.filter(c => c !== channel)
+        : [...currentChannels, channel]
+      
+      return {
+        ...prev,
+        [event]: newChannels
+      }
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -673,6 +720,48 @@ export default function ProjectDetails() {
                             Save Changes
                         </Button>
                     </form>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Notification Settings</CardTitle>
+                    <CardDescription>Configure how you want to be notified about project events.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="grid gap-4">
+                        {['analysis_completed', 'vulnerability_found'].map(event => (
+                            <div key={event} className="flex items-center justify-between border p-4 rounded-lg">
+                                <div>
+                                    <div className="font-medium capitalize">{event.replace('_', ' ')}</div>
+                                    <div className="text-sm text-muted-foreground">
+                                        Receive notifications when {event.replace('_', ' ')} occurs.
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                    {['email', 'slack', 'mattermost'].map(channel => (
+                                        <div key={channel} className="flex items-center space-x-2">
+                                            <Checkbox 
+                                                id={`${event}-${channel}`}
+                                                checked={(notificationPrefs[event] || []).includes(channel)}
+                                                onCheckedChange={() => toggleNotification(event, channel)}
+                                            />
+                                            <Label htmlFor={`${event}-${channel}`} className="capitalize cursor-pointer">
+                                                {channel}
+                                            </Label>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <Button 
+                        onClick={() => updateNotificationSettingsMutation.mutate({ notification_preferences: notificationPrefs })}
+                        disabled={updateNotificationSettingsMutation.isPending}
+                    >
+                        {updateNotificationSettingsMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
+                        Save Notification Settings
+                    </Button>
                 </CardContent>
             </Card>
 
