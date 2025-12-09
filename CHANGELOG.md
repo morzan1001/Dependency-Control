@@ -1,3 +1,12 @@
+# Release 0.2.2
+
+## 🚀 Features
+
+- feat: add frontend deployment and service configurations, including health checks and environment variables (#0)
+- feat: update version to 0.2.2, add project notification settings and update API for PATCH method (#0)
+
+
+
 # Release 0.2.1
 
 ## 🚀 Features
