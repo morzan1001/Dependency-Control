@@ -66,16 +66,41 @@ spec:
   podSelector:
     matchLabels:
       {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
   policyTypes:
   - Ingress
   ingress:
-  {{ range .Values.networkPolicy.ingress }}
+  {{- range .Values.networkPolicy.ingress }}
   - from:
 {{ toYaml .from | indent 4 }}
     ports:
     - protocol: TCP
       port: 8000
-  {{ end }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.networkPolicy.enabled }}
+---
+# Allow Ingress to Frontend
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-ingress-to-frontend
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  policyTypes:
+  - Ingress
+  ingress:
+  {{- range .Values.networkPolicy.ingress }}
+  - from:
+{{ toYaml .from | indent 4 }}
+    ports:
+    - protocol: TCP
+      port: 80
+  {{- end }}
 {{- end }}
 
 ---
