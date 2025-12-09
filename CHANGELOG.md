@@ -1,3 +1,11 @@
+# Release 0.2.4
+
+## 🚀 Features
+
+- feat: update Dockerfile to fix permissions and switch to non-root user (#0)
+
+
+
 # Release 0.2.3
 
 ## 🚀 Features
