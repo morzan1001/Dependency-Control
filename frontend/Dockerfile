@@ -24,6 +24,17 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY env.sh /docker-entrypoint.d/40-env-config.sh
 RUN chmod +x /docker-entrypoint.d/40-env-config.sh
 
+# Fix permissions for non-root user
+RUN chown -R 101:101 /usr/share/nginx/html && \
+    chown -R 101:101 /var/cache/nginx && \
+    chown -R 101:101 /var/log/nginx && \
+    chown -R 101:101 /etc/nginx/conf.d && \
+    touch /var/run/nginx.pid && \
+    chown 101:101 /var/run/nginx.pid
+
+# Switch to non-root user
+USER 101
+
 # Add healthcheck
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost/ || exit 1
