@@ -68,5 +68,13 @@ def main():
         f'version="{new_version}"'
     )
 
+    # 4. Update Frontend (package.json)
+    package_json_path = os.path.join(root_dir, 'frontend', 'package.json')
+    update_file(
+        package_json_path,
+        r'"version": "[0-9]+\.[0-9]+\.[0-9]+"',
+        f'"version": "{new_version}"'
+    )
+
 if __name__ == "__main__":
     main()

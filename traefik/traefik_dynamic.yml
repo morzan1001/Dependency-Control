@@ -20,6 +20,25 @@ http:
         contentTypeNosniff: true
         customResponseHeaders:
           Server: ""
+        accessControlAllowMethods:
+          - "GET"
+          - "POST"
+          - "PUT"
+          - "DELETE"
+          - "OPTIONS"
+        accessControlAllowHeaders:
+          - "Authorization"
+          - "Content-Type"
+          - "Origin"
+          - "Accept"
+        accessControlExposeHeaders:
+          - "Content-Length"
+          - "Content-Range"
+        accessControlAllowOriginList:
+          - "https://dependencycontrol.local"
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 100
+        addVaryHeader: true
     secure-headers-frontend:
       headers:
         stsSeconds: 63072000

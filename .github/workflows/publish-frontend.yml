@@ -1,0 +1,68 @@
+name: Build and Publish Frontend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    tags: [ 'v*.*.*' ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/publish-frontend.yml'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'frontend/**'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Lowercase Repo Name
+        run: |
+          REPO_LOWER=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')
+          echo "REPO_NAME=${REPO_LOWER}" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.REPO_NAME }}-frontend
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@v6
+        with:
+          context: "./frontend"
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          provenance: false

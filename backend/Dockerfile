@@ -38,6 +38,15 @@ RUN poetry install --no-interaction --no-ansi
 RUN addgroup --system --gid 1001 appgroup && \
     adduser --system --uid 1001 --gid 1001 --no-create-home appuser
 
+# Set environment variables for tools
+ENV TRIVY_CACHE_DIR=/app/.cache/trivy
+ENV GRYPE_DB_CACHE_DIR=/app/.cache/grype
+ENV HOME=/app
+
+# Create cache directories
+RUN mkdir -p /app/.cache/trivy && \
+    mkdir -p /app/.cache/grype
+
 # Change ownership of the application directory
 RUN chown -R appuser:appgroup /app
 

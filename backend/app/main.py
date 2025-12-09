@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
 from app.core.init_db import init_db
@@ -20,8 +19,6 @@ app = FastAPI(
     * **Integrations**: Webhooks and Notifications (Email, Slack, Mattermost).
     * **User Management**: Secure authentication with 2FA and email verification.
 
-    ## Repository
-    [https://github.com/morzan1001/Dependency-Control](https://github.com/morzan1001/Dependency-Control)
     """,
     version="0.1.8",
     license_info={
@@ -30,16 +27,6 @@ app = FastAPI(
     },
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
-
-# Set all CORS enabled origins
-if settings.BACKEND_CORS_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
 
 @app.on_event("startup")
 async def startup_event():

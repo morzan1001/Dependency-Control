@@ -71,7 +71,50 @@ async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: Lis
     # Save aggregated findings to the scan document
     aggregated_findings = aggregator.get_findings()
     
-    # Calculate stats
+    # Fetch scan to get project_id
+    scan_doc = await db.scans.find_one({"_id": scan_id})
+    project_id = scan_doc.get("project_id") if scan_doc else None
+
+    # Fetch waivers
+    waivers = []
+    if project_id:
+        waivers = await db.waivers.find({"project_id": project_id}).to_list(length=None)
+
+    # Apply waivers
+    ignored_count = 0
+    for finding in aggregated_findings:
+        is_waived = False
+        waiver_reason = None
+        
+        for waiver in waivers:
+            # Check expiration
+            if waiver.get("expiration_date") and waiver["expiration_date"] < datetime.utcnow():
+                continue
+                
+            # Check criteria
+            match = True
+            if waiver.get("finding_id") and waiver["finding_id"] != finding.get("id"):
+                match = False
+            if match and waiver.get("package_name") and waiver["package_name"] != finding.get("component"):
+                match = False
+            if match and waiver.get("package_version") and waiver["package_version"] != finding.get("version"):
+                match = False
+            if match and waiver.get("finding_type") and waiver["finding_type"] != finding.get("type"):
+                match = False
+                
+            if match:
+                is_waived = True
+                waiver_reason = waiver.get("reason")
+                break
+        
+        if is_waived:
+            finding["waived"] = True
+            finding["waiver_reason"] = waiver_reason
+            ignored_count += 1
+        else:
+            finding["waived"] = False
+
+    # Calculate stats (excluding waived)
     stats = {
         "critical": 0,
         "high": 0,
@@ -82,6 +125,9 @@ async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: Lis
     }
     
     for finding in aggregated_findings:
+        if finding.get("waived"):
+            continue
+
         severity = finding.get("severity", "UNKNOWN").lower()
         if severity in stats:
             stats[severity] += 1
@@ -94,6 +140,7 @@ async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: Lis
             "status": "completed", 
             "findings_summary": aggregated_findings,
             "findings_count": len(aggregated_findings),
+            "ignored_count": ignored_count,
             "stats": stats,
             "completed_at": datetime.utcnow()
         }}

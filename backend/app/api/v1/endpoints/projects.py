@@ -14,8 +14,12 @@ from app.models.user import User
 from app.models.invitation import ProjectInvitation
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectMemberInvite, ProjectNotificationSettings, ProjectApiKeyResponse, ProjectMemberUpdate
 from app.db.mongodb import get_database
+from pydantic import BaseModel
 
 router = APIRouter()
+
+class RecentScan(Scan):
+    project_name: str
 
 async def check_project_access(project_id: str, user: User, db: AsyncIOMotorDatabase, required_role: str = None) -> Project:
     project_data = await db.projects.find_one({"_id": project_id})
@@ -179,6 +183,58 @@ async def read_projects(
         }).to_list(1000)
     return projects
 
+@router.get("/recent-scans", response_model=List[RecentScan], summary="List recent scans across all accessible projects")
+async def read_recent_scans(
+    limit: int = 10,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Retrieve recent scans for all projects the user has access to.
+    """
+    # 1. Get accessible project IDs
+    if "*" in current_user.permissions or "project:list" in current_user.permissions:
+        # Admin sees all
+        project_cursor = db.projects.find({}, {"_id": 1, "name": 1})
+    else:
+        # Get teams user is member of
+        user_teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
+        team_ids = [t["_id"] for t in user_teams]
+
+        # Find projects where user is owner OR is in members list OR project belongs to one of user's teams
+        project_cursor = db.projects.find({
+            "$or": [
+                {"owner_id": str(current_user.id)},
+                {"members.user_id": str(current_user.id)},
+                {"team_id": {"$in": team_ids}}
+            ]
+        }, {"_id": 1, "name": 1})
+    
+    projects = await project_cursor.to_list(10000)
+    project_map = {p["_id"]: p["name"] for p in projects}
+    project_ids = list(project_map.keys())
+
+    if not project_ids:
+        return []
+
+    # 2. Get recent scans for these projects
+    scans = await db.scans.find(
+        {"project_id": {"$in": project_ids}}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+
+    # 3. Enrich with project name
+    result = []
+    for scan_data in scans:
+        scan = Scan(**scan_data)
+        # Create RecentScan object
+        recent_scan = RecentScan(
+            **scan.dict(by_alias=True),
+            project_name=project_map.get(scan.project_id, "Unknown Project")
+        )
+        result.append(recent_scan)
+        
+    return result
+
 @router.get("/{project_id}", response_model=Project, summary="Get project details")
 async def read_project(
     project_id: str,
@@ -220,6 +276,25 @@ async def update_project(
         
     updated_project_data = await db.projects.find_one({"_id": project_id})
     return Project(**updated_project_data)
+
+@router.get("/{project_id}/scans", response_model=List[Scan], summary="List project scans")
+async def read_project_scans(
+    project_id: str,
+    skip: int = 0,
+    limit: int = 20,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Get scans for a project.
+    """
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+    
+    scans = await db.scans.find(
+        {"project_id": project_id}
+    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    
+    return scans
 
 @router.put("/{project_id}/notifications", response_model=Project, summary="Update notification settings")
 async def update_notification_settings(
@@ -349,6 +424,22 @@ async def read_analysis_results(
     
     results = await db.analysis_results.find({"scan_id": scan_id}).to_list(100)
     return results
+
+@router.get("/scans/{scan_id}", response_model=Scan, summary="Get scan details")
+async def read_scan(
+    scan_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Get details of a specific scan.
+    """
+    scan_data = await db.scans.find_one({"_id": scan_id})
+    if not scan_data:
+        raise HTTPException(status_code=404, detail="Scan not found")
+        
+    await check_project_access(scan_data["project_id"], current_user, db)
+    return Scan(**scan_data)
 
 @router.put("/{project_id}/members/{user_id}", response_model=Project, summary="Update project member role")
 async def update_project_member(

@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.db.mongodb import get_database
 from app.schemas.token import Token, TokenPayload
 from app.models.user import User
-from app.schemas.user import UserCreate, User as UserSchema
+from app.schemas.user import UserCreate, User as UserSchema, UserSignup
 from app.api import deps
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.templates import get_verification_email_template
@@ -83,6 +83,47 @@ async def login_access_token(
         "refresh_token": refresh_token,
         "token_type": "bearer"
     }
+
+@router.post("/signup", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
+async def signup(
+    user_in: UserSignup,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Signup a new user.
+    """
+    config = await db.system_settings.find_one({"_id": "signup_config"})
+    signup_enabled = config.get("enabled", True) if config else True
+    
+    if not signup_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Open registration is forbidden on this server",
+        )
+
+    user = await db.users.find_one({"username": user_in.username})
+    if user:
+        raise HTTPException(
+            status_code=400,
+            detail="The user with this username already exists in the system.",
+        )
+    
+    user_email = await db.users.find_one({"email": user_in.email})
+    if user_email:
+        raise HTTPException(
+            status_code=400,
+            detail="The user with this email already exists in the system.",
+        )
+    
+    user_dict = user_in.dict()
+    hashed_password = security.get_password_hash(user_dict.pop("password"))
+    user_dict["hashed_password"] = hashed_password
+    user_dict["is_active"] = True
+    user_dict["permissions"] = [] # No permissions by default
+    
+    new_user = User(**user_dict)
+    await db.users.insert_one(new_user.dict(by_alias=True))
+    return new_user
 
 @router.post("/login/refresh-token", response_model=Token, summary="Refresh access token")
 async def refresh_token(
