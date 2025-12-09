@@ -1,3 +1,12 @@
+# Release 0.2.3
+
+## 🚀 Features
+
+- feat: add OpenGrep ingestion endpoint and schema, integrate OpenGrep results into the analysis workflow (#0)
+- feat: update version to 0.2.3 (#0)
+
+
+
 # Release 0.2.2
 
 ## 🚀 Features
