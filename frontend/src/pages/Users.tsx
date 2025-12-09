@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getUsers, createUser, updateUser, getProjects, getTeams, User } from '@/lib/api';
+import { getUsers, createUser, updateUser, deleteUser, getProjects, getTeams, User } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Check, X, Shield, Users as UsersIcon, Folder } from 'lucide-react';
+import { Plus, Check, X, Shield, Users as UsersIcon, Folder, Trash2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -32,7 +32,7 @@ const PERMISSION_GROUPS = [
   {
     title: "User Management",
     permissions: [
-      { id: "user:list", label: "List Users", description: "View list of all users" },
+      { id: "user:read_all", label: "List All Users", description: "View list of all users in the system" },
       { id: "user:create", label: "Create Users", description: "Create new users" },
       { id: "user:read", label: "Read User Details", description: "View detailed user information" },
       { id: "user:update", label: "Update Users", description: "Update user profiles" },
@@ -42,7 +42,8 @@ const PERMISSION_GROUPS = [
   {
     title: "Team Management",
     permissions: [
-      { id: "team:list", label: "List Teams", description: "View all teams" },
+      { id: "team:read_all", label: "Read All Teams", description: "View all teams in the system" },
+      { id: "team:read", label: "Read Own Teams", description: "View teams you are a member of" },
       { id: "team:create", label: "Create Teams", description: "Create new teams" },
       { id: "team:update", label: "Update Teams", description: "Update any team" },
       { id: "team:delete", label: "Delete Teams", description: "Delete any team" },
@@ -51,7 +52,8 @@ const PERMISSION_GROUPS = [
   {
     title: "Project Management",
     permissions: [
-      { id: "project:list", label: "List Projects", description: "View all projects" },
+      { id: "project:read_all", label: "Read All Projects", description: "View all projects in the system" },
+      { id: "project:read", label: "Read Own Projects", description: "View projects you are a member of" },
       { id: "project:create", label: "Create Projects", description: "Create new projects" },
       { id: "project:update", label: "Update Projects", description: "Update any project" },
     ]
@@ -59,6 +61,8 @@ const PERMISSION_GROUPS = [
   {
     title: "Security & Compliance",
     permissions: [
+      { id: "waiver:read_all", label: "Read All Waivers", description: "View all waivers in the system" },
+      { id: "waiver:read", label: "Read Own Waivers", description: "View waivers for your projects" },
       { id: "waiver:manage", label: "Manage Waivers", description: "Create global waivers" },
       { id: "waiver:delete", label: "Delete Waivers", description: "Delete any waiver" },
     ]
@@ -75,7 +79,9 @@ const PERMISSION_GROUPS = [
 export default function UsersPage() {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
   
   // Invite form state
   const [username, setUsername] = useState("");
@@ -87,6 +93,21 @@ export default function UsersPage() {
   const { data: users, isLoading, error } = useQuery({
     queryKey: ['users'],
     queryFn: getUsers,
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: (userId: string) => deleteUser(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setIsDeleteDialogOpen(false);
+      setUserToDelete(null);
+      toast.success("User deleted successfully");
+    },
+    onError: (error: any) => {
+      toast.error("Failed to delete user", {
+        description: error.response?.data?.detail || "An error occurred"
+      })
+    }
   });
 
   const { data: projects } = useQuery({
@@ -267,6 +288,7 @@ export default function UsersPage() {
                   <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
                   <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">2FA</th>
                   <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Permissions</th>
+                  <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody className="[&_tr:last-child]:border-0">
@@ -304,6 +326,19 @@ export default function UsersPage() {
                           </span>
                         ))}
                       </div>
+                    </td>
+                    <td className="p-4 align-middle" onClick={(e) => e.stopPropagation()}>
+                        <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-destructive hover:text-destructive/90"
+                            onClick={() => {
+                                setUserToDelete(user);
+                                setIsDeleteDialogOpen(true);
+                            }}
+                        >
+                            <Trash2 className="h-4 w-4" />
+                        </Button>
                     </td>
                   </tr>
                 ))}
@@ -464,6 +499,27 @@ export default function UsersPage() {
           )}
           <DialogFooter>
             <Button onClick={() => setIsPermissionDialogOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete User</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete user {userToDelete?.username}? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>Cancel</Button>
+            <Button 
+                variant="destructive" 
+                onClick={() => userToDelete && deleteUserMutation.mutate(userToDelete.id)}
+                disabled={deleteUserMutation.isPending}
+            >
+              {deleteUserMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

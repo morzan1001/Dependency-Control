@@ -5,7 +5,7 @@ import uuid
 
 class Webhook(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
-    project_id: str
+    project_id: Optional[str] = None
     url: str
     events: List[str] # ["scan_completed", "vulnerability_found"]
     secret: Optional[str] = None

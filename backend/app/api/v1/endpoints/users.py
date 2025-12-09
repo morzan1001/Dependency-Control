@@ -51,7 +51,7 @@ async def read_users(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
-    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions and "user:list" not in current_user.permissions:
+    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions and "user:read_all" not in current_user.permissions:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     users = await db.users.find().skip(skip).limit(limit).to_list(limit)
     return users

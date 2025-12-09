@@ -1,0 +1,112 @@
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { searchDependencies } from '@/lib/api'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Search as SearchIcon, Package } from 'lucide-react'
+import { Spinner } from '@/components/ui/spinner'
+import { Link } from 'react-router-dom'
+
+export default function SearchPage() {
+  const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+
+  const { data: results, isLoading } = useQuery({
+    queryKey: ['search', debouncedQuery],
+    queryFn: () => searchDependencies(debouncedQuery),
+    enabled: !!debouncedQuery && debouncedQuery.length > 2
+  })
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault()
+    setDebouncedQuery(query)
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Dependency Search</h1>
+        <p className="text-muted-foreground">
+          Search for dependencies across all projects.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Search</CardTitle>
+          <CardDescription>
+            Enter a package name to find where it is used.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <Input 
+              placeholder="e.g. react, lodash, requests" 
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <Button type="submit">
+              <SearchIcon className="mr-2 h-4 w-4" />
+              Search
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {isLoading && (
+        <div className="flex justify-center p-8">
+          <Spinner size={32} />
+        </div>
+      )}
+
+      {results && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Results</CardTitle>
+            <CardDescription>
+              Found {results.length} occurrences.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Project</TableHead>
+                  <TableHead>Package</TableHead>
+                  <TableHead>Version</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>License</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {results.map((result: any, index: number) => (
+                  <TableRow key={index}>
+                    <TableCell>
+                      <Link to={`/projects/${result.project_id}`} className="hover:underline font-medium flex items-center gap-2">
+                        <Package className="h-4 w-4" />
+                        {result.project_name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>{result.package_name}</TableCell>
+                    <TableCell>{result.version}</TableCell>
+                    <TableCell>{result.type}</TableCell>
+                    <TableCell>{result.license || 'Unknown'}</TableCell>
+                  </TableRow>
+                ))}
+                {results.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      No results found.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}

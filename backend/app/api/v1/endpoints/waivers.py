@@ -49,13 +49,39 @@ async def list_waivers(
     List waivers.
     """
     query = {}
+    
+    # Permission check logic
+    has_read_all = "*" in current_user.permissions or "waiver:read_all" in current_user.permissions
+    has_read_own = "waiver:read" in current_user.permissions
+    
+    if not (has_read_all or has_read_own):
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
     if project_id:
-        # Check access
+        # Check access to specific project
         await check_project_access(project_id, current_user, db, required_role="viewer")
         query["project_id"] = project_id
-    elif not current_user.is_superuser:
-        # If no project_id, return global waivers only (unless superuser)
-        query["project_id"] = None
+    elif not has_read_all:
+        # User can only see waivers from their projects + global waivers
+        # 1. Get all project IDs user has access to
+        user_teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
+        team_ids = [t["_id"] for t in user_teams]
+        
+        projects = await db.projects.find({
+            "$or": [
+                {"owner_id": str(current_user.id)},
+                {"members.user_id": str(current_user.id)},
+                {"team_id": {"$in": team_ids}}
+            ]
+        }, {"_id": 1}).to_list(10000)
+        
+        accessible_project_ids = [p["_id"] for p in projects]
+        
+        # Query: Global waivers (project_id=None) OR waivers in accessible projects
+        query["$or"] = [
+            {"project_id": None},
+            {"project_id": {"$in": accessible_project_ids}}
+        ]
     
     if finding_id:
         query["finding_id"] = finding_id

@@ -111,14 +111,18 @@ export function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-export function RequirePermission({ children, permission }: { children: React.ReactNode, permission: string }) {
+export function RequirePermission({ children, permission }: { children: React.ReactNode, permission: string | string[] }) {
   const { hasPermission, isLoading } = useAuth();
   
   if (isLoading) {
       return null;
   }
 
-  if (!hasPermission(permission)) {
+  const hasAccess = Array.isArray(permission)
+    ? permission.some(p => hasPermission(p))
+    : hasPermission(permission);
+
+  if (!hasAccess) {
       return <Navigate to="/dashboard" replace />;
   }
 

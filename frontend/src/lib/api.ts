@@ -62,9 +62,9 @@ export const refreshToken = async (token: string) => {
     return response.data;
 }
 
-export const getSignupEnabled = async () => {
-  const response = await api.get<{ enabled: boolean }>('/system/signup-status');
-  return response.data.enabled;
+export const getPublicConfig = async () => {
+  const response = await api.get<{ allow_public_registration: boolean, enforce_2fa: boolean }>('/system/public-config');
+  return response.data;
 };
 
 export const signup = async (username: string, email: string, password: string) => {
@@ -79,6 +79,8 @@ export interface User {
   is_active: boolean;
   permissions: string[];
   totp_enabled: boolean;
+  slack_username?: string;
+  mattermost_username?: string;
 }
 
 export const getMe = async () => {
@@ -88,6 +90,7 @@ export const getMe = async () => {
 
 export interface ProjectMember {
   user_id: string;
+  username?: string;
   role: string;
   notification_preferences?: Record<string, string[]>;
 }
@@ -443,4 +446,129 @@ export const deleteWaiver = async (waiverId: string) => {
   await api.delete(`/waivers/${waiverId}`);
 };
 
+export interface SystemSettings {
+  instance_name: string;
+  allow_public_registration: boolean;
+  enforce_2fa: boolean;
+  enforce_email_verification: boolean;
+  smtp_host?: string;
+  smtp_port: number;
+  smtp_user?: string;
+  smtp_password?: string;
+  emails_from_email: string;
+  open_source_malware_api_key?: string;
+  slack_bot_token?: string;
+  mattermost_bot_token?: string;
+  mattermost_url?: string;
+}
+
+export const getSystemSettings = async () => {
+  const response = await api.get<SystemSettings>('/system/');
+  return response.data;
+};
+
+export const updateSystemSettings = async (settings: Partial<SystemSettings>) => {
+  const response = await api.put<SystemSettings>('/system/', settings);
+  return response.data;
+};
+
+export interface Webhook {
+  id: string;
+  project_id?: string;
+  url: string;
+  events: string[];
+  secret?: string;
+  is_active: boolean;
+  created_at: string;
+  last_triggered_at?: string;
+}
+
+export interface WebhookCreate {
+  url: string;
+  events: string[];
+  secret?: string;
+}
+
+export const getProjectWebhooks = async (projectId: string) => {
+  const response = await api.get<Webhook[]>(`/webhooks/project/${projectId}`);
+  return response.data;
+};
+
+export const createProjectWebhook = async (projectId: string, data: WebhookCreate) => {
+  const response = await api.post<Webhook>(`/webhooks/project/${projectId}`, data);
+  return response.data;
+};
+
+export const getGlobalWebhooks = async () => {
+  const response = await api.get<Webhook[]>('/webhooks/global/');
+  return response.data;
+};
+
+export const createGlobalWebhook = async (data: WebhookCreate) => {
+  const response = await api.post<Webhook>('/webhooks/global/', data);
+  return response.data;
+};
+
+export const deleteWebhook = async (webhookId: string) => {
+  await api.delete(`/webhooks/${webhookId}`);
+};
+
+// Missing Project Endpoints
+export const exportProjectCsv = async (projectId: string) => {
+  const response = await api.get(`/projects/${projectId}/export/csv`, { responseType: 'blob' });
+  return response.data;
+};
+
+export const exportProjectSbom = async (projectId: string) => {
+  const response = await api.get(`/projects/${projectId}/export/sbom`, { responseType: 'blob' });
+  return response.data;
+};
+
+export const inviteProjectMember = async (projectId: string, email: string, role: string) => {
+  const response = await api.post(`/projects/${projectId}/invite`, { email, role });
+  return response.data;
+};
+
+export const updateProjectMember = async (projectId: string, userId: string, role: string) => {
+  const response = await api.put(`/projects/${projectId}/members/${userId}`, { role });
+  return response.data;
+};
+
+export const removeProjectMember = async (projectId: string, userId: string) => {
+  const response = await api.delete(`/projects/${projectId}/members/${userId}`);
+  return response.data;
+};
+
+// Missing Team Endpoints
+export const updateTeam = async (teamId: string, name: string, description?: string) => {
+  const response = await api.put<Team>(`/teams/${teamId}`, { name, description });
+  return response.data;
+};
+
+export const updateTeamMember = async (teamId: string, userId: string, role: string) => {
+  const response = await api.put<Team>(`/teams/${teamId}/members/${userId}`, { role });
+  return response.data;
+};
+
+export const removeTeamMember = async (teamId: string, userId: string) => {
+  const response = await api.delete(`/teams/${teamId}/members/${userId}`);
+  return response.data;
+};
+
+// Missing User Endpoints
+export const deleteUser = async (userId: string) => {
+  await api.delete(`/users/${userId}`);
+};
+
+// Search Endpoints
+export const searchDependencies = async (query: string, version?: string) => {
+  const params = new URLSearchParams();
+  params.append('q', query);
+  if (version) params.append('version', version);
+  
+  const response = await api.get<any>('/search/dependencies', { params });
+  return response.data;
+};
+
 export default api;
+

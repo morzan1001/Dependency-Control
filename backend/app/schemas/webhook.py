@@ -15,7 +15,7 @@ class WebhookUpdate(BaseModel):
 
 class WebhookResponse(WebhookCreate):
     id: str
-    project_id: str
+    project_id: Optional[str] = None
     is_active: bool
     created_at: datetime
     last_triggered_at: Optional[datetime] = None

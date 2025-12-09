@@ -1,13 +1,14 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getProject, getProjectScans, updateProject, rotateProjectApiKey, getTeams, getWaivers, deleteWaiver, getMe, updateProjectNotificationSettings, ProjectNotificationSettings } from '@/lib/api'
+import { getProject, getProjectScans, updateProject, rotateProjectApiKey, getTeams, getWaivers, deleteWaiver, getMe, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getSystemSettings, exportProjectCsv, exportProjectSbom, inviteProjectMember, updateProjectMember, removeProjectMember } from '@/lib/api'
+import { WebhookManager } from '@/components/WebhookManager'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import { ArrowLeft, ShieldAlert, Activity, ShieldCheck, AlertTriangle, Copy, RefreshCw, Trash2, Filter, ArrowUpDown } from 'lucide-react'
+import { ArrowLeft, ShieldAlert, Activity, ShieldCheck, AlertTriangle, Copy, RefreshCw, Trash2, Filter, ArrowUpDown, Info, Download, UserPlus, UserMinus } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
 import { Spinner } from '@/components/ui/spinner'
 import { toast } from "sonner"
@@ -28,18 +29,27 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 
 const AVAILABLE_ANALYZERS = [
-  { id: 'end_of_life', label: 'End of Life (EOL)' },
-  { id: 'os_malware', label: 'Open Source Malware' },
-  { id: 'trivy', label: 'Trivy (Container/FS)' },
-  { id: 'osv', label: 'OSV (Open Source Vulnerabilities)' },
-  { id: 'deps_dev', label: 'Deps.dev (Google)' },
-  { id: 'license_compliance', label: 'License Compliance' },
-  { id: 'grype', label: 'Grype (Anchore)' },
-  { id: 'outdated_packages', label: 'Outdated Packages' },
-  { id: 'typosquatting', label: 'Typosquatting' },
-  { id: 'opengrep', label: 'OpenGrep (SAST)' },
+  { id: 'end_of_life', label: 'End of Life (EOL)', description: 'Checks if packages have reached their End-of-Life date and are no longer supported.' },
+  { id: 'os_malware', label: 'Open Source Malware', description: 'Checks packages against the Open Source Malware database for known malicious packages.' },
+  { id: 'trivy', label: 'Trivy (Container/FS)', description: 'Scans container images and filesystems for vulnerabilities (CVEs) and misconfigurations.' },
+  { id: 'osv', label: 'OSV (Open Source Vulnerabilities)', description: 'Checks dependencies against the Open Source Vulnerabilities (OSV) database.' },
+  { id: 'deps_dev', label: 'Deps.dev (Google)', description: 'Queries Google\'s deps.dev API for security, license, and maintenance information.' },
+  { id: 'license_compliance', label: 'License Compliance', description: 'Analyzes package licenses to ensure compliance with project policies.' },
+  { id: 'grype', label: 'Grype (Anchore)', description: 'A vulnerability scanner for container images and filesystems, similar to Trivy.' },
+  { id: 'outdated_packages', label: 'Outdated Packages', description: 'Identifies packages that are not on the latest version.' },
+  { id: 'typosquatting', label: 'Typosquatting', description: 'Detects potential typosquatting attacks (packages with names similar to popular ones).' },
+  { id: 'opengrep', label: 'OpenGrep (SAST)', description: 'Static Application Security Testing (SAST) tool to find security flaws in code.' },
+  { id: 'trufflehog', label: 'TruffleHog (Secrets)', description: 'Scans for hardcoded secrets, passwords, and keys in the codebase.' },
 ];
 
 export default function ProjectDetails() {
@@ -86,6 +96,109 @@ export default function ProjectDetails() {
     queryKey: ['me'],
     queryFn: getMe,
   })
+
+  const { data: systemSettings } = useQuery({
+    queryKey: ['systemSettings'],
+    queryFn: getSystemSettings,
+  })
+
+  const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useQuery({
+    queryKey: ['projectWebhooks', id],
+    queryFn: () => getProjectWebhooks(id!),
+    enabled: !!id
+  })
+
+  const createWebhookMutation = useMutation({
+    mutationFn: (data: WebhookCreate) => createProjectWebhook(id!, data),
+    onSuccess: () => {
+      refetchWebhooks()
+    }
+  })
+
+  const deleteWebhookMutation = useMutation({
+    mutationFn: deleteWebhook,
+    onSuccess: () => {
+      refetchWebhooks()
+    }
+  })
+
+  const [isInviteMemberOpen, setIsInviteMemberOpen] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState("")
+  const [inviteRole, setInviteRole] = useState("viewer")
+
+  const inviteMemberMutation = useMutation({
+    mutationFn: (data: { email: string, role: string }) => inviteProjectMember(id!, data.email, data.role),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', id] })
+      setIsInviteMemberOpen(false)
+      setInviteEmail("")
+      setInviteRole("viewer")
+      toast.success("Member invited successfully")
+    },
+    onError: (error: any) => {
+      toast.error("Failed to invite member", {
+        description: error.response?.data?.detail || "An error occurred"
+      })
+    }
+  })
+
+  const updateMemberMutation = useMutation({
+    mutationFn: (data: { userId: string, role: string }) => updateProjectMember(id!, data.userId, data.role),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', id] })
+      toast.success("Member role updated")
+    },
+    onError: (error: any) => {
+      toast.error("Failed to update member role", {
+        description: error.response?.data?.detail || "An error occurred"
+      })
+    }
+  })
+
+  const removeMemberMutation = useMutation({
+    mutationFn: (userId: string) => removeProjectMember(id!, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', id] })
+      toast.success("Member removed")
+    },
+    onError: (error: any) => {
+      toast.error("Failed to remove member", {
+        description: error.response?.data?.detail || "An error occurred"
+      })
+    }
+  })
+
+  const handleExportCsv = async () => {
+    try {
+      const blob = await exportProjectCsv(id!)
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `project-${project?.name}-export.csv`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (error) {
+      toast.error("Failed to export CSV")
+    }
+  }
+
+  const handleExportSbom = async () => {
+    try {
+      const blob = await exportProjectSbom(id!)
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `project-${project?.name}-sbom.json`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (error) {
+      toast.error("Failed to export SBOM")
+    }
+  }
 
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>({})
 
@@ -241,6 +354,7 @@ export default function ProjectDetails() {
 
       // 2. Collect unique findings
       const uniqueFindings = new Map(); // Key: finding.id + finding.component + finding.version
+      const activeAnalyzers = project?.active_analyzers || [];
       
       Object.values(latestScansByBranch).forEach(scan => {
           if (!scan.findings_summary) return;
@@ -264,6 +378,13 @@ export default function ProjectDetails() {
               }
 
               if (isWaived) return; 
+
+              // Filter by active analyzers
+              const findingScanners = finding.scanners || [];
+              if (findingScanners.length > 0) {
+                  const isActive = findingScanners.some((scanner: string) => activeAnalyzers.includes(scanner));
+                  if (!isActive) return;
+              }
               
               const key = `${finding.type}:${finding.id}:${finding.component}:${finding.version}`;
               if (!uniqueFindings.has(key)) {
@@ -284,13 +405,13 @@ export default function ProjectDetails() {
 
           // Category
           const type = finding.type || 'unknown';
-          if (['vulnerability', 'secret', 'malware', 'typosquatting'].includes(type)) byCategory.Security++;
+          if (['vulnerability', 'secret', 'malware', 'typosquatting', 'sast'].includes(type)) byCategory.Security++;
           else if (['license', 'eol'].includes(type)) byCategory.Compliance++;
           else if (['outdated', 'quality'].includes(type)) byCategory.Quality++;
       });
 
       return { stats, byCategory };
-  }, [filteredScans, waivers]);
+  }, [filteredScans, waivers, project]);
 
   if (isLoadingProject || isLoadingScans) {
     return (
@@ -391,6 +512,14 @@ export default function ProjectDetails() {
           <p className="text-muted-foreground text-sm">ID: {project._id}</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleExportCsv} className="gap-2">
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportSbom} className="gap-2">
+              <Download className="h-4 w-4" />
+              Export SBOM
+            </Button>
             <Dialog open={isBranchFilterOpen} onOpenChange={setIsBranchFilterOpen}>
                 <DialogTrigger asChild>
                     <Button variant="outline" className="gap-2">
@@ -448,6 +577,8 @@ export default function ProjectDetails() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="scans">Scans</TabsTrigger>
           <TabsTrigger value="waivers">Waivers</TabsTrigger>
+          <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
+          <TabsTrigger value="members">Members</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
         
@@ -656,6 +787,130 @@ export default function ProjectDetails() {
         <TabsContent value="waivers">
             <WaiversTab projectId={id!} />
         </TabsContent>
+
+        <TabsContent value="webhooks" className="space-y-4">
+          <WebhookManager 
+            webhooks={webhooks || []}
+            isLoading={isLoadingWebhooks}
+            onCreate={(data) => createWebhookMutation.mutateAsync(data)}
+            onDelete={(id) => deleteWebhookMutation.mutateAsync(id)}
+            title="Project Webhooks"
+            description="Configure webhooks for this project."
+          />
+        </TabsContent>
+
+        <TabsContent value="members" className="space-y-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Project Members</CardTitle>
+                <CardDescription>Manage who has access to this project.</CardDescription>
+              </div>
+              <Dialog open={isInviteMemberOpen} onOpenChange={setIsInviteMemberOpen}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2">
+                    <UserPlus className="h-4 w-4" />
+                    Invite Member
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Invite Member</DialogTitle>
+                    <DialogDescription>Add a user to this project.</DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="email">Email</Label>
+                      <Input 
+                        id="email" 
+                        value={inviteEmail} 
+                        onChange={(e) => setInviteEmail(e.target.value)} 
+                        placeholder="user@example.com"
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="role">Role</Label>
+                      <Select value={inviteRole} onValueChange={setInviteRole}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="viewer">Viewer</SelectItem>
+                          <SelectItem value="editor">Editor</SelectItem>
+                          <SelectItem value="admin">Admin</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button onClick={() => inviteMemberMutation.mutate({ email: inviteEmail, role: inviteRole })} disabled={inviteMemberMutation.isPending}>
+                      {inviteMemberMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
+                      Invite
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead className="w-[100px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {project.members?.map((member) => (
+                    <TableRow key={member.user_id}>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{member.username || 'Unknown'}</span>
+                          <span className="text-xs text-muted-foreground">{member.user_id}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Select 
+                          defaultValue={member.role} 
+                          onValueChange={(value) => updateMemberMutation.mutate({ userId: member.user_id, role: value })}
+                          disabled={member.user_id === project.owner_id}
+                        >
+                          <SelectTrigger className="w-[120px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="viewer">Viewer</SelectItem>
+                            <SelectItem value="editor">Editor</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell>
+                        {member.user_id !== project.owner_id && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-destructive"
+                            onClick={() => removeMemberMutation.mutate(member.user_id)}
+                          >
+                            <UserMinus className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {(!project.members || project.members.length === 0) && (
+                    <TableRow>
+                      <TableCell colSpan={3} className="text-center text-muted-foreground">
+                        No members found.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
         
         <TabsContent value="settings" className="space-y-6">
             <Card>
@@ -709,9 +964,14 @@ export default function ProjectDetails() {
                                             checked={analyzers.includes(analyzer.id)}
                                             onCheckedChange={() => toggleAnalyzer(analyzer.id)}
                                         />
-                                        <Label htmlFor={`analyzer-${analyzer.id}`} className="font-normal cursor-pointer">
-                                            {analyzer.label}
-                                        </Label>
+                                        <div className="flex items-center gap-2">
+                                            <Label htmlFor={`analyzer-${analyzer.id}`} className="font-normal cursor-pointer">
+                                                {analyzer.label}
+                                            </Label>
+                                            <div title={analyzer.description} className="cursor-help text-muted-foreground hover:text-foreground">
+                                                <Info className="h-4 w-4" />
+                                            </div>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
@@ -740,7 +1000,12 @@ export default function ProjectDetails() {
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                    {['email', 'slack', 'mattermost'].map(channel => (
+                                    {['email', 'slack', 'mattermost'].filter(channel => {
+                                        if (channel === 'email') return !!systemSettings?.smtp_host;
+                                        if (channel === 'slack') return !!systemSettings?.slack_bot_token;
+                                        if (channel === 'mattermost') return !!systemSettings?.mattermost_url;
+                                        return false;
+                                    }).map(channel => (
                                         <div key={channel} className="flex items-center space-x-2">
                                             <Checkbox 
                                                 id={`${event}-${channel}`}

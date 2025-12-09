@@ -28,6 +28,13 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
     
     project = Project(**project_data)
     
+    if "*" in user.permissions:
+        return project
+
+    # Global read access
+    if required_role is None and "project:read_all" in user.permissions:
+        return project
+
     is_owner = project.owner_id == str(user.id)
     is_member = False
     member_role = None
@@ -38,12 +45,6 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
             member_role = member.role
             break
             
-    if "*" in user.permissions:
-        return project
-
-    if required_role is None and "project:read" in user.permissions:
-        return project
-
     # Check team membership if project belongs to a team
     is_team_member = False
     if project.team_id:
@@ -62,6 +63,10 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
             is_member = True
 
     if not (is_owner or is_member):
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    # Check for basic read permission
+    if "project:read" not in user.permissions and "project:read_all" not in user.permissions:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     if required_role:
@@ -166,9 +171,9 @@ async def read_projects(
     - **Superusers** see all projects.
     - **Regular users** see projects they own or are members of.
     """
-    if "*" in current_user.permissions or "project:list" in current_user.permissions:
+    if "*" in current_user.permissions or "project:read_all" in current_user.permissions:
         projects = await db.projects.find().to_list(1000)
-    else:
+    elif "project:read" in current_user.permissions:
         # Get teams user is member of
         user_teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
         team_ids = [t["_id"] for t in user_teams]
@@ -181,6 +186,9 @@ async def read_projects(
                 {"team_id": {"$in": team_ids}}
             ]
         }).to_list(1000)
+    else:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+        
     return projects
 
 @router.get("/recent-scans", response_model=List[RecentScan], summary="List recent scans across all accessible projects")
@@ -193,10 +201,10 @@ async def read_recent_scans(
     Retrieve recent scans for all projects the user has access to.
     """
     # 1. Get accessible project IDs
-    if "*" in current_user.permissions or "project:list" in current_user.permissions:
+    if "*" in current_user.permissions or "project:read_all" in current_user.permissions:
         # Admin sees all
         project_cursor = db.projects.find({}, {"_id": 1, "name": 1})
-    else:
+    elif "project:read" in current_user.permissions:
         # Get teams user is member of
         user_teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
         team_ids = [t["_id"] for t in user_teams]
@@ -209,6 +217,8 @@ async def read_recent_scans(
                 {"team_id": {"$in": team_ids}}
             ]
         }, {"_id": 1, "name": 1})
+    else:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     
     projects = await project_cursor.to_list(10000)
     project_map = {p["_id"]: p["name"] for p in projects}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getMe, updatePassword, setup2FA, enable2FA, disable2FA, updateMe, TwoFASetup } from '@/lib/api';
+import { getMe, updatePassword, setup2FA, enable2FA, disable2FA, updateMe, TwoFASetup, getSystemSettings } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,16 +32,25 @@ export default function ProfilePage() {
 
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [slackUsername, setSlackUsername] = useState('');
+  const [mattermostUsername, setMattermostUsername] = useState('');
 
   const { data: user, isLoading } = useQuery({
     queryKey: ['me'],
     queryFn: getMe,
   });
 
+  const { data: systemSettings } = useQuery({
+    queryKey: ['systemSettings'],
+    queryFn: getSystemSettings,
+  });
+
   useEffect(() => {
     if (user) {
       setUsername(user.username);
       setEmail(user.email);
+      setSlackUsername(user.slack_username || '');
+      setMattermostUsername(user.mattermost_username || '');
     }
   }, [user]);
 
@@ -55,7 +64,12 @@ export default function ProfilePage() {
   };
 
   const updateProfileMutation = useMutation({
-    mutationFn: () => updateMe({ username, email }),
+    mutationFn: () => updateMe({ 
+      username, 
+      email,
+      slack_username: slackUsername || undefined,
+      mattermost_username: mattermostUsername || undefined
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
       toast.success("Profile updated", {
@@ -206,6 +220,34 @@ export default function ProfilePage() {
                   onChange={(e) => setEmail(e.target.value)} 
                 />
               </div>
+              
+              {systemSettings?.slack_bot_token && (
+                <div className="grid gap-2">
+                  <Label htmlFor="slack-username">Slack Member ID</Label>
+                  <Input 
+                    id="slack-username" 
+                    value={slackUsername} 
+                    onChange={(e) => setSlackUsername(e.target.value)} 
+                    placeholder="U12345678"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Your Slack Member ID (not username) for direct messages.
+                  </p>
+                </div>
+              )}
+
+              {systemSettings?.mattermost_url && (
+                <div className="grid gap-2">
+                  <Label htmlFor="mattermost-username">Mattermost Username</Label>
+                  <Input 
+                    id="mattermost-username" 
+                    value={mattermostUsername} 
+                    onChange={(e) => setMattermostUsername(e.target.value)} 
+                    placeholder="username"
+                  />
+                </div>
+              )}
+
               <div className="grid gap-2">
                 <Label>Status</Label>
                 <div className="flex items-center gap-2">

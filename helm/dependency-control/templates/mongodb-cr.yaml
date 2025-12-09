@@ -45,6 +45,8 @@ spec:
                   topologyKey: "kubernetes.io/hostname"
           containers:
             - name: mongod
+              resources:
+{{ toYaml .Values.mongodb.resources | indent 16 }}
               securityContext:
                 runAsNonRoot: true
                 runAsUser: 2000 # MongoDB Community images often use 2000 or 999

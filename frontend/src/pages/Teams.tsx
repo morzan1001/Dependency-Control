@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getTeams, createTeam, addTeamMember, deleteTeam, Team } from '@/lib/api';
+import { getTeams, createTeam, addTeamMember, deleteTeam, updateTeam, updateTeamMember, removeTeamMember, Team } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus, Users as UsersIcon, UserPlus, Trash2 } from 'lucide-react';
+import { Plus, Users as UsersIcon, UserPlus, Trash2, UserMinus, Edit } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { toast } from "sonner"
 
 import { Spinner } from '@/components/ui/spinner';
 
@@ -41,6 +50,14 @@ export default function TeamsPage() {
   const [newMemberEmail, setNewMemberEmail] = useState('');
   const [newMemberRole, setNewMemberRole] = useState('member');
 
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isManageMembersOpen, setIsManageMembersOpen] = useState(false);
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+
+  // Edit Team Form State
+  const [editTeamName, setEditTeamName] = useState('');
+  const [editTeamDesc, setEditTeamDesc] = useState('');
+
   const { data: teams, isLoading, error } = useQuery({
     queryKey: ['teams'],
     queryFn: getTeams,
@@ -53,6 +70,16 @@ export default function TeamsPage() {
       setIsCreateOpen(false);
       setNewTeamName('');
       setNewTeamDesc('');
+      toast.success("Team created successfully");
+    },
+  });
+
+  const updateTeamMutation = useMutation({
+    mutationFn: (data: { teamId: string; name: string; description: string }) => updateTeam(data.teamId, data.name, data.description),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['teams'] });
+      setIsEditOpen(false);
+      toast.success("Team updated successfully");
     },
   });
 
@@ -64,6 +91,23 @@ export default function TeamsPage() {
       setNewMemberEmail('');
       setNewMemberRole('member');
       setSelectedTeamId(null);
+      toast.success("Member added successfully");
+    },
+  });
+
+  const updateMemberMutation = useMutation({
+    mutationFn: (data: { teamId: string; userId: string; role: string }) => updateTeamMember(data.teamId, data.userId, data.role),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['teams'] });
+      toast.success("Member role updated");
+    },
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: (data: { teamId: string; userId: string }) => removeTeamMember(data.teamId, data.userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['teams'] });
+      toast.success("Member removed");
     },
   });
 
@@ -73,12 +117,32 @@ export default function TeamsPage() {
       queryClient.invalidateQueries({ queryKey: ['teams'] });
       setIsDeleteConfirmOpen(false);
       setTeamToDelete(null);
+      toast.success("Team deleted successfully");
     },
   });
 
   const handleCreateTeam = (e: React.FormEvent) => {
     e.preventDefault();
     createTeamMutation.mutate({ name: newTeamName, description: newTeamDesc });
+  };
+
+  const handleUpdateTeam = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedTeam) {
+      updateTeamMutation.mutate({ teamId: selectedTeam._id, name: editTeamName, description: editTeamDesc });
+    }
+  };
+
+  const openEditDialog = (team: Team) => {
+    setSelectedTeam(team);
+    setEditTeamName(team.name);
+    setEditTeamDesc(team.description || '');
+    setIsEditOpen(true);
+  };
+
+  const openManageMembersDialog = (team: Team) => {
+    setSelectedTeam(team);
+    setIsManageMembersOpen(true);
   };
 
   const handleAddMember = (e: React.FormEvent) => {
@@ -177,9 +241,14 @@ export default function TeamsPage() {
               <CardTitle className="text-sm font-medium">
                 {team.name}
               </CardTitle>
-              <div className="flex items-center gap-2">
-                  <UsersIcon className="h-4 w-4 text-muted-foreground" />
-                  <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive/90" onClick={() => handleDeleteClick(team._id)}>
+              <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditDialog(team)}>
+                      <Edit className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openManageMembersDialog(team)}>
+                      <UsersIcon className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive/90" onClick={() => handleDeleteClick(team._id)}>
                       <Trash2 className="h-4 w-4" />
                   </Button>
               </div>
@@ -260,6 +329,111 @@ export default function TeamsPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <form onSubmit={handleUpdateTeam}>
+            <DialogHeader>
+              <DialogTitle>Edit Team</DialogTitle>
+              <DialogDescription>
+                Update team details.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-name" className="text-right">
+                  Name
+                </Label>
+                <Input
+                  id="edit-name"
+                  value={editTeamName}
+                  onChange={(e) => setEditTeamName(e.target.value)}
+                  className="col-span-3"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-description" className="text-right">
+                  Description
+                </Label>
+                <Input
+                  id="edit-description"
+                  value={editTeamDesc}
+                  onChange={(e) => setEditTeamDesc(e.target.value)}
+                  className="col-span-3"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={updateTeamMutation.isPending}>
+                  {updateTeamMutation.isPending ? 'Updating...' : 'Update Team'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isManageMembersOpen} onOpenChange={setIsManageMembersOpen}>
+        <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Manage Members - {selectedTeam?.name}</DialogTitle>
+              <DialogDescription>
+                Manage team members and their roles.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead className="w-[100px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedTeam?.members.map((member) => (
+                    <TableRow key={member.user_id}>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{member.username || 'Unknown'}</span>
+                          <span className="text-xs text-muted-foreground">{member.user_id}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Select 
+                          defaultValue={member.role} 
+                          onValueChange={(value) => updateMemberMutation.mutate({ teamId: selectedTeam._id, userId: member.user_id, role: value })}
+                        >
+                          <SelectTrigger className="w-[120px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="member">Member</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                            <SelectItem value="owner">Owner</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell>
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="text-destructive"
+                          onClick={() => removeMemberMutation.mutate({ teamId: selectedTeam._id, userId: member.user_id })}
+                        >
+                          <UserMinus className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <DialogFooter>
+                <Button onClick={() => setIsManageMembersOpen(false)}>Close</Button>
+            </DialogFooter>
         </DialogContent>
       </Dialog>
 

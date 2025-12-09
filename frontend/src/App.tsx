@@ -9,11 +9,15 @@ import ProjectsPage from './pages/Projects'
 import ProjectDetails from './pages/ProjectDetails'
 import ScanDetails from './pages/ScanDetails'
 import ProfilePage from './pages/Profile'
+import SystemSettings from './pages/SystemSettings'
+import SearchPage from './pages/Search'
 import DashboardLayout from './layouts/DashboardLayout'
 import { AuthProvider, useAuth, RequirePermission } from './context/AuthContext'
 import { Toaster } from "@/components/ui/sonner"
 import { ThemeProvider } from "next-themes"
 import { Spinner } from "@/components/ui/spinner"
+import { getPublicConfig } from '@/lib/api'
+import { useState, useEffect } from 'react'
 
 const queryClient = new QueryClient()
 
@@ -36,11 +40,25 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function SignupRoute() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    getPublicConfig().then(config => setEnabled(config.allow_public_registration)).catch(() => setEnabled(false));
+  }, []);
+
+  if (enabled === null) return <div className="flex h-screen items-center justify-center"><Spinner size={48} /></div>;
+  
+  if (!enabled) return <Navigate to="/login" replace />;
+
+  return <Signup />;
+}
+
 function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
+      <Route path="/signup" element={<SignupRoute />} />
       <Route element={
         <ProtectedRoute>
           <DashboardLayout />
@@ -48,14 +66,36 @@ function AppRoutes() {
       }>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/projects" element={<ProjectsPage />} />
-        <Route path="/projects/:id" element={<ProjectDetails />} />
-        <Route path="/projects/:projectId/scans/:scanId" element={<ScanDetails />} />
-        <Route path="/teams" element={<TeamsPage />} />
+        <Route path="/projects" element={
+          <RequirePermission permission={['project:read', 'project:read_all']}>
+            <ProjectsPage />
+          </RequirePermission>
+        } />
+        <Route path="/projects/:id" element={
+          <RequirePermission permission={['project:read', 'project:read_all']}>
+            <ProjectDetails />
+          </RequirePermission>
+        } />
+        <Route path="/projects/:projectId/scans/:scanId" element={
+          <RequirePermission permission={['project:read', 'project:read_all']}>
+            <ScanDetails />
+          </RequirePermission>
+        } />
+        <Route path="/teams" element={
+          <RequirePermission permission={['team:read', 'team:read_all']}>
+            <TeamsPage />
+          </RequirePermission>
+        } />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/users" element={
-          <RequirePermission permission="user:manage">
+          <RequirePermission permission={['user:manage', 'user:read_all']}>
             <UsersPage />
+          </RequirePermission>
+        } />
+        <Route path="/search/dependencies" element={<SearchPage />} />
+        <Route path="/settings" element={
+          <RequirePermission permission="system:manage">
+            <SystemSettings />
           </RequirePermission>
         } />
         {/* Add other routes here */}

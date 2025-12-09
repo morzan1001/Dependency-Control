@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List
+from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -43,6 +43,40 @@ async def list_webhooks(
     webhooks = await db.webhooks.find({"project_id": project_id}).to_list(100)
     return [Webhook(**w) for w in webhooks]
 
+@router.post("/global/", response_model=WebhookResponse, status_code=201)
+async def create_global_webhook(
+    webhook_in: WebhookCreate,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Create a global webhook. Requires 'system:manage' permission.
+    """
+    if "*" not in current_user.permissions and "system:manage" not in current_user.permissions:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    webhook = Webhook(
+        project_id=None,
+        **webhook_in.dict()
+    )
+    
+    await db.webhooks.insert_one(webhook.dict(by_alias=True))
+    return webhook
+
+@router.get("/global/", response_model=List[WebhookResponse])
+async def list_global_webhooks(
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    List global webhooks. Requires 'system:manage' permission.
+    """
+    if "*" not in current_user.permissions and "system:manage" not in current_user.permissions:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
+    webhooks = await db.webhooks.find({"project_id": None}).to_list(100)
+    return [Webhook(**w) for w in webhooks]
+
 @router.delete("/{webhook_id}", status_code=204)
 async def delete_webhook(
     webhook_id: str,
@@ -55,7 +89,12 @@ async def delete_webhook(
         
     webhook = Webhook(**webhook_data)
     
-    if "*" not in current_user.permissions and "webhook:delete" not in current_user.permissions:
-        await check_project_access(webhook.project_id, current_user, db, required_role="admin")
+    if webhook.project_id:
+        if "*" not in current_user.permissions and "webhook:delete" not in current_user.permissions:
+            await check_project_access(webhook.project_id, current_user, db, required_role="admin")
+    else:
+        # Global webhook
+        if "*" not in current_user.permissions and "system:manage" not in current_user.permissions:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
     
     await db.webhooks.delete_one({"_id": webhook_id})

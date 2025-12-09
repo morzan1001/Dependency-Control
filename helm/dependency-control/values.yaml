@@ -85,10 +85,6 @@ backend:
   env:
     workerCount: 2
     logLevel: "INFO"
-    smtpHost: ""
-    smtpPort: 587
-    smtpUser: ""
-    fromEmail: ""
     algorithm: "HS256"
     accessTokenExpireMinutes: 30
     refreshTokenExpireDays: 7

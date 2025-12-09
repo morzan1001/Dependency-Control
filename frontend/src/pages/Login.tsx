@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { login as apiLogin, getSignupEnabled } from '@/lib/api'
+import { login as apiLogin, getPublicConfig } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { AxiosError } from 'axios'
 import { Link, useLocation } from 'react-router-dom'
@@ -19,7 +19,7 @@ export default function Login() {
   const message = location.state?.message
 
   useEffect(() => {
-    getSignupEnabled().then(setSignupEnabled).catch(console.error)
+    getPublicConfig().then(config => setSignupEnabled(config.allow_public_registration)).catch(console.error)
   }, [])
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {

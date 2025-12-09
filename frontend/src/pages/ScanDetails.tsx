@@ -1,7 +1,7 @@
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
-import { getScanResults, getScan, AnalysisResult } from '@/lib/api'
+import { getScanResults, getScan, getProject, AnalysisResult } from '@/lib/api'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -35,7 +35,13 @@ export default function ScanDetails() {
     enabled: !!scanId
   })
 
-  if (isScanLoading || isResultsLoading) {
+  const { data: project, isLoading: isProjectLoading } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => getProject(projectId!),
+    enabled: !!projectId
+  })
+
+  if (isScanLoading || isResultsLoading || isProjectLoading) {
     return (
       <div className="flex h-[50vh] items-center justify-center">
         <Spinner size={48} />
@@ -43,9 +49,23 @@ export default function ScanDetails() {
     )
   }
 
-  if (!scan || !results) {
+  if (!scan || !results || !project) {
     return <div>No results found</div>
   }
+
+  const activeAnalyzers = project.active_analyzers || [];
+  const showSecurity = activeAnalyzers.some(a => ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev'].includes(a));
+  const showSecrets = activeAnalyzers.includes('trufflehog');
+  const showSast = activeAnalyzers.includes('opengrep');
+  const showCompliance = activeAnalyzers.some(a => ['trivy', 'license_compliance', 'end_of_life'].includes(a));
+  const showQuality = activeAnalyzers.includes('outdated_packages');
+
+  // Filter findings based on active analyzers
+  const filteredFindings = (scan.findings_summary || []).filter((f: any) => {
+      const scanners = f.scanners || [];
+      if (scanners.length === 0) return true; 
+      return scanners.some((s: string) => activeAnalyzers.includes(s));
+  });
 
   const findingsByCategory = {
       Security: 0,
@@ -64,36 +84,42 @@ export default function ScanDetails() {
       UNKNOWN: 0
   };
   
-  if (scan && scan.findings_summary) {
-      scan.findings_summary.forEach((finding: any) => {
-          if (finding.waived) return;
+  filteredFindings.forEach((finding: any) => {
+      if (finding.waived) return;
 
-          const type = finding.type || 'unknown';
-          
-          if (['vulnerability', 'malware', 'typosquatting'].includes(type)) {
-              findingsByCategory.Security++;
-          } else if (type === 'secret') {
-              findingsByCategory.Secrets++;
-          } else if (type === 'sast') {
-              findingsByCategory.SAST++;
-          } else if (['license', 'eol'].includes(type)) {
-              findingsByCategory.Compliance++;
-          } else if (['outdated', 'quality'].includes(type)) {
-              findingsByCategory.Quality++;
-          }
+      const type = finding.type || 'unknown';
+      
+      if (['vulnerability', 'malware', 'typosquatting'].includes(type)) {
+          findingsByCategory.Security++;
+      } else if (type === 'secret') {
+          findingsByCategory.Secrets++;
+      } else if (type === 'sast') {
+          findingsByCategory.SAST++;
+      } else if (['license', 'eol'].includes(type)) {
+          findingsByCategory.Compliance++;
+      } else if (['outdated', 'quality'].includes(type)) {
+          findingsByCategory.Quality++;
+      }
 
-          const severity = finding.severity || 'UNKNOWN';
-          if (severity in severityCounts) {
-              severityCounts[severity]++;
-          } else {
-              severityCounts.UNKNOWN++;
-          }
-      });
-  }
+      const severity = finding.severity || 'UNKNOWN';
+      if (severity in severityCounts) {
+          severityCounts[severity]++;
+      } else {
+          severityCounts.UNKNOWN++;
+      }
+  });
 
   const categoryData = Object.entries(findingsByCategory)
       .map(([name, value]) => ({ name, value }))
-      .filter(d => d.value > 0);
+      .filter(d => d.value > 0)
+      .filter(d => {
+          if (d.name === 'Security') return showSecurity;
+          if (d.name === 'Secrets') return showSecrets;
+          if (d.name === 'SAST') return showSast;
+          if (d.name === 'Compliance') return showCompliance;
+          if (d.name === 'Quality') return showQuality;
+          return true;
+      });
 
   const severityData = [
       { name: 'Critical', value: severityCounts.CRITICAL, color: '#ef4444' },
@@ -129,11 +155,11 @@ export default function ScanDetails() {
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="security">Security</TabsTrigger>
-            <TabsTrigger value="secrets">Secrets</TabsTrigger>
-            <TabsTrigger value="sast">SAST</TabsTrigger>
-            <TabsTrigger value="compliance">Compliance</TabsTrigger>
-            <TabsTrigger value="quality">Quality</TabsTrigger>
+            {showSecurity && <TabsTrigger value="security">Security</TabsTrigger>}
+            {showSecrets && <TabsTrigger value="secrets">Secrets</TabsTrigger>}
+            {showSast && <TabsTrigger value="sast">SAST</TabsTrigger>}
+            {showCompliance && <TabsTrigger value="compliance">Compliance</TabsTrigger>}
+            {showQuality && <TabsTrigger value="quality">Quality</TabsTrigger>}
             <TabsTrigger value="raw">Raw Data</TabsTrigger>
         </TabsList>
 
@@ -254,25 +280,35 @@ export default function ScanDetails() {
             )}
         </TabsContent>
 
-        <TabsContent value="security">
-            <SecurityTab findings={scan.findings_summary || []} projectId={projectId!} />
-        </TabsContent>
+        {showSecurity && (
+            <TabsContent value="security">
+                <SecurityTab findings={filteredFindings} projectId={projectId!} />
+            </TabsContent>
+        )}
 
-        <TabsContent value="secrets">
-            <SecretsTab findings={scan.findings_summary || []} projectId={projectId!} />
-        </TabsContent>
+        {showSecrets && (
+            <TabsContent value="secrets">
+                <SecretsTab findings={filteredFindings} projectId={projectId!} />
+            </TabsContent>
+        )}
 
-        <TabsContent value="sast">
-            <SastTab findings={scan.findings_summary || []} projectId={projectId!} />
-        </TabsContent>
+        {showSast && (
+            <TabsContent value="sast">
+                <SastTab findings={filteredFindings} projectId={projectId!} />
+            </TabsContent>
+        )}
 
-        <TabsContent value="compliance">
-            <ComplianceTab findings={scan.findings_summary || []} projectId={projectId!} />
-        </TabsContent>
+        {showCompliance && (
+            <TabsContent value="compliance">
+                <ComplianceTab findings={filteredFindings} projectId={projectId!} />
+            </TabsContent>
+        )}
 
-        <TabsContent value="quality">
-            <QualityTab findings={scan.findings_summary || []} projectId={projectId!} />
-        </TabsContent>
+        {showQuality && (
+            <TabsContent value="quality">
+                <QualityTab findings={filteredFindings} projectId={projectId!} />
+            </TabsContent>
+        )}
 
         <TabsContent value="raw">
             <Tabs defaultValue={results[0]?.analyzer_name || 'sbom'} className="space-y-4">

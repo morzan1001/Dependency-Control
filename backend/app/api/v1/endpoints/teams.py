@@ -48,8 +48,16 @@ async def check_team_access(team_id: str, user: User, db: AsyncIOMotorDatabase, 
             member_role = member.role
             break
             
+    # Check for global read permission
+    if required_role is None and "team:read_all" in user.permissions:
+        return team
+
     if not is_member:
         raise HTTPException(status_code=403, detail="Not a member of this team")
+
+    # Check for basic read permission
+    if "team:read" not in user.permissions and "team:read_all" not in user.permissions:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
 
     if required_role:
         # Role hierarchy: owner > admin > member
@@ -91,12 +99,14 @@ async def read_teams(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
-    List teams the current user is a member of.
+    List teams.
     """
-    if "*" in current_user.permissions or "team:list" in current_user.permissions:
+    if "*" in current_user.permissions or "team:read_all" in current_user.permissions:
         teams = await db.teams.find().to_list(1000)
-    else:
+    elif "team:read" in current_user.permissions:
         teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
+    else:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
         
     for team in teams:
         await enrich_team_with_usernames(team, db)

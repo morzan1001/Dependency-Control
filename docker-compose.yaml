@@ -55,15 +55,7 @@ services:
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - REFRESH_TOKEN_EXPIRE_DAYS=7
-      - OPEN_SOURCE_MALWARE_API_KEY=osm_EAamMAJY0jFHiBulzZt1MLlpjxqPweDcqgcKID1u
       - FRONTEND_BASE_URL=https://dependencycontrol.local
-      # Notification Settings
-      - SMTP_HOST=${SMTP_HOST:-}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
-      - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL:-info@dependencycontrol.local}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     labels:
       traefik.enable: "true"
