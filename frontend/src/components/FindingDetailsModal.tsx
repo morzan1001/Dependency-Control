@@ -79,7 +79,55 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                 <p className="text-sm leading-relaxed">{finding.description || "No description available."}</p>
                             </div>
 
-                            {finding.details && (
+                            {finding.type === 'secret' && (
+                                <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
+                                    <div>
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Detector</h4>
+                                        <p className="font-medium">{finding.details?.detector || "Unknown"}</p>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Verified</h4>
+                                        <Badge variant={finding.details?.verified ? "destructive" : "secondary"}>
+                                            {finding.details?.verified ? "Verified Live" : "Unverified"}
+                                        </Badge>
+                                    </div>
+                                    {finding.details?.redacted && (
+                                        <div className="col-span-2">
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Redacted Secret</h4>
+                                            <code className="bg-background p-2 rounded border block w-full font-mono text-sm break-all">
+                                                {finding.details.redacted}
+                                            </code>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {finding.type === 'sast' && (
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Rule ID</h4>
+                                            <p className="font-mono text-sm">{finding.details?.check_id || "Unknown"}</p>
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Location</h4>
+                                            <p className="text-sm">
+                                                Line {finding.details?.start?.line || "?"} - {finding.details?.end?.line || "?"}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {finding.details?.metadata && (
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-2">Rule Metadata</h4>
+                                            <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">
+                                                {JSON.stringify(finding.details.metadata, null, 2)}
+                                            </pre>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && (
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-2">Additional Details</h4>
                                     <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">

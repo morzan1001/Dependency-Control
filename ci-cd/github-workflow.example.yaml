@@ -82,3 +82,38 @@ jobs:
             echo "CRITICAL: Unwaived secrets found!"
             exit 1
           fi
+
+  opengrep-scan:
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run OpenGrep
+        run: semgrep scan --config=auto --json --output opengrep.json . || true
+        
+      - name: Upload SAST Results
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          PROJECT_NAME: "your-project-name"
+        run: |
+          # Install jq/curl if missing
+          if ! command -v jq &> /dev/null; then
+             if [ -f /etc/alpine-release ]; then apk add --no-cache jq curl; else apt-get update && apt-get install -y jq curl; fi
+          fi
+          
+          jq -n \
+            --arg pn "$PROJECT_NAME" \
+            --arg br "${{ github.ref_name }}" \
+            --arg ch "${{ github.sha }}" \
+            --slurpfile findings opengrep.json \
+            '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0].results}' > payload.json
+            
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $DEP_CONTROL_API_KEY" \
+            -d @payload.json \
+            "$DEP_CONTROL_URL/api/v1/ingest/opengrep"
+

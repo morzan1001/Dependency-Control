@@ -44,6 +44,9 @@ class ResultAggregator:
             
         elif analyzer_name == "trufflehog":
             self._normalize_trufflehog(result)
+            
+        elif analyzer_name == "opengrep":
+            self._normalize_opengrep(result)
 
     def get_findings(self) -> List[Dict[str, Any]]:
         """
@@ -288,3 +291,41 @@ class ResultAggregator:
                     "similarity": item.get("similarity")
                 }
             })
+
+    def _normalize_opengrep(self, result: Dict[str, Any]):
+        # OpenGrep structure: {"findings": [OpenGrepFinding objects]}
+        for finding in result.get("findings", []):
+            # finding is a dict
+            check_id = finding.get("check_id", "unknown-check")
+            path = finding.get("path", "unknown")
+            extra = finding.get("extra", {})
+            
+            severity_map = {
+                "ERROR": "HIGH",
+                "WARNING": "MEDIUM",
+                "INFO": "LOW"
+            }
+            
+            severity = severity_map.get(extra.get("severity"), "MEDIUM")
+            message = extra.get("message", "No description provided")
+            
+            # Create unique ID
+            finding_hash = hashlib.md5(f"{check_id}:{path}:{message}".encode()).hexdigest()
+            finding_id = f"SAST-{finding_hash[:8]}"
+            
+            self._add_finding({
+                "id": finding_id,
+                "type": "sast",
+                "severity": severity,
+                "component": path,
+                "version": "",
+                "description": message,
+                "scanners": ["opengrep"],
+                "details": {
+                    "check_id": check_id,
+                    "start": finding.get("start"),
+                    "end": finding.get("end"),
+                    "metadata": extra.get("metadata")
+                }
+            })
+

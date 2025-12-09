@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ArrowLeft, FileJson, CheckCircle, Package, Scale, ShieldAlert, Activity, AlertTriangle, Info, GitBranch, GitCommit, Calendar, ArrowUpDown } from 'lucide-react'
+import { ArrowLeft, FileJson, CheckCircle, Package, Scale, ShieldAlert, Activity, AlertTriangle, Info, GitBranch, GitCommit, Calendar, ArrowUpDown, Lock, Code } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -49,6 +49,8 @@ export default function ScanDetails() {
 
   const findingsByCategory = {
       Security: 0,
+      Secrets: 0,
+      SAST: 0,
       Compliance: 0,
       Quality: 0
   };
@@ -68,8 +70,12 @@ export default function ScanDetails() {
 
           const type = finding.type || 'unknown';
           
-          if (['vulnerability', 'secret', 'malware', 'typosquatting'].includes(type)) {
+          if (['vulnerability', 'malware', 'typosquatting'].includes(type)) {
               findingsByCategory.Security++;
+          } else if (type === 'secret') {
+              findingsByCategory.Secrets++;
+          } else if (type === 'sast') {
+              findingsByCategory.SAST++;
           } else if (['license', 'eol'].includes(type)) {
               findingsByCategory.Compliance++;
           } else if (['outdated', 'quality'].includes(type)) {
@@ -100,6 +106,8 @@ export default function ScanDetails() {
 
   const CATEGORY_COLORS: Record<string, string> = {
       Security: '#ef4444',
+      Secrets: '#8b5cf6',
+      SAST: '#ec4899',
       Compliance: '#3b82f6',
       Quality: '#10b981'
   };
@@ -122,6 +130,8 @@ export default function ScanDetails() {
         <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="security">Security</TabsTrigger>
+            <TabsTrigger value="secrets">Secrets</TabsTrigger>
+            <TabsTrigger value="sast">SAST</TabsTrigger>
             <TabsTrigger value="compliance">Compliance</TabsTrigger>
             <TabsTrigger value="quality">Quality</TabsTrigger>
             <TabsTrigger value="raw">Raw Data</TabsTrigger>
@@ -248,6 +258,14 @@ export default function ScanDetails() {
             <SecurityTab findings={scan.findings_summary || []} projectId={projectId!} />
         </TabsContent>
 
+        <TabsContent value="secrets">
+            <SecretsTab findings={scan.findings_summary || []} projectId={projectId!} />
+        </TabsContent>
+
+        <TabsContent value="sast">
+            <SastTab findings={scan.findings_summary || []} projectId={projectId!} />
+        </TabsContent>
+
         <TabsContent value="compliance">
             <ComplianceTab findings={scan.findings_summary || []} projectId={projectId!} />
         </TabsContent>
@@ -312,7 +330,7 @@ function SecurityTab({ findings, projectId }: { findings: any[], projectId: stri
     const [selectedFinding, setSelectedFinding] = useState<any>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
 
-    const securityFindings = findings.filter(f => ['vulnerability', 'secret', 'malware', 'typosquatting'].includes(f.type) && !f.waived);
+    const securityFindings = findings.filter(f => ['vulnerability', 'malware', 'typosquatting'].includes(f.type) && !f.waived);
     
     const stats = {
         critical: securityFindings.filter(f => f.severity === 'CRITICAL').length,
@@ -413,6 +431,67 @@ function SecurityTab({ findings, projectId }: { findings: any[], projectId: stri
                 <CardContent>
                     <FindingsTable 
                         findings={securityFindings} 
+                        showSeverity={true} 
+                        onFindingClick={(f) => {
+                            setSelectedFinding(f)
+                            setIsModalOpen(true)
+                        }} 
+                    />
+                </CardContent>
+            </Card>
+        </div>
+    );
+}
+
+function SecretsTab({ findings, projectId }: { findings: any[], projectId: string }) {
+    const [selectedFinding, setSelectedFinding] = useState<any>(null)
+    const [isModalOpen, setIsModalOpen] = useState(false)
+
+    const secretFindings = findings.filter(f => f.type === 'secret' && !f.waived);
+    
+    const stats = {
+        critical: secretFindings.filter(f => f.severity === 'CRITICAL').length,
+        high: secretFindings.filter(f => f.severity === 'HIGH').length,
+        medium: secretFindings.filter(f => f.severity === 'MEDIUM').length,
+        low: secretFindings.filter(f => f.severity === 'LOW').length,
+    };
+
+    return (
+        <div className="space-y-6">
+            <FindingDetailsModal 
+                finding={selectedFinding} 
+                isOpen={isModalOpen} 
+                onClose={() => setIsModalOpen(false)} 
+                projectId={projectId} 
+            />
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Total Secrets</CardTitle>
+                        <Lock className="h-4 w-4 text-violet-500" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{secretFindings.length}</div>
+                    </CardContent>
+                </Card>
+                 <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Critical</CardTitle>
+                        <ShieldAlert className="h-4 w-4 text-destructive" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{stats.critical}</div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Secret Findings</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <FindingsTable 
+                        findings={secretFindings} 
                         showSeverity={true} 
                         onFindingClick={(f) => {
                             setSelectedFinding(f)
@@ -532,6 +611,67 @@ function QualityTab({ findings, projectId }: { findings: any[], projectId: strin
                     <FindingsTable 
                         findings={qualityFindings} 
                         showSeverity={false} 
+                        onFindingClick={(f) => {
+                            setSelectedFinding(f)
+                            setIsModalOpen(true)
+                        }} 
+                    />
+                </CardContent>
+            </Card>
+        </div>
+    );
+}
+
+function SastTab({ findings, projectId }: { findings: any[], projectId: string }) {
+    const [selectedFinding, setSelectedFinding] = useState<any>(null)
+    const [isModalOpen, setIsModalOpen] = useState(false)
+
+    const sastFindings = findings.filter(f => f.type === 'sast' && !f.waived);
+    
+    const stats = {
+        critical: sastFindings.filter(f => f.severity === 'CRITICAL').length,
+        high: sastFindings.filter(f => f.severity === 'HIGH').length,
+        medium: sastFindings.filter(f => f.severity === 'MEDIUM').length,
+        low: sastFindings.filter(f => f.severity === 'LOW').length,
+    };
+
+    return (
+        <div className="space-y-6">
+            <FindingDetailsModal 
+                finding={selectedFinding} 
+                isOpen={isModalOpen} 
+                onClose={() => setIsModalOpen(false)} 
+                projectId={projectId} 
+            />
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Total Issues</CardTitle>
+                        <Code className="h-4 w-4 text-pink-500" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{sastFindings.length}</div>
+                    </CardContent>
+                </Card>
+                 <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">High Severity</CardTitle>
+                        <Activity className="h-4 w-4 text-orange-500" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{stats.high}</div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>SAST Findings</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <FindingsTable 
+                        findings={sastFindings} 
+                        showSeverity={true} 
                         onFindingClick={(f) => {
                             setSelectedFinding(f)
                             setIsModalOpen(true)

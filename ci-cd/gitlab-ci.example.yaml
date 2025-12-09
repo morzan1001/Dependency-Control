@@ -69,3 +69,33 @@ secret-scan:
         echo "CRITICAL: Unwaived secrets found!"
         exit 1
       fi
+
+opengrep-scan:
+  stage: dependency-scan
+  image: returntocorp/semgrep
+  variables:
+    # DEP_CONTROL_URL, DEP_CONTROL_API_KEY, PROJECT_NAME defined in CI/CD settings
+  script:
+    - echo "Running OpenGrep..."
+    - semgrep scan --config=auto --json --output opengrep.json . || true
+    
+    # Install jq for payload formatting
+    - if [ -f /etc/alpine-release ]; then apk add --no-cache jq curl; else apt-get update && apt-get install -y jq curl; fi
+    
+    - echo "Preparing payload..."
+    - |
+      jq -n \
+        --arg pn "$PROJECT_NAME" \
+        --arg br "$CI_COMMIT_REF_NAME" \
+        --arg ch "$CI_COMMIT_SHA" \
+        --slurpfile findings opengrep.json \
+        '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0].results}' > payload.json
+      
+    - echo "Uploading results..."
+    - |
+      curl -X POST \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: $DEP_CONTROL_API_KEY" \
+        -d @payload.json \
+        "$DEP_CONTROL_URL/api/v1/ingest/opengrep"
+

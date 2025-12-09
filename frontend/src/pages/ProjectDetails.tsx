@@ -39,6 +39,7 @@ const AVAILABLE_ANALYZERS = [
   { id: 'grype', label: 'Grype (Anchore)' },
   { id: 'outdated_packages', label: 'Outdated Packages' },
   { id: 'typosquatting', label: 'Typosquatting' },
+  { id: 'opengrep', label: 'OpenGrep (SAST)' },
 ];
 
 export default function ProjectDetails() {
