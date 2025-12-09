@@ -3,6 +3,53 @@ global:
   imageRegistry: ""
   imagePullSecrets: []
 
+# Frontend Application Settings
+frontend:
+  image:
+    repository: ghcr.io/morzan1001/dependency-control-frontend
+    pullPolicy: IfNotPresent
+    tag: "latest"
+  
+  replicaCount: 2
+  
+  service:
+    type: ClusterIP
+    port: 80
+  
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+  securityContext:
+    runAsUser: 101
+    runAsGroup: 101
+    runAsNonRoot: true
+    readOnlyRootFilesystem: false # Nginx needs to write to /var/cache/nginx and /var/run
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+        
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 3
+
 # Backend Application Settings
 backend:
   image:
@@ -42,6 +89,10 @@ backend:
     smtpPort: 587
     smtpUser: ""
     fromEmail: ""
+    algorithm: "HS256"
+    accessTokenExpireMinutes: 30
+    refreshTokenExpireDays: 7
+    frontendBaseUrl: ""
 
   autoscaling:
     enabled: true

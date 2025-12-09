@@ -18,6 +18,7 @@ spec:
     metadata:
       labels:
         {{- include "dependency-control.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
     spec:
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -99,6 +100,19 @@ spec:
                 secretKeyRef:
                   name: {{ include "dependency-control.fullname" . }}-secrets
                   key: malware-api-key
+            - name: ALGORITHM
+              value: "{{ .Values.backend.env.algorithm }}"
+            - name: ACCESS_TOKEN_EXPIRE_MINUTES
+              value: "{{ .Values.backend.env.accessTokenExpireMinutes }}"
+            - name: REFRESH_TOKEN_EXPIRE_DAYS
+              value: "{{ .Values.backend.env.refreshTokenExpireDays }}"
+            - name: FRONTEND_BASE_URL
+              value: "{{ .Values.backend.env.frontendBaseUrl }}"
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "dependency-control.fullname" . }}-secrets
+                  key: slack-bot-token
           # Temporary volume for /tmp because of ReadOnlyRootFilesystem
           # Trivy/Grype need to write temp files
           volumeMounts:

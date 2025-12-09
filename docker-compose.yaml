@@ -80,6 +80,12 @@ services:
     build: ./frontend
     environment:
       - VITE_API_URL=https://api.dependencycontrol.local/api/v1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     labels:
       traefik.enable: "true"
       traefik.http.routers.frontend.rule: "Host(`dependencycontrol.local`)"
