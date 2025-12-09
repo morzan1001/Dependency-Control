@@ -1,3 +1,16 @@
+# Release 0.2.1
+
+## 🚀 Features
+
+- feat: enhance permission checks across various endpoints and update user schema (#0)
+- feat: add password verification for 2FA enable/disable endpoints and update user schema (#0)
+
+## 📦 Build & CI
+
+- chore: update Traefik chart to version 37.4.0 (#0)
+
+
+
 # Release 0.2.0
 
 ## 🚀 Features
