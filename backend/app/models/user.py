@@ -10,6 +10,7 @@ class User(BaseModel):
     hashed_password: str
     is_active: bool = True
     is_verified: bool = False
+    auth_provider: str = "local" # "local", "gitlab", "google", etc.
     permissions: list[str] = []  # e.g. "project:create", "user:manage"
     last_logout_at: Optional[datetime] = None
     

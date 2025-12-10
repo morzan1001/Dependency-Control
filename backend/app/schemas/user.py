@@ -6,6 +6,7 @@ class UserBase(BaseModel):
     email: EmailStr
     username: str
     is_active: Optional[bool] = True
+    auth_provider: Optional[str] = "local"
     permissions: list[str] = []
     slack_username: Optional[str] = None
     mattermost_username: Optional[str] = None

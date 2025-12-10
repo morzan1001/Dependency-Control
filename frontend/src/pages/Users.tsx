@@ -357,7 +357,16 @@ export default function UsersPage() {
                     className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
                     onClick={() => setSelectedUser(user)}
                   >
-                    <td className="p-4 align-middle font-medium">{user.username}</td>
+                    <td className="p-4 align-middle font-medium">
+                      <div className="flex items-center gap-2">
+                        {user.username}
+                        {user.auth_provider && user.auth_provider !== 'local' && (
+                          <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800 capitalize">
+                            {user.auth_provider}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="p-4 align-middle">{user.email}</td>
                     <td className="p-4 align-middle">
                       {user.is_active ? (

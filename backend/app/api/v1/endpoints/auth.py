@@ -395,7 +395,8 @@ async def resend_verification_email_public(
         subject=f"Verify your email for {settings.PROJECT_NAME}",
         message=f"Please verify your email by clicking this link: {link}",
         html_message=html_content,
-        logo_path=logo_path
+        logo_path=logo_path,
+        system_settings=system_config
     )
     
     return {"message": "If an account with this email exists, a verification email has been sent."}
@@ -484,7 +485,8 @@ async def login_oidc_callback(
             password=secrets.token_urlsafe(32), # Random password
             full_name=user_info.get("name"),
             is_active=True,
-            is_verified=True # Trusted provider
+            is_verified=True, # Trusted provider
+            auth_provider=system_config.oidc_provider_name
         )
         user_data = user_in.dict()
         user_data["hashed_password"] = security.get_password_hash(user_data["password"])

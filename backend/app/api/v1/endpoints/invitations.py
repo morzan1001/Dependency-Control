@@ -9,12 +9,19 @@ from app.core import security
 from app.core.config import settings
 from app.models.user import User
 from app.models.invitation import SystemInvitation
+from app.models.system import SystemSettings
 from app.schemas.user import User as UserSchema, UserSignup
 from app.db.mongodb import get_database
 from app.services.notifications.service import notification_service
 from app.services.notifications import templates
 
 router = APIRouter()
+
+async def get_system_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
+    data = await db.system_settings.find_one({"_id": "current"})
+    if not data:
+        return SystemSettings()
+    return SystemSettings(**data)
 
 @router.post("/system", status_code=status.HTTP_201_CREATED)
 async def create_system_invitation(
@@ -67,12 +74,15 @@ async def create_system_invitation(
         inviter_name=current_user.username
     )
     
+    system_config = await get_system_settings(db)
+
     await notification_service.email_provider.send(
         destination=email,
         subject=f"Invitation to join {settings.PROJECT_NAME}",
         message=f"You have been invited to join {settings.PROJECT_NAME}. Click here to accept: {link}",
         html_message=html_content,
-        logo_path=logo_path
+        logo_path=logo_path,
+        system_settings=system_config
     )
     
     return {"message": "Invitation sent successfully"}

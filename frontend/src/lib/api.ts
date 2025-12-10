@@ -87,6 +87,7 @@ export interface User {
   email: string;
   username: string;
   is_active: boolean;
+  auth_provider?: string;
   permissions: string[];
   totp_enabled: boolean;
   slack_username?: string;

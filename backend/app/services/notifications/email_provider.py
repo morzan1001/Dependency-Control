@@ -6,12 +6,21 @@ from email.mime.multipart import MIMEMultipart
 import logging
 from app.core.config import settings
 from app.services.notifications.base import NotificationProvider
+from app.models.system import SystemSettings
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 class EmailProvider(NotificationProvider):
-    async def send(self, destination: str, subject: str, message: str, html_message: str = None, logo_path: str = None) -> bool:
-        if not settings.SMTP_HOST:
+    async def send(self, destination: str, subject: str, message: str, html_message: str = None, logo_path: str = None, system_settings: Optional[SystemSettings] = None) -> bool:
+        # Determine configuration to use
+        smtp_host = system_settings.smtp_host if system_settings and system_settings.smtp_host else settings.SMTP_HOST
+        smtp_port = system_settings.smtp_port if system_settings else settings.SMTP_PORT
+        smtp_user = system_settings.smtp_user if system_settings and system_settings.smtp_user else settings.SMTP_USER
+        smtp_password = system_settings.smtp_password if system_settings and system_settings.smtp_password else settings.SMTP_PASSWORD
+        emails_from = system_settings.emails_from_email if system_settings else settings.EMAILS_FROM_EMAIL
+
+        if not smtp_host:
             logger.warning("SMTP_HOST not configured. Skipping email.")
             return False
 
@@ -21,7 +30,7 @@ class EmailProvider(NotificationProvider):
             else:
                 msg = MIMEMultipart("alternative")
                 
-            msg["From"] = settings.EMAILS_FROM_EMAIL
+            msg["From"] = emails_from
             msg["To"] = destination
             msg["Subject"] = subject
 
@@ -44,10 +53,10 @@ class EmailProvider(NotificationProvider):
                     msg.attach(MIMEText(html_message, "html"))
 
             # Send email
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-                if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                if smtp_user and smtp_password:
                     server.starttls()
-                    server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                    server.login(smtp_user, smtp_password)
                 server.send_message(msg)
             
             logger.info(f"Email sent to {destination}")

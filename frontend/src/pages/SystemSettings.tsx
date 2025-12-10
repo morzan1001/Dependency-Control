@@ -220,6 +220,17 @@ export default function SystemSettings() {
                   </div>
 
                   <div className="grid gap-2">
+                    <Label htmlFor="oidc-issuer">Issuer URL</Label>
+                    <Input 
+                      id="oidc-issuer" 
+                      placeholder="https://gitlab.com" 
+                      value={formData.oidc_issuer || ''}
+                      onChange={(e) => handleInputChange('oidc_issuer', e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">The OIDC Issuer URL (used for discovery).</p>
+                  </div>
+
+                  <div className="grid gap-2">
                     <Label htmlFor="oidc-auth-endpoint">Authorization Endpoint</Label>
                     <Input 
                       id="oidc-auth-endpoint" 
