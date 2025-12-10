@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
-from typing import List, Dict
+from typing import List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.config import settings as env_settings
 from app.db.mongodb import get_database
@@ -54,7 +54,7 @@ async def update_settings(
     
     return await get_current_settings(db)
 
-@router.get("/public-config", response_model=Dict[str, bool], summary="Get public system configuration")
+@router.get("/public-config", response_model=Dict[str, Any], summary="Get public system configuration")
 async def get_public_config(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -64,7 +64,10 @@ async def get_public_config(
     settings = await get_current_settings(db)
     return {
         "allow_public_registration": settings.allow_public_registration,
-        "enforce_2fa": settings.enforce_2fa
+        "enforce_2fa": settings.enforce_2fa,
+        "enforce_email_verification": settings.enforce_email_verification,
+        "oidc_enabled": settings.oidc_enabled,
+        "oidc_provider_name": settings.oidc_provider_name
     }
 
 @router.get("/notifications/channels", response_model=List[str], summary="Get available notification channels")

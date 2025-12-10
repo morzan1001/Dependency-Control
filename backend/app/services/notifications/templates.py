@@ -32,6 +32,13 @@ def get_invitation_template(invitation_link: str, project_name: str, inviter_nam
         "team_name": team_name
     })
 
+def get_system_invitation_template(invitation_link: str, project_name: str, inviter_name: str) -> str:
+    return render_template("system_invitation.html", {
+        "link": invitation_link,
+        "project_name": project_name,
+        "inviter_name": inviter_name
+    })
+
 def get_vulnerability_found_template(report_link: str, project_name: str, project_name_scanned: str, vulnerabilities: list) -> str:
     return render_template("vulnerability_found.html", {
         "link": report_link,

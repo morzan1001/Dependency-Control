@@ -73,7 +73,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     try {
         const decoded: DecodedToken = jwtDecode(accessToken);
-        setPermissions(decoded.permissions || []);
+        const perms = decoded.permissions || [];
+        setPermissions(perms);
+        
+        // Check if this is a limited token for 2FA setup
+        if (perms.length === 1 && perms[0] === 'auth:setup_2fa') {
+            setIsAuthenticated(true);
+            navigate('/setup-2fa');
+            return;
+        }
     } catch (e) {
         console.error("Failed to decode token on login", e);
     }

@@ -1,11 +1,15 @@
 from datetime import timedelta, datetime
 from typing import Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Form, Request
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from jose import jwt, JWTError
 from pydantic import ValidationError
 import pyotp
+import httpx
+import secrets
+from urllib.parse import urlencode
 
 from app.core import security
 from app.core.config import settings
@@ -16,9 +20,15 @@ from app.schemas.user import UserCreate, User as UserSchema, UserSignup
 from app.api import deps
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.templates import get_verification_email_template
-import os
+from app.models.system import SystemSettings
 
 router = APIRouter()
+
+async def get_system_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
+    data = await db.system_settings.find_one({"_id": "current"})
+    if not data:
+        return SystemSettings()
+    return SystemSettings(**data)
 
 @router.post("/login/access-token", response_model=Token, summary="Login to get access token")
 async def login_access_token(
@@ -47,6 +57,16 @@ async def login_access_token(
             detail="Inactive user",
         )
     
+    system_config = await get_system_settings(db)
+
+    # Check Email Verification
+    if system_config.enforce_email_verification and not user.get("is_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Email not verified",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     # Check 2FA
     if user.get("totp_enabled", False):
         if not otp:
@@ -63,10 +83,13 @@ async def login_access_token(
                 detail="Invalid OTP code",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+    elif system_config.enforce_2fa:
+        # User has no 2FA but it is enforced -> Issue limited token for setup
+        permissions = ["auth:setup_2fa"]
+    else:
+        permissions = user.get("permissions", [])
     
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    permissions = user.get("permissions", [])
         
     access_token = security.create_access_token(
         user["username"], 
@@ -92,8 +115,8 @@ async def signup(
     """
     Signup a new user.
     """
-    config = await db.system_settings.find_one({"_id": "signup_config"})
-    signup_enabled = config.get("enabled", True) if config else True
+    system_config = await get_system_settings(db)
+    signup_enabled = system_config.allow_public_registration
     
     if not signup_enabled:
         raise HTTPException(
@@ -204,8 +227,8 @@ async def create_user(
     Create a new user in the system.
     """
     # Check if signup is enabled
-    config = await db.system_settings.find_one({"_id": "signup_config"})
-    signup_enabled = config.get("enabled", True) if config else True
+    system_config = await get_system_settings(db)
+    signup_enabled = system_config.allow_public_registration
     
     if not signup_enabled:
         raise HTTPException(
@@ -334,4 +357,161 @@ async def verify_email(
     )
     
     return {"message": "Email successfully verified"}
+
+@router.post("/resend-verification", summary="Resend verification email (Public)")
+async def resend_verification_email_public(
+    email: str = Body(..., embed=True),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+) -> Any:
+    """
+    Resend verification email to the user with the given email address.
+    This endpoint is public to allow unverified users to request a new token.
+    """
+    user = await db.users.find_one({"email": email})
+    if not user:
+        # Return success even if user not found to prevent email enumeration
+        return {"message": "If an account with this email exists, a verification email has been sent."}
+        
+    if user.get("is_verified"):
+        return {"message": "Email already verified"}
+        
+    if not settings.SMTP_HOST:
+        raise HTTPException(
+            status_code=501,
+            detail="Email server not configured",
+        )
+        
+    token = security.create_email_verification_token(user["email"])
+    link = f"{settings.FRONTEND_BASE_URL}/verify-email?token={token}"
+    
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
+    logo_path = os.path.join(project_root, "assets", "logo.png")
+    
+    html_content = get_verification_email_template(link, settings.PROJECT_NAME)
+    email_provider = EmailProvider()
+    await email_provider.send(
+        destination=user["email"],
+        subject=f"Verify your email for {settings.PROJECT_NAME}",
+        message=f"Please verify your email by clicking this link: {link}",
+        html_message=html_content,
+        logo_path=logo_path
+    )
+    
+    return {"message": "If an account with this email exists, a verification email has been sent."}
+
+
+@router.get("/login/oidc/authorize")
+async def login_oidc_authorize(
+    request: Request,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    system_config = await get_system_settings(db)
+    if not system_config.oidc_enabled:
+        raise HTTPException(status_code=400, detail="OIDC is not enabled")
+    
+    if not system_config.oidc_client_id or not system_config.oidc_authorization_endpoint:
+        raise HTTPException(status_code=500, detail="OIDC is not properly configured")
+
+    # Construct redirect URI (callback to backend)
+    redirect_uri = str(request.url_for("login_oidc_callback"))
+    
+    # Generate state to prevent CSRF
+    state = secrets.token_urlsafe(32)
+    
+    params = {
+        "client_id": system_config.oidc_client_id,
+        "response_type": "code",
+        "scope": system_config.oidc_scopes,
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    
+    url = f"{system_config.oidc_authorization_endpoint}?{urlencode(params)}"
+    return RedirectResponse(url)
+
+@router.get("/login/oidc/callback")
+async def login_oidc_callback(
+    request: Request,
+    code: str,
+    state: Optional[str] = None,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    system_config = await get_system_settings(db)
+    if not system_config.oidc_enabled:
+        raise HTTPException(status_code=400, detail="OIDC is not enabled")
+
+    redirect_uri = str(request.url_for("login_oidc_callback"))
+    
+    token_data = {
+        "client_id": system_config.oidc_client_id,
+        "client_secret": system_config.oidc_client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    }
+    
+    async with httpx.AsyncClient() as client:
+        # Exchange code for token
+        response = await client.post(system_config.oidc_token_endpoint, data=token_data)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to retrieve token from provider")
+        
+        tokens = response.json()
+        access_token = tokens.get("access_token")
+        
+        # Get user info
+        user_info_response = await client.get(
+            system_config.oidc_userinfo_endpoint,
+            headers={"Authorization": f"Bearer {access_token}"}
+        )
+        if user_info_response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to retrieve user info")
+            
+        user_info = user_info_response.json()
+        
+    email = user_info.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Email not provided by OIDC provider")
+        
+    # Find or create user
+    user = await db.users.find_one({"email": email})
+    if not user:
+        # Create new user
+        user_in = UserCreate(
+            email=email,
+            username=user_info.get("preferred_username", email.split("@")[0]),
+            password=secrets.token_urlsafe(32), # Random password
+            full_name=user_info.get("name"),
+            is_active=True,
+            is_verified=True # Trusted provider
+        )
+        user_data = user_in.dict()
+        user_data["hashed_password"] = security.get_password_hash(user_data["password"])
+        del user_data["password"]
+        user_data["created_at"] = datetime.utcnow()
+        user_data["permissions"] = [] # Default permissions
+        
+        result = await db.users.insert_one(user_data)
+        user = await db.users.find_one({"_id": result.inserted_id})
+    
+    # Check 2FA enforcement (same logic as login)
+    permissions = user.get("permissions", [])
+    if system_config.enforce_2fa and not user.get("totp_enabled", False):
+        permissions = ["auth:setup_2fa"]
+        
+    # Create tokens
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = security.create_access_token(
+        user["username"], 
+        permissions=permissions,
+        expires_delta=access_token_expires
+    )
+    refresh_token = security.create_refresh_token(user["username"])
+    
+    # Redirect to frontend with tokens
+    # We'll use a hash fragment to pass the tokens securely
+    frontend_url = f"{settings.FRONTEND_BASE_URL}/login/callback#access_token={access_token}&refresh_token={refresh_token}"
+    
+    return RedirectResponse(frontend_url)
 

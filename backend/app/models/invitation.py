@@ -16,3 +16,16 @@ class ProjectInvitation(BaseModel):
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True
+
+class SystemInvitation(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
+    email: EmailStr
+    token: str
+    invited_by: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
+    is_used: bool = False
+
+    class Config:
+        populate_by_name = True
+        arbitrary_types_allowed = True

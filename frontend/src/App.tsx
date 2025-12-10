@@ -2,6 +2,11 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
+import VerifyEmail from './pages/VerifyEmail'
+import ResendVerification from './pages/ResendVerification'
+import Setup2FA from './pages/Setup2FA'
+import AcceptInvite from './pages/AcceptInvite'
+import LoginCallback from './pages/LoginCallback'
 import Dashboard from './pages/Dashboard'
 import UsersPage from './pages/Users'
 import TeamsPage from './pages/Teams'
@@ -16,10 +21,31 @@ import { AuthProvider, useAuth, RequirePermission } from './context/AuthContext'
 import { Toaster } from "@/components/ui/sonner"
 import { ThemeProvider } from "next-themes"
 import { Spinner } from "@/components/ui/spinner"
-import { getPublicConfig } from '@/lib/api'
+import { getPublicConfig, getMe, getSystemSettings } from '@/lib/api'
 import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 const queryClient = new QueryClient()
+
+function Force2FAGuard({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, permissions } = useAuth();
+  const location = useLocation();
+
+  // Check for limited token first
+  if (permissions.length === 1 && permissions[0] === 'auth:setup_2fa') {
+      if (location.pathname === '/setup-2fa') {
+          return <>{children}</>;
+      }
+      return <Navigate to="/setup-2fa" replace />;
+  }
+
+  // If we are on setup page but have full permissions, redirect to dashboard
+  if (location.pathname === '/setup-2fa' && !(permissions.length === 1 && permissions[0] === 'auth:setup_2fa')) {
+      return <Navigate to="/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -37,7 +63,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  return <>{children}</>;
+  return <Force2FAGuard>{children}</Force2FAGuard>;
 }
 
 function SignupRoute() {
@@ -58,7 +84,16 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/login/callback" element={<LoginCallback />} />
       <Route path="/signup" element={<SignupRoute />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/resend-verification" element={<ResendVerification />} />
+      <Route path="/accept-invite" element={<AcceptInvite />} />
+      <Route path="/setup-2fa" element={
+        <ProtectedRoute>
+          <Setup2FA />
+        </ProtectedRoute>
+      } />
       <Route element={
         <ProtectedRoute>
           <DashboardLayout />

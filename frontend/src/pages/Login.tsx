@@ -13,19 +13,28 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showOTP, setShowOTP] = useState(false)
+  const [showResendLink, setShowResendLink] = useState(false)
   const [signupEnabled, setSignupEnabled] = useState(false)
+  const [oidcConfig, setOidcConfig] = useState<{ enabled: boolean, providerName: string }>({ enabled: false, providerName: 'GitLab' })
   const { login } = useAuth()
   const location = useLocation()
   const message = location.state?.message
 
   useEffect(() => {
-    getPublicConfig().then(config => setSignupEnabled(config.allow_public_registration)).catch(console.error)
+    getPublicConfig().then(config => {
+      setSignupEnabled(config.allow_public_registration)
+      setOidcConfig({
+        enabled: config.oidc_enabled || false,
+        providerName: config.oidc_provider_name || 'GitLab'
+      })
+    }).catch(console.error)
   }, [])
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setIsLoading(true)
     setError(null)
+    setShowResendLink(false)
 
     const formData = new FormData(event.currentTarget)
     const username = formData.get('username') as string
@@ -46,6 +55,12 @@ export default function Login() {
         if (error.response.status === 401 && error.response.data?.detail === '2FA required') {
           setShowOTP(true)
           setError('Please enter your 2FA code')
+          return;
+        }
+
+        if (error.response.status === 401 && error.response.data?.detail === 'Email not verified') {
+          setError('Email not verified.')
+          setShowResendLink(true)
           return;
         }
         
@@ -95,6 +110,13 @@ export default function Login() {
               {error && (
                 <div className="text-sm text-destructive">
                   {error}
+                  {showResendLink && (
+                    <div className="mt-1">
+                      <Link to="/resend-verification" className="underline hover:text-destructive/80">
+                        Resend verification email
+                      </Link>
+                    </div>
+                  )}
                 </div>
               )}
               {message && (
@@ -103,6 +125,29 @@ export default function Login() {
                 </div>
               )}
             </div>
+
+            {oidcConfig.enabled && (
+              <div className="mt-4">
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-background px-2 text-muted-foreground">
+                      Or continue with
+                    </span>
+                  </div>
+                </div>
+                <Button 
+                  variant="outline" 
+                  type="button" 
+                  className="w-full mt-4"
+                  onClick={() => window.location.href = `${import.meta.env.VITE_API_URL || '/api/v1'}/auth/login/oidc/authorize`}
+                >
+                  {oidcConfig.providerName}
+                </Button>
+              </div>
+            )}
           </CardContent>
           <CardFooter className="flex justify-between">
             {showOTP ? (

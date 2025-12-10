@@ -26,9 +26,10 @@ async def get_current_user(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
         username: str = payload.get("sub")
+        permissions: list[str] = payload.get("permissions", [])
         if username is None:
             raise credentials_exception
-        token_data = TokenPayload(sub=username)
+        token_data = TokenPayload(sub=username, permissions=permissions)
     except (JWTError, ValidationError):
         raise credentials_exception
     
@@ -45,7 +46,13 @@ async def get_current_user(
             if iat < last_logout_ts:
                 raise credentials_exception
 
-    return User(**user)
+    user_obj = User(**user)
+    
+    # If token has restricted permissions (e.g. only setup_2fa), override user permissions
+    if token_data.permissions and "auth:setup_2fa" in token_data.permissions and len(token_data.permissions) == 1:
+        user_obj.permissions = token_data.permissions
+        
+    return user_obj
 
 async def get_current_active_user(
     current_user: User = Depends(get_current_user),

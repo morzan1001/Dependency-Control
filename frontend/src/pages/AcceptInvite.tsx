@@ -1,62 +1,104 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { signup, login as apiLogin } from '@/lib/api'
+import { validateInvitation, acceptInvitation, login as apiLogin } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { AxiosError } from 'axios'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { Spinner } from '@/components/ui/spinner'
 
-export default function Signup() {
-  const [isLoading, setIsLoading] = useState(false)
+export default function AcceptInvite() {
+  const [searchParams] = useSearchParams()
+  const token = searchParams.get('token')
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [email, setEmail] = useState<string | null>(null)
   const navigate = useNavigate()
   const { login } = useAuth()
 
+  useEffect(() => {
+    if (!token) {
+      setError("Invalid invitation link.")
+      setIsLoading(false)
+      return
+    }
+
+    validateInvitation(token)
+      .then((data) => {
+        setEmail(data.email)
+        setIsLoading(false)
+      })
+      .catch((err) => {
+        const error = err as AxiosError<{ detail: string }>
+        setError(error.response?.data?.detail || "Invalid or expired invitation.")
+        setIsLoading(false)
+      })
+  }, [token])
+
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setIsLoading(true)
+    if (!token) return
+
+    setIsSubmitting(true)
     setError(null)
 
     const formData = new FormData(event.currentTarget)
     const username = formData.get('username') as string
-    const email = formData.get('email') as string
     const password = formData.get('password') as string
     const confirmPassword = formData.get('confirmPassword') as string
 
     if (password !== confirmPassword) {
       setError("Passwords do not match")
-      setIsLoading(false)
+      setIsSubmitting(false)
       return
     }
 
     try {
-      await signup(username, email, password)
+      await acceptInvitation(token, username, password)
       
-      // Auto-login after signup
+      // Auto-login
       try {
         const data = await apiLogin(username, password)
         login(data.access_token, data.refresh_token)
-        // The AuthContext will handle redirection to /setup-2fa if needed
       } catch (loginErr) {
-        // If auto-login fails, redirect to login page
         navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
       }
 
     } catch (err) {
       const error = err as AxiosError<{ detail: string }>
-      console.error('Signup error:', error);
-      
-      if (error.response) {
-        setError(error.response.data?.detail || `Signup failed with status ${error.response.status}`);
-      } else {
-        setError('Network error or server unreachable');
-      }
+      setError(error.response?.data?.detail || "Failed to create account.")
     } finally {
-      setIsLoading(false)
+      setIsSubmitting(false)
     }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-muted/50">
+        <Spinner size={48} />
+      </div>
+    )
+  }
+
+  if (error && !email) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-muted/50">
+        <Card className="w-[350px]">
+          <CardHeader className="text-center">
+            <CardTitle className="text-destructive">Error</CardTitle>
+            <CardDescription>{error}</CardDescription>
+          </CardHeader>
+          <CardFooter className="flex justify-center">
+            <Button asChild>
+              <Link to="/login">Go to Login</Link>
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    )
   }
 
   return (
@@ -66,21 +108,21 @@ export default function Signup() {
           <div className="flex justify-center mb-2">
             <img src="/logo.png" alt="Logo" className="h-12 w-auto object-contain" />
           </div>
-          <CardTitle>Create Account</CardTitle>
+          <CardTitle>Accept Invitation</CardTitle>
           <CardDescription>
-            Enter your details to create a new account.
+            Create your account for {email}
           </CardDescription>
         </CardHeader>
         <form onSubmit={onSubmit}>
           <CardContent>
             <div className="grid w-full items-center gap-4">
               <div className="flex flex-col space-y-1.5">
-                <Label htmlFor="username">Username</Label>
-                <Input id="username" name="username" required />
+                <Label htmlFor="email">Email</Label>
+                <Input id="email" value={email || ''} disabled />
               </div>
               <div className="flex flex-col space-y-1.5">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" name="email" type="email" required />
+                <Label htmlFor="username">Username</Label>
+                <Input id="username" name="username" required />
               </div>
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="password">Password</Label>
@@ -98,17 +140,14 @@ export default function Signup() {
             </div>
           </CardContent>
           <CardFooter className="flex flex-col gap-2">
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? (
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? (
                 <>
                   <Spinner className="mr-2 h-4 w-4 text-primary-foreground" />
                   Creating account...
                 </>
-              ) : "Sign Up"}
+              ) : "Create Account"}
             </Button>
-            <div className="text-sm text-center text-muted-foreground">
-              Already have an account? <Link to="/login" className="text-primary hover:underline">Login</Link>
-            </div>
           </CardFooter>
         </form>
       </Card>

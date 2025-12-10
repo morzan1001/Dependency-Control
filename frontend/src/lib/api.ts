@@ -63,12 +63,22 @@ export const refreshToken = async (token: string) => {
 }
 
 export const getPublicConfig = async () => {
-  const response = await api.get<{ allow_public_registration: boolean, enforce_2fa: boolean }>('/system/public-config');
+  const response = await api.get<{ allow_public_registration: boolean, enforce_2fa: boolean, enforce_email_verification: boolean }>('/system/public-config');
   return response.data;
 };
 
 export const signup = async (username: string, email: string, password: string) => {
   const response = await api.post<User>('/signup', { username, email, password });
+  return response.data;
+};
+
+export const verifyEmail = async (token: string) => {
+  const response = await api.get<{ message: string }>(`/verify-email?token=${token}`);
+  return response.data;
+};
+
+export const resendVerificationEmail = async (email: string) => {
+  const response = await api.post<{ message: string }>('/resend-verification', { email });
   return response.data;
 };
 
@@ -460,6 +470,17 @@ export interface SystemSettings {
   slack_bot_token?: string;
   mattermost_bot_token?: string;
   mattermost_url?: string;
+  
+  // OIDC
+  oidc_enabled: boolean;
+  oidc_provider_name: string;
+  oidc_client_id?: string;
+  oidc_client_secret?: string;
+  oidc_issuer?: string;
+  oidc_authorization_endpoint?: string;
+  oidc_token_endpoint?: string;
+  oidc_userinfo_endpoint?: string;
+  oidc_scopes: string;
 }
 
 export const getSystemSettings = async () => {
@@ -558,6 +579,22 @@ export const removeTeamMember = async (teamId: string, userId: string) => {
 // Missing User Endpoints
 export const deleteUser = async (userId: string) => {
   await api.delete(`/users/${userId}`);
+};
+
+// Invitation Endpoints
+export const inviteUser = async (email: string) => {
+  const response = await api.post<{ message: string }>('/invitations/system', { email });
+  return response.data;
+};
+
+export const validateInvitation = async (token: string) => {
+  const response = await api.get<{ email: string }>(`/invitations/system/${token}`);
+  return response.data;
+};
+
+export const acceptInvitation = async (token: string, username: string, password: string) => {
+  const response = await api.post<User>('/invitations/system/accept', { token, username, password });
+  return response.data;
 };
 
 // Search Endpoints

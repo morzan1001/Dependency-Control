@@ -177,6 +177,12 @@ async def setup_2fa(
     """
     Generate a new 2FA secret and QR code.
     """
+    # Allow if user has full permissions OR if they are in setup mode
+    if "auth:setup_2fa" in current_user.permissions and len(current_user.permissions) == 1:
+        pass # Allowed
+    elif not current_user.is_active: # Should be caught by deps but double check
+         raise HTTPException(status_code=400, detail="Inactive user")
+    
     secret = pyotp.random_base32()
     
     # Save secret to user but don't enable yet
@@ -207,6 +213,10 @@ async def enable_2fa(
     """
     Verify OTP and enable 2FA.
     """
+    # Allow if user has full permissions OR if they are in setup mode
+    if "auth:setup_2fa" in current_user.permissions and len(current_user.permissions) == 1:
+        pass # Allowed
+    
     user = await db.users.find_one({"_id": current_user.id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

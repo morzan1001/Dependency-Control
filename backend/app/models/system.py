@@ -25,5 +25,16 @@ class SystemSettings(BaseModel):
     mattermost_bot_token: Optional[str] = None
     mattermost_url: Optional[str] = None
 
+    # OIDC / SSO
+    oidc_enabled: bool = False
+    oidc_provider_name: str = "GitLab"
+    oidc_client_id: Optional[str] = None
+    oidc_client_secret: Optional[str] = None
+    oidc_issuer: Optional[str] = None # e.g. https://gitlab.com
+    oidc_authorization_endpoint: Optional[str] = None
+    oidc_token_endpoint: Optional[str] = None
+    oidc_userinfo_endpoint: Optional[str] = None
+    oidc_scopes: str = "openid profile email"
+
     class Config:
         populate_by_name = True
