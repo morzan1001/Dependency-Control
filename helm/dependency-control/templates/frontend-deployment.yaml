@@ -25,6 +25,8 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      serviceAccountName: {{ include "dependency-control.serviceAccountName" . }}
+      automountServiceAccountToken: false
       securityContext:
         fsGroup: {{ .Values.frontend.securityContext.fsGroup }}
       containers:
@@ -60,6 +62,6 @@ spec:
             failureThreshold: {{ .Values.frontend.probes.readiness.failureThreshold }}
           env:
             - name: VITE_API_URL
-              value: "/api/v1"
+              value: "{{ .Values.frontend.env.apiUrl }}"
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}

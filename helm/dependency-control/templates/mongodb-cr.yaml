@@ -49,7 +49,7 @@ spec:
 {{ toYaml .Values.mongodb.resources | indent 16 }}
               securityContext:
                 runAsNonRoot: true
-                runAsUser: 2000 # MongoDB Community images often use 2000 or 999
+                runAsUser: 2000 
       volumeClaimTemplates:
         - metadata:
             name: data-volume

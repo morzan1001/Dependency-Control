@@ -24,6 +24,8 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      serviceAccountName: {{ include "dependency-control.serviceAccountName" . }}
+      automountServiceAccountToken: false
       # Ensure pods are spread across nodes for HA
       affinity:
         podAntiAffinity:

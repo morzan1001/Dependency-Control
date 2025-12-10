@@ -3,6 +3,12 @@ global:
   imageRegistry: ""
   imagePullSecrets: []
 
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
 # Frontend Application Settings
 frontend:
   image:
@@ -33,6 +39,9 @@ frontend:
     capabilities:
       drop:
         - ALL
+
+  env:
+    apiUrl: "/api/v1"
         
   autoscaling:
     enabled: true
@@ -122,8 +131,11 @@ backend:
 # MongoDB Community Operator Settings
 mongodb-operator:
   enabled: true
+  serviceAccount:
+    create: true
+    automountServiceAccountToken: true
   operator:
-    watchNamespace: "dependency-control" # Watch all namespaces or set to specific
+    watchNamespace: "dependency-control"
     podLabels:
       app.kubernetes.io/name: mongodb-kubernetes-operator
 
