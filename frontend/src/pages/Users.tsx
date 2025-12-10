@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getUsers, createUser, updateUser, deleteUser, inviteUser, getProjects, getTeams, User } from '@/lib/api';
+import { getUsers, updateUser, deleteUser, inviteUser, getProjects, getTeams, getSystemSettings, User } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Check, X, Shield, Users as UsersIcon, Folder, Trash2, Mail, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Check, X, Shield, Users as UsersIcon, Folder, Trash2, Mail, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,6 @@ import {
 import { Link } from 'react-router-dom';
 import { toast } from "sonner"
 import { Spinner } from '@/components/ui/spinner';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 // Grouped permissions
 const PERMISSION_GROUPS = [
@@ -79,17 +78,12 @@ const PERMISSION_GROUPS = [
 ];
 
 export default function UsersPage() {
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
-  
-  // Create form state
-  const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
 
   // Invite form state
   const [inviteEmail, setInviteEmail] = useState("");
@@ -104,15 +98,28 @@ export default function UsersPage() {
     queryFn: () => getUsers(page * limit, limit),
   });
 
+  const { data: systemSettings } = useQuery({
+    queryKey: ['systemSettings'],
+    queryFn: getSystemSettings,
+  });
+
   const inviteUserMutation = useMutation({
     mutationFn: (email: string) => inviteUser(email),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      setIsInviteDialogOpen(false);
-      setInviteEmail("");
-      toast.success("Invitation sent", {
-        description: "An invitation email has been sent to the user.",
-      });
+      
+      if (!systemSettings?.smtp_host && data.link) {
+        setInviteLink(data.link);
+        toast.success("Invitation created", {
+          description: "Please copy the invitation link below.",
+        });
+      } else {
+        setIsInviteDialogOpen(false);
+        setInviteEmail("");
+        toast.success("Invitation sent", {
+          description: "An invitation email has been sent to the user.",
+        });
+      }
     },
     onError: (error: any) => {
       toast.error("Error", {
@@ -146,25 +153,6 @@ export default function UsersPage() {
     queryFn: getTeams,
   });
 
-  const createUserMutation = useMutation({
-    mutationFn: createUser,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      setIsCreateDialogOpen(false);
-      setUsername("");
-      setEmail("");
-      setPassword("");
-      toast.success("User created", {
-        description: "The user has been successfully created.",
-      });
-    },
-    onError: (error: any) => {
-      toast.error("Error", {
-        description: error.response?.data?.detail || "Failed to create user.",
-      });
-    },
-  });
-
   const updateUserMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: any }) => updateUser(id, data),
     onSuccess: () => {
@@ -180,14 +168,9 @@ export default function UsersPage() {
     },
   });
 
-  const handleCreateUser = (e: React.FormEvent) => {
+  const handleInviteUser = (e: React.FormEvent) => {
     e.preventDefault();
-    createUserMutation.mutate({
-      username,
-      email,
-      password,
-      permissions: [],
-    });
+    inviteUserMutation.mutate(inviteEmail);
   };
 
   const handlePermissionChange = (permission: string, hasPermission: boolean) => {
@@ -227,7 +210,17 @@ export default function UsersPage() {
 
   const getUserProjects = (userId: string) => {
     if (!projects) return [];
-    return projects.filter(p => p.owner_id === userId || p.members?.some(m => m.user_id === userId));
+    
+    // Find teams this user belongs to
+    const userTeamIds = teams 
+      ? teams.filter(t => t.members.some(m => m.user_id === userId)).map(t => t._id)
+      : [];
+
+    return projects.filter(p => 
+      p.owner_id === userId || 
+      p.members?.some(m => m.user_id === userId) ||
+      (p.team_id && userTeamIds.includes(p.team_id))
+    );
   };
   
   const getUserTeams = (userId: string) => {
@@ -253,7 +246,13 @@ export default function UsersPage() {
         <h1 className="text-3xl font-bold tracking-tight">Users</h1>
         <div className="flex gap-2">
           {hasPermission('user:create') && (
-            <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
+            <Dialog open={isInviteDialogOpen} onOpenChange={(open) => {
+              setIsInviteDialogOpen(open);
+              if (!open) {
+                setInviteLink(null);
+                setInviteEmail("");
+              }
+            }}>
               <DialogTrigger asChild>
                 <Button variant="outline">
                   <Mail className="mr-2 h-4 w-4" />
@@ -267,74 +266,39 @@ export default function UsersPage() {
                     Send an invitation email to a new user. They will be able to set their own password.
                   </DialogDescription>
                 </DialogHeader>
-                <form onSubmit={handleInviteUser} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="invite-email">Email</Label>
-                    <Input
-                      id="invite-email"
-                      type="email"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      required
-                    />
+                
+                {inviteLink ? (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-muted rounded-md break-all text-sm font-mono">
+                      {inviteLink}
+                    </div>
+                    <Button 
+                      className="w-full" 
+                      onClick={() => {
+                        navigator.clipboard.writeText(inviteLink);
+                        toast.success("Link copied to clipboard");
+                      }}
+                    >
+                      Copy Link
+                    </Button>
                   </div>
-                  <Button type="submit" className="w-full" disabled={inviteUserMutation.isPending}>
-                    {inviteUserMutation.isPending ? "Sending..." : "Send Invitation"}
-                  </Button>
-                </form>
-              </DialogContent>
-            </Dialog>
-          )}
-
-          {hasPermission('user:create') && (
-            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create User
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create New User</DialogTitle>
-                  <DialogDescription>
-                    Manually create a new user account.
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleCreateUser} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="username">Username</Label>
-                    <Input
-                      id="username"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Password</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={createUserMutation.isPending}>
-                    {createUserMutation.isPending ? "Creating..." : "Create User"}
-                  </Button>
-                </form>
+                ) : (
+                  <form onSubmit={handleInviteUser} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="invite-email">Email</Label>
+                      <Input
+                        id="invite-email"
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <Button type="submit" className="w-full" disabled={inviteUserMutation.isPending}>
+                      {inviteUserMutation.isPending ? "Sending..." : "Send Invitation"}
+                    </Button>
+                  </form>
+                )}
               </DialogContent>
             </Dialog>
           )}
@@ -423,26 +387,30 @@ export default function UsersPage() {
               </tbody>
             </table>
           </div>
-          <div className="flex items-center justify-end space-x-2 py-4">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => p + 1)}
-              disabled={!users || users.length < limit}
-            >
-              Next
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
+          {!(page === 0 && (!users || users.length < limit)) && (
+            <div className="flex items-center justify-end space-x-2 py-4">
+              {page > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+              )}
+              {users && users.length >= limit && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -1,9 +1,9 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getProject, getMe } from '@/lib/api'
+import { getProject, getMe, getProjectBranches, exportProjectCsv, exportProjectSbom } from '@/lib/api'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Download } from 'lucide-react'
+import { ArrowLeft, Download, Filter } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { toast } from "sonner"
 import { ProjectOverview } from '@/components/project/ProjectOverview'
@@ -11,11 +11,25 @@ import { ProjectScans } from '@/components/project/ProjectScans'
 import { ProjectWaivers } from '@/components/project/ProjectWaivers'
 import { ProjectMembers } from '@/components/project/ProjectMembers'
 import { ProjectSettings } from '@/components/project/ProjectSettings'
-import { exportProjectCsv, exportProjectSbom } from '@/lib/api'
+import { useState, useEffect } from 'react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 
 export default function ProjectDetails() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [selectedBranches, setSelectedBranches] = useState<string[]>([])
+  const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState("overview")
   
   const { data: project, isLoading: isLoadingProject } = useQuery({
     queryKey: ['project', id],
@@ -23,10 +37,45 @@ export default function ProjectDetails() {
     enabled: !!id
   })
 
+  const { data: branches } = useQuery({
+    queryKey: ['project-branches', id],
+    queryFn: () => getProjectBranches(id!),
+    enabled: !!id
+  })
+
   const { data: user } = useQuery({
     queryKey: ['me'],
     queryFn: getMe,
   })
+
+  const allBranches = branches || []
+
+  // Initialize selected branches with default branch or all branches
+  useEffect(() => {
+    if (allBranches.length > 0 && selectedBranches.length === 0) {
+      if (project?.default_branch && allBranches.includes(project.default_branch)) {
+        setSelectedBranches([project.default_branch])
+      } else {
+        setSelectedBranches(allBranches)
+      }
+    }
+  }, [allBranches, project])
+
+  const toggleBranch = (branch: string) => {
+      setSelectedBranches(prev => 
+          prev.includes(branch) 
+              ? prev.filter(b => b !== branch)
+              : [...prev, branch]
+      )
+  }
+
+  const toggleAllBranches = () => {
+      if (selectedBranches.length === allBranches.length) {
+          setSelectedBranches([])
+      } else {
+          setSelectedBranches(allBranches)
+      }
+  }
 
   const handleExportCsv = async () => {
     try {
@@ -105,17 +154,71 @@ export default function ProjectDetails() {
         </div>
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="scans">Scans</TabsTrigger>
-          <TabsTrigger value="waivers">Waivers</TabsTrigger>
-          <TabsTrigger value="members">Members</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <div className="flex items-center justify-between">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="scans">Scans</TabsTrigger>
+            <TabsTrigger value="waivers">Waivers</TabsTrigger>
+            <TabsTrigger value="members">Members</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
+          </TabsList>
+          
+          {activeTab === 'overview' && (
+            <Dialog open={isBranchFilterOpen} onOpenChange={setIsBranchFilterOpen}>
+              <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2">
+                      <Filter className="h-4 w-4" />
+                      Filter Branches
+                      {selectedBranches.length < allBranches.length && (
+                          <span className="bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                              {selectedBranches.length}
+                          </span>
+                      )}
+                  </Button>
+              </DialogTrigger>
+              <DialogContent>
+                  <DialogHeader>
+                      <DialogTitle>Filter Branches</DialogTitle>
+                      <DialogDescription>
+                          Select which branches to include in the analysis and charts.
+                      </DialogDescription>
+                  </DialogHeader>
+                  <div className="py-4 space-y-4">
+                      <div className="flex items-center space-x-2 border-b pb-2">
+                          <Checkbox 
+                              id="select-all" 
+                              checked={selectedBranches.length === allBranches.length && allBranches.length > 0}
+                              onCheckedChange={toggleAllBranches}
+                          />
+                          <Label htmlFor="select-all" className="font-bold cursor-pointer">Select All</Label>
+                      </div>
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
+                          {allBranches.map(branch => (
+                              <div key={branch} className="flex items-center space-x-2">
+                                  <Checkbox 
+                                      id={`branch-${branch}`}
+                                      checked={selectedBranches.includes(branch)}
+                                      onCheckedChange={() => toggleBranch(branch)}
+                                  />
+                                  <Label htmlFor={`branch-${branch}`} className="cursor-pointer font-normal">{branch}</Label>
+                              </div>
+                          ))}
+                          {allBranches.length === 0 && (
+                              <p className="text-sm text-muted-foreground">No branches found.</p>
+                          )}
+                      </div>
+                  </div>
+                  <DialogFooter>
+                      <Button onClick={() => setIsBranchFilterOpen(false)}>Done</Button>
+                  </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
+        </div>
         
         <TabsContent value="overview" className="space-y-4">
-          <ProjectOverview projectId={project._id} />
+          <ProjectOverview projectId={project._id} selectedBranches={selectedBranches} />
         </TabsContent>
         
         <TabsContent value="scans" className="space-y-4">

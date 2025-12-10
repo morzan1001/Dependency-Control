@@ -16,6 +16,7 @@ class ProjectUpdate(BaseModel):
     team_id: Optional[str] = Field(None, description="Transfer project to a team")
     active_analyzers: Optional[List[str]] = Field(None, description="Updated list of active analyzers")
     retention_days: Optional[int] = Field(None, description="Number of days to keep scan history", ge=1)
+    default_branch: Optional[str] = Field(None, description="Default branch to show in dashboard")
     owner_notification_preferences: Optional[Dict[str, List[str]]] = Field(None, description="Notification preferences for the owner")
 
 class ProjectMemberInvite(BaseModel):

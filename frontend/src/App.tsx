@@ -22,9 +22,8 @@ import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Spinner } from "@/components/ui/spinner"
-import { getPublicConfig, getMe, getSystemSettings } from '@/lib/api'
+import { getPublicConfig } from '@/lib/api'
 import { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
@@ -49,7 +48,7 @@ const queryClient = new QueryClient({
 })
 
 function Force2FAGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, permissions } = useAuth();
+  const { permissions } = useAuth();
   const location = useLocation();
 
   // Check for limited token first

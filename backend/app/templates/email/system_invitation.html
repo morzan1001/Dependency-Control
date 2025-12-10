@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Invitation to {{ project_name }}{% endblock %}
+
+{% block content %}
+<h2>You've been invited!</h2>
+<p><strong>{{ inviter_name }}</strong> has invited you to join <strong>{{ project_name }}</strong>.</p>
+<p>Click the button below to accept the invitation and set up your account:</p>
+<div style="text-align: center;">
+    <a href="{{ link }}" class="button">Accept Invitation</a>
+</div>
+<p style="margin-top: 30px; font-size: 14px; color: #666;">
+    If you were not expecting this invitation, you can ignore this email.
+</p>
+{% endblock %}

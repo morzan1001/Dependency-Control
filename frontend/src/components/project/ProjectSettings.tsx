@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { updateProject, rotateProjectApiKey, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getTeams, getSystemSettings, Project } from '@/lib/api'
+import { updateProject, rotateProjectApiKey, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getTeams, getSystemSettings, Project, getProjectBranches } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -55,6 +55,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [teamId, setTeamId] = useState<string | undefined>(project.team_id || "none")
   const [retentionDays, setRetentionDays] = useState(project.retention_days || 90)
   const [analyzers, setAnalyzers] = useState<string[]>(project.active_analyzers || [])
+  const [defaultBranch, setDefaultBranch] = useState<string | undefined>(project.default_branch)
   
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
@@ -63,6 +64,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const { data: teams } = useQuery({
     queryKey: ['teams'],
     queryFn: getTeams,
+  })
+
+  const { data: branches } = useQuery({
+    queryKey: ['project-branches', projectId],
+    queryFn: () => getProjectBranches(projectId),
   })
 
   const { data: systemSettings } = useQuery({
@@ -149,7 +155,8 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       name,
       team_id: teamId === "none" ? null : teamId,
       retention_days: retentionDays,
-      active_analyzers: analyzers
+      active_analyzers: analyzers,
+      default_branch: defaultBranch === "none" ? null : defaultBranch
     })
   }
 
@@ -207,6 +214,23 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                             ))}
                         </SelectContent>
                     </Select>
+                </div>
+                <div className="grid gap-2">
+                    <Label htmlFor="defaultBranch">Default Branch</Label>
+                    <Select value={defaultBranch || "none"} onValueChange={(val) => setDefaultBranch(val === "none" ? undefined : val)}>
+                        <SelectTrigger>
+                            <SelectValue placeholder="Select default branch" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="none">None (Show All)</SelectItem>
+                            {branches?.map((branch) => (
+                                <SelectItem key={branch} value={branch}>{branch}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                        This branch will be selected by default on the dashboard.
+                    </p>
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="retention">Retention Period (Days)</Label>

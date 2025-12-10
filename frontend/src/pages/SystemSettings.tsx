@@ -83,7 +83,6 @@ export default function SystemSettings() {
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
-          <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="space-y-4">
@@ -344,6 +343,57 @@ export default function SystemSettings() {
               </Button>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Chat Notifications</CardTitle>
+              <CardDescription>
+                Configure Slack and Mattermost integrations.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-2">
+                  <Label htmlFor="slack-token">Slack Bot Token</Label>
+                  <Input 
+                      id="slack-token" 
+                      type="password"
+                      value={formData.slack_bot_token || ''}
+                      onChange={(e) => handleInputChange('slack_bot_token', e.target.value)}
+                  />
+              </div>
+              <hr className="my-4" />
+              <div className="grid gap-2">
+                  <Label htmlFor="mattermost-url">Mattermost URL</Label>
+                  <Input 
+                      id="mattermost-url" 
+                      placeholder="https://mattermost.example.com"
+                      value={formData.mattermost_url || ''}
+                      onChange={(e) => handleInputChange('mattermost_url', e.target.value)}
+                  />
+              </div>
+              <div className="grid gap-2">
+                  <Label htmlFor="mattermost-token">Mattermost Bot Token</Label>
+                  <Input 
+                      id="mattermost-token" 
+                      type="password"
+                      value={formData.mattermost_bot_token || ''}
+                      onChange={(e) => handleInputChange('mattermost_bot_token', e.target.value)}
+                  />
+              </div>
+              <Button onClick={handleSave} disabled={mutation.isPending}>
+                  {mutation.isPending ? "Saving..." : "Save Chat Settings"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <WebhookManager 
+            webhooks={webhooks || []}
+            isLoading={isLoadingWebhooks}
+            onCreate={(data) => createWebhookMutation.mutateAsync(data)}
+            onDelete={(id) => deleteWebhookMutation.mutateAsync(id)}
+            title="Global Webhooks"
+            description="Configure webhooks that trigger on system-wide events."
+          />
         </TabsContent>
         
         <TabsContent value="integrations" className="space-y-4">
@@ -362,51 +412,11 @@ export default function SystemSettings() {
                             onChange={(e) => handleInputChange('open_source_malware_api_key', e.target.value)}
                         />
                     </div>
-                    <hr className="my-4" />
-                    <div className="grid gap-2">
-                        <Label htmlFor="slack-token">Slack Bot Token</Label>
-                        <Input 
-                            id="slack-token" 
-                            type="password"
-                            value={formData.slack_bot_token || ''}
-                            onChange={(e) => handleInputChange('slack_bot_token', e.target.value)}
-                        />
-                    </div>
-                    <hr className="my-4" />
-                    <div className="grid gap-2">
-                        <Label htmlFor="mattermost-url">Mattermost URL</Label>
-                        <Input 
-                            id="mattermost-url" 
-                            placeholder="https://mattermost.example.com"
-                            value={formData.mattermost_url || ''}
-                            onChange={(e) => handleInputChange('mattermost_url', e.target.value)}
-                        />
-                    </div>
-                    <div className="grid gap-2">
-                        <Label htmlFor="mattermost-token">Mattermost Bot Token</Label>
-                        <Input 
-                            id="mattermost-token" 
-                            type="password"
-                            value={formData.mattermost_bot_token || ''}
-                            onChange={(e) => handleInputChange('mattermost_bot_token', e.target.value)}
-                        />
-                    </div>
                     <Button onClick={handleSave} disabled={mutation.isPending}>
                         {mutation.isPending ? "Saving..." : "Save Integrations"}
                     </Button>
                 </CardContent>
             </Card>
-        </TabsContent>
-
-        <TabsContent value="webhooks" className="space-y-4">
-          <WebhookManager 
-            webhooks={webhooks || []}
-            isLoading={isLoadingWebhooks}
-            onCreate={(data) => createWebhookMutation.mutateAsync(data)}
-            onDelete={(id) => deleteWebhookMutation.mutateAsync(id)}
-            title="Global Webhooks"
-            description="Configure webhooks that trigger on system-wide events."
-          />
         </TabsContent>
       </Tabs>
     </div>

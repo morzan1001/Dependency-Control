@@ -21,6 +21,51 @@ router = APIRouter()
 class RecentScan(Scan):
     project_name: str
 
+async def enrich_project_details(project: Project, db: AsyncIOMotorDatabase):
+    # 1. Get all direct member user IDs
+    user_ids = [m.user_id for m in project.members]
+    
+    # 2. If project has a team, get team members
+    team_members_map = {}
+    if project.team_id:
+        team = await db.teams.find_one({"_id": project.team_id})
+        if team:
+            for tm in team.get("members", []):
+                # Map team role to project role
+                # owner/admin -> admin, member -> viewer
+                role = "admin" if tm.get("role") in ["admin", "owner"] else "viewer"
+                
+                team_members_map[tm["user_id"]] = {
+                    "user_id": tm["user_id"],
+                    "role": role,
+                    "inherited_from": f"Team: {team.get('name', 'Unknown')}"
+                }
+                if tm["user_id"] not in user_ids:
+                    user_ids.append(tm["user_id"])
+
+    # 3. Fetch all users
+    users = await db.users.find({"_id": {"$in": user_ids}}).to_list(None)
+    user_map = {u["_id"]: u["username"] for u in users}
+
+    # 4. Enrich direct members
+    for m in project.members:
+        m.username = user_map.get(m.user_id)
+
+    # 5. Add team-only members to the list
+    existing_member_ids = set(m.user_id for m in project.members)
+    
+    for uid, tm_data in team_members_map.items():
+        if uid not in existing_member_ids:
+            pm = ProjectMember(
+                user_id=uid,
+                role=tm_data["role"],
+                username=user_map.get(uid),
+                inherited_from=tm_data["inherited_from"]
+            )
+            project.members.append(pm)
+            
+    return project
+
 async def check_project_access(project_id: str, user: User, db: AsyncIOMotorDatabase, required_role: str = None) -> Project:
     project_data = await db.projects.find_one({"_id": project_id})
     if not project_data:
@@ -116,7 +161,13 @@ async def create_project(
         owner_id=str(current_user.id),
         team_id=project_in.team_id,
         api_key_hash=api_key_hash,
-        active_analyzers=project_in.active_analyzers
+        active_analyzers=project_in.active_analyzers,
+        members=[
+            ProjectMember(
+                user_id=str(current_user.id),
+                role="admin"
+            )
+        ]
     )
     
     await db.projects.insert_one(project.dict(by_alias=True))
@@ -255,6 +306,7 @@ async def read_project(
     Get a specific project by ID.
     """
     project = await check_project_access(project_id, current_user, db)
+    await enrich_project_details(project, db)
     return project
 
 @router.put("/{project_id}", response_model=Project, summary="Update project details")
@@ -287,11 +339,26 @@ async def update_project(
     updated_project_data = await db.projects.find_one({"_id": project_id})
     return Project(**updated_project_data)
 
+@router.get("/{project_id}/branches", response_model=List[str], summary="List project branches")
+async def read_project_branches(
+    project_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Get all unique branches for a project.
+    """
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+    
+    branches = await db.scans.distinct("branch", {"project_id": project_id})
+    return sorted(branches)
+
 @router.get("/{project_id}/scans", response_model=List[Scan], summary="List project scans")
 async def read_project_scans(
     project_id: str,
     skip: int = 0,
     limit: int = 20,
+    branch: str = None,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -300,8 +367,12 @@ async def read_project_scans(
     """
     await check_project_access(project_id, current_user, db, required_role="viewer")
     
+    query = {"project_id": project_id}
+    if branch:
+        query["branch"] = branch
+
     scans = await db.scans.find(
-        {"project_id": project_id}
+        query
     ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     
     return scans

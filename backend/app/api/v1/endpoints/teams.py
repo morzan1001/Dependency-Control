@@ -9,21 +9,17 @@ from app.models.team import Team, TeamMember
 from app.schemas.team import TeamCreate, TeamUpdate, TeamResponse, TeamMemberAdd, TeamMemberUpdate
 from app.db.mongodb import get_database
 
-from bson import ObjectId
-
 router = APIRouter()
 
 async def enrich_team_with_usernames(team_data: dict, db: AsyncIOMotorDatabase) -> dict:
     members = team_data.get("members", [])
     user_ids = []
     for m in members:
-        try:
-            user_ids.append(ObjectId(m["user_id"]))
-        except:
-            pass
+        if "user_id" in m:
+            user_ids.append(m["user_id"])
             
     users = await db.users.find({"_id": {"$in": user_ids}}).to_list(None)
-    user_map = {str(u["_id"]): u["username"] for u in users}
+    user_map = {u["_id"]: u["username"] for u in users}
     
     for member in members:
         member["username"] = user_map.get(member["user_id"])

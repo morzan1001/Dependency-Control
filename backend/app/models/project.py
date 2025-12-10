@@ -7,6 +7,8 @@ class ProjectMember(BaseModel):
     user_id: str
     role: str = "viewer"  # "admin", "editor", "viewer"
     notification_preferences: Dict[str, List[str]] = Field(default_factory=dict)
+    username: Optional[str] = None
+    inherited_from: Optional[str] = None # e.g. "Team: DevOps"
 
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
@@ -21,6 +23,7 @@ class Project(BaseModel):
     stats: Optional[Dict[str, int]] = None
     last_scan_at: Optional[datetime] = None
     retention_days: int = 90  # Default retention period in days
+    default_branch: Optional[str] = None
 
     class Config:
         populate_by_name = True

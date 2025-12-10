@@ -148,6 +148,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
             <TableRow>
               <TableHead>User</TableHead>
               <TableHead>Role</TableHead>
+              <TableHead>Source</TableHead>
               <TableHead className="w-[100px]">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -164,7 +165,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
                   <Select 
                     defaultValue={member.role} 
                     onValueChange={(value) => updateMemberMutation.mutate({ userId: member.user_id, role: value })}
-                    disabled={member.user_id === project.owner_id || !hasPermission('project:update')}
+                    disabled={member.user_id === project.owner_id || !hasPermission('project:update') || !!member.inherited_from}
                   >
                     <SelectTrigger className="w-[120px]">
                       <SelectValue />
@@ -177,7 +178,16 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
                   </Select>
                 </TableCell>
                 <TableCell>
-                  {member.user_id !== project.owner_id && hasPermission('project:update') && (
+                  {member.inherited_from ? (
+                    <span className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
+                      {member.inherited_from}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground text-sm">Direct</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {member.user_id !== project.owner_id && hasPermission('project:update') && !member.inherited_from && (
                     <Button 
                       variant="ghost" 
                       size="icon" 
@@ -192,7 +202,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
             ))}
             {(!project.members || project.members.length === 0) && (
               <TableRow>
-                <TableCell colSpan={3} className="text-center text-muted-foreground">
+                <TableCell colSpan={4} className="text-center text-muted-foreground">
                   No members found.
                 </TableCell>
               </TableRow>

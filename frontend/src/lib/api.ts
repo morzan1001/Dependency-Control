@@ -63,7 +63,13 @@ export const refreshToken = async (token: string) => {
 }
 
 export const getPublicConfig = async () => {
-  const response = await api.get<{ allow_public_registration: boolean, enforce_2fa: boolean, enforce_email_verification: boolean }>('/system/public-config');
+  const response = await api.get<{ 
+    allow_public_registration: boolean, 
+    enforce_2fa: boolean, 
+    enforce_email_verification: boolean,
+    oidc_enabled?: boolean,
+    oidc_provider_name?: string
+  }>('/system/public-config');
   return response.data;
 };
 
@@ -104,26 +110,25 @@ export interface ProjectMember {
   username?: string;
   role: string;
   notification_preferences?: Record<string, string[]>;
+  inherited_from?: string;
 }
 
 export interface Project {
   _id: string;
   name: string;
   owner_id: string;
-  team_id?: string | null;
+  team_id?: string;
   members?: ProjectMember[];
-  created_at: string;
-  active_analyzers: string[];
+  active_analyzers?: string[];
+  retention_days?: number;
+  default_branch?: string;
+  owner_notification_preferences?: {
+    [key: string]: string[];
+  };
   stats?: {
-    critical?: number;
-    high?: number;
-    medium?: number;
-    low?: number;
     [key: string]: number | undefined;
   } | null;
-  last_scan_at?: string | null;
-  retention_days: number;
-  owner_notification_preferences?: Record<string, string[]>;
+  last_scan_at?: string;
 }
 
 export interface Scan {
@@ -173,6 +178,7 @@ export interface ProjectUpdate {
   team_id?: string | null;
   active_analyzers?: string[];
   retention_days?: number;
+  default_branch?: string | null;
 }
 
 export interface ProjectApiKeyResponse {
@@ -210,10 +216,15 @@ export const getProject = async (id: string) => {
   return response.data;
 };
 
-export const getProjectScans = async (id: string, skip: number = 0, limit: number = 20) => {
+export const getProjectScans = async (id: string, skip: number = 0, limit: number = 20, branch?: string) => {
   const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
-    params: { skip, limit }
+    params: { skip, limit, branch }
   });
+  return response.data;
+};
+
+export const getProjectBranches = async (id: string) => {
+  const response = await api.get<string[]>(`/projects/${id}/branches`);
   return response.data;
 };
 
@@ -586,7 +597,7 @@ export const deleteUser = async (userId: string) => {
 
 // Invitation Endpoints
 export const inviteUser = async (email: string) => {
-  const response = await api.post<{ message: string }>('/invitations/system', { email });
+  const response = await api.post<{ message: string, link: string }>('/invitations/system', { email });
   return response.data;
 };
 

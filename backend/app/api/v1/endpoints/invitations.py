@@ -85,7 +85,7 @@ async def create_system_invitation(
         system_settings=system_config
     )
     
-    return {"message": "Invitation sent successfully"}
+    return {"message": "Invitation sent successfully", "link": link}
 
 @router.get("/system/{token}")
 async def validate_system_invitation(
