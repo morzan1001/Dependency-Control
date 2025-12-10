@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getProjects, createProject, getTeams, Project } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,6 +42,7 @@ const AVAILABLE_ANALYZERS = [
 
 export default function ProjectsPage() {
   const queryClient = useQueryClient();
+  const { hasPermission } = useAuth();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [teamId, setTeamId] = useState<string | undefined>(undefined);
@@ -110,92 +112,94 @@ export default function ProjectsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
         
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Project
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-[500px]">
-            <form onSubmit={handleCreateProject}>
-              <DialogHeader>
-                <DialogTitle>Create Project</DialogTitle>
-                <DialogDescription>
-                  Create a new project to start scanning for vulnerabilities.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="name">Project Name</Label>
-                  <Input
-                    id="name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="My Awesome App"
-                    required
-                  />
-                </div>
-                
-                <div className="grid gap-2">
-                  <Label htmlFor="team">Team (Optional)</Label>
-                  <Select value={teamId} onValueChange={setTeamId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a team" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No Team</SelectItem>
-                      {teams?.map((team) => (
-                        <SelectItem key={team._id} value={team._id}>
-                          {team.name}
-                        </SelectItem>
+        {hasPermission('project:create') && (
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Project
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[500px]">
+              <form onSubmit={handleCreateProject}>
+                <DialogHeader>
+                  <DialogTitle>Create Project</DialogTitle>
+                  <DialogDescription>
+                    Create a new project to start scanning for vulnerabilities.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="name">Project Name</Label>
+                    <Input
+                      id="name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="My Awesome App"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="grid gap-2">
+                    <Label htmlFor="team">Team (Optional)</Label>
+                    <Select value={teamId} onValueChange={setTeamId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a team" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No Team</SelectItem>
+                        {teams?.map((team) => (
+                          <SelectItem key={team._id} value={team._id}>
+                            {team.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label htmlFor="retention">Retention Period (Days)</Label>
+                    <Input
+                      id="retention"
+                      type="number"
+                      min="1"
+                      value={retentionDays}
+                      onChange={(e) => setRetentionDays(parseInt(e.target.value))}
+                      required
+                    />
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label>Active Analyzers</Label>
+                    <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[200px] overflow-y-auto">
+                      {AVAILABLE_ANALYZERS.map((analyzer) => (
+                        <div key={analyzer.id} className="flex items-center space-x-2">
+                          <Checkbox 
+                            id={`analyzer-${analyzer.id}`}
+                            checked={analyzers.includes(analyzer.id)}
+                            onCheckedChange={() => toggleAnalyzer(analyzer.id)}
+                          />
+                          <Label htmlFor={`analyzer-${analyzer.id}`} className="font-normal cursor-pointer">
+                            {analyzer.label}
+                          </Label>
+                        </div>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="retention">Retention Period (Days)</Label>
-                  <Input
-                    id="retention"
-                    type="number"
-                    min="1"
-                    value={retentionDays}
-                    onChange={(e) => setRetentionDays(parseInt(e.target.value))}
-                    required
-                  />
-                </div>
-
-                <div className="grid gap-2">
-                  <Label>Active Analyzers</Label>
-                  <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[200px] overflow-y-auto">
-                    {AVAILABLE_ANALYZERS.map((analyzer) => (
-                      <div key={analyzer.id} className="flex items-center space-x-2">
-                        <Checkbox 
-                          id={`analyzer-${analyzer.id}`}
-                          checked={analyzers.includes(analyzer.id)}
-                          onCheckedChange={() => toggleAnalyzer(analyzer.id)}
-                        />
-                        <Label htmlFor={`analyzer-${analyzer.id}`} className="font-normal cursor-pointer">
-                          {analyzer.label}
-                        </Label>
-                      </div>
-                    ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={createProjectMutation.isPending}>
-                  {createProjectMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
-                  Create Project
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={createProjectMutation.isPending}>
+                    {createProjectMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
+                    Create Project
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

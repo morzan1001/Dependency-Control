@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Trash2, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { Spinner } from "@/components/ui/spinner"
+import { useAuth } from "@/context/AuthContext"
 
 interface WebhookManagerProps {
   webhooks: Webhook[]
@@ -22,6 +23,7 @@ interface WebhookManagerProps {
 
 export function WebhookManager({ webhooks, isLoading, onCreate, onDelete, title = "Webhooks", description = "Manage webhooks for event notifications." }: WebhookManagerProps) {
   const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const { hasPermission } = useAuth()
   const [newWebhook, setNewWebhook] = useState<WebhookCreate>({
     url: "",
     events: [],
@@ -71,31 +73,32 @@ export function WebhookManager({ webhooks, isLoading, onCreate, onDelete, title 
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Webhook</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add Webhook</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label>URL</Label>
-                <Input 
-                  value={newWebhook.url} 
-                  onChange={e => setNewWebhook(prev => ({ ...prev, url: e.target.value }))}
-                  placeholder="https://example.com/webhook"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Secret (Optional)</Label>
-                <Input 
-                  value={newWebhook.secret} 
-                  onChange={e => setNewWebhook(prev => ({ ...prev, secret: e.target.value }))}
-                  type="password"
-                />
-              </div>
+        {hasPermission('webhook:create') && (
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Webhook</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add Webhook</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>URL</Label>
+                  <Input 
+                    value={newWebhook.url} 
+                    onChange={e => setNewWebhook(prev => ({ ...prev, url: e.target.value }))}
+                    placeholder="https://example.com/webhook"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Secret (Optional)</Label>
+                  <Input 
+                    value={newWebhook.secret} 
+                    onChange={e => setNewWebhook(prev => ({ ...prev, secret: e.target.value }))}
+                    type="password"
+                  />
+                </div>
               <div className="space-y-2">
                 <Label>Events</Label>
                 <div className="space-y-2">
@@ -115,6 +118,7 @@ export function WebhookManager({ webhooks, isLoading, onCreate, onDelete, title 
             </div>
           </DialogContent>
         </Dialog>
+        )}
       </CardHeader>
       <CardContent>
         <Table>
@@ -148,9 +152,11 @@ export function WebhookManager({ webhooks, isLoading, onCreate, onDelete, title 
                   </TableCell>
                   <TableCell>{new Date(webhook.created_at).toLocaleDateString()}</TableCell>
                   <TableCell>
-                    <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
+                    {hasPermission('webhook:delete') && (
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

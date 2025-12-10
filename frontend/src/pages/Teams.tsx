@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getTeams, createTeam, addTeamMember, deleteTeam, updateTeam, updateTeamMember, removeTeamMember, Team } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,6 +37,7 @@ import { Spinner } from '@/components/ui/spinner';
 
 export default function TeamsPage() {
   const queryClient = useQueryClient();
+  const { hasPermission } = useAuth();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -184,54 +186,57 @@ export default function TeamsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Teams</h1>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Create Team
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
-            <form onSubmit={handleCreateTeam}>
-              <DialogHeader>
-                <DialogTitle>Create Team</DialogTitle>
-                <DialogDescription>
-                  Create a new team to manage projects and members.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="name" className="text-right">
-                    Name
-                  </Label>
-                  <Input
-                    id="name"
-                    value={newTeamName}
-                    onChange={(e) => setNewTeamName(e.target.value)}
-                    className="col-span-3"
-                    required
-                  />
+        
+        {hasPermission('team:create') && (
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Create Team
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px]">
+              <form onSubmit={handleCreateTeam}>
+                <DialogHeader>
+                  <DialogTitle>Create Team</DialogTitle>
+                  <DialogDescription>
+                    Create a new team to manage projects and members.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="name" className="text-right">
+                      Name
+                    </Label>
+                    <Input
+                      id="name"
+                      value={newTeamName}
+                      onChange={(e) => setNewTeamName(e.target.value)}
+                      className="col-span-3"
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="description" className="text-right">
+                      Description
+                    </Label>
+                    <Input
+                      id="description"
+                      value={newTeamDesc}
+                      onChange={(e) => setNewTeamDesc(e.target.value)}
+                      className="col-span-3"
+                    />
+                  </div>
                 </div>
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="description" className="text-right">
-                    Description
-                  </Label>
-                  <Input
-                    id="description"
-                    value={newTeamDesc}
-                    onChange={(e) => setNewTeamDesc(e.target.value)}
-                    className="col-span-3"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button type="submit" disabled={createTeamMutation.isPending}>
-                    {createTeamMutation.isPending ? 'Creating...' : 'Create Team'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+                <DialogFooter>
+                  <Button type="submit" disabled={createTeamMutation.isPending}>
+                      {createTeamMutation.isPending ? 'Creating...' : 'Create Team'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -242,15 +247,21 @@ export default function TeamsPage() {
                 {team.name}
               </CardTitle>
               <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditDialog(team)}>
-                      <Edit className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openManageMembersDialog(team)}>
-                      <UsersIcon className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive/90" onClick={() => handleDeleteClick(team._id)}>
-                      <Trash2 className="h-4 w-4" />
-                  </Button>
+                  {hasPermission('team:update') && (
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditDialog(team)}>
+                        <Edit className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {hasPermission('team:update') && (
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openManageMembersDialog(team)}>
+                        <UsersIcon className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {hasPermission('team:delete') && (
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive/90" onClick={() => handleDeleteClick(team._id)}>
+                        <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
               </div>
             </CardHeader>
             <CardContent className="flex-1">
@@ -273,10 +284,12 @@ export default function TeamsPage() {
               </div>
             </CardContent>
             <CardFooter>
-                <Button variant="outline" className="w-full" onClick={() => openAddMemberDialog(team._id)}>
-                    <UserPlus className="mr-2 h-4 w-4" />
-                    Add Member
-                </Button>
+                {hasPermission('team:update') && (
+                  <Button variant="outline" className="w-full" onClick={() => openAddMemberDialog(team._id)}>
+                      <UserPlus className="mr-2 h-4 w-4" />
+                      Add Member
+                  </Button>
+                )}
             </CardFooter>
           </Card>
         ))}

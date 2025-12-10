@@ -1,5 +1,6 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useAuth } from '@/context/AuthContext'
 import { getProject, getProjectScans, updateProject, rotateProjectApiKey, getTeams, getWaivers, deleteWaiver, getMe, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getSystemSettings, exportProjectCsv, exportProjectSbom, inviteProjectMember, updateProjectMember, removeProjectMember } from '@/lib/api'
 import { WebhookManager } from '@/components/WebhookManager'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -56,6 +57,7 @@ export default function ProjectDetails() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { hasPermission } = useAuth()
   
   const [name, setName] = useState('')
   const [teamId, setTeamId] = useState<string | undefined>(undefined)
@@ -806,50 +808,52 @@ export default function ProjectDetails() {
                 <CardTitle>Project Members</CardTitle>
                 <CardDescription>Manage who has access to this project.</CardDescription>
               </div>
-              <Dialog open={isInviteMemberOpen} onOpenChange={setIsInviteMemberOpen}>
-                <DialogTrigger asChild>
-                  <Button className="gap-2">
-                    <UserPlus className="h-4 w-4" />
-                    Invite Member
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Invite Member</DialogTitle>
-                    <DialogDescription>Add a user to this project.</DialogDescription>
-                  </DialogHeader>
-                  <div className="grid gap-4 py-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="email">Email</Label>
-                      <Input 
-                        id="email" 
-                        value={inviteEmail} 
-                        onChange={(e) => setInviteEmail(e.target.value)} 
-                        placeholder="user@example.com"
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="role">Role</Label>
-                      <Select value={inviteRole} onValueChange={setInviteRole}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="viewer">Viewer</SelectItem>
-                          <SelectItem value="editor">Editor</SelectItem>
-                          <SelectItem value="admin">Admin</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button onClick={() => inviteMemberMutation.mutate({ email: inviteEmail, role: inviteRole })} disabled={inviteMemberMutation.isPending}>
-                      {inviteMemberMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
-                      Invite
+              {hasPermission('project:update') && (
+                <Dialog open={isInviteMemberOpen} onOpenChange={setIsInviteMemberOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="gap-2">
+                      <UserPlus className="h-4 w-4" />
+                      Invite Member
                     </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Invite Member</DialogTitle>
+                      <DialogDescription>Add a user to this project.</DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="email">Email</Label>
+                        <Input 
+                          id="email" 
+                          value={inviteEmail} 
+                          onChange={(e) => setInviteEmail(e.target.value)} 
+                          placeholder="user@example.com"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="role">Role</Label>
+                        <Select value={inviteRole} onValueChange={setInviteRole}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="viewer">Viewer</SelectItem>
+                            <SelectItem value="editor">Editor</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button onClick={() => inviteMemberMutation.mutate({ email: inviteEmail, role: inviteRole })} disabled={inviteMemberMutation.isPending}>
+                        {inviteMemberMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
+                        Invite
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              )}
             </CardHeader>
             <CardContent>
               <Table>
@@ -873,7 +877,7 @@ export default function ProjectDetails() {
                         <Select 
                           defaultValue={member.role} 
                           onValueChange={(value) => updateMemberMutation.mutate({ userId: member.user_id, role: value })}
-                          disabled={member.user_id === project.owner_id}
+                          disabled={member.user_id === project.owner_id || !hasPermission('project:update')}
                         >
                           <SelectTrigger className="w-[120px]">
                             <SelectValue />
@@ -886,7 +890,7 @@ export default function ProjectDetails() {
                         </Select>
                       </TableCell>
                       <TableCell>
-                        {member.user_id !== project.owner_id && (
+                        {member.user_id !== project.owner_id && hasPermission('project:update') && (
                           <Button 
                             variant="ghost" 
                             size="icon" 
@@ -976,10 +980,12 @@ export default function ProjectDetails() {
                                 ))}
                             </div>
                         </div>
-                        <Button type="submit" disabled={updateProjectMutation.isPending}>
-                            {updateProjectMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
-                            Save Changes
-                        </Button>
+                        {hasPermission('project:update') && (
+                            <Button type="submit" disabled={updateProjectMutation.isPending}>
+                                {updateProjectMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
+                                Save Changes
+                            </Button>
+                        )}
                     </form>
                 </CardContent>
             </Card>
@@ -1021,41 +1027,45 @@ export default function ProjectDetails() {
                             </div>
                         ))}
                     </div>
-                    <Button 
-                        onClick={() => updateNotificationSettingsMutation.mutate({ notification_preferences: notificationPrefs })}
-                        disabled={updateNotificationSettingsMutation.isPending}
-                    >
-                        {updateNotificationSettingsMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
-                        Save Notification Settings
-                    </Button>
+                    {hasPermission('project:update') && (
+                        <Button 
+                            onClick={() => updateNotificationSettingsMutation.mutate({ notification_preferences: notificationPrefs })}
+                            disabled={updateNotificationSettingsMutation.isPending}
+                        >
+                            {updateNotificationSettingsMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
+                            Save Notification Settings
+                        </Button>
+                    )}
                 </CardContent>
             </Card>
 
-            <Card className="border-destructive">
-                <CardHeader>
-                    <CardTitle className="text-destructive flex items-center gap-2">
-                        <AlertTriangle className="h-5 w-5" />
-                        Danger Zone
-                    </CardTitle>
-                    <CardDescription>
-                        Destructive actions that cannot be undone.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
-                        <div>
-                            <div className="font-medium">Rotate API Key</div>
-                            <div className="text-sm text-muted-foreground">
-                                Invalidate the current API key and generate a new one.
+            {hasPermission('project:update') && (
+                <Card className="border-destructive">
+                    <CardHeader>
+                        <CardTitle className="text-destructive flex items-center gap-2">
+                            <AlertTriangle className="h-5 w-5" />
+                            Danger Zone
+                        </CardTitle>
+                        <CardDescription>
+                            Destructive actions that cannot be undone.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
+                            <div>
+                                <div className="font-medium">Rotate API Key</div>
+                                <div className="text-sm text-muted-foreground">
+                                    Invalidate the current API key and generate a new one.
+                                </div>
                             </div>
+                            <Button variant="destructive" onClick={() => rotateKeyMutation.mutate()} disabled={rotateKeyMutation.isPending}>
+                                {rotateKeyMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                                Rotate Key
+                            </Button>
                         </div>
-                        <Button variant="destructive" onClick={() => rotateKeyMutation.mutate()} disabled={rotateKeyMutation.isPending}>
-                            {rotateKeyMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                            Rotate Key
-                        </Button>
-                    </div>
-                </CardContent>
-            </Card>
+                    </CardContent>
+                </Card>
+            )}
         </TabsContent>
       </Tabs>
 
@@ -1087,6 +1097,7 @@ export default function ProjectDetails() {
 
 function WaiversTab({ projectId }: { projectId: string }) {
     const queryClient = useQueryClient()
+    const { hasPermission } = useAuth()
     const { data: waivers, isLoading } = useQuery({
         queryKey: ['waivers', projectId],
         queryFn: () => getWaivers(projectId)
@@ -1198,19 +1209,21 @@ function WaiversTab({ projectId }: { projectId: string }) {
                                         {waiver.expiration_date ? new Date(waiver.expiration_date).toLocaleDateString() : "Never"}
                                     </td>
                                     <td className="p-4 align-middle">
-                                        <Button 
-                                            variant="ghost" 
-                                            size="icon" 
-                                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                            onClick={() => {
-                                                if (confirm("Are you sure you want to delete this waiver?")) {
-                                                    deleteWaiverMutation.mutate(waiver._id)
-                                                }
-                                            }}
-                                            disabled={deleteWaiverMutation.isPending}
-                                        >
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
+                                        {hasPermission('waiver:delete') && (
+                                            <Button 
+                                                variant="ghost" 
+                                                size="icon" 
+                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                onClick={() => {
+                                                    if (confirm("Are you sure you want to delete this waiver?")) {
+                                                        deleteWaiverMutation.mutate(waiver._id)
+                                                    }
+                                                }}
+                                                disabled={deleteWaiverMutation.isPending}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}

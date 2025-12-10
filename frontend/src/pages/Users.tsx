@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getUsers, createUser, updateUser, deleteUser, inviteUser, getProjects, getTeams, User } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,6 +94,7 @@ export default function UsersPage() {
   // Invite form state
   const [inviteEmail, setInviteEmail] = useState("");
   
+  const { hasPermission } = useAuth();
   const queryClient = useQueryClient();
 
   const { data: users, isLoading, error } = useQuery({
@@ -248,88 +250,92 @@ export default function UsersPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Users</h1>
         <div className="flex gap-2">
-          <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline">
-                <Mail className="mr-2 h-4 w-4" />
-                Invite User
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Invite User</DialogTitle>
-                <DialogDescription>
-                  Send an invitation email to a new user. They will be able to set their own password.
-                </DialogDescription>
-              </DialogHeader>
-              <form onSubmit={handleInviteUser} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="invite-email">Email</Label>
-                  <Input
-                    id="invite-email"
-                    type="email"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    required
-                  />
-                </div>
-                <Button type="submit" className="w-full" disabled={inviteUserMutation.isPending}>
-                  {inviteUserMutation.isPending ? "Sending..." : "Send Invitation"}
+          {hasPermission('user:create') && (
+            <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline">
+                  <Mail className="mr-2 h-4 w-4" />
+                  Invite User
                 </Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Invite User</DialogTitle>
+                  <DialogDescription>
+                    Send an invitation email to a new user. They will be able to set their own password.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleInviteUser} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="invite-email">Email</Label>
+                    <Input
+                      id="invite-email"
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={inviteUserMutation.isPending}>
+                    {inviteUserMutation.isPending ? "Sending..." : "Send Invitation"}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
 
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Create User
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create New User</DialogTitle>
-                <DialogDescription>
-                  Manually create a new user account.
-                </DialogDescription>
-              </DialogHeader>
-              <form onSubmit={handleCreateUser} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="username">Username</Label>
-                  <Input
-                    id="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                  />
-                </div>
-                <Button type="submit" className="w-full" disabled={createUserMutation.isPending}>
-                  {createUserMutation.isPending ? "Creating..." : "Create User"}
+          {hasPermission('user:create') && (
+            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create User
                 </Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create New User</DialogTitle>
+                  <DialogDescription>
+                    Manually create a new user account.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleCreateUser} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="username">Username</Label>
+                    <Input
+                      id="username"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={createUserMutation.isPending}>
+                    {createUserMutation.isPending ? "Creating..." : "Create User"}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
       </div>
 
@@ -396,17 +402,19 @@ export default function UsersPage() {
                       </div>
                     </td>
                     <td className="p-4 align-middle" onClick={(e) => e.stopPropagation()}>
-                        <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-destructive hover:text-destructive/90"
-                            onClick={() => {
-                                setUserToDelete(user);
-                                setIsDeleteDialogOpen(true);
-                            }}
-                        >
-                            <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {hasPermission('user:delete') && (
+                          <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="text-destructive hover:text-destructive/90"
+                              onClick={() => {
+                                  setUserToDelete(user);
+                                  setIsDeleteDialogOpen(true);
+                              }}
+                          >
+                              <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                     </td>
                   </tr>
                 ))}
@@ -441,14 +449,16 @@ export default function UsersPage() {
                           Inactive
                         </span>
                       )}
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className="h-6 text-xs ml-2"
-                        onClick={handleToggleStatus}
-                      >
-                        {selectedUser.is_active ? "Deactivate" : "Activate"}
-                      </Button>
+                      {hasPermission('user:update') && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-6 text-xs ml-2"
+                          onClick={handleToggleStatus}
+                        >
+                          {selectedUser.is_active ? "Deactivate" : "Activate"}
+                        </Button>
+                      )}
                   </div>
                 </div>
               </div>
@@ -458,9 +468,11 @@ export default function UsersPage() {
                     <h3 className="text-lg font-medium flex items-center gap-2">
                     <Shield className="h-5 w-5" /> Permissions
                     </h3>
-                    <Button variant="outline" size="sm" onClick={() => setIsPermissionDialogOpen(true)}>
-                        Manage Permissions
-                    </Button>
+                    {hasPermission('user:update') && (
+                      <Button variant="outline" size="sm" onClick={() => setIsPermissionDialogOpen(true)}>
+                          Manage Permissions
+                      </Button>
+                    )}
                 </div>
                 <div className="flex flex-wrap gap-1">
                     {selectedUser.permissions.length === 0 && <span className="text-sm text-muted-foreground">No permissions assigned.</span>}

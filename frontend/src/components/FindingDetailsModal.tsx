@@ -8,6 +8,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { createWaiver } from "@/lib/api"
 import { toast } from "sonner"
 import { ShieldAlert } from "lucide-react"
+import { useAuth } from "@/context/AuthContext"
 
 interface FindingDetailsModalProps {
     finding: any | null
@@ -18,6 +19,7 @@ interface FindingDetailsModalProps {
 
 export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: FindingDetailsModalProps) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
+    const { hasPermission } = useAuth()
     
     if (!finding) return null
 
@@ -141,10 +143,12 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
 
                 {!showWaiverForm && (
                     <DialogFooter className="gap-2 sm:gap-0">
-                        <Button variant="outline" onClick={() => setShowWaiverForm(true)}>
-                            <ShieldAlert className="mr-2 h-4 w-4" />
-                            Create Waiver
-                        </Button>
+                        {hasPermission('waiver:manage') && (
+                            <Button variant="outline" onClick={() => setShowWaiverForm(true)}>
+                                <ShieldAlert className="mr-2 h-4 w-4" />
+                                Create Waiver
+                            </Button>
+                        )}
                         <Button onClick={onClose}>Close</Button>
                     </DialogFooter>
                 )}
