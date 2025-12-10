@@ -210,8 +210,10 @@ export const getProject = async (id: string) => {
   return response.data;
 };
 
-export const getProjectScans = async (id: string) => {
-  const response = await api.get<Scan[]>(`/projects/${id}/scans`);
+export const getProjectScans = async (id: string, skip: number = 0, limit: number = 20) => {
+  const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
+    params: { skip, limit }
+  });
   return response.data;
 };
 
@@ -233,8 +235,8 @@ export const getScan = async (scanId: string) => {
   return response.data;
 };
 
-export const getUsers = async () => {
-  const response = await api.get<User[]>('/users/');
+export const getUsers = async (skip = 0, limit = 20) => {
+  const response = await api.get<User[]>(`/users/?skip=${skip}&limit=${limit}`);
   return response.data;
 };
 

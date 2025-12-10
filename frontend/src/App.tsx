@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from '@tanstack/react-query'
 import Login from './pages/Login'
 import Signup from './pages/Signup'
 import VerifyEmail from './pages/VerifyEmail'
@@ -19,13 +19,34 @@ import SearchPage from './pages/Search'
 import DashboardLayout from './layouts/DashboardLayout'
 import { AuthProvider, useAuth, RequirePermission } from './context/AuthContext'
 import { Toaster } from "@/components/ui/sonner"
+import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Spinner } from "@/components/ui/spinner"
 import { getPublicConfig, getMe, getSystemSettings } from '@/lib/api'
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error: any) => {
+      console.error("Global query error:", error)
+      if (error.response?.status >= 500) {
+        toast.error("Server Error", { description: "Something went wrong on the server." })
+      }
+    }
+  }),
+  mutationCache: new MutationCache({
+    onError: (error: any) => {
+      console.error("Global mutation error:", error)
+    }
+  }),
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+})
 
 function Force2FAGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, permissions } = useAuth();

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Check, X, Shield, Users as UsersIcon, Folder, Trash2, Mail } from 'lucide-react';
+import { Plus, Check, X, Shield, Users as UsersIcon, Folder, Trash2, Mail, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -93,13 +93,15 @@ export default function UsersPage() {
 
   // Invite form state
   const [inviteEmail, setInviteEmail] = useState("");
+  const [page, setPage] = useState(0);
+  const limit = 20;
   
   const { hasPermission } = useAuth();
   const queryClient = useQueryClient();
 
   const { data: users, isLoading, error } = useQuery({
-    queryKey: ['users'],
-    queryFn: getUsers,
+    queryKey: ['users', page],
+    queryFn: () => getUsers(page * limit, limit),
   });
 
   const inviteUserMutation = useMutation({
@@ -420,6 +422,26 @@ export default function UsersPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="flex items-center justify-end space-x-2 py-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage((p) => p + 1)}
+              disabled={!users || users.length < limit}
+            >
+              Next
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
         </CardContent>
       </Card>
