@@ -7,7 +7,6 @@ import { login as apiLogin, getPublicConfig } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { AxiosError } from 'axios'
 import { Link, useLocation } from 'react-router-dom'
-import { Spinner } from '@/components/ui/spinner'
 
 export default function Login() {
   const [isLoading, setIsLoading] = useState(false)
@@ -16,6 +15,11 @@ export default function Login() {
   const [showResendLink, setShowResendLink] = useState(false)
   const [signupEnabled, setSignupEnabled] = useState(false)
   const [oidcConfig, setOidcConfig] = useState<{ enabled: boolean, providerName: string }>({ enabled: false, providerName: 'GitLab' })
+  
+  // Form State
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+
   const { login } = useAuth()
   const location = useLocation()
   const message = location.state?.message
@@ -37,8 +41,6 @@ export default function Login() {
     setShowResendLink(false)
 
     const formData = new FormData(event.currentTarget)
-    const username = formData.get('username') as string
-    const password = formData.get('password') as string
     const otp = formData.get('otp') as string
 
     try {
@@ -95,11 +97,26 @@ export default function Login() {
             <div className="grid w-full items-center gap-4">
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="username">Username</Label>
-                <Input id="username" name="username" required disabled={showOTP} />
+                <Input 
+                  id="username" 
+                  name="username" 
+                  required 
+                  disabled={showOTP} 
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
               </div>
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="password">Password</Label>
-                <Input id="password" name="password" type="password" required disabled={showOTP} />
+                <Input 
+                  id="password" 
+                  name="password" 
+                  type="password" 
+                  required 
+                  disabled={showOTP} 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
               </div>
               {showOTP && (
                 <div className="flex flex-col space-y-1.5 animate-accordion-down">
@@ -162,12 +179,7 @@ export default function Login() {
               )
             )}
             <Button type="submit" disabled={isLoading} className={!showOTP && !signupEnabled ? "ml-auto" : ""}>
-              {isLoading ? (
-                <>
-                  <Spinner className="mr-2 h-4 w-4 text-primary-foreground" />
-                  Logging in...
-                </>
-              ) : (showOTP ? "Verify" : "Login")}
+              {isLoading ? "Logging in..." : (showOTP ? "Verify" : "Login")}
             </Button>
           </CardFooter>
         </form>

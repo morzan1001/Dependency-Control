@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Search as SearchIcon, Package } from 'lucide-react'
-import { Spinner } from '@/components/ui/spinner'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Link } from 'react-router-dom'
 
 export default function SearchPage() {
@@ -56,9 +56,19 @@ export default function SearchPage() {
       </Card>
 
       {isLoading && (
-        <div className="flex justify-center p-8">
-          <Spinner size={32} />
-        </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-24 mb-2" />
+            <Skeleton className="h-4 w-48" />
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {results && (

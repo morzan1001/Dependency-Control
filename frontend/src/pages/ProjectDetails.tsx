@@ -4,7 +4,7 @@ import { getProject, getMe, getProjectBranches, exportProjectCsv, exportProjectS
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Filter } from 'lucide-react'
-import { Spinner } from '@/components/ui/spinner'
+import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from "sonner"
 import { ProjectOverview } from '@/components/project/ProjectOverview'
 import { ProjectScans } from '@/components/project/ProjectScans'
@@ -111,8 +111,15 @@ export default function ProjectDetails() {
 
   if (isLoadingProject) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <Spinner className="h-8 w-8" />
+      <div className="container mx-auto py-6 space-y-6">
+        <div className="flex items-center gap-4">
+          <Skeleton className="h-10 w-10 rounded-full" />
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-4 w-32" />
+          </div>
+        </div>
+        <Skeleton className="h-[400px] w-full" />
       </div>
     )
   }

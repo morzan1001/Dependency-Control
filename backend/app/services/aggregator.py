@@ -21,32 +21,24 @@ class ResultAggregator:
         if not result:
             return
 
-        if analyzer_name == "trivy":
-            self._normalize_trivy(result)
-        elif analyzer_name == "grype":
-            self._normalize_grype(result)
-        elif analyzer_name == "osv":
-            self._normalize_osv(result)
-        elif analyzer_name == "outdated_packages":
-            self._normalize_outdated(result)
-        elif analyzer_name == "license_compliance":
-            self._normalize_license(result)
-        elif analyzer_name == "deps_dev":
-            self._normalize_scorecard(result)
-        elif analyzer_name == "os_malware":
-            self._normalize_malware(result)
+        normalizers = {
+            "trivy": self._normalize_trivy,
+            "grype": self._normalize_grype,
+            "osv": self._normalize_osv,
+            "outdated_packages": self._normalize_outdated,
+            "license_compliance": self._normalize_license,
+            "deps_dev": self._normalize_scorecard,
+            "os_malware": self._normalize_malware,
+            "end_of_life": self._normalize_eol,
+            "typosquatting": self._normalize_typosquatting,
+            "trufflehog": self._normalize_trufflehog,
+            "opengrep": self._normalize_opengrep,
+            "kics": self._normalize_kics,
+            "bearer": self._normalize_bearer
+        }
 
-        elif analyzer_name == "end_of_life":
-            self._normalize_eol(result)
-            
-        elif analyzer_name == "typosquatting":
-            self._normalize_typosquatting(result)
-            
-        elif analyzer_name == "trufflehog":
-            self._normalize_trufflehog(result)
-            
-        elif analyzer_name == "opengrep":
-            self._normalize_opengrep(result)
+        if analyzer_name in normalizers:
+            normalizers[analyzer_name](result)
 
     def get_findings(self) -> List[Dict[str, Any]]:
         """
@@ -139,6 +131,29 @@ class ResultAggregator:
             
         for target in result.get("Results", []):
             for vuln in target.get("Vulnerabilities", []):
+                # Extract extra details
+                references = vuln.get("References", [])
+                published_date = vuln.get("PublishedDate")
+                last_modified_date = vuln.get("LastModifiedDate")
+                cwe_ids = vuln.get("CweIDs", [])
+                
+                # CVSS Parsing
+                cvss_score = None
+                cvss_vector = None
+                if "CVSS" in vuln:
+                    # Trivy CVSS structure varies, usually {"nvd": {"V3Score": ...}, "redhat": ...}
+                    # We prefer NVD V3, then V2, then Vendor
+                    for source in ["nvd", "redhat", "ghsa", "bitnami"]:
+                        if source in vuln["CVSS"]:
+                            data = vuln["CVSS"][source]
+                            if "V3Score" in data:
+                                cvss_score = data["V3Score"]
+                                cvss_vector = data.get("V3Vector")
+                                break
+                            elif "V2Score" in data and cvss_score is None:
+                                cvss_score = data["V2Score"]
+                                cvss_vector = data.get("V2Vector")
+
                 self._add_finding({
                     "id": vuln.get("VulnerabilityID"),
                     "type": "vulnerability",
@@ -148,8 +163,16 @@ class ResultAggregator:
                     "description": vuln.get("Title") or vuln.get("Description", ""),
                     "fixed_version": vuln.get("FixedVersion"),
                     "scanners": ["trivy"],
-                    "details": {"cvss": vuln.get("CVSS")},
-                    "aliases": [] # Trivy doesn't always provide aliases in this structure easily
+                    "details": {
+                        "cvss_score": cvss_score,
+                        "cvss_vector": cvss_vector,
+                        "references": references,
+                        "published_date": published_date,
+                        "last_modified_date": last_modified_date,
+                        "cwe_ids": cwe_ids,
+                        "layer_id": vuln.get("Layer", {}).get("Digest")
+                    },
+                    "aliases": [] 
                 })
 
     def _normalize_grype(self, result: Dict[str, Any]):
@@ -158,8 +181,35 @@ class ResultAggregator:
             vuln = match.get("vulnerability", {})
             artifact = match.get("artifact", {})
             
+            # ID Normalization: Prefer CVE if available in aliases
+            vuln_id = vuln.get("id")
+            aliases = [r.get("id") for r in vuln.get("relatedVulnerabilities", []) if r.get("id")]
+            
+            # If current ID is GHSA/GO/etc and a CVE exists in aliases, use CVE as primary ID
+            cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
+            if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
+                if vuln_id not in aliases:
+                    aliases.append(vuln_id)
+                vuln_id = cve_alias
+
+            # CVSS Parsing
+            cvss_score = None
+            cvss_vector = None
+            if "cvss" in vuln:
+                # Grype CVSS is a list of objects
+                # We look for the highest version (3.1 > 3.0 > 2.0)
+                best_cvss = None
+                for cvss in vuln["cvss"]:
+                    version = cvss.get("version", "0.0")
+                    if best_cvss is None or version > best_cvss.get("version", "0.0"):
+                        best_cvss = cvss
+                
+                if best_cvss:
+                    cvss_score = float(best_cvss.get("metrics", {}).get("baseScore", 0))
+                    cvss_vector = best_cvss.get("vector")
+
             self._add_finding({
-                "id": vuln.get("id"),
+                "id": vuln_id,
                 "type": "vulnerability",
                 "severity": vuln.get("severity", "UNKNOWN").upper(),
                 "component": artifact.get("name"),
@@ -167,8 +217,14 @@ class ResultAggregator:
                 "description": vuln.get("description", ""),
                 "fixed_version": ", ".join(vuln.get("fix", {}).get("versions", [])),
                 "scanners": ["grype"],
-                "details": {"datasource": vuln.get("dataSource")},
-                "aliases": vuln.get("relatedVulnerabilities", []) # Grype provides related IDs
+                "details": {
+                    "datasource": vuln.get("dataSource"),
+                    "urls": vuln.get("urls", []),
+                    "cvss_score": cvss_score,
+                    "cvss_vector": cvss_vector,
+                    "namespace": vuln.get("namespace")
+                },
+                "aliases": aliases
             })
 
     def _normalize_osv(self, result: Dict[str, Any]):
@@ -326,6 +382,79 @@ class ResultAggregator:
                     "start": finding.get("start"),
                     "end": finding.get("end"),
                     "metadata": extra.get("metadata")
+                }
+            })
+
+    def _normalize_kics(self, result: Dict[str, Any]):
+        # KICS structure: {"queries": [{"query_name": "...", "files": [...]}]}
+        for query in result.get("queries", []):
+            severity = query.get("severity", "INFO").upper()
+            
+            query_id = query.get("query_id")
+            query_name = query.get("query_name")
+            description = query.get("description")
+            category = query.get("category")
+            
+            for file_obj in query.get("files", []):
+                file_name = file_obj.get("file_name")
+                line = file_obj.get("line")
+                
+                self._add_finding({
+                    "id": query_id,
+                    "type": "sast", # Using sast for IaC/Misconfiguration to align with Security category
+                    "severity": severity,
+                    "component": file_name,
+                    "version": "",
+                    "description": f"{query_name}: {description}",
+                    "scanners": ["kics"],
+                    "details": {
+                        "category": category,
+                        "platform": query.get("platform"),
+                        "line": line,
+                        "issue_type": file_obj.get("issue_type"),
+                        "expected_value": file_obj.get("expected_value"),
+                        "actual_value": file_obj.get("actual_value")
+                    }
+                })
+
+    def _normalize_bearer(self, result: Dict[str, Any]):
+        findings_data = result.get("findings", {})
+        
+        all_findings = []
+        if isinstance(findings_data, list):
+            all_findings = findings_data
+        elif isinstance(findings_data, dict):
+            # If it's a dict, it might be grouped by severity or rule
+            # We'll flatten it
+            for key, val in findings_data.items():
+                if isinstance(val, list):
+                    all_findings.extend(val)
+        
+        for f in all_findings:
+            # Extract fields
+            severity = f.get("severity", "UNKNOWN").upper()
+            file_path = f.get("filename") or f.get("file") or "unknown"
+            line = f.get("line_number") or f.get("line")
+            rule_id = f.get("rule_id") or f.get("rule")
+            message = f.get("message") or f.get("description") or "Security issue found"
+            
+            # Create ID
+            finding_hash = hashlib.md5(f"{rule_id}:{file_path}:{line}".encode()).hexdigest()
+            finding_id = f"BEARER-{finding_hash[:8]}"
+            
+            self._add_finding({
+                "id": finding_id,
+                "type": "sast",
+                "severity": severity,
+                "component": file_path,
+                "version": "",
+                "description": message,
+                "scanners": ["bearer"],
+                "details": {
+                    "rule_id": rule_id,
+                    "line": line,
+                    "cwe_ids": f.get("cwe_ids", []),
+                    "documentation": f.get("documentation_url")
                 }
             })
 

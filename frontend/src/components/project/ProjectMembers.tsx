@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Spinner } from '@/components/ui/spinner'
 import { UserPlus, UserMinus } from 'lucide-react'
 import { toast } from "sonner"
 import {
@@ -134,8 +133,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
               </div>
               <DialogFooter>
                 <Button onClick={() => inviteMemberMutation.mutate({ email: inviteEmail, role: inviteRole })} disabled={inviteMemberMutation.isPending}>
-                  {inviteMemberMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
-                  Invite
+                  {inviteMemberMutation.isPending ? "Inviting..." : "Invite"}
                 </Button>
               </DialogFooter>
             </DialogContent>

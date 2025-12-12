@@ -36,109 +36,91 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const projectStats = useMemo(() => {
       if (!filteredScans.length) return null;
 
-      // 1. Group by branch, get latest completed scan
-      const latestScansByBranch: Record<string, any> = {};
+      // Helper to check if finding is active (not waived, analyzer enabled)
+      const isFindingActive = (finding: any) => {
+          // Check waivers
+          let isWaived = finding.waived;
+          if (!isWaived && waivers) {
+              isWaived = waivers.some((waiver: any) => {
+                  if (waiver.expiration_date && new Date(waiver.expiration_date) < new Date()) return false;
+                  let match = true;
+                  if (waiver.finding_id && waiver.finding_id !== finding.id && waiver.finding_id !== finding.vuln_id) match = false;
+                  if (match && waiver.package_name && waiver.package_name !== finding.component && waiver.package_name !== finding.pkg_name) match = false;
+                  if (match && waiver.package_version && waiver.package_version !== finding.version && waiver.package_version !== finding.installed_version) match = false;
+                  if (match && waiver.finding_type && waiver.finding_type !== finding.type) match = false;
+                  return match;
+              });
+          }
+          if (isWaived) return false;
+
+          // Check active analyzers
+          const activeAnalyzers = project?.active_analyzers || [];
+          const findingScanners = finding.scanners || [];
+          if (findingScanners.length > 0) {
+              const isActive = findingScanners.some((scanner: string) => activeAnalyzers.includes(scanner));
+              if (!isActive) return false;
+          }
+          return true;
+      };
+
+      // 1. Group by branch
+      const scansByBranch: Record<string, any[]> = {};
       filteredScans.forEach(scan => {
           if (scan.status !== 'completed') return;
-          if (!latestScansByBranch[scan.branch] || new Date(scan.created_at) > new Date(latestScansByBranch[scan.branch].created_at)) {
-              latestScansByBranch[scan.branch] = scan;
-          }
+          if (!scansByBranch[scan.branch]) scansByBranch[scan.branch] = [];
+          scansByBranch[scan.branch].push(scan);
       });
 
-      // 2. Collect unique findings
-      const uniqueFindings = new Map(); // Key: finding.id + finding.component + finding.version
-      const activeAnalyzers = project?.active_analyzers || [];
-      
-      Object.values(latestScansByBranch).forEach(scan => {
-          if (!scan.findings_summary) return;
-          scan.findings_summary.forEach((finding: any) => {
-              // Check if finding is waived (either by backend or dynamically by frontend)
-              let isWaived = finding.waived;
-              
-              if (!isWaived && waivers) {
-                  // Dynamic check against active waivers
-                  isWaived = waivers.some((waiver: any) => {
-                      if (waiver.expiration_date && new Date(waiver.expiration_date) < new Date()) return false;
-                      
-                      let match = true;
-                      if (waiver.finding_id && waiver.finding_id !== finding.id && waiver.finding_id !== finding.vuln_id) match = false;
-                      if (match && waiver.package_name && waiver.package_name !== finding.component && waiver.package_name !== finding.pkg_name) match = false;
-                      if (match && waiver.package_version && waiver.package_version !== finding.version && waiver.package_version !== finding.installed_version) match = false;
-                      if (match && waiver.finding_type && waiver.finding_type !== finding.type) match = false;
-                      
-                      return match;
-                  });
-              }
+      const uniqueFindings = new Map(); // Global unique findings
+      const branchStatsData: any[] = [];
 
-              if (isWaived) return; 
+      Object.entries(scansByBranch).forEach(([branch, branchScans]) => {
+          // Sort by date desc
+          branchScans.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+          if (branchScans.length === 0) return;
 
-              // Filter by active analyzers
-              const findingScanners = finding.scanners || [];
-              if (findingScanners.length > 0) {
-                  const isActive = findingScanners.some((scanner: string) => activeAnalyzers.includes(scanner));
-                  if (!isActive) return;
-              }
-              
-              const key = `${finding.type}:${finding.id}:${finding.component}:${finding.version}`;
-              if (!uniqueFindings.has(key)) {
-                  uniqueFindings.set(key, finding);
-              }
+          const latestScan = branchScans[0];
+          const latestCommit = latestScan.commit_hash;
+          const commitScans = branchScans.filter(s => s.commit_hash === latestCommit);
+
+          const currentBranchStats = { name: branch, critical: 0, high: 0, medium: 0, low: 0 };
+          const branchUniqueFindings = new Set<string>();
+
+          commitScans.forEach(scan => {
+              if (!scan.findings_summary) return;
+              scan.findings_summary.forEach((finding: any) => {
+                  if (!isFindingActive(finding)) return;
+
+                  const key = `${finding.type}:${finding.id}:${finding.component}:${finding.version}`;
+                  
+                  // Add to global stats
+                  if (!uniqueFindings.has(key)) {
+                      uniqueFindings.set(key, finding);
+                  }
+
+                  // Add to branch stats (deduplicated locally)
+                  if (!branchUniqueFindings.has(key)) {
+                      branchUniqueFindings.add(key);
+                      const severity = (finding.severity || 'UNKNOWN').toLowerCase();
+                      if (currentBranchStats[severity as keyof typeof currentBranchStats] !== undefined) {
+                          (currentBranchStats as any)[severity]++;
+                      }
+                  }
+              });
           });
+          branchStatsData.push(currentBranchStats);
       });
 
-      // 3. Calculate Stats
+      // 3. Calculate Global Stats
       const stats: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
-
       uniqueFindings.forEach(finding => {
-          // Severity
           const severity = (finding.severity || 'UNKNOWN').toLowerCase();
           if (stats[severity] !== undefined) stats[severity]++;
           else stats.unknown++;
       });
 
-      // 4. Calculate Branch Stats for Stacked Bar Chart
-      const branchStatsData: any[] = [];
-      
-      Object.entries(latestScansByBranch).forEach(([branch, scan]: [string, any]) => {
-          const currentBranchStats = { name: branch, critical: 0, high: 0, medium: 0, low: 0 };
-          
-          if (scan.findings_summary) {
-              scan.findings_summary.forEach((finding: any) => {
-                  // Re-apply waiver/analyzer checks locally for this branch stat
-                  // Note: This duplicates logic slightly but ensures consistency. 
-                  // Ideally we'd refactor the check into a helper function inside useMemo.
-                  
-                  let isWaived = finding.waived;
-                  if (!isWaived && waivers) {
-                      isWaived = waivers.some((waiver: any) => {
-                          if (waiver.expiration_date && new Date(waiver.expiration_date) < new Date()) return false;
-                          let match = true;
-                          if (waiver.finding_id && waiver.finding_id !== finding.id && waiver.finding_id !== finding.vuln_id) match = false;
-                          if (match && waiver.package_name && waiver.package_name !== finding.component && waiver.package_name !== finding.pkg_name) match = false;
-                          if (match && waiver.package_version && waiver.package_version !== finding.version && waiver.package_version !== finding.installed_version) match = false;
-                          if (match && waiver.finding_type && waiver.finding_type !== finding.type) match = false;
-                          return match;
-                      });
-                  }
-                  if (isWaived) return;
-
-                  const findingScanners = finding.scanners || [];
-                  if (findingScanners.length > 0) {
-                      const isActive = findingScanners.some((scanner: string) => activeAnalyzers.includes(scanner));
-                      if (!isActive) return;
-                  }
-
-                  const severity = (finding.severity || 'UNKNOWN').toLowerCase();
-                  if (currentBranchStats[severity as keyof typeof currentBranchStats] !== undefined) {
-                      (currentBranchStats as any)[severity]++;
-                  }
-              });
-          }
-          branchStatsData.push(currentBranchStats);
-      });
-
       return { stats, branchStats: branchStatsData };
-  }, [filteredScans, waivers, project]);
+  }, [filteredScans, project, waivers]);
 
   if (isLoading) {
     return (

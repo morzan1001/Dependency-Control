@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { logger } from './logger';
 
 // Define the shape of the runtime config
 interface RuntimeConfig {
@@ -27,11 +28,23 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
+  logger.debug(`Request: ${config.method?.toUpperCase()} ${config.url}`);
   const token = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
+}, (error) => {
+  logger.error('Request Error:', error);
+  return Promise.reject(error);
+});
+
+api.interceptors.response.use((response) => {
+  logger.debug(`Response: ${response.status} ${response.config.url}`);
+  return response;
+}, (error) => {
+  logger.error(`Response Error: ${error.response?.status} ${error.config?.url}`, error.response?.data || error.message);
+  return Promise.reject(error);
 });
 
 export interface Token {
@@ -90,6 +103,7 @@ export const resendVerificationEmail = async (email: string) => {
 
 export interface User {
   id: string;
+  _id?: string;
   email: string;
   username: string;
   is_active: boolean;
@@ -126,6 +140,11 @@ export interface Project {
     [key: string]: string[];
   };
   stats?: {
+    critical?: number;
+    high?: number;
+    medium?: number;
+    low?: number;
+    risk_score?: number;
     [key: string]: number | undefined;
   } | null;
   last_scan_at?: string;
@@ -146,6 +165,7 @@ export interface Scan {
     high?: number;
     medium?: number;
     low?: number;
+    risk_score?: number;
     [key: string]: number | undefined;
   } | null;
   completed_at?: string;
@@ -169,7 +189,7 @@ export interface ProjectCreate {
 }
 
 export const createProject = async (data: ProjectCreate) => {
-  const response = await api.post<Project>('/projects/', data);
+  const response = await api.post<ProjectApiKeyResponse>('/projects/', data);
   return response.data;
 };
 

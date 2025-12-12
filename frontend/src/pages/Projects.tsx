@@ -7,9 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info } from 'lucide-react';
+import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, Copy, Check } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { Spinner } from '@/components/ui/spinner';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from "sonner";
 import {
   Dialog,
@@ -48,6 +48,8 @@ export default function ProjectsPage() {
   const [teamId, setTeamId] = useState<string | undefined>(undefined);
   const [retentionDays, setRetentionDays] = useState(90);
   const [analyzers, setAnalyzers] = useState<string[]>(['end_of_life']);
+  const [createdProjectData, setCreatedProjectData] = useState<{ project_id: string, api_key: string, note: string } | null>(null);
+  const [hasCopied, setHasCopied] = useState(false);
 
   const { data: projects, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
     queryKey: ['projects'],
@@ -61,13 +63,9 @@ export default function ProjectsPage() {
 
   const createProjectMutation = useMutation({
     mutationFn: (data: { name: string; team_id?: string; active_analyzers: string[]; retention_days: number }) => createProject(data),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
-      setIsCreateOpen(false);
-      setName('');
-      setTeamId(undefined);
-      setRetentionDays(90);
-      setAnalyzers(['end_of_life']);
+      setCreatedProjectData(data);
       toast.success("Project created successfully");
     },
     onError: (error: any) => {
@@ -87,6 +85,25 @@ export default function ProjectsPage() {
     });
   };
 
+  const handleCloseCreate = () => {
+    setIsCreateOpen(false);
+    setCreatedProjectData(null);
+    setName('');
+    setTeamId(undefined);
+    setRetentionDays(90);
+    setAnalyzers(['end_of_life']);
+    setHasCopied(false);
+  }
+
+  const copyToClipboard = () => {
+    if (createdProjectData?.api_key) {
+      navigator.clipboard.writeText(createdProjectData.api_key);
+      setHasCopied(true);
+      toast.success("API Key copied to clipboard");
+      setTimeout(() => setHasCopied(false), 2000);
+    }
+  }
+
   const toggleAnalyzer = (analyzer: string) => {
       setAnalyzers(prev => 
           prev.includes(analyzer) 
@@ -97,8 +114,19 @@ export default function ProjectsPage() {
 
   if (isLoadingProjects) {
     return (
-      <div className="flex h-[50vh] items-center justify-center">
-        <Spinner size={48} />
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-9 w-32" />
+          <Skeleton className="h-10 w-32" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <Skeleton className="h-48 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+        </div>
       </div>
     );
   }
@@ -113,7 +141,15 @@ export default function ProjectsPage() {
         <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
         
         {hasPermission('project:create') && (
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => {
+            if (!open && createdProjectData) {
+              handleCloseCreate();
+            } else if (!open) {
+              setIsCreateOpen(false);
+            } else {
+              setIsCreateOpen(true);
+            }
+          }}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
@@ -121,82 +157,114 @@ export default function ProjectsPage() {
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-[500px]">
-              <form onSubmit={handleCreateProject}>
-                <DialogHeader>
-                  <DialogTitle>Create Project</DialogTitle>
-                  <DialogDescription>
-                    Create a new project to start scanning for vulnerabilities.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="name">Project Name</Label>
-                    <Input
-                      id="name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="My Awesome App"
-                      required
-                    />
-                  </div>
-                  
-                  <div className="grid gap-2">
-                    <Label htmlFor="team">Team (Optional)</Label>
-                    <Select value={teamId} onValueChange={setTeamId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a team" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No Team</SelectItem>
-                        {teams?.map((team) => (
-                          <SelectItem key={team._id} value={team._id}>
-                            {team.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label htmlFor="retention">Retention Period (Days)</Label>
-                    <Input
-                      id="retention"
-                      type="number"
-                      min="1"
-                      value={retentionDays}
-                      onChange={(e) => setRetentionDays(parseInt(e.target.value))}
-                      required
-                    />
-                  </div>
-
-                  <div className="grid gap-2">
-                    <Label>Active Analyzers</Label>
-                    <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[200px] overflow-y-auto">
-                      {AVAILABLE_ANALYZERS.map((analyzer) => (
-                        <div key={analyzer.id} className="flex items-center space-x-2">
-                          <Checkbox 
-                            id={`analyzer-${analyzer.id}`}
-                            checked={analyzers.includes(analyzer.id)}
-                            onCheckedChange={() => toggleAnalyzer(analyzer.id)}
-                          />
-                          <Label htmlFor={`analyzer-${analyzer.id}`} className="font-normal cursor-pointer">
-                            {analyzer.label}
-                          </Label>
-                        </div>
-                      ))}
+              <DialogHeader>
+                <DialogTitle>{createdProjectData ? 'Project Created' : 'Create Project'}</DialogTitle>
+                <DialogDescription>
+                  {createdProjectData 
+                    ? 'Your project has been created. Please save this API Key securely as it will not be shown again.' 
+                    : 'Create a new project to start scanning for vulnerabilities.'}
+                </DialogDescription>
+              </DialogHeader>
+              
+              {createdProjectData ? (
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Project ID</Label>
+                    <div className="p-2 bg-muted rounded-md font-mono text-sm select-all">
+                      {createdProjectData.project_id}
                     </div>
                   </div>
+                  <div className="space-y-2">
+                    <Label>API Key</Label>
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 bg-muted rounded-md font-mono text-sm flex-1 break-all">
+                        {createdProjectData.api_key}
+                      </div>
+                      <Button size="icon" variant="outline" onClick={copyToClipboard}>
+                        {hasCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground text-red-500 font-medium">
+                      {createdProjectData.note}
+                    </p>
+                  </div>
+                  <DialogFooter>
+                    <Button onClick={handleCloseCreate} className="w-full">
+                      I have saved the key
+                    </Button>
+                  </DialogFooter>
                 </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={createProjectMutation.isPending}>
-                    {createProjectMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
-                    Create Project
-                  </Button>
-                </DialogFooter>
-              </form>
+              ) : (
+                <form onSubmit={handleCreateProject}>
+                  <div className="grid gap-4 py-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="name">Project Name</Label>
+                      <Input
+                        id="name"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="My Awesome App"
+                        required
+                      />
+                    </div>
+                    
+                    <div className="grid gap-2">
+                      <Label htmlFor="team">Team (Optional)</Label>
+                      <Select value={teamId} onValueChange={setTeamId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a team" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No Team</SelectItem>
+                          {teams?.map((team) => (
+                            <SelectItem key={team._id} value={team._id}>
+                              {team.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="retention">Retention Period (Days)</Label>
+                      <Input
+                        id="retention"
+                        type="number"
+                        min="1"
+                        value={retentionDays}
+                        onChange={(e) => setRetentionDays(parseInt(e.target.value))}
+                        required
+                      />
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label>Active Analyzers</Label>
+                      <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[200px] overflow-y-auto">
+                        {AVAILABLE_ANALYZERS.map((analyzer) => (
+                          <div key={analyzer.id} className="flex items-center space-x-2">
+                            <Checkbox 
+                              id={`analyzer-${analyzer.id}`}
+                              checked={analyzers.includes(analyzer.id)}
+                              onCheckedChange={() => toggleAnalyzer(analyzer.id)}
+                            />
+                            <Label htmlFor={`analyzer-${analyzer.id}`} className="font-normal cursor-pointer">
+                              {analyzer.label}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={createProjectMutation.isPending}>
+                      {createProjectMutation.isPending ? "Creating..." : "Create Project"}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              )}
             </DialogContent>
           </Dialog>
         )}

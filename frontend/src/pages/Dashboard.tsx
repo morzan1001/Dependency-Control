@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getProjects, getRecentScans } from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
-import { Spinner } from '@/components/ui/spinner'
+import { Skeleton } from '@/components/ui/skeleton'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -20,8 +20,21 @@ export default function Dashboard() {
 
   if (isLoadingProjects || isLoadingScans) {
     return (
-      <div className="flex h-[50vh] items-center justify-center">
-        <Spinner size={48} />
+      <div className="space-y-8">
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-48" />
+          <Skeleton className="h-4 w-64" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <Skeleton className="h-32 rounded-xl" />
+          <Skeleton className="h-32 rounded-xl" />
+          <Skeleton className="h-32 rounded-xl" />
+          <Skeleton className="h-32 rounded-xl" />
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+          <Skeleton className="col-span-4 h-[400px] rounded-xl" />
+          <Skeleton className="col-span-3 h-[400px] rounded-xl" />
+        </div>
       </div>
     )
   }
@@ -42,7 +55,14 @@ export default function Dashboard() {
     if (p.stats) {
       totalCritical += p.stats.critical || 0
       totalHigh += p.stats.high || 0
-      totalRiskScore += (p.stats.critical || 0) * 2 + (p.stats.high || 0)
+      
+      if (p.stats.risk_score !== undefined) {
+        totalRiskScore += p.stats.risk_score
+      } else {
+        // Fallback calculation matching backend logic for consistency
+        // Critical=10, High=7.5, Medium=4, Low=1
+        totalRiskScore += (p.stats.critical || 0) * 10 + (p.stats.high || 0) * 7.5 + (p.stats.medium || 0) * 4 + (p.stats.low || 0) * 1
+      }
     }
   })
 
@@ -73,21 +93,26 @@ export default function Dashboard() {
       title: "Avg Risk Score",
       value: avgRiskScore,
       icon: ShieldCheck,
-      description: "Average risk per project"
+      description: "Average risk per project",
+      tooltip: "Calculated as the average sum of CVSS scores per project. If CVSS is missing, weighted severity is used: Critical=10, High=7.5, Medium=4, Low=1."
     }
   ]
 
   // Chart Data
   const chartData = [...projectList]
     .sort((a, b) => {
-      const scoreA = (a.stats?.critical || 0) * 2 + (a.stats?.high || 0)
-      const scoreB = (b.stats?.critical || 0) * 2 + (b.stats?.high || 0)
-      return scoreB - scoreA
+      const getScore = (p: typeof projectList[0]) => {
+        if (p.stats?.risk_score !== undefined) return p.stats.risk_score
+        return (p.stats?.critical || 0) * 10 + (p.stats?.high || 0) * 7.5 + (p.stats?.medium || 0) * 4
+      }
+      return getScore(b) - getScore(a)
     })
     .slice(0, 5)
     .map(p => ({
       name: p.name,
-      risk: (p.stats?.critical || 0) + (p.stats?.high || 0) // Simplified for chart as per Appsmith logic (critical + high)
+      risk: p.stats?.risk_score !== undefined 
+        ? p.stats.risk_score 
+        : (p.stats?.critical || 0) * 10 + (p.stats?.high || 0) * 7.5 + (p.stats?.medium || 0) * 4
     }))
 
   return (
@@ -102,10 +127,13 @@ export default function Dashboard() {
         {stats.map((stat) => {
           const Icon = stat.icon
           return (
-            <Card key={stat.title}>
+            <Card key={stat.title} title={stat.tooltip}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
                   {stat.title}
+                  {stat.tooltip && (
+                    <span className="sr-only">{stat.tooltip}</span>
+                  )}
                 </CardTitle>
                 <Icon className={`h-4 w-4 text-muted-foreground ${stat.className || ''}`} />
               </CardHeader>

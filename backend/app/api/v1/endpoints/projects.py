@@ -477,6 +477,8 @@ async def invite_user(
 @router.get("/{project_id}/scans", response_model=List[Scan], summary="List project scans")
 async def read_scans(
     project_id: str,
+    skip: int = 0,
+    limit: int = 100,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -484,7 +486,7 @@ async def read_scans(
     Get all scans for a project.
     """
     await check_project_access(project_id, current_user, db)
-    scans = await db.scans.find({"project_id": project_id}).to_list(100)
+    scans = await db.scans.find({"project_id": project_id}).skip(skip).limit(limit).to_list(limit)
     return scans
 
 @router.get("/scans/{scan_id}/results", response_model=List[AnalysisResult], summary="Get analysis results")
@@ -495,6 +497,7 @@ async def read_analysis_results(
 ):
     """
     Get the results of all analyzers for a specific scan.
+    Also includes results from other scans on the same commit to provide a complete view.
     """
     # Need to find project_id from scan to check permissions
     scan = await db.scans.find_one({"_id": scan_id})
@@ -503,8 +506,38 @@ async def read_analysis_results(
         
     await check_project_access(scan["project_id"], current_user, db)
     
-    results = await db.analysis_results.find({"scan_id": scan_id}).to_list(100)
-    return results
+    # Find all scans for this commit to aggregate results
+    # This ensures that if scanners ran in different jobs (creating different scan entries),
+    # we still see all results for this commit.
+    related_scans_cursor = db.scans.find({
+        "project_id": scan["project_id"],
+        "commit_hash": scan["commit_hash"]
+    })
+    related_scan_ids = [s["_id"] async for s in related_scans_cursor]
+    
+    if not related_scan_ids:
+        related_scan_ids = [scan_id]
+    
+    results = await db.analysis_results.find({"scan_id": {"$in": related_scan_ids}}).to_list(1000)
+    
+    # Deduplicate results by analyzer_name (preferring the one from the requested scan_id, or latest)
+    # Since we might have multiple runs for the same commit.
+    unique_results = {}
+    for res in results:
+        name = res["analyzer_name"]
+        # If we already have a result for this analyzer
+        if name in unique_results:
+            existing = unique_results[name]
+            # If the current res is from the requested scan_id, prioritize it
+            if res["scan_id"] == scan_id:
+                unique_results[name] = res
+            # Else if existing is NOT from requested scan_id, and res is newer, take res
+            elif existing["scan_id"] != scan_id and res["created_at"] > existing["created_at"]:
+                unique_results[name] = res
+        else:
+            unique_results[name] = res
+            
+    return list(unique_results.values())
 
 @router.get("/scans/{scan_id}", response_model=Scan, summary="Get scan details")
 async def read_scan(

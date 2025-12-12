@@ -7,9 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Spinner } from '@/components/ui/spinner'
 import { WebhookManager } from '@/components/WebhookManager'
-import { AlertTriangle, RefreshCw, Info, Copy } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Copy } from 'lucide-react'
 import { toast } from "sonner"
 import {
   Select,
@@ -38,6 +37,8 @@ const AVAILABLE_ANALYZERS = [
   { id: 'outdated_packages', label: 'Outdated Packages', description: 'Identifies packages that are not on the latest version.' },
   { id: 'typosquatting', label: 'Typosquatting', description: 'Detects potential typosquatting attacks (packages with names similar to popular ones).' },
   { id: 'opengrep', label: 'OpenGrep (SAST)', description: 'Static Application Security Testing (SAST) tool to find security flaws in code.' },
+  { id: 'kics', label: 'KICS (IaC)', description: 'Finds security vulnerabilities, compliance issues, and infrastructure misconfigurations in IaC.' },
+  { id: 'bearer', label: 'Bearer (SAST/Data)', description: 'Static Application Security Testing (SAST) and Data Security tool.' },
   { id: 'trufflehog', label: 'TruffleHog (Secrets)', description: 'Scans for hardcoded secrets, passwords, and keys in the codebase.' },
 ];
 
@@ -85,10 +86,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   useEffect(() => {
     if (project && user) {
       let prefs: Record<string, string[]> = {}
-      if (project.owner_id === user.id) {
+      const userId = user._id || user.id;
+      if (project.owner_id === userId) {
         prefs = project.owner_notification_preferences || {}
       } else if (project.members) {
-        const member = project.members.find(m => m.user_id === user.id)
+        const member = project.members.find(m => m.user_id === userId)
         if (member) {
           prefs = member.notification_preferences || {}
         }
@@ -246,19 +248,20 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     <Label>Active Analyzers</Label>
                     <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[300px] overflow-y-auto">
                         {AVAILABLE_ANALYZERS.map((analyzer) => (
-                            <div key={analyzer.id} className="flex items-center space-x-2">
+                            <div key={analyzer.id} className="flex items-start space-x-2 py-2">
                                 <Checkbox 
                                     id={`analyzer-${analyzer.id}`}
                                     checked={analyzers.includes(analyzer.id)}
                                     onCheckedChange={() => toggleAnalyzer(analyzer.id)}
+                                    className="mt-1"
                                 />
-                                <div className="flex items-center gap-2">
-                                    <Label htmlFor={`analyzer-${analyzer.id}`} className="font-normal cursor-pointer">
+                                <div className="flex flex-col gap-1">
+                                    <Label htmlFor={`analyzer-${analyzer.id}`} className="font-medium cursor-pointer">
                                         {analyzer.label}
                                     </Label>
-                                    <div title={analyzer.description} className="cursor-help text-muted-foreground hover:text-foreground">
-                                        <Info className="h-4 w-4" />
-                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                        {analyzer.description}
+                                    </p>
                                 </div>
                             </div>
                         ))}
@@ -266,8 +269,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </div>
                 {hasPermission('project:update') && (
                     <Button type="submit" disabled={updateProjectMutation.isPending}>
-                        {updateProjectMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
-                        Save Changes
+                        {updateProjectMutation.isPending ? "Saving..." : "Save Changes"}
                     </Button>
                 )}
             </form>
@@ -316,8 +318,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     onClick={() => updateNotificationSettingsMutation.mutate({ notification_preferences: notificationPrefs })}
                     disabled={updateNotificationSettingsMutation.isPending}
                 >
-                    {updateNotificationSettingsMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : null}
-                    Save Notification Settings
+                    {updateNotificationSettingsMutation.isPending ? "Saving..." : "Save Notification Settings"}
                 </Button>
             )}
         </CardContent>
@@ -350,7 +351,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         </div>
                     </div>
                     <Button variant="destructive" onClick={() => rotateKeyMutation.mutate()} disabled={rotateKeyMutation.isPending}>
-                        {rotateKeyMutation.isPending ? <Spinner className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                        {rotateKeyMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
                         Rotate Key
                     </Button>
                 </div>

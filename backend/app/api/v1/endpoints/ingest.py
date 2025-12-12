@@ -4,6 +4,8 @@ from app.api import deps
 from app.schemas.ingest import SBOMIngest
 from app.schemas.trufflehog import TruffleHogIngest
 from app.schemas.opengrep import OpenGrepIngest
+from app.schemas.kics import KicsIngest
+from app.schemas.bearer import BearerIngest
 from app.models.project import Project, Scan, AnalysisResult
 from app.db.mongodb import get_database
 from app.core.worker import worker_manager
@@ -233,6 +235,186 @@ async def ingest_opengrep(
     await db.scans.insert_one(scan.dict(by_alias=True))
     
     # Update Project Stats
+    await db.projects.update_one(
+        {"_id": str(project.id)},
+        {"$set": {"last_scan_at": datetime.utcnow()}}
+    )
+    
+    return {
+        "scan_id": scan.id,
+        "findings_count": len(final_findings),
+        "stats": stats
+    }
+
+@router.post("/ingest/kics", summary="Ingest KICS Results", status_code=200)
+async def ingest_kics(
+    data: KicsIngest,
+    project: Project = Depends(deps.get_project_by_api_key),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Ingest KICS IaC scan results.
+    """
+    scan = Scan(
+        project_id=str(project.id),
+        branch=data.branch,
+        commit_hash=data.commit_hash,
+        sbom=None,
+        status="completed",
+        created_at=datetime.utcnow(),
+        completed_at=datetime.utcnow()
+    )
+    
+    aggregator = ResultAggregator()
+    kics_result = data.dict()
+    
+    aggregator.aggregate("kics", kics_result)
+    findings = aggregator.get_findings()
+    
+    # Apply Waivers
+    waivers_cursor = db.waivers.find({
+        "$or": [
+            {"project_id": str(project.id)},
+            {"project_id": None}
+        ],
+        "expiration_date": {"$gt": datetime.utcnow()}
+    })
+    waivers = await waivers_cursor.to_list(length=1000)
+    
+    final_findings = []
+    
+    for finding in findings:
+        is_waived = False
+        for waiver in waivers:
+            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
+                is_waived = True
+                break
+            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
+                is_waived = True
+                break
+            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
+                is_waived = True
+                break
+        
+        if is_waived:
+            finding["waived"] = True
+        else:
+            final_findings.append(finding)
+
+    # Store Results
+    await db.analysis_results.insert_one({
+        "_id": str(uuid.uuid4()),
+        "scan_id": scan.id,
+        "analyzer_name": "kics",
+        "result": kics_result,
+        "created_at": datetime.utcnow()
+    })
+    
+    # Update Scan
+    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
+    for f in final_findings:
+        sev = f.get("severity", "UNKNOWN").lower()
+        if sev in stats:
+            stats[sev] += 1
+        else:
+            stats["unknown"] += 1
+            
+    scan.findings_summary = final_findings
+    scan.findings_count = len(final_findings)
+    scan.stats = stats
+    
+    await db.scans.insert_one(scan.dict(by_alias=True))
+    
+    await db.projects.update_one(
+        {"_id": str(project.id)},
+        {"$set": {"last_scan_at": datetime.utcnow()}}
+    )
+    
+    return {
+        "scan_id": scan.id,
+        "findings_count": len(final_findings),
+        "stats": stats
+    }
+
+@router.post("/ingest/bearer", summary="Ingest Bearer Results", status_code=200)
+async def ingest_bearer(
+    data: BearerIngest,
+    project: Project = Depends(deps.get_project_by_api_key),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Ingest Bearer SAST/Data Security scan results.
+    """
+    scan = Scan(
+        project_id=str(project.id),
+        branch=data.branch,
+        commit_hash=data.commit_hash,
+        sbom=None,
+        status="completed",
+        created_at=datetime.utcnow(),
+        completed_at=datetime.utcnow()
+    )
+    
+    aggregator = ResultAggregator()
+    bearer_result = data.dict()
+    
+    aggregator.aggregate("bearer", bearer_result)
+    findings = aggregator.get_findings()
+    
+    # Apply Waivers
+    waivers_cursor = db.waivers.find({
+        "$or": [
+            {"project_id": str(project.id)},
+            {"project_id": None}
+        ],
+        "expiration_date": {"$gt": datetime.utcnow()}
+    })
+    waivers = await waivers_cursor.to_list(length=1000)
+    
+    final_findings = []
+    
+    for finding in findings:
+        is_waived = False
+        for waiver in waivers:
+            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
+                is_waived = True
+                break
+            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
+                is_waived = True
+                break
+            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
+                is_waived = True
+                break
+        
+        if is_waived:
+            finding["waived"] = True
+        else:
+            final_findings.append(finding)
+
+    # Store Results
+    await db.analysis_results.insert_one({
+        "_id": str(uuid.uuid4()),
+        "scan_id": scan.id,
+        "analyzer_name": "bearer",
+        "result": bearer_result,
+        "created_at": datetime.utcnow()
+    })
+    
+    # Update Scan
+    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
+    for f in final_findings:
+        sev = f.get("severity", "UNKNOWN").lower()
+        if sev in stats:
+            stats[sev] += 1
+        else:
+            stats["unknown"] += 1
+            
+    scan.findings_summary = final_findings
+    scan.findings_count = len(final_findings)
+    scan.stats = stats
+    
+    await db.scans.insert_one(scan.dict(by_alias=True))
+    
     await db.projects.update_one(
         {"_id": str(project.id)},
         {"$set": {"last_scan_at": datetime.utcnow()}}

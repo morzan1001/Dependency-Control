@@ -7,7 +7,7 @@ import { validateInvitation, acceptInvitation, login as apiLogin } from '@/lib/a
 import { useAuth } from '@/context/AuthContext'
 import { AxiosError } from 'axios'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { Spinner } from '@/components/ui/spinner'
+import { Skeleton } from '@/components/ui/skeleton'
 
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams()
@@ -78,7 +78,19 @@ export default function AcceptInvite() {
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-muted/50">
-        <Spinner size={48} />
+        <Card className="w-[350px]">
+          <CardHeader>
+            <Skeleton className="h-12 w-12 rounded-full mx-auto mb-2" />
+            <Skeleton className="h-6 w-32 mx-auto mb-2" />
+            <Skeleton className="h-4 w-48 mx-auto" />
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -141,12 +153,7 @@ export default function AcceptInvite() {
           </CardContent>
           <CardFooter className="flex flex-col gap-2">
             <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Spinner className="mr-2 h-4 w-4 text-primary-foreground" />
-                  Creating account...
-                </>
-              ) : "Create Account"}
+              {isSubmitting ? "Creating account..." : "Create Account"}
             </Button>
           </CardFooter>
         </form>

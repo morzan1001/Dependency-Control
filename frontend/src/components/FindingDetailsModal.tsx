@@ -129,7 +129,76 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                 </div>
                             )}
 
-                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && (
+                            {finding.type === 'vulnerability' && (
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">CVSS Score</h4>
+                                            <div className="flex items-center gap-2">
+                                                <span className={`text-lg font-bold ${
+                                                    (finding.details?.cvss_score || 0) >= 9 ? 'text-red-600' :
+                                                    (finding.details?.cvss_score || 0) >= 7 ? 'text-orange-600' :
+                                                    (finding.details?.cvss_score || 0) >= 4 ? 'text-yellow-600' :
+                                                    'text-blue-600'
+                                                }`}>
+                                                    {finding.details?.cvss_score || "N/A"}
+                                                </span>
+                                                {finding.details?.cvss_vector && (
+                                                    <span className="text-xs text-muted-foreground font-mono bg-background px-1 rounded border">
+                                                        {finding.details.cvss_vector}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Published</h4>
+                                            <p className="text-sm">
+                                                {finding.details?.published_date ? new Date(finding.details.published_date).toLocaleDateString() : "Unknown"}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {finding.details?.references && finding.details.references.length > 0 && (
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-2">References</h4>
+                                            <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm">
+                                                {finding.details.references.map((ref: string, i: number) => (
+                                                    <a 
+                                                        key={i} 
+                                                        href={ref} 
+                                                        target="_blank" 
+                                                        rel="noopener noreferrer"
+                                                        className="text-blue-600 hover:underline truncate"
+                                                    >
+                                                        {ref}
+                                                    </a>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    
+                                    {finding.details?.urls && finding.details.urls.length > 0 && (
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-2">URLs</h4>
+                                            <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm">
+                                                {finding.details.urls.map((url: string, i: number) => (
+                                                    <a 
+                                                        key={i} 
+                                                        href={url} 
+                                                        target="_blank" 
+                                                        rel="noopener noreferrer"
+                                                        className="text-blue-600 hover:underline truncate"
+                                                    >
+                                                        {url}
+                                                    </a>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && (
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-2">Additional Details</h4>
                                     <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">

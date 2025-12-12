@@ -5,7 +5,6 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { resendVerificationEmail } from '@/lib/api'
 import { Link } from 'react-router-dom'
-import { Spinner } from '@/components/ui/spinner'
 import { AxiosError } from 'axios'
 
 export default function ResendVerification() {
@@ -66,12 +65,7 @@ export default function ResendVerification() {
           </CardContent>
           <CardFooter className="flex flex-col gap-2">
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? (
-                <>
-                  <Spinner className="mr-2 h-4 w-4 text-primary-foreground" />
-                  Sending...
-                </>
-              ) : "Send Verification Email"}
+              {isLoading ? "Sending..." : "Send Verification Email"}
             </Button>
             <div className="text-sm text-center text-muted-foreground">
               <Link to="/login" className="text-primary hover:underline">Back to Login</Link>

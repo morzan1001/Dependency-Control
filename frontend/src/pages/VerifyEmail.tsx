@@ -3,7 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { verifyEmail } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
+import { Skeleton } from '@/components/ui/skeleton'
 import { CheckCircle2, XCircle } from 'lucide-react'
 
 export default function VerifyEmail() {
@@ -35,7 +35,7 @@ export default function VerifyEmail() {
       <Card className="w-[350px]">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            {status === 'loading' && <Spinner size={48} />}
+            {status === 'loading' && <Skeleton className="h-12 w-12 rounded-full" />}
             {status === 'success' && <CheckCircle2 className="h-12 w-12 text-green-500" />}
             {status === 'error' && <XCircle className="h-12 w-12 text-destructive" />}
           </div>

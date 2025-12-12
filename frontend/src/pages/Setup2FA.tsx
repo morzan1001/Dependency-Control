@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Spinner } from '@/components/ui/spinner'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { getErrorMessage } from "@/lib/utils"
@@ -87,8 +86,7 @@ export default function Setup2FA() {
                 You will need to use an authenticator app (like Google Authenticator or Authy) to scan a QR code.
               </p>
               <Button onClick={handleStartSetup} disabled={setupMutation.isPending} className="w-full">
-                {setupMutation.isPending ? <Spinner className="mr-2" /> : null}
-                Start Setup
+                {setupMutation.isPending ? "Starting..." : "Start Setup"}
               </Button>
             </div>
           )}
@@ -127,8 +125,7 @@ export default function Setup2FA() {
               </div>
 
               <Button type="submit" className="w-full" disabled={enableMutation.isPending}>
-                {enableMutation.isPending ? <Spinner className="mr-2" /> : null}
-                Verify and Enable
+                {enableMutation.isPending ? "Verifying..." : "Verify and Enable"}
               </Button>
             </form>
           )}

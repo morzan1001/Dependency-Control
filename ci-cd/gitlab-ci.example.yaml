@@ -99,3 +99,61 @@ opengrep-scan:
         -d @payload.json \
         "$DEP_CONTROL_URL/api/v1/ingest/opengrep"
 
+kics-scan:
+  stage: dependency-scan
+  image: 
+    name: checkmarx/kics:latest
+    entrypoint: [""]
+  variables:
+    # DEP_CONTROL_URL, DEP_CONTROL_API_KEY, PROJECT_NAME defined in CI/CD settings
+  script:
+    - echo "Running KICS..."
+    - kics scan -p . -o . --output-name kics-results.json --report-formats json --ignore-on-exit all || true
+    
+    - echo "Preparing payload..."
+    - apk add --no-cache jq curl
+    - |
+      jq -n \
+        --arg pn "$PROJECT_NAME" \
+        --arg br "$CI_COMMIT_REF_NAME" \
+        --arg ch "$CI_COMMIT_SHA" \
+        --slurpfile findings kics-results.json \
+        '{project_name: $pn, branch: $br, commit_hash: $ch, queries: $findings[0].queries, files: $findings[0].files}' > payload.json
+      
+    - echo "Uploading results..."
+    - |
+      curl -X POST \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: $DEP_CONTROL_API_KEY" \
+        -d @payload.json \
+        "$DEP_CONTROL_URL/api/v1/ingest/kics"
+
+bearer-scan:
+  stage: dependency-scan
+  image: 
+    name: bearer/bearer
+    entrypoint: [""]
+  variables:
+    # DEP_CONTROL_URL, DEP_CONTROL_API_KEY, PROJECT_NAME defined in CI/CD settings
+  script:
+    - echo "Running Bearer..."
+    - bearer scan . --format json --output bearer.json || true
+    
+    - echo "Preparing payload..."
+    - apk add --no-cache jq curl
+    - |
+      jq -n \
+        --arg pn "$PROJECT_NAME" \
+        --arg br "$CI_COMMIT_REF_NAME" \
+        --arg ch "$CI_COMMIT_SHA" \
+        --slurpfile findings bearer.json \
+        '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0]}' > payload.json
+      
+    - echo "Uploading results..."
+    - |
+      curl -X POST \
+        -H "Content-Type: application/json" \
+        -H "x-api-key: $DEP_CONTROL_API_KEY" \
+        -d @payload.json \
+        "$DEP_CONTROL_URL/api/v1/ingest/bearer"
+

@@ -117,3 +117,73 @@ jobs:
             -d @payload.json \
             "$DEP_CONTROL_URL/api/v1/ingest/opengrep"
 
+  kics-scan:
+    runs-on: ubuntu-latest
+    container:
+      image: checkmarx/kics:latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run KICS
+        run: |
+          # Run KICS scan
+          # --ignore-on-exit all ensures the step doesn't fail if vulnerabilities are found
+          kics scan -p . -o . --output-name kics-results.json --report-formats json --ignore-on-exit all || true
+        
+      - name: Upload KICS Results
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          PROJECT_NAME: "your-project-name"
+        run: |
+          # Install jq/curl if missing (KICS image is Alpine based)
+          if ! command -v jq &> /dev/null; then
+             apk add --no-cache jq curl
+          fi
+          
+          # Prepare payload
+          # KICS output structure needs to be passed correctly
+          jq -n \
+            --arg pn "$PROJECT_NAME" \
+            --arg br "${{ github.ref_name }}" \
+            --arg ch "${{ github.sha }}" \
+            --slurpfile findings kics-results.json \
+            '{project_name: $pn, branch: $br, commit_hash: $ch, queries: $findings[0].queries, files: $findings[0].files}' > payload.json
+            
+          # Send to Backend
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $DEP_CONTROL_API_KEY" \
+            -d @payload.json \
+            "$DEP_CONTROL_URL/api/v1/ingest/kics"
+
+  bearer-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Bearer
+        run: curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+        
+      - name: Run Bearer
+        run: bearer scan . --format json --output bearer.json || true
+        
+      - name: Upload Bearer Results
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          PROJECT_NAME: "your-project-name"
+        run: |
+          jq -n \
+            --arg pn "$PROJECT_NAME" \
+            --arg br "${{ github.ref_name }}" \
+            --arg ch "${{ github.sha }}" \
+            --slurpfile findings bearer.json \
+            '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0]}' > payload.json
+            
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $DEP_CONTROL_API_KEY" \
+            -d @payload.json \
+            "$DEP_CONTROL_URL/api/v1/ingest/bearer"
+

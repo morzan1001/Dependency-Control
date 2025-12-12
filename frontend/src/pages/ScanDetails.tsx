@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ArrowLeft, FileJson, CheckCircle, Package, Scale, ShieldAlert, Activity, AlertTriangle, Info, GitBranch, GitCommit, Calendar, ArrowUpDown, Lock, Code } from 'lucide-react'
-import { Spinner } from '@/components/ui/spinner'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -43,8 +43,24 @@ export default function ScanDetails() {
 
   if (isScanLoading || isResultsLoading || isProjectLoading) {
     return (
-      <div className="flex h-[50vh] items-center justify-center">
-        <Spinner size={48} />
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Skeleton className="h-10 w-10 rounded-md" />
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-32" />
+          </div>
+        </div>
+        <div className="space-y-4">
+          <Skeleton className="h-10 w-full max-w-md" />
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <Skeleton className="h-32 rounded-xl" />
+            <Skeleton className="h-32 rounded-xl" />
+            <Skeleton className="h-32 rounded-xl" />
+            <Skeleton className="h-32 rounded-xl" />
+          </div>
+          <Skeleton className="h-[400px] rounded-xl" />
+        </div>
       </div>
     )
   }
@@ -56,7 +72,7 @@ export default function ScanDetails() {
   const activeAnalyzers = project.active_analyzers || [];
   const showSecurity = activeAnalyzers.some(a => ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev'].includes(a));
   const showSecrets = activeAnalyzers.includes('trufflehog');
-  const showSast = activeAnalyzers.includes('opengrep');
+  const showSast = activeAnalyzers.some(a => ['opengrep', 'kics', 'bearer'].includes(a));
   const showCompliance = activeAnalyzers.some(a => ['trivy', 'license_compliance', 'end_of_life'].includes(a));
   const showQuality = activeAnalyzers.includes('outdated_packages');
 
@@ -111,15 +127,7 @@ export default function ScanDetails() {
 
   const categoryData = Object.entries(findingsByCategory)
       .map(([name, value]) => ({ name, value }))
-      .filter(d => d.value > 0)
-      .filter(d => {
-          if (d.name === 'Security') return showSecurity;
-          if (d.name === 'Secrets') return showSecrets;
-          if (d.name === 'SAST') return showSast;
-          if (d.name === 'Compliance') return showCompliance;
-          if (d.name === 'Quality') return showQuality;
-          return true;
-      });
+      .filter(d => d.value > 0);
 
   const severityData = [
       { name: 'Critical', value: severityCounts.CRITICAL, color: '#ef4444' },
@@ -762,6 +770,11 @@ function FindingsTable({ findings, showSeverity = false, onFindingClick }: { fin
                     bValue = severityOrder[bValue] || -1
                 }
 
+                if (sortConfig.key === 'cvss') {
+                    aValue = a.details?.cvss_score || -1
+                    bValue = b.details?.cvss_score || -1
+                }
+
                 if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1
                 if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1
                 return 0
@@ -801,6 +814,14 @@ function FindingsTable({ findings, showSeverity = false, onFindingClick }: { fin
                                     </div>
                                 </TableHead>
                             )}
+                            {showSeverity && (
+                                <TableHead className="cursor-pointer w-[80px]" onClick={() => requestSort('cvss')}>
+                                    <div className="flex items-center gap-1">
+                                        CVSS
+                                        {sortConfig?.key === 'cvss' && <ArrowUpDown className="h-3 w-3" />}
+                                    </div>
+                                </TableHead>
+                            )}
                             <TableHead className="cursor-pointer" onClick={() => requestSort('type')}>
                                 <div className="flex items-center gap-1">
                                     Type
@@ -836,6 +857,22 @@ function FindingsTable({ findings, showSeverity = false, onFindingClick }: { fin
                                             </Badge>
                                         </TableCell>
                                     )}
+                                    {showSeverity && (
+                                        <TableCell>
+                                            {finding.details?.cvss_score ? (
+                                                <span className={`font-mono font-bold ${
+                                                    finding.details.cvss_score >= 9 ? 'text-red-600' :
+                                                    finding.details.cvss_score >= 7 ? 'text-orange-600' :
+                                                    finding.details.cvss_score >= 4 ? 'text-yellow-600' :
+                                                    'text-blue-600'
+                                                }`}>
+                                                    {finding.details.cvss_score}
+                                                </span>
+                                            ) : (
+                                                <span className="text-muted-foreground">-</span>
+                                            )}
+                                        </TableCell>
+                                    )}
                                     <TableCell>
                                         {showSeverity ? finding.type : <Badge variant="outline">{finding.type}</Badge>}
                                     </TableCell>
@@ -854,7 +891,7 @@ function FindingsTable({ findings, showSeverity = false, onFindingClick }: { fin
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={showSeverity ? 5 : 4} className="h-24 text-center">
+                                <TableCell colSpan={showSeverity ? 6 : 4} className="h-24 text-center">
                                     No findings found.
                                 </TableCell>
                             </TableRow>

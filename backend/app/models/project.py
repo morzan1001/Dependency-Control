@@ -20,8 +20,9 @@ class Project(BaseModel):
     api_key_hash: Optional[str] = Field(None, exclude=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     active_analyzers: List[str] = []
-    stats: Optional[Dict[str, int]] = None
+    stats: Optional[Dict[str, Any]] = None
     last_scan_at: Optional[datetime] = None
+    latest_scan_id: Optional[str] = None
     retention_days: int = 90  # Default retention period in days
     default_branch: Optional[str] = None
 
@@ -39,7 +40,7 @@ class Scan(BaseModel):
     status: str = "pending"
     findings_summary: Optional[List[Dict[str, Any]]] = None
     findings_count: Optional[int] = None
-    stats: Optional[Dict[str, int]] = None
+    stats: Optional[Dict[str, Any]] = None
     completed_at: Optional[datetime] = None
 
     class Config:

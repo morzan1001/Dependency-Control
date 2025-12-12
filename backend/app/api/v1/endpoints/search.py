@@ -17,11 +17,9 @@ async def search_dependencies(
 ):
     """
     Search for dependencies in the latest scans of all projects the user has access to.
+    Optimized to use 'latest_scan_id' from Project document to avoid expensive aggregation.
     """
     # 1. Get list of project IDs user has access to
-    # This is expensive if user has many projects. 
-    # Optimization: If superuser, skip check.
-    
     match_stage = {}
     
     if not current_user.is_superuser:
@@ -30,7 +28,7 @@ async def search_dependencies(
         user_team_ids = [str(t["_id"]) for t in user_teams]
 
         # Find projects where user is member or owner OR project is assigned to one of user's teams
-        user_projects = await db.projects.find(
+        user_projects_cursor = db.projects.find(
             {
                 "$or": [
                     {"owner_id": str(current_user.id)},
@@ -38,29 +36,58 @@ async def search_dependencies(
                     {"team_id": {"$in": user_team_ids}}
                 ]
             },
-            {"_id": 1}
-        ).to_list(10000)
-        project_ids = [p["_id"] for p in user_projects]
-        match_stage["project_id"] = {"$in": project_ids}
+            {"_id": 1, "latest_scan_id": 1, "name": 1}
+        )
+    else:
+        user_projects_cursor = db.projects.find({}, {"_id": 1, "latest_scan_id": 1, "name": 1})
 
-    # 2. Aggregate to find latest scan for each project and search in SBOM
-    # SBOM is stored in 'sbom' field and has 'components' list.
+    user_projects = await user_projects_cursor.to_list(10000)
+    
+    # Map project_id to project_name for enrichment later
+    project_map = {p["_id"]: p.get("name", "Unknown") for p in user_projects}
+    
+    # Filter out projects that have no scan yet
+    latest_scan_ids = [p["latest_scan_id"] for p in user_projects if p.get("latest_scan_id")]
+    
+    if not latest_scan_ids:
+        return []
+
+    # 2. Aggregate directly on scans collection using the known IDs
+    # This avoids sorting and grouping all scans.
     
     pipeline = [
-        {"$match": match_stage},
-        {"$sort": {"created_at": -1}},
-        {"$group": {
-            "_id": "$project_id",
-            "latest_scan": {"$first": "$$ROOT"}
-        }},
-        {"$unwind": "$latest_scan.sbom.components"},
-        {"$match": {
-            "latest_scan.sbom.components.name": {"$regex": q, "$options": "i"}
-        }},
+        {
+            "$match": {
+                "_id": {"$in": latest_scan_ids},
+                "sbom.components.name": {"$regex": q, "$options": "i"}
+            }
+        },
+        {
+            "$project": {
+                "project_id": 1,
+                "created_at": 1,
+                # Filter the components array to only include matching items
+                # This prevents unwinding thousands of non-matching components
+                "matching_components": {
+                    "$filter": {
+                        "input": "$sbom.components",
+                        "as": "comp",
+                        "cond": {
+                            "$regexMatch": {
+                                "input": "$$comp.name",
+                                "regex": q,
+                                "options": "i"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {"$unwind": "$matching_components"},
         {"$project": {
-            "project_id": "$_id",
-            "component": "$latest_scan.sbom.components",
-            "scan_date": "$latest_scan.created_at"
+            "project_id": 1,
+            "component": "$matching_components",
+            "scan_date": "$created_at"
         }}
     ]
     
@@ -74,9 +101,7 @@ async def search_dependencies(
     # Enrich with project names
     enriched_results = []
     for res in results:
-        project = await db.projects.find_one({"_id": res["project_id"]}, {"name": 1})
-        if project:
-            res["project_name"] = project["name"]
-            enriched_results.append(res)
+        res["project_name"] = project_map.get(res["project_id"], "Unknown")
+        enriched_results.append(res)
             
     return enriched_results

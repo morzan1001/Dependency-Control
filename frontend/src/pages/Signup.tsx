@@ -7,7 +7,6 @@ import { signup, login as apiLogin } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { AxiosError } from 'axios'
 import { useNavigate, Link } from 'react-router-dom'
-import { Spinner } from '@/components/ui/spinner'
 
 export default function Signup() {
   const [isLoading, setIsLoading] = useState(false)
@@ -99,12 +98,7 @@ export default function Signup() {
           </CardContent>
           <CardFooter className="flex flex-col gap-2">
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? (
-                <>
-                  <Spinner className="mr-2 h-4 w-4 text-primary-foreground" />
-                  Creating account...
-                </>
-              ) : "Sign Up"}
+              {isLoading ? "Creating account..." : "Sign Up"}
             </Button>
             <div className="text-sm text-center text-muted-foreground">
               Already have an account? <Link to="/login" className="text-primary hover:underline">Login</Link>

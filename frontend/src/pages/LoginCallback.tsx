@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
-import { Spinner } from '@/components/ui/spinner'
+import { Skeleton } from '@/components/ui/skeleton'
 
 export default function LoginCallback() {
   const navigate = useNavigate()
@@ -29,7 +29,7 @@ export default function LoginCallback() {
   return (
     <div className="flex h-screen items-center justify-center">
       <div className="flex flex-col items-center gap-4">
-        <Spinner className="h-8 w-8" />
+        <Skeleton className="h-12 w-12 rounded-full" />
         <p className="text-muted-foreground">Completing login...</p>
       </div>
     </div>

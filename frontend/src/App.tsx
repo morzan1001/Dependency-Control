@@ -21,7 +21,7 @@ import { AuthProvider, useAuth, RequirePermission } from './context/AuthContext'
 import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
-import { Spinner } from "@/components/ui/spinner"
+import { Skeleton } from "@/components/ui/skeleton"
 import { getPublicConfig } from '@/lib/api'
 import { useState, useEffect } from 'react'
 
@@ -74,7 +74,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center">
-        <Spinner size={48} />
+        <div className="space-y-4 flex flex-col items-center">
+          <Skeleton className="h-12 w-12 rounded-full" />
+          <Skeleton className="h-4 w-32" />
+        </div>
       </div>
     );
   }
@@ -93,7 +96,14 @@ function SignupRoute() {
     getPublicConfig().then(config => setEnabled(config.allow_public_registration)).catch(() => setEnabled(false));
   }, []);
 
-  if (enabled === null) return <div className="flex h-screen items-center justify-center"><Spinner size={48} /></div>;
+  if (enabled === null) return (
+    <div className="flex h-screen items-center justify-center">
+      <div className="space-y-4 flex flex-col items-center">
+        <Skeleton className="h-12 w-12 rounded-full" />
+        <Skeleton className="h-4 w-32" />
+      </div>
+    </div>
+  );
   
   if (!enabled) return <Navigate to="/login" replace />;
 

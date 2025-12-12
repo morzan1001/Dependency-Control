@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "sonner"
-import { Spinner } from "@/components/ui/spinner"
+import { Skeleton } from "@/components/ui/skeleton"
 
 export default function SystemSettings() {
   const queryClient = useQueryClient()
@@ -65,7 +65,15 @@ export default function SystemSettings() {
   })
 
   if (isLoading) {
-    return <div className="flex justify-center p-8"><Spinner /></div>
+    return (
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <Skeleton className="h-[500px] w-full" />
+      </div>
+    )
   }
 
   return (

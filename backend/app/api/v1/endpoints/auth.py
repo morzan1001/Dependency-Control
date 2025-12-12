@@ -77,12 +77,13 @@ async def login_access_token(
             )
         
         totp = pyotp.TOTP(user["totp_secret"])
-        if not totp.verify(otp):
+        if not totp.verify(otp, valid_window=1):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid OTP code",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        permissions = user.get("permissions", [])
     elif system_config.enforce_2fa:
         # User has no 2FA but it is enforced -> Issue limited token for setup
         permissions = ["auth:setup_2fa"]
