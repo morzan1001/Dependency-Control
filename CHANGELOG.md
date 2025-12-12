@@ -1,3 +1,16 @@
+# Release 0.2.5
+
+## 🚀 Features
+
+- feat: Add ingress network policies for frontend and enhance backend policy (#0)
+- feat: Remove unused SMTP and Slack environment variables from backend deployment (#0)
+- feat: Add service account configuration and update deployments to use it (#0)
+- feat: enhance user model and email provider to support multiple authentication providers, add OIDC issuer input in system settings (#0)
+- feat: implement permission checks for various user actions across components (#0)
+- feat: add pagination to users list with previous and next buttons (#0)
+
+
+
 # Release 0.2.4
 
 ## 🚀 Features
