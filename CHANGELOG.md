@@ -1,3 +1,12 @@
+# Release 0.3.1
+
+## 🚀 Features
+
+- feat: implement logging improvements and remove deprecated SMTP settings (#0)
+- feat: implement permission checker for user actions and update endpoints to use it (#0)
+
+
+
 # Release 0.2.9
 
 ## 🚀 Features
