@@ -1,3 +1,11 @@
+# Release 0.3.4
+
+## 🐛 Fixes
+
+- fix: update dependency versions in pyproject.toml and improve version propagation script (#0)
+
+
+
 # Release 0.3.3
 
 
