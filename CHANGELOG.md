@@ -1,3 +1,12 @@
+# Release 0.2.7
+
+## 🚀 Features
+
+- feat: implement user migration to local account and enhance password update functionality (#0)
+- feat: implement password reset functionality and user migration to local accounts (#0)
+
+
+
 # Release 0.2.6
 
 ## 🚀 Features
