@@ -1,3 +1,11 @@
+# Release 0.3.2
+
+## 🚀 Features
+
+- feat: add dashboard stats endpoint and integrate with frontend dashboard (#0)
+
+
+
 # Release 0.3.1
 
 ## 🚀 Features

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "dependency-checks"
-version = "0.3.1"
+version = "0.3.2"
 description = "Backend for Dependency Control System"
 authors = ["Matthias Duve <morzan1001@gmail.com>"]
 license = "MIT"
@@ -10,12 +10,12 @@ packages = [{ include = "app" }]
 [tool.poetry.dependencies]
 python = "^3.13"
 fastapi = "^0.124.0"
-uvicorn = {extras = ["standard"], version = "0.3.1"}
+uvicorn = {extras = ["standard"], version = "0.3.2"}
 pydantic = "^2.6.0"
 pydantic-settings = "^2.1.0"
 motor = "^3.3.2"
-python-jose = {extras = ["cryptography"], version = "0.3.1"}
-passlib = {extras = ["argon2"], version = "0.3.1"}
+python-jose = {extras = ["cryptography"], version = "0.3.2"}
+passlib = {extras = ["argon2"], version = "0.3.2"}
 python-multipart = "^0.0.20"
 httpx = "^0.28.1"
 email-validator = "^2.1.0"
