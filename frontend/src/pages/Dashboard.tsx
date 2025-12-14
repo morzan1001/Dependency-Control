@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Activity, ShieldAlert, ShieldCheck, FolderGit2 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { getDashboardStats, getRecentScans } from '@/lib/api'
+import { getDashboardStats, getRecentScans, getProjects } from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -18,7 +18,12 @@ export default function Dashboard() {
     queryFn: getRecentScans,
   })
 
-  if (isLoadingStats || isLoadingScans) {
+  const { data: projects, isLoading: isLoadingProjects } = useQuery({
+    queryKey: ['projects'],
+    queryFn: getProjects,
+  })
+
+  if (isLoadingStats || isLoadingScans || isLoadingProjects) {
     return (
       <div className="space-y-8">
         <div className="space-y-2">
@@ -44,6 +49,7 @@ export default function Dashboard() {
   }
 
   const scanList = recentScans || []
+  const projectList = projects || []
 
   const stats = [
     {

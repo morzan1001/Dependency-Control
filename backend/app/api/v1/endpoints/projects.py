@@ -136,7 +136,7 @@ class DashboardStats(BaseModel):
 @router.get("/dashboard/stats", response_model=DashboardStats)
 async def get_dashboard_stats(
     db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(security.get_current_active_user),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     # Filter projects user has access to
     query = {}
