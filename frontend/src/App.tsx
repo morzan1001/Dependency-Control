@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider, QueryCache, MutationCache } from '@tanstack/react-query'
 import Login from './pages/Login'
+import ResetPassword from './pages/ResetPassword'
 import Signup from './pages/Signup'
 import VerifyEmail from './pages/VerifyEmail'
 import ResendVerification from './pages/ResendVerification'
@@ -114,6 +115,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/login/callback" element={<LoginCallback />} />
       <Route path="/signup" element={<SignupRoute />} />
       <Route path="/verify-email" element={<VerifyEmail />} />

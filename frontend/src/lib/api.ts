@@ -339,6 +339,26 @@ export const migrateToLocal = async (newPassword: string) => {
   return response.data;
 };
 
+export const adminMigrateUserToLocal = async (userId: string) => {
+  const response = await api.post<User>(`/users/${userId}/migrate`);
+  return response.data;
+};
+
+export const adminResetUserPassword = async (userId: string) => {
+  const response = await api.post<{ message: string, email_sent: boolean, reset_link?: string }>(`/users/${userId}/reset-password`);
+  return response.data;
+};
+
+export const adminDisableUser2FA = async (userId: string) => {
+  const response = await api.post<User>(`/users/${userId}/2fa/disable`);
+  return response.data;
+};
+
+export const resetPassword = async (token: string, newPassword: string) => {
+  const response = await api.post<{ message: string }>('/auth/reset-password', { token, new_password: newPassword });
+  return response.data;
+};
+
 export interface UserUpdateMe {
   email?: string;
   username?: string;
@@ -513,6 +533,7 @@ export interface SystemSettings {
   // OIDC
   oidc_enabled: boolean;
   oidc_provider_name: string;
+  gitlab_access_token?: string;
   oidc_client_id?: string;
   oidc_client_secret?: string;
   oidc_issuer?: string;

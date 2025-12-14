@@ -126,19 +126,115 @@ async def update_user(
         
     update_data = user_in.dict(exclude_unset=True)
     if "password" in update_data:
-        # Prevent password change for non-local users unless admin is doing it (optional, but safer to block generally)
-        # Or allow admins to reset passwords for anyone? Let's allow admins, but block self-service for SSO users.
-        if user.get("auth_provider", "local") != "local" and not has_admin_perm:
-             raise HTTPException(status_code=400, detail="SSO users cannot change password. Please migrate to local account first.")
-             
-        hashed_password = security.get_password_hash(update_data.pop("password"))
-        update_data["hashed_password"] = hashed_password
+        if has_admin_perm:
+             raise HTTPException(status_code=400, detail="Admins cannot set passwords directly. Please use the 'Reset Password' feature to send a reset link.")
+        
+        del update_data["password"]
 
     if update_data:
         await db.users.update_one({"_id": user_id}, {"$set": update_data})
         
     updated_user = await db.users.find_one({"_id": user_id})
     return updated_user
+
+
+@router.post("/{user_id}/migrate", response_model=UserSchema)
+async def migrate_user_to_local(
+    user_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Admin only: Migrate a user to local authentication.
+    This does not set a password, but changes the auth_provider to 'local'.
+    The admin should then trigger a password reset.
+    """
+    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:update" in current_user.permissions
+    if not has_admin_perm:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    user = await db.users.find_one({"_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if user.get("auth_provider") == "local":
+        raise HTTPException(status_code=400, detail="User is already a local account")
+
+    await db.users.update_one(
+        {"_id": user_id},
+        {"$set": {"auth_provider": "local"}}
+    )
+    
+    updated_user = await db.users.find_one({"_id": user_id})
+    return updated_user
+
+
+@router.post("/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Admin only: Trigger password reset for a user.
+    Generates a reset token and link.
+    If SMTP is configured, sends an email.
+    Always returns the link (so admin can send it manually if needed).
+    """
+    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:update" in current_user.permissions
+    if not has_admin_perm:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    user = await db.users.find_one({"_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if user.get("auth_provider", "local") != "local":
+        raise HTTPException(status_code=400, detail="Cannot reset password for non-local users. Please migrate user first.")
+
+    token = security.create_password_reset_token(user["email"])
+    link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={token}"
+    
+    email_sent = False
+    if settings.SMTP_HOST:
+        try:
+            from app.services.notifications.email_provider import EmailProvider
+            from app.services.notifications.templates import get_password_reset_template
+            import os
+            
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
+            logo_path = os.path.join(project_root, "assets", "logo.png")
+            
+            html_content = get_password_reset_template(
+                username=user["username"],
+                link=link,
+                project_name=settings.PROJECT_NAME
+            )
+            
+            email_provider = EmailProvider()
+            await email_provider.send(
+                destination=user["email"],
+                subject=f"Password Reset for {settings.PROJECT_NAME}",
+                message=f"Please reset your password by clicking this link: {link}",
+                html_message=html_content,
+                logo_path=logo_path
+            )
+            email_sent = True
+        except Exception as e:
+            print(f"Failed to send password reset email: {e}")
+            # We continue to return the link
+
+    response = {
+        "message": "Password reset initiated",
+        "email_sent": email_sent
+    }
+    
+    if not email_sent:
+        response["reset_link"] = link
+        
+    return response
+
 
 @router.post("/me/password", response_model=UserSchema)
 async def update_password_me(
@@ -326,6 +422,49 @@ async def disable_2fa(
     )
 
     updated_user = await db.users.find_one({"_id": current_user.id})
+    return updated_user
+
+@router.post("/{user_id}/2fa/disable", response_model=UserSchema)
+async def admin_disable_2fa(
+    user_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Admin only: Disable 2FA for a user (e.g. lost device).
+    """
+    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:update" in current_user.permissions
+    if not has_admin_perm:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
+    user = await db.users.find_one({"_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if not user.get("totp_enabled"):
+        raise HTTPException(status_code=400, detail="2FA is not enabled for this user")
+
+    await db.users.update_one(
+        {"_id": user_id},
+        {"$set": {"totp_enabled": False, "totp_secret": None}}
+    )
+    
+    # Send notification
+    if settings.SMTP_HOST:
+        try:
+            await notification_service.email_provider.send(
+                destination=user["email"],
+                subject="Security Alert: 2FA Disabled by Admin",
+                message=f"Hello {user['username']},\n\nTwo-Factor Authentication (2FA) has been disabled for your account by an administrator.\n\nIf you did not request this, please contact your administrator immediately.",
+                html_message=templates.get_2fa_disabled_template(
+                    username=user["username"],
+                    project_name=settings.PROJECT_NAME
+                )
+            )
+        except Exception as e:
+            print(f"Failed to send 2FA disable email: {e}")
+
+    updated_user = await db.users.find_one({"_id": user_id})
     return updated_user
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,6 +1,11 @@
 import httpx
+import secrets
+from datetime import datetime
 from typing import Optional, Dict, Any
 from app.models.system import SystemSettings
+from app.models.team import Team, TeamMember
+from app.models.user import User
+from app.core import security
 
 class GitLabService:
     def __init__(self, settings: SystemSettings):
@@ -73,3 +78,71 @@ class GitLabService:
             except Exception as e:
                 print(f"Error fetching GitLab members: {e}")
                 return None
+
+    async def sync_team_from_gitlab(self, db, gitlab_project_id: int, gitlab_project_path: str, token: str) -> Optional[str]:
+        """
+        Syncs GitLab project members to a local Team.
+        Returns the Team ID.
+        """
+        try:
+            members = await self.get_project_members(gitlab_project_id, token)
+            if not members:
+                return None
+
+            # Create or Update Team
+            team_name = f"GitLab: {gitlab_project_path}"
+            team = await db.teams.find_one({"name": team_name})
+            
+            team_members = []
+            for member in members:
+                member_email = member.get("email")
+                member_username = member.get("username")
+                
+                user = None
+                if member_email:
+                    user = await db.users.find_one({"email": member_email})
+                elif member_username:
+                    user = await db.users.find_one({"username": member_username})
+                    
+                if not user and member_email:
+                    # Create new user
+                    user = User(
+                        username=member_username or member_email.split("@")[0],
+                        email=member_email,
+                        hashed_password=security.get_password_hash(secrets.token_urlsafe(16)),
+                        is_active=True,
+                        auth_provider="gitlab"
+                    )
+                    await db.users.insert_one(user.dict(by_alias=True))
+                    user = user.dict(by_alias=True)
+                
+                if user:
+                    # Map GitLab access level to role
+                    # 10: Guest, 20: Reporter, 30: Developer, 40: Maintainer, 50: Owner
+                    access_level = member.get("access_level", 0)
+                    role = "member"
+                    if access_level >= 40:
+                        role = "admin"
+                    
+                    team_members.append(TeamMember(user_id=str(user["_id"]), role=role))
+
+            if team:
+                await db.teams.update_one(
+                    {"_id": team["_id"]},
+                    {"$set": {"members": [tm.dict() for tm in team_members], "updated_at": datetime.utcnow()}}
+                )
+                return str(team["_id"])
+            elif team_members:
+                new_team = Team(
+                    name=team_name,
+                    description=f"Imported from GitLab Project {gitlab_project_path}",
+                    members=team_members
+                )
+                result = await db.teams.insert_one(new_team.dict(by_alias=True))
+                return str(result.inserted_id)
+                
+        except Exception as e:
+            print(f"Error syncing GitLab teams: {e}")
+            return None
+        
+        return None

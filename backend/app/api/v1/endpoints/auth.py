@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.db.mongodb import get_database
 from app.schemas.token import Token, TokenPayload
 from app.models.user import User
-from app.schemas.user import UserCreate, User as UserSchema, UserSignup
+from app.schemas.user import UserCreate, User as UserSchema, UserSignup, UserPasswordReset
 from app.api import deps
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.templates import get_verification_email_template
@@ -517,4 +517,37 @@ async def login_oidc_callback(
     frontend_url = f"{settings.FRONTEND_BASE_URL}/login/callback#access_token={access_token}&refresh_token={refresh_token}"
     
     return RedirectResponse(frontend_url)
+
+
+@router.post("/reset-password", summary="Reset password with token")
+async def reset_password(
+    reset_in: UserPasswordReset,
+    db: AsyncIOMotorDatabase = Depends(get_database)
+) -> Any:
+    """
+    Reset password using the token received via email.
+    """
+    email = security.verify_password_reset_token(reset_in.token)
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired reset token",
+        )
+        
+    user = await db.users.find_one({"email": email})
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found",
+        )
+        
+    hashed_password = security.get_password_hash(reset_in.new_password)
+    
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"hashed_password": hashed_password}}
+    )
+    
+    return {"message": "Password successfully reset"}
+
 

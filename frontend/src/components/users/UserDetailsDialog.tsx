@@ -1,9 +1,9 @@
-import { User, updateUser, getProjects, getTeams } from '@/lib/api';
+import { User, updateUser, getProjects, getTeams, adminMigrateUserToLocal, adminResetUserPassword, adminDisableUser2FA } from '@/lib/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Shield, Users as UsersIcon, Folder } from 'lucide-react';
+import { Shield, Users as UsersIcon, Folder, KeyRound, RefreshCw } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -27,6 +27,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
+  const [resetLink, setResetLink] = useState<string | null>(null);
 
   const { data: projects, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
     queryKey: ['projects'],
@@ -55,6 +56,57 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
     },
   });
 
+  const migrateUserMutation = useMutation({
+    mutationFn: (userId: string) => adminMigrateUserToLocal(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success("User Migrated", {
+        description: "User authentication provider set to 'local'. You can now reset their password.",
+      });
+    },
+    onError: (error: any) => {
+      toast.error("Migration Failed", {
+        description: error.response?.data?.detail || "Failed to migrate user.",
+      });
+    }
+  });
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: (userId: string) => adminResetUserPassword(userId),
+    onSuccess: (data) => {
+      if (data.email_sent) {
+        toast.success("Password Reset Initiated", {
+          description: "An email with the reset link has been sent to the user.",
+        });
+      } else {
+        toast.success("Password Reset Initiated", {
+          description: "Email not configured. Please share the link manually.",
+        });
+      }
+      setResetLink(data.reset_link || null);
+    },
+    onError: (error: any) => {
+      toast.error("Reset Failed", {
+        description: error.response?.data?.detail || "Failed to initiate password reset.",
+      });
+    }
+  });
+
+  const disable2FAMutation = useMutation({
+    mutationFn: (userId: string) => adminDisableUser2FA(userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      toast.success("2FA Disabled", {
+        description: "Two-Factor Authentication has been disabled for this user.",
+      });
+    },
+    onError: (error: any) => {
+      toast.error("Action Failed", {
+        description: error.response?.data?.detail || "Failed to disable 2FA.",
+      });
+    }
+  });
+
   const handleToggleStatus = () => {
     if (!user) return;
     
@@ -64,6 +116,19 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
       id: user._id || user.id,
       data: { is_active: newStatus }
     });
+  };
+
+  const handleMigrate = () => {
+    if (!user) return;
+    if (confirm("Are you sure you want to migrate this user to 'local' authentication? They will need a password reset to login.")) {
+        migrateUserMutation.mutate(user._id || user.id);
+    }
+  };
+
+  const handleResetPassword = () => {
+    if (!user) return;
+    setResetLink(null);
+    resetPasswordMutation.mutate(user._id || user.id);
   };
 
   const getUserProjects = (userId: string) => {
@@ -88,7 +153,10 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={(val) => {
+        if (!val) setResetLink(null);
+        onOpenChange(val);
+      }}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>User Details: {user?.username}</DialogTitle>
@@ -158,6 +226,72 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                         <span className="text-xs text-muted-foreground flex items-center">
                             +{user.permissions.filter(p => p !== '*').length - 5} more
                         </span>
+                    )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-lg font-medium flex items-center gap-2">
+                  <KeyRound className="h-5 w-5" /> Security & Authentication
+                </h3>
+                <div className="border rounded-md p-4 space-y-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <div className="text-sm font-medium">Authentication Provider</div>
+                            <div className="text-sm text-muted-foreground capitalize">{user.auth_provider || 'local'}</div>
+                        </div>
+                        {hasPermission('user:update') && user.auth_provider !== 'local' && (
+                            <Button 
+                                variant="outline" 
+                                size="sm" 
+                                onClick={handleMigrate}
+                                disabled={migrateUserMutation.isPending}
+                            >
+                                {migrateUserMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                                Migrate to Local
+                            </Button>
+                        )}
+                    </div>
+
+                    {user.auth_provider === 'local' && hasPermission('user:update') && (
+                        <div className="flex items-center justify-between pt-2 border-t">
+                            <div>
+                                <div className="text-sm font-medium">Password Reset</div>
+                                <div className="text-sm text-muted-foreground">Send a password reset email to the user.</div>
+                            </div>
+                            <Button 
+                                variant="outline" 
+                                size="sm" 
+                                onClick={handleResetPassword}
+                                disabled={resetPasswordMutation.isPending}
+                            >
+                                {resetPasswordMutation.isPending ? "Sending..." : "Send Reset Email"}
+                            </Button>
+                        </div>
+                    )}
+
+                    {resetLink && (
+                        <div className="bg-muted p-3 rounded-md text-sm break-all">
+                            <div className="font-medium mb-1">Reset Link (Manual):</div>
+                            {resetLink}
+                        </div>
+                    )}
+
+                    {user.totp_enabled && hasPermission('user:update') && (
+                        <div className="flex items-center justify-between pt-2 border-t">
+                            <div>
+                                <div className="text-sm font-medium">Two-Factor Authentication</div>
+                                <div className="text-sm text-muted-foreground">User has 2FA enabled.</div>
+                            </div>
+                            <Button 
+                                variant="destructive" 
+                                size="sm" 
+                                onClick={() => disable2FAMutation.mutate(user._id || user.id)}
+                                disabled={disable2FAMutation.isPending}
+                            >
+                                {disable2FAMutation.isPending ? "Disabling..." : "Disable 2FA"}
+                            </Button>
+                        </div>
                     )}
                 </div>
               </div>

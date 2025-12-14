@@ -137,7 +137,21 @@ async def get_project_for_ingest(
         project_data = await db.projects.find_one({"gitlab_project_id": gitlab_project_id})
         
         if project_data:
-            return Project(**project_data)
+            project = Project(**project_data)
+            # Sync Teams/Members if enabled (even for existing projects)
+            if settings.gitlab_sync_teams:
+                team_id = await gitlab_service.sync_team_from_gitlab(
+                    db, 
+                    gitlab_project_id, 
+                    gitlab_project["path_with_namespace"], 
+                    token
+                )
+                if team_id and project.team_id != team_id:
+                    await db.projects.update_one(
+                        {"_id": project.id},
+                        {"$set": {"team_id": team_id}}
+                    )
+            return project
             
         # Auto-create if enabled
         if settings.gitlab_auto_create_projects:
@@ -170,75 +184,14 @@ async def get_project_for_ingest(
             
             # Sync Teams/Members if enabled
             if settings.gitlab_sync_teams:
-                try:
-                    members = await gitlab_service.get_project_members(gitlab_project_id, token)
-                    if members:
-                        from app.models.team import Team, TeamMember
-                        from app.models.user import User
-                        import secrets
-                        
-                        # Create or Update Team
-                        team_name = f"GitLab: {gitlab_project['path_with_namespace']}"
-                        team = await db.teams.find_one({"name": team_name})
-                        
-                        team_members = []
-                        for member in members:
-                            # Skip if no email (bot users?)
-                            # GitLab API might not return email for all members depending on visibility
-                            # If we can't match by email, we can't sync safely.
-                            # Note: /members endpoint often doesn't return email unless you are admin.
-                            # We might need to rely on username matching if email is missing, but that's risky.
-                            # Let's assume we can get email or username.
-                            
-                            member_email = member.get("email")
-                            member_username = member.get("username")
-                            
-                            user = None
-                            if member_email:
-                                user = await db.users.find_one({"email": member_email})
-                            elif member_username:
-                                user = await db.users.find_one({"username": member_username})
-                                
-                            if not user and member_email:
-                                # Create new user
-                                user = User(
-                                    username=member_username or member_email.split("@")[0],
-                                    email=member_email,
-                                    hashed_password=security.get_password_hash(secrets.token_urlsafe(16)),
-                                    is_active=True,
-                                    auth_provider="gitlab"
-                                )
-                                await db.users.insert_one(user.dict(by_alias=True))
-                                user = user.dict(by_alias=True)
-                            
-                            if user:
-                                # Map GitLab access level to role
-                                # 10: Guest, 20: Reporter, 30: Developer, 40: Maintainer, 50: Owner
-                                access_level = member.get("access_level", 0)
-                                role = "member"
-                                if access_level >= 40:
-                                    role = "admin"
-                                
-                                team_members.append(TeamMember(user_id=str(user["_id"]), role=role))
-
-                        if team:
-                            await db.teams.update_one(
-                                {"_id": team["_id"]},
-                                {"$set": {"members": [tm.dict() for tm in team_members], "updated_at": datetime.utcnow()}}
-                            )
-                            new_project.team_id = str(team["_id"])
-                        elif team_members:
-                            new_team = Team(
-                                name=team_name,
-                                description=f"Imported from GitLab Project {gitlab_project['path_with_namespace']}",
-                                members=team_members
-                            )
-                            await db.teams.insert_one(new_team.dict(by_alias=True))
-                            new_project.team_id = str(new_team.id)
-
-                except Exception as e:
-                    print(f"Error syncing GitLab teams: {e}")
-                    # Continue creating project even if team sync fails
+                team_id = await gitlab_service.sync_team_from_gitlab(
+                    db, 
+                    gitlab_project_id, 
+                    gitlab_project["path_with_namespace"], 
+                    token
+                )
+                if team_id:
+                    new_project.team_id = team_id
 
             await db.projects.insert_one(new_project.dict(by_alias=True))
             return new_project
