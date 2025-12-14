@@ -1,3 +1,11 @@
+# Release 0.2.6
+
+## 🚀 Features
+
+- feat: implement GitLab integration for automatic project creation and team syncing, update system settings and API endpoints accordingly (#0)
+
+
+
 # Release 0.2.5
 
 ## 🚀 Features
