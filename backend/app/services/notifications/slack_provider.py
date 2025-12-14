@@ -40,14 +40,3 @@ class SlackProvider(NotificationProvider):
         except Exception as e:
             logger.error(f"Error sending Slack message: {e}")
             return False
-                data = response.json()
-                
-                if data.get("ok"):
-                    logger.info(f"Slack message sent to {destination}")
-                    return True
-                else:
-                    logger.error(f"Failed to send Slack message: {data.get('error')}")
-                    return False
-        except Exception as e:
-            logger.error(f"Error sending Slack message: {e}")
-            return False
