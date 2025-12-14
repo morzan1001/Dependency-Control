@@ -36,7 +36,7 @@ export default function ProfilePage() {
       <div className="grid gap-6 md:grid-cols-2">
         <UserDetailsCard user={user} systemSettings={systemSettings} />
         <div className="space-y-6">
-          <PasswordUpdateCard />
+          <PasswordUpdateCard user={user} />
           <TwoFactorAuthCard user={user} />
         </div>
       </div>

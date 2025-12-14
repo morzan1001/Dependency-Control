@@ -9,7 +9,7 @@ import base64
 from app.api import deps
 from app.core import security
 from app.models.user import User
-from app.schemas.user import User as UserSchema, UserUpdate, UserCreate, UserPasswordUpdate, User2FASetup, User2FAVerify, UserUpdateMe, User2FADisable
+from app.schemas.user import User as UserSchema, UserUpdate, UserCreate, UserPasswordUpdate, User2FASetup, User2FAVerify, UserUpdateMe, User2FADisable, UserMigrateToLocal
 from app.db.mongodb import get_database
 from app.services.notifications.service import notification_service
 from app.services.notifications import templates
@@ -126,6 +126,11 @@ async def update_user(
         
     update_data = user_in.dict(exclude_unset=True)
     if "password" in update_data:
+        # Prevent password change for non-local users unless admin is doing it (optional, but safer to block generally)
+        # Or allow admins to reset passwords for anyone? Let's allow admins, but block self-service for SSO users.
+        if user.get("auth_provider", "local") != "local" and not has_admin_perm:
+             raise HTTPException(status_code=400, detail="SSO users cannot change password. Please migrate to local account first.")
+             
         hashed_password = security.get_password_hash(update_data.pop("password"))
         update_data["hashed_password"] = hashed_password
 
@@ -144,6 +149,9 @@ async def update_password_me(
     """
     Update current user password.
     """
+    if current_user.auth_provider != "local":
+        raise HTTPException(status_code=400, detail="SSO users cannot change password. Please migrate to local account first.")
+
     if not security.verify_password(password_in.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect password")
     
@@ -168,6 +176,39 @@ async def update_password_me(
 
     updated_user = await db.users.find_one({"_id": current_user.id})
     return updated_user
+
+
+@router.post("/me/migrate-to-local", response_model=User)
+async def migrate_to_local(
+    *,
+    password_in: UserMigrateToLocal,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(deps.get_database),
+) -> Any:
+    """
+    Migrate SSO user to local account by setting a password.
+    """
+    if current_user.auth_provider == "local":
+        raise HTTPException(
+            status_code=400,
+            detail="User is already a local account."
+        )
+
+    hashed_password = security.get_password_hash(password_in.new_password)
+    
+    await db.users.update_one(
+        {"_id": current_user.id}, 
+        {
+            "$set": {
+                "hashed_password": hashed_password,
+                "auth_provider": "local"
+            }
+        }
+    )
+    
+    updated_user = await db.users.find_one({"_id": current_user.id})
+    return updated_user
+
 
 @router.post("/me/2fa/setup", response_model=User2FASetup)
 async def setup_2fa(

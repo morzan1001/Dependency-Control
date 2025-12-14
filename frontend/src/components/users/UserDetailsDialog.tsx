@@ -102,6 +102,10 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                   <div className="text-sm font-medium">{user.email}</div>
                 </div>
                 <div>
+                  <Label>Auth Provider</Label>
+                  <div className="text-sm font-medium capitalize">{user.auth_provider || 'local'}</div>
+                </div>
+                <div>
                   <Label>Status</Label>
                   <div className="flex items-center gap-2">
                     {user.is_active ? (

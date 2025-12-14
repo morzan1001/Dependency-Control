@@ -79,6 +79,15 @@ export function UserDetailsCard({ user, systemSettings }: UserDetailsCardProps) 
               onChange={(e) => setEmail(e.target.value)} 
             />
           </div>
+
+          <div className="grid gap-2">
+            <Label>Authentication Provider</Label>
+            <Input 
+              value={user?.auth_provider || 'local'} 
+              disabled 
+              className="bg-muted capitalize"
+            />
+          </div>
           
           {systemSettings?.slack_bot_token && (
             <div className="grid gap-2">

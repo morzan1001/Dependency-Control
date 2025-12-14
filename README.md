@@ -2,7 +2,7 @@
 
 **Dependency Control** is a centralized security and compliance platform designed to manage software supply chain risks. It aggregates data from various sources—SBOMs, secret scans, SAST, and IaC analysis—to provide a unified view of your project's security posture.
 
-## � Supported Scanners
+## 🔍 Supported Scanners
 
 Dependency Control integrates with leading open-source security tools to provide comprehensive coverage.
 

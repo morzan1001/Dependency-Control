@@ -334,6 +334,11 @@ export const updatePassword = async (currentPassword: string, newPassword: strin
   return response.data;
 };
 
+export const migrateToLocal = async (newPassword: string) => {
+  const response = await api.post<User>('/users/me/migrate-to-local', { new_password: newPassword });
+  return response.data;
+};
+
 export interface UserUpdateMe {
   email?: string;
   username?: string;
