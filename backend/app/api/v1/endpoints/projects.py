@@ -714,3 +714,38 @@ async def export_project_sbom(
         media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"}
     )
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_project(
+    project_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Delete a project and all associated data (scans, results).
+    Requires 'project:delete' permission or being the project owner.
+    """
+    project = await check_project_access(project_id, current_user, db, required_role="admin")
+    
+    # Additional check: Only global admin or project owner can delete
+    is_global_admin = "*" in current_user.permissions or "project:delete" in current_user.permissions
+    is_owner = project.owner_id == str(current_user.id)
+    
+    if not (is_global_admin or is_owner):
+         raise HTTPException(status_code=403, detail="Only project owner or administrator can delete a project")
+
+    # 1. Find all scans
+    cursor = db.scans.find({"project_id": project_id}, {"_id": 1})
+    scan_ids = [doc["_id"] async for doc in cursor]
+    
+    # 2. Delete analysis results for these scans
+    if scan_ids:
+        await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids}})
+        
+    # 3. Delete scans
+    await db.scans.delete_many({"project_id": project_id})
+    
+    # 4. Delete project
+    await db.projects.delete_one({"_id": project_id})
+    
+    return None

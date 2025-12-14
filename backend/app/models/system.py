@@ -43,5 +43,9 @@ class SystemSettings(BaseModel):
     gitlab_auto_create_projects: bool = False
     gitlab_sync_teams: bool = False
 
+    # Retention
+    retention_mode: str = "project" # "project" or "global"
+    global_retention_days: int = 90 # 0 means keep forever
+
     class Config:
         populate_by_name = True

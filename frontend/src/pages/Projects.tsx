@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getProjects, createProject, getTeams, Project } from '@/lib/api';
+import { getProjects, createProject, getTeams, Project, getSystemSettings } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, Copy, Check } from 
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from "sonner";
+import { AVAILABLE_ANALYZERS } from '@/lib/constants';
 import {
   Dialog,
   DialogContent,
@@ -27,18 +28,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-const AVAILABLE_ANALYZERS = [
-  { id: 'end_of_life', label: 'End of Life (EOL)' },
-  { id: 'os_malware', label: 'Open Source Malware' },
-  { id: 'trivy', label: 'Trivy (Container/FS)' },
-  { id: 'osv', label: 'OSV (Open Source Vulnerabilities)' },
-  { id: 'deps_dev', label: 'Deps.dev (Google)' },
-  { id: 'license_compliance', label: 'License Compliance' },
-  { id: 'grype', label: 'Grype (Anchore)' },
-  { id: 'outdated_packages', label: 'Outdated Packages' },
-  { id: 'typosquatting', label: 'Typosquatting' },
-];
 
 export default function ProjectsPage() {
   const queryClient = useQueryClient();
@@ -59,6 +48,11 @@ export default function ProjectsPage() {
   const { data: teams } = useQuery({
     queryKey: ['teams'],
     queryFn: getTeams,
+  });
+
+  const { data: systemSettings } = useQuery({
+    queryKey: ['systemSettings'],
+    queryFn: getSystemSettings,
   });
 
   const createProjectMutation = useMutation({
@@ -227,29 +221,46 @@ export default function ProjectsPage() {
 
                     <div className="grid gap-2">
                       <Label htmlFor="retention">Retention Period (Days)</Label>
-                      <Input
-                        id="retention"
-                        type="number"
-                        min="1"
-                        value={retentionDays}
-                        onChange={(e) => setRetentionDays(parseInt(e.target.value))}
-                        required
-                      />
+                      {systemSettings?.retention_mode === 'global' ? (
+                          <div className="p-3 bg-muted rounded-md text-sm border">
+                              <p className="font-medium">Managed Globally</p>
+                              <p className="text-muted-foreground mt-1">
+                                  {systemSettings.global_retention_days && systemSettings.global_retention_days > 0 
+                                      ? `Data is retained for ${systemSettings.global_retention_days} days.` 
+                                      : "Data retention is disabled (data is kept forever)."}
+                              </p>
+                          </div>
+                      ) : (
+                          <Input
+                            id="retention"
+                            type="number"
+                            min="1"
+                            value={retentionDays}
+                            onChange={(e) => setRetentionDays(parseInt(e.target.value))}
+                            required
+                          />
+                      )}
                     </div>
 
                     <div className="grid gap-2">
                       <Label>Active Analyzers</Label>
-                      <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[200px] overflow-y-auto">
+                      <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[300px] overflow-y-auto">
                         {AVAILABLE_ANALYZERS.map((analyzer) => (
-                          <div key={analyzer.id} className="flex items-center space-x-2">
+                          <div key={analyzer.id} className="flex items-start space-x-2 py-2">
                             <Checkbox 
                               id={`analyzer-${analyzer.id}`}
                               checked={analyzers.includes(analyzer.id)}
                               onCheckedChange={() => toggleAnalyzer(analyzer.id)}
+                              className="mt-1"
                             />
-                            <Label htmlFor={`analyzer-${analyzer.id}`} className="font-normal cursor-pointer">
-                              {analyzer.label}
-                            </Label>
+                            <div className="flex flex-col gap-1">
+                                <Label htmlFor={`analyzer-${analyzer.id}`} className="font-medium cursor-pointer">
+                                  {analyzer.label}
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                    {analyzer.description}
+                                </p>
+                            </div>
                           </div>
                         ))}
                       </div>

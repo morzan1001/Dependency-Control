@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from app.db.mongodb import get_database
 from app.models.project import Project
+from app.models.system import SystemSettings
 
 logger = logging.getLogger(__name__)
 
@@ -15,12 +16,22 @@ async def run_housekeeping():
     try:
         db = await get_database()
         
+        # Get System Settings
+        settings_data = await db.system_settings.find_one({"_id": "current"})
+        system_settings = SystemSettings(**settings_data) if settings_data else SystemSettings()
+        
         # Iterate over all projects
         async for project_data in db.projects.find({}):
             try:
                 project = Project(**project_data)
-                retention_days = project.retention_days
                 
+                # Determine retention days
+                if system_settings.retention_mode == "global":
+                    retention_days = system_settings.global_retention_days
+                else:
+                    retention_days = project.retention_days
+                
+                # If retention is 0 or less, it means "keep forever"
                 if retention_days <= 0:
                     continue
                     

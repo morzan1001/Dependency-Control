@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { getSystemSettings, updateSystemSettings, SystemSettings as SystemSettingsType, getGlobalWebhooks, createGlobalWebhook, deleteWebhook } from "@/lib/api"
 import { WebhookManager } from "@/components/WebhookManager"
+import { useAuth } from "@/context/AuthContext"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Label } from "@/components/ui/label"
@@ -10,9 +11,17 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 export default function SystemSettings() {
   const queryClient = useQueryClient()
+  const { hasPermission } = useAuth()
   const [formData, setFormData] = useState<Partial<SystemSettingsType>>({})
 
   const { data: settings, isLoading } = useQuery({
@@ -110,7 +119,56 @@ export default function SystemSettings() {
                   onChange={(e) => handleInputChange('instance_name', e.target.value)}
                 />
               </div>
-              <Button onClick={handleSave} disabled={mutation.isPending}>
+              <Button onClick={handleSave} disabled={!hasPermission('system:manage') || mutation.isPending}>
+                {mutation.isPending ? "Saving..." : "Save Changes"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Data Retention</CardTitle>
+              <CardDescription>
+                Configure how long scan data is kept.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-2">
+                <Label>Retention Mode</Label>
+                <Select 
+                    value={formData.retention_mode || 'project'} 
+                    onValueChange={(value) => handleInputChange('retention_mode', value)}
+                >
+                    <SelectTrigger>
+                        <SelectValue placeholder="Select mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="project">Per Project (Default)</SelectItem>
+                        <SelectItem value="global">Global Enforcement</SelectItem>
+                    </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                    "Per Project" allows project owners to set their own retention period. "Global Enforcement" overrides all project settings.
+                </p>
+              </div>
+
+              {formData.retention_mode === 'global' && (
+                  <div className="grid gap-2">
+                    <Label htmlFor="global-retention">Global Retention Period (Days)</Label>
+                    <Input 
+                      id="global-retention" 
+                      type="number"
+                      min="0"
+                      value={formData.global_retention_days ?? 90} 
+                      onChange={(e) => handleInputChange('global_retention_days', parseInt(e.target.value))}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                        Set to 0 to disable deletion (keep data forever).
+                    </p>
+                  </div>
+              )}
+              
+              <Button onClick={handleSave} disabled={!hasPermission('system:manage') || mutation.isPending}>
                 {mutation.isPending ? "Saving..." : "Save Changes"}
               </Button>
             </CardContent>
@@ -165,7 +223,7 @@ export default function SystemSettings() {
                 />
               </div>
               <div className="mt-4">
-                <Button onClick={handleSave} disabled={mutation.isPending}>
+                <Button onClick={handleSave} disabled={!hasPermission('system:manage') || mutation.isPending}>
                     {mutation.isPending ? "Saving..." : "Save Changes"}
                 </Button>
               </div>
@@ -280,7 +338,7 @@ export default function SystemSettings() {
               )}
               
               <div className="mt-4">
-                <Button onClick={handleSave} disabled={mutation.isPending}>
+                <Button onClick={handleSave} disabled={!hasPermission('system:manage') || mutation.isPending}>
                     {mutation.isPending ? "Saving..." : "Save Changes"}
                 </Button>
               </div>
@@ -346,7 +404,7 @@ export default function SystemSettings() {
                     onChange={(e) => handleInputChange('emails_from_email', e.target.value)}
                   />
               </div>
-              <Button onClick={handleSave} disabled={mutation.isPending}>
+              <Button onClick={handleSave} disabled={!hasPermission('system:manage') || mutation.isPending}>
                 {mutation.isPending ? "Saving..." : "Save Email Settings"}
               </Button>
             </CardContent>
@@ -388,7 +446,7 @@ export default function SystemSettings() {
                       onChange={(e) => handleInputChange('mattermost_bot_token', e.target.value)}
                   />
               </div>
-              <Button onClick={handleSave} disabled={mutation.isPending}>
+              <Button onClick={handleSave} disabled={!hasPermission('system:manage') || mutation.isPending}>
                   {mutation.isPending ? "Saving..." : "Save Chat Settings"}
               </Button>
             </CardContent>
@@ -476,7 +534,7 @@ export default function SystemSettings() {
                             </div>
                         </>
                     )}
-                    <Button onClick={handleSave} disabled={mutation.isPending}>
+                    <Button onClick={handleSave} disabled={!hasPermission('system:manage') || mutation.isPending}>
                         {mutation.isPending ? "Saving..." : "Save GitLab Settings"}
                     </Button>
                 </CardContent>
@@ -497,7 +555,7 @@ export default function SystemSettings() {
                             onChange={(e) => handleInputChange('open_source_malware_api_key', e.target.value)}
                         />
                     </div>
-                    <Button onClick={handleSave} disabled={mutation.isPending}>
+                    <Button onClick={handleSave} disabled={!hasPermission('system:manage') || mutation.isPending}>
                         {mutation.isPending ? "Saving..." : "Save Integrations"}
                     </Button>
                 </CardContent>

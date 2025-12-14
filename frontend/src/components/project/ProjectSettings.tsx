@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { updateProject, rotateProjectApiKey, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getTeams, getSystemSettings, Project, getProjectBranches } from '@/lib/api'
+import { updateProject, rotateProjectApiKey, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getTeams, getSystemSettings, Project, getProjectBranches, deleteProject } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -8,8 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { WebhookManager } from '@/components/WebhookManager'
-import { AlertTriangle, RefreshCw, Copy } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Copy, Trash2 } from 'lucide-react'
 import { toast } from "sonner"
+import { useNavigate } from 'react-router-dom'
+import { AVAILABLE_ANALYZERS } from '@/lib/constants'
 import {
   Select,
   SelectContent,
@@ -26,22 +28,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-const AVAILABLE_ANALYZERS = [
-  { id: 'end_of_life', label: 'End of Life (EOL)', description: 'Checks if packages have reached their End-of-Life date and are no longer supported.' },
-  { id: 'os_malware', label: 'Open Source Malware', description: 'Checks packages against the Open Source Malware database for known malicious packages.' },
-  { id: 'trivy', label: 'Trivy (Container/FS)', description: 'Scans container images and filesystems for vulnerabilities (CVEs) and misconfigurations.' },
-  { id: 'osv', label: 'OSV (Open Source Vulnerabilities)', description: 'Checks dependencies against the Open Source Vulnerabilities (OSV) database.' },
-  { id: 'deps_dev', label: 'Deps.dev (Google)', description: 'Queries Google\'s deps.dev API for security, license, and maintenance information.' },
-  { id: 'license_compliance', label: 'License Compliance', description: 'Analyzes package licenses to ensure compliance with project policies.' },
-  { id: 'grype', label: 'Grype (Anchore)', description: 'A vulnerability scanner for container images and filesystems, similar to Trivy.' },
-  { id: 'outdated_packages', label: 'Outdated Packages', description: 'Identifies packages that are not on the latest version.' },
-  { id: 'typosquatting', label: 'Typosquatting', description: 'Detects potential typosquatting attacks (packages with names similar to popular ones).' },
-  { id: 'opengrep', label: 'OpenGrep (SAST)', description: 'Static Application Security Testing (SAST) tool to find security flaws in code.' },
-  { id: 'kics', label: 'KICS (IaC)', description: 'Finds security vulnerabilities, compliance issues, and infrastructure misconfigurations in IaC.' },
-  { id: 'bearer', label: 'Bearer (SAST/Data)', description: 'Static Application Security Testing (SAST) and Data Security tool.' },
-  { id: 'trufflehog', label: 'TruffleHog (Secrets)', description: 'Scans for hardcoded secrets, passwords, and keys in the codebase.' },
-];
-
 interface ProjectSettingsProps {
   project: Project
   projectId: string
@@ -51,6 +37,7 @@ interface ProjectSettingsProps {
 export function ProjectSettings({ project, projectId, user }: ProjectSettingsProps) {
   const queryClient = useQueryClient()
   const { hasPermission } = useAuth()
+  const navigate = useNavigate()
   
   const [name, setName] = useState(project.name)
   const [teamId, setTeamId] = useState<string | undefined>(project.team_id || "none")
@@ -60,6 +47,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>({})
 
   const { data: teams } = useQuery({
@@ -98,6 +86,17 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       setNotificationPrefs(prefs)
     }
   }, [project, user])
+
+  const deleteProjectMutation = useMutation({
+    mutationFn: () => deleteProject(projectId),
+    onSuccess: () => {
+      toast.success("Project Deleted", { description: "The project has been permanently deleted." })
+      navigate('/projects')
+    },
+    onError: (error: any) => {
+      toast.error("Delete Failed", { description: error.response?.data?.detail || "Failed to delete project." })
+    }
+  })
 
   const updateProjectMutation = useMutation({
     mutationFn: (data: any) => updateProject(projectId, data),
@@ -236,13 +235,24 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="retention">Retention Period (Days)</Label>
-                    <Input 
-                        id="retention" 
-                        type="number" 
-                        min="1"
-                        value={retentionDays} 
-                        onChange={(e) => setRetentionDays(parseInt(e.target.value))} 
-                    />
+                    {systemSettings?.retention_mode === 'global' ? (
+                        <div className="p-3 bg-muted rounded-md text-sm border">
+                            <p className="font-medium">Managed Globally</p>
+                            <p className="text-muted-foreground mt-1">
+                                {systemSettings.global_retention_days && systemSettings.global_retention_days > 0 
+                                    ? `Data is retained for ${systemSettings.global_retention_days} days.` 
+                                    : "Data retention is disabled (data is kept forever)."}
+                            </p>
+                        </div>
+                    ) : (
+                        <Input 
+                            id="retention" 
+                            type="number" 
+                            min="1"
+                            value={retentionDays} 
+                            onChange={(e) => setRetentionDays(parseInt(e.target.value))} 
+                        />
+                    )}
                 </div>
                 <div className="grid gap-2">
                     <Label>Active Analyzers</Label>
@@ -329,9 +339,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
         isLoading={isLoadingWebhooks}
         onCreate={createWebhookMutation.mutateAsync}
         onDelete={deleteWebhookMutation.mutateAsync}
+        createPermission="project:update"
+        deletePermission="project:update"
       />
 
-      {hasPermission('project:update') && (
+      {(hasPermission('project:update') || hasPermission('project:delete')) && (
         <Card className="border-destructive">
             <CardHeader>
                 <CardTitle className="text-destructive flex items-center gap-2">
@@ -343,18 +355,35 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
-                    <div>
-                        <div className="font-medium">Rotate API Key</div>
-                        <div className="text-sm text-muted-foreground">
-                            Invalidate the current API key and generate a new one.
+                {hasPermission('project:update') && (
+                    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
+                        <div>
+                            <div className="font-medium">Rotate API Key</div>
+                            <div className="text-sm text-muted-foreground">
+                                Invalidate the current API key and generate a new one.
+                            </div>
                         </div>
+                        <Button variant="destructive" onClick={() => rotateKeyMutation.mutate()} disabled={rotateKeyMutation.isPending}>
+                            {rotateKeyMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                            Rotate Key
+                        </Button>
                     </div>
-                    <Button variant="destructive" onClick={() => rotateKeyMutation.mutate()} disabled={rotateKeyMutation.isPending}>
-                        {rotateKeyMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                        Rotate Key
-                    </Button>
-                </div>
+                )}
+
+                {hasPermission('project:delete') && (
+                    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
+                        <div>
+                            <div className="font-medium">Delete Project</div>
+                            <div className="text-sm text-muted-foreground">
+                                Permanently delete this project and all its data. This action cannot be undone.
+                            </div>
+                        </div>
+                        <Button variant="destructive" onClick={() => setIsDeleteDialogOpen(true)}>
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete Project
+                        </Button>
+                    </div>
+                )}
             </CardContent>
         </Card>
       )}
@@ -378,6 +407,27 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             </div>
             <DialogFooter>
                 <Button onClick={() => setIsApiKeyDialogOpen(false)}>Close</Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+            <DialogHeader>
+                <DialogTitle>Delete Project</DialogTitle>
+                <DialogDescription>
+                    Are you sure you want to delete this project? This action cannot be undone and will permanently remove all scans, findings, and settings associated with <strong>{project.name}</strong>.
+                </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+                <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>Cancel</Button>
+                <Button 
+                    variant="destructive" 
+                    onClick={() => deleteProjectMutation.mutate()} 
+                    disabled={deleteProjectMutation.isPending}
+                >
+                    {deleteProjectMutation.isPending ? "Deleting..." : "Delete Project"}
+                </Button>
             </DialogFooter>
         </DialogContent>
       </Dialog>

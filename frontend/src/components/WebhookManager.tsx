@@ -19,9 +19,20 @@ interface WebhookManagerProps {
   onDelete: (id: string) => Promise<void>
   title?: string
   description?: string
+  createPermission?: string
+  deletePermission?: string
 }
 
-export function WebhookManager({ webhooks, isLoading, onCreate, onDelete, title = "Webhooks", description = "Manage webhooks for event notifications." }: WebhookManagerProps) {
+export function WebhookManager({ 
+  webhooks, 
+  isLoading, 
+  onCreate, 
+  onDelete, 
+  title = "Webhooks", 
+  description = "Manage webhooks for event notifications.",
+  createPermission = "webhook:create",
+  deletePermission = "webhook:delete"
+}: WebhookManagerProps) {
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const { hasPermission } = useAuth()
   const [newWebhook, setNewWebhook] = useState<WebhookCreate>({
@@ -89,7 +100,7 @@ export function WebhookManager({ webhooks, isLoading, onCreate, onDelete, title 
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </div>
-        {hasPermission('webhook:create') && (
+        {hasPermission(createPermission) && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Webhook</Button>
@@ -168,7 +179,7 @@ export function WebhookManager({ webhooks, isLoading, onCreate, onDelete, title 
                   </TableCell>
                   <TableCell>{new Date(webhook.created_at).toLocaleDateString()}</TableCell>
                   <TableCell>
-                    {hasPermission('webhook:delete') && (
+                    {hasPermission(deletePermission) && (
                       <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>

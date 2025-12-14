@@ -212,6 +212,10 @@ export const updateProject = async (id: string, data: ProjectUpdate) => {
   return response.data;
 };
 
+export const deleteProject = async (projectId: string) => {
+  await api.delete(`/projects/${projectId}`);
+};
+
 export const rotateProjectApiKey = async (id: string) => {
   const response = await api.post<ProjectApiKeyResponse>(`/projects/${id}/rotate-key`);
   return response.data;
@@ -445,7 +449,9 @@ api.interceptors.response.use(
 
       try {
         // Use a new axios instance to avoid interceptor loop
-        const response = await axios.post<Token>('/api/v1/login/refresh-token', {
+        const baseUrl = getBaseUrl();
+        const url = baseUrl.endsWith('/') ? `${baseUrl}login/refresh-token` : `${baseUrl}/login/refresh-token`;
+        const response = await axios.post<Token>(url, {
             refresh_token: refreshTokenValue
         });
 
@@ -547,6 +553,10 @@ export interface SystemSettings {
   gitlab_url: string;
   gitlab_auto_create_projects: boolean;
   gitlab_sync_teams: boolean;
+
+  // Retention
+  retention_mode: 'project' | 'global';
+  global_retention_days: number;
 }
 
 export const getSystemSettings = async () => {
