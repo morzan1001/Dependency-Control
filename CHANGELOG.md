@@ -1,3 +1,11 @@
+# Release 0.2.8
+
+## 🐛 Fixes
+
+- fix: add 'Any' type import for improved type hinting in users.py (#0)
+
+
+
 # Release 0.2.7
 
 ## 🚀 Features
