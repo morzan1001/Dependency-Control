@@ -10,8 +10,30 @@ import { toast } from "sonner"
 import { ShieldAlert } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 
+export interface Finding {
+    id: string;
+    title?: string;
+    vuln_id?: string;
+    severity?: string;
+    type?: string;
+    package?: string;
+    pkg_name?: string;
+    component?: string;
+    version?: string;
+    installed_version?: string;
+    fixed_version?: string;
+    description?: string;
+    details?: any;
+    [key: string]: any;
+}
+
+const getFindingTitle = (f: Finding) => f.title || f.vuln_id || f.id || "Finding Details";
+const getFindingPackage = (f: Finding) => f.pkg_name || f.package || f.component || "Unknown";
+const getFindingVersion = (f: Finding) => f.installed_version || f.version || "Unknown";
+const getFindingId = (f: Finding) => f.vuln_id || f.id;
+
 interface FindingDetailsModalProps {
-    finding: any | null
+    finding: Finding | null
     isOpen: boolean
     onClose: () => void
     projectId: string
@@ -37,10 +59,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                 {finding.severity}
                             </Badge>
                         )}
-                        <span className="truncate">{finding.title || finding.vuln_id || finding.id || "Finding Details"}</span>
+                        <span className="truncate">{getFindingTitle(finding)}</span>
                     </DialogTitle>
                     <DialogDescription>
-                        {finding.type} detected in {finding.pkg_name || finding.package || finding.component}
+                        {finding.type} detected in {getFindingPackage(finding)}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -60,11 +82,11 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-1">Component</h4>
-                                    <p className="font-medium">{finding.pkg_name || finding.package || finding.component}</p>
+                                    <p className="font-medium">{getFindingPackage(finding)}</p>
                                 </div>
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-1">Version</h4>
-                                    <p className="font-medium">{finding.installed_version || finding.version || "Unknown"}</p>
+                                    <p className="font-medium">{getFindingVersion(finding)}</p>
                                 </div>
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-1">Fixed Version</h4>
@@ -72,7 +94,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                 </div>
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-1">ID</h4>
-                                    <p className="font-mono text-sm">{finding.vuln_id || finding.id}</p>
+                                    <p className="font-mono text-sm">{getFindingId(finding)}</p>
                                 </div>
                             </div>
 
@@ -226,7 +248,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
     )
 }
 
-function WaiverForm({ finding, projectId, onCancel, onSuccess }: { finding: any, projectId: string, onCancel: () => void, onSuccess: () => void }) {
+function WaiverForm({ finding, projectId, onCancel, onSuccess }: { finding: Finding, projectId: string, onCancel: () => void, onSuccess: () => void }) {
     const [reason, setReason] = useState("")
     const [date, setDate] = useState("")
     const queryClient = useQueryClient()
@@ -251,10 +273,10 @@ function WaiverForm({ finding, projectId, onCancel, onSuccess }: { finding: any,
 
         createWaiverMutation.mutate({
             project_id: projectId,
-            finding_id: finding.vuln_id || finding.id,
-            package_name: finding.pkg_name || finding.package || finding.component,
-            package_version: finding.installed_version || finding.version,
-            finding_type: finding.type,
+            finding_id: getFindingId(finding),
+            package_name: getFindingPackage(finding),
+            package_version: getFindingVersion(finding),
+            finding_type: finding.type || "unknown",
             reason,
             expiration_date: date ? new Date(date).toISOString() : undefined
         })

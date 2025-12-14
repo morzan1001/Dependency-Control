@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
-from typing import List
+from typing import List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import secrets
 import csv
@@ -125,6 +125,79 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
              raise HTTPException(status_code=403, detail="Not enough permissions")
              
     return project
+
+class DashboardStats(BaseModel):
+    total_projects: int
+    total_critical: int
+    total_high: int
+    avg_risk_score: float
+    top_risky_projects: List[Dict[str, Any]]
+
+@router.get("/dashboard/stats", response_model=DashboardStats)
+async def get_dashboard_stats(
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: User = Depends(security.get_current_active_user),
+):
+    # Filter projects user has access to
+    query = {}
+    if "*" not in current_user.permissions and "project:read_all" not in current_user.permissions:
+        # Find teams user is member of
+        user_teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(None)
+        team_ids = [t["_id"] for t in user_teams]
+        
+        query = {
+            "$or": [
+                {"owner_id": str(current_user.id)},
+                {"members.user_id": str(current_user.id)},
+                {"team_id": {"$in": team_ids}}
+            ]
+        }
+
+    projects_cursor = db.projects.find(query)
+    projects = await projects_cursor.to_list(None)
+    
+    total_projects = len(projects)
+    total_critical = 0
+    total_high = 0
+    total_risk_score = 0.0
+    
+    risky_projects = []
+
+    for p in projects:
+        stats = p.get("stats", {}) or {}
+        crit = stats.get("critical", 0)
+        high = stats.get("high", 0)
+        
+        total_critical += crit
+        total_high += high
+        
+        risk = stats.get("risk_score")
+        if risk is None:
+            # Fallback calculation
+            risk = (crit * 10) + (high * 7.5) + (stats.get("medium", 0) * 4) + (stats.get("low", 0) * 1)
+        
+        total_risk_score += risk
+        
+        risky_projects.append({
+            "name": p.get("name"),
+            "risk": risk,
+            "id": p.get("_id")
+        })
+
+    avg_risk = 0.0
+    if total_projects > 0:
+        avg_risk = round(total_risk_score / total_projects, 1)
+        
+    # Sort by risk desc
+    risky_projects.sort(key=lambda x: x["risk"], reverse=True)
+    
+    return {
+        "total_projects": total_projects,
+        "total_critical": total_critical,
+        "total_high": total_high,
+        "avg_risk_score": avg_risk,
+        "top_risky_projects": risky_projects[:5]
+    }
 
 @router.post("/", response_model=ProjectApiKeyResponse, summary="Create a new project", status_code=201)
 async def create_project(

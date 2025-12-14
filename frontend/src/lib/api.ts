@@ -39,14 +39,6 @@ api.interceptors.request.use((config) => {
   return Promise.reject(error);
 });
 
-api.interceptors.response.use((response) => {
-  logger.debug(`Response: ${response.status} ${response.config.url}`);
-  return response;
-}, (error) => {
-  logger.error(`Response Error: ${error.response?.status} ${error.config?.url}`, error.response?.data || error.message);
-  return Promise.reject(error);
-});
-
 export interface Token {
   access_token: string;
   refresh_token: string;
@@ -419,10 +411,15 @@ export const setLogoutCallback = (callback: () => void) => {
 
 api.interceptors.response.use(
   (response) => {
+    logger.debug(`Response: ${response.status} ${response.config.url}`);
     return response;
   },
   async (error) => {
     const originalRequest = error.config;
+
+    if (error.response?.status !== 401) {
+        logger.error(`Response Error: ${error.response?.status} ${error.config?.url}`, error.response?.data || error.message);
+    }
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
@@ -681,6 +678,23 @@ export const searchDependencies = async (query: string, version?: string) => {
   
   const response = await api.get<any>('/search/dependencies', { params });
   return response.data;
+};
+
+export interface DashboardStats {
+    total_projects: number;
+    total_critical: number;
+    total_high: number;
+    avg_risk_score: number;
+    top_risky_projects: {
+        name: string;
+        risk: number;
+        id: string;
+    }[];
+}
+
+export const getDashboardStats = async () => {
+    const response = await api.get<DashboardStats>('/projects/dashboard/stats');
+    return response.data;
 };
 
 export default api;

@@ -1,16 +1,16 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Activity, ShieldAlert, ShieldCheck, FolderGit2 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { getProjects, getRecentScans } from '@/lib/api'
+import { getDashboardStats, getRecentScans } from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { data: projects, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: getProjects,
+  const { data: dashboardStats, isLoading: isLoadingStats, error: errorStats } = useQuery({
+    queryKey: ['dashboard-stats'],
+    queryFn: getDashboardStats,
   })
 
   const { data: recentScans, isLoading: isLoadingScans } = useQuery({
@@ -18,7 +18,7 @@ export default function Dashboard() {
     queryFn: getRecentScans,
   })
 
-  if (isLoadingProjects || isLoadingScans) {
+  if (isLoadingStats || isLoadingScans) {
     return (
       <div className="space-y-8">
         <div className="space-y-2">
@@ -39,59 +39,36 @@ export default function Dashboard() {
     )
   }
 
-  if (errorProjects) {
-    return <div className="text-destructive">Error loading dashboard: {errorProjects.message}</div>
+  if (errorStats) {
+    return <div className="text-destructive">Error loading dashboard: {errorStats.message}</div>
   }
 
-  const projectList = projects || []
   const scanList = recentScans || []
-
-  // Stats Calculation
-  let totalCritical = 0
-  let totalHigh = 0
-  let totalRiskScore = 0
-
-  projectList.forEach(p => {
-    if (p.stats) {
-      totalCritical += p.stats.critical || 0
-      totalHigh += p.stats.high || 0
-      
-      if (p.stats.risk_score !== undefined) {
-        totalRiskScore += p.stats.risk_score
-      } else {
-        // Fallback calculation matching backend logic for consistency
-        // Critical=10, High=7.5, Medium=4, Low=1
-        totalRiskScore += (p.stats.critical || 0) * 10 + (p.stats.high || 0) * 7.5 + (p.stats.medium || 0) * 4 + (p.stats.low || 0) * 1
-      }
-    }
-  })
-
-  const avgRiskScore = projectList.length > 0 ? (totalRiskScore / projectList.length).toFixed(1) : "0.0"
 
   const stats = [
     {
       title: "Total Projects",
-      value: projectList.length.toString(),
+      value: dashboardStats?.total_projects.toString() || "0",
       icon: FolderGit2,
       description: "Active projects"
     },
     {
       title: "Critical Vulnerabilities",
-      value: totalCritical.toString(),
+      value: dashboardStats?.total_critical.toString() || "0",
       icon: ShieldAlert,
       description: "Across all projects",
       className: "text-destructive"
     },
     {
       title: "High Vulnerabilities",
-      value: totalHigh.toString(),
+      value: dashboardStats?.total_high.toString() || "0",
       icon: Activity,
       description: "Across all projects",
       className: "text-orange-500"
     },
     {
       title: "Avg Risk Score",
-      value: avgRiskScore,
+      value: dashboardStats?.avg_risk_score.toString() || "0.0",
       icon: ShieldCheck,
       description: "Average risk per project",
       tooltip: "Calculated as the average sum of CVSS scores per project. If CVSS is missing, weighted severity is used: Critical=10, High=7.5, Medium=4, Low=1."
@@ -99,21 +76,7 @@ export default function Dashboard() {
   ]
 
   // Chart Data
-  const chartData = [...projectList]
-    .sort((a, b) => {
-      const getScore = (p: typeof projectList[0]) => {
-        if (p.stats?.risk_score !== undefined) return p.stats.risk_score
-        return (p.stats?.critical || 0) * 10 + (p.stats?.high || 0) * 7.5 + (p.stats?.medium || 0) * 4
-      }
-      return getScore(b) - getScore(a)
-    })
-    .slice(0, 5)
-    .map(p => ({
-      name: p.name,
-      risk: p.stats?.risk_score !== undefined 
-        ? p.stats.risk_score 
-        : (p.stats?.critical || 0) * 10 + (p.stats?.high || 0) * 7.5 + (p.stats?.medium || 0) * 4
-    }))
+  const chartData = dashboardStats?.top_risky_projects || []
 
   return (
     <div className="space-y-8">
