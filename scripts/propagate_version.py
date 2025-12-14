@@ -35,8 +35,9 @@ def main():
     pyproject_path = os.path.join(root_dir, 'backend', 'pyproject.toml')
     update_file(
         pyproject_path,
-        r'version = "[^"]+"',
-        f'version = "{new_version}"'
+        r'^version = "[^"]+"',
+        f'version = "{new_version}"',
+        flags=re.MULTILINE
     )
 
     # 2. Update Helm Chart (Chart.yaml)
