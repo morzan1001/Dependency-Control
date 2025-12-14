@@ -515,6 +515,12 @@ export interface SystemSettings {
   oidc_token_endpoint?: string;
   oidc_userinfo_endpoint?: string;
   oidc_scopes: string;
+
+  // GitLab Integration
+  gitlab_integration_enabled: boolean;
+  gitlab_url: string;
+  gitlab_auto_create_projects: boolean;
+  gitlab_sync_teams: boolean;
 }
 
 export const getSystemSettings = async () => {

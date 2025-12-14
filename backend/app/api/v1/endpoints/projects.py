@@ -170,7 +170,11 @@ async def create_project(
         ]
     )
     
-    await db.projects.insert_one(project.dict(by_alias=True))
+    # api_key_hash is excluded from dict() by default in the model, so we must add it manually
+    project_data = project.dict(by_alias=True)
+    project_data["api_key_hash"] = api_key_hash
+    
+    await db.projects.insert_one(project_data)
     
     return ProjectApiKeyResponse(
         project_id=project_id,
@@ -328,6 +332,15 @@ async def update_project(
     else:
         project = await check_project_access(project_id, current_user, db, required_role="admin")
     
+    # If transferring to a team, verify membership
+    if project_in.team_id and project_in.team_id != project.team_id:
+        # Check if user is member of the new team
+        # Exception: Superusers can transfer to any team
+        if "*" not in current_user.permissions and "project:update" not in current_user.permissions:
+             team = await db.teams.find_one({"_id": project_in.team_id, "members.user_id": str(current_user.id)})
+             if not team:
+                 raise HTTPException(status_code=403, detail="You are not a member of the target team")
+
     update_data = {k: v for k, v in project_in.dict(exclude_unset=True).items()}
     
     if update_data:

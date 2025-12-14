@@ -18,7 +18,7 @@ router = APIRouter()
 @router.post("/ingest/trufflehog", summary="Ingest TruffleHog Results", status_code=200)
 async def ingest_trufflehog(
     data: TruffleHogIngest,
-    project: Project = Depends(deps.get_project_by_api_key),
+    project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
@@ -127,7 +127,7 @@ async def ingest_trufflehog(
 @router.post("/ingest", summary="Ingest SBOM", status_code=202)
 async def ingest_sbom(
     data: SBOMIngest,
-    project: Project = Depends(deps.get_project_by_api_key),
+    project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
@@ -155,7 +155,7 @@ async def ingest_sbom(
 @router.post("/ingest/opengrep", summary="Ingest OpenGrep Results", status_code=200)
 async def ingest_opengrep(
     data: OpenGrepIngest,
-    project: Project = Depends(deps.get_project_by_api_key),
+    project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
@@ -249,7 +249,7 @@ async def ingest_opengrep(
 @router.post("/ingest/kics", summary="Ingest KICS Results", status_code=200)
 async def ingest_kics(
     data: KicsIngest,
-    project: Project = Depends(deps.get_project_by_api_key),
+    project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
@@ -339,7 +339,7 @@ async def ingest_kics(
 @router.post("/ingest/bearer", summary="Ingest Bearer Results", status_code=200)
 async def ingest_bearer(
     data: BearerIngest,
-    project: Project = Depends(deps.get_project_by_api_key),
+    project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """

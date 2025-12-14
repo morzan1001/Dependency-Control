@@ -38,10 +38,10 @@ jobs:
           cd "helm/dependency-control"
           helm dependency update
 
-      #- name: Lint Chart
-      #  run: |
-      #    cd "helm/dependency-control"
-      #     helm lint .
+      - name: Lint Chart
+        run: |
+          cd "helm/dependency-control"
+           helm lint .
 
       - name: Render Chart (Template Check)
         run: |

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict
 
 class ProjectCreate(BaseModel):
@@ -23,9 +23,21 @@ class ProjectMemberInvite(BaseModel):
     email: str = Field(..., description="Email address of the user to invite", example="colleague@example.com")
     role: str = Field("viewer", description="Role to assign (viewer, editor, admin)", example="editor")
 
+    @field_validator('role')
+    def validate_role(cls, v):
+        if v not in ["viewer", "editor", "admin"]:
+            raise ValueError('Role must be one of: viewer, editor, admin')
+        return v
+
 class ProjectMemberUpdate(BaseModel):
     role: Optional[str] = Field(None, description="New role to assign (viewer, editor, admin)", example="admin")
     notification_preferences: Optional[Dict[str, List[str]]] = Field(None, description="Notification preferences for the member")
+
+    @field_validator('role')
+    def validate_role(cls, v):
+        if v and v not in ["viewer", "editor", "admin"]:
+            raise ValueError('Role must be one of: viewer, editor, admin')
+        return v
 
 class ProjectNotificationSettings(BaseModel):
     notification_preferences: Dict[str, List[str]] = Field(

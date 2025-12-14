@@ -407,6 +407,83 @@ export default function SystemSettings() {
         <TabsContent value="integrations" className="space-y-4">
             <Card>
                 <CardHeader>
+                    <CardTitle>GitLab Integration</CardTitle>
+                    <CardDescription>Configure GitLab integration for automatic project creation and CI/CD.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between space-x-2">
+                        <Label htmlFor="gitlab-enabled">Enable GitLab Integration</Label>
+                        <Switch
+                            id="gitlab-enabled"
+                            checked={formData.gitlab_integration_enabled || false}
+                            onCheckedChange={(checked) => handleInputChange('gitlab_integration_enabled', checked)}
+                        />
+                    </div>
+                    {formData.gitlab_integration_enabled && (
+                        <>
+                            <div className="grid gap-2">
+                                <Label htmlFor="gitlab-url">GitLab URL</Label>
+                                <Input
+                                    id="gitlab-url"
+                                    placeholder="https://gitlab.com"
+                                    value={formData.gitlab_url || ''}
+                                    onChange={(e) => handleInputChange('gitlab_url', e.target.value)}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between space-x-2">
+                                <Label htmlFor="gitlab-auto-create">Auto-Create Projects</Label>
+                                <Switch
+                                    id="gitlab-auto-create"
+                                    checked={formData.gitlab_auto_create_projects || false}
+                                    onCheckedChange={(checked) => handleInputChange('gitlab_auto_create_projects', checked)}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between space-x-2">
+                                <Label htmlFor="gitlab-sync-teams">Sync Teams</Label>
+                                <Switch
+                                    id="gitlab-sync-teams"
+                                    checked={formData.gitlab_sync_teams || false}
+                                    onCheckedChange={(checked) => handleInputChange('gitlab_sync_teams', checked)}
+                                />
+                            </div>
+                            <div className="grid gap-2">
+                                <Label htmlFor="gitlab-token">GitLab Access Token (Optional)</Label>
+                                <Input
+                                    id="gitlab-token"
+                                    type="password"
+                                    placeholder="glpat-..."
+                                    value={formData.gitlab_access_token || ''}
+                                    onChange={(e) => handleInputChange('gitlab_access_token', e.target.value)}
+                                />
+                                <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground space-y-3 mt-2">
+                                    <div>
+                                        <span className="font-semibold text-foreground">Why is this needed?</span>
+                                        <p className="mt-1">
+                                            Projects are automatically created using the CI Pipeline Token. However, syncing team members often requires higher privileges that the CI token lacks.
+                                            <br/>
+                                            <strong>Note:</strong> If you leave this empty, automatic project creation will still work, but team members might not be synced.
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <span className="font-semibold text-foreground">How to create a token:</span>
+                                        <ol className="list-decimal list-inside mt-1 space-y-1">
+                                            <li>Go to GitLab <strong>User Settings</strong> (or Group Settings) &rarr; <strong>Access Tokens</strong>.</li>
+                                            <li>Create a new token with the <code>read_api</code> scope.</li>
+                                            <li>Copy the token (usually starts with <code>glpat-</code>) and paste it here.</li>
+                                        </ol>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    )}
+                    <Button onClick={handleSave} disabled={mutation.isPending}>
+                        {mutation.isPending ? "Saving..." : "Save GitLab Settings"}
+                    </Button>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
                     <CardTitle>External Integrations</CardTitle>
                     <CardDescription>Connect with other services.</CardDescription>
                 </CardHeader>

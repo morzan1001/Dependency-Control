@@ -1,24 +1,37 @@
 # Dependency Control
 
-**Dependency Control** is a centralized security and compliance platform for managing software dependencies. It ingests SBOMs (Software Bill of Materials) and Secret Scan results from your CI/CD pipelines, analyzes them for vulnerabilities, license issues, and malware, and provides a unified dashboard for risk management.
+**Dependency Control** is a centralized security and compliance platform designed to manage software supply chain risks. It aggregates data from various sources—SBOMs, secret scans, SAST, and IaC analysis—to provide a unified view of your project's security posture.
 
-## Features
+## � Supported Scanners
 
-*   **Centralized Ingestion:** Accepts SBOMs (CycloneDX/SPDX) and TruffleHog secret scans via API.
-*   **Multi-Scanner Analysis:** Aggregates results from **Trivy**, **Grype**, **OSV**, **Deps.dev**, **End-of-Life**, **Malware**, and **Typosquatting** analyzers.
-*   **Secret Management:** Tracks leaked secrets and allows marking them as false positives (Waivers).
-*   **Waiver System:** Define exceptions for vulnerabilities or secrets (e.g., "Accepted Risk" or "False Positive") to keep pipelines green.
-*   **Notifications:** Alerts via Email, Slack, or Mattermost when critical issues are found.
-*   **Housekeeping:** Automatically cleans up old scan data based on retention policies.
+Dependency Control integrates with leading open-source security tools to provide comprehensive coverage.
 
-## Quick Start (Docker Compose)
+### CI/CD Scanners (Ingestion)
+These tools run in your pipeline and send data to Dependency Control:
+*   **[Syft](https://github.com/anchore/syft)** - Generates Software Bill of Materials (SBOM) from container images and filesystems.
+*   **[TruffleHog](https://github.com/trufflesecurity/trufflehog)** - Scans for leaked credentials and secrets in your codebase.
+*   **[OpenGrep](https://github.com/opengrep/opengrep)** - Fast and lightweight Static Application Security Testing (SAST).
+*   **[Bearer](https://github.com/bearer/bearer)** - Code security scanning focusing on sensitive data flows and privacy.
+*   **[KICS](https://github.com/Checkmarx/kics)** - Finds security vulnerabilities, compliance issues, and infrastructure misconfigurations in IaC.
 
-Ideal for testing and local development.
+### SBOM Analysis (Internal)
+Once an SBOM is ingested, the backend performs deep analysis using:
+*   **[Trivy](https://github.com/aquasecurity/trivy)** & **[Grype](https://github.com/anchore/grype)** - Vulnerability scanning against the SBOM.
+*   **[OSV.dev](https://osv.dev)** - Distributed vulnerability database.
+*   **[Deps.dev](https://deps.dev)** - Insights on dependency health and security.
+*   **End-of-Life** - Checks for software components that have reached their end of life.
+*   **Malware Detection** - Checks packages against known open-source malware databases.
+*   **Typosquatting** - Detects potential typosquatting attacks in dependency names.
+*   **License Compliance** - Analyzes licenses for compliance and risk.
+
+## 🛠️ Quick Start (Docker Compose)
+
+The easiest way to run Dependency Control locally.
 
 ### 1. Configure Hosts
-Since Traefik is used for routing with custom domains, add the following to your `/etc/hosts` file:
+Add the following to your `/etc/hosts` file to route traffic correctly via Traefik:
 ```
-127.0.0.1 api.dependencycontrol.local appsmith.local metabase.local
+127.0.0.1 dependencycontrol.local api.dependencycontrol.local metabase.local
 ```
 
 ### 2. Start the Stack
@@ -27,55 +40,50 @@ docker compose up -d --build
 ```
 
 ### 3. Access Services
-*   **Backend API:** `https://api.dependencycontrol.local/docs`
-*   **Appsmith (Frontend):** `https://appsmith.local`
-    *   Used for managing projects, waivers, and viewing findings.
-*   **Metabase (Analytics):** `https://metabase.local`
-    *   Used for advanced dashboards and reporting.
+*   **Frontend Dashboard:** [https://dependencycontrol.local](https://dependencycontrol.local)
+*   **Backend API Docs:** [https://api.dependencycontrol.local/docs](https://api.dependencycontrol.local/docs)
+*   **Metabase (Analytics):** [https://metabase.local](https://metabase.local)
 
-*Note: You may need to accept the self-signed certificate warning in your browser.*
+*Note: Accept the self-signed certificate warning in your browser.*
 
-## Production Deployment (Kubernetes)
+## 📦 CI/CD Integration
 
-A Helm chart is provided for deploying to Kubernetes.
+Dependency Control is designed to sit in your CI/CD pipeline.
 
-### Prerequisites
-*   Kubernetes Cluster (v1.24+)
-*   Helm (v3.0+)
-*   MongoDB (or use the included operator)
+### GitLab CI (Recommended)
+Enable **GitLab Integration** in the System Settings, then use the `CI_JOB_TOKEN` to authenticate. No manual API Key management required!
 
-### Installation
-
-The chart is hosted as an OCI artifact on GitHub Container Registry.
-
-```bash
-helm upgrade --install dependency-control oci://ghcr.io/morzan1001/charts/dependency-control \
-  --namespace dependency-control --create-namespace \
-  --set backend.secrets.secretKey="YOUR_SECURE_KEY"
-```
-
-## CI/CD Integration
-
-Integrate Dependency Control into your pipelines to block builds on critical findings.
-
-### GitHub Actions
-```yaml
-- name: Upload SBOM
-  run: |
-    curl -X POST "$DEP_CONTROL_URL/api/v1/ingest" \
-      -H "x-api-key: ${{ secrets.DEP_CONTROL_API_KEY }}" \
-      -d @payload.json
-```
-
-### GitLab CI
 ```yaml
 dependency-scan:
   script:
-    - curl -X POST "$DEP_CONTROL_URL/api/v1/ingest" ...
+    - |
+      curl -X POST "https://api.dependencycontrol.local/api/v1/ingest" \
+        -H "Content-Type: application/json" \
+        -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+        -d @payload.json
 ```
 
-See `ci-cd/` for full examples including TruffleHog integration.
+### Other CI
+For other systems (GitHub Actions, Jenkins), generate a Project API Key in the dashboard and use the `X-API-Key` header.
 
-## License
+```bash
+curl -X POST "https://api.dependencycontrol.local/api/v1/ingest" \
+  -H "x-api-key: $DEP_CONTROL_API_KEY" \
+  ...
+```
+
+👉 **See [ci-cd/](ci-cd/) for complete pipeline examples.**
+
+## ☸️ Kubernetes Deployment
+
+A Helm chart is available for production deployments.
+
+```bash
+helm upgrade --install dependency-control ./helm/dependency-control \
+  --namespace dependency-control --create-namespace \
+  --set backend.secrets.secretKey="CHANGE_ME"
+```
+
+## 📄 License
 
 MIT License. See [LICENSE](LICENSE) for details.

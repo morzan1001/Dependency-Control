@@ -1,14 +1,31 @@
 stages:
   - dependency-scan
 
+# ---------------------------------------------------------------------------
+# Dependency Control GitLab CI/CD Example
+# ---------------------------------------------------------------------------
+# This pipeline demonstrates how to integrate with Dependency Control.
+#
+# Authentication Methods:
+# 1. GitLab Integration (Recommended):
+#    - Uses the automatic $CI_JOB_TOKEN.
+#    - Requires "GitLab Integration" to be enabled in Dependency Control System Settings.
+#    - Can automatically create projects and sync teams.
+#
+# 2. API Key (Legacy/Manual):
+#    - Uses a static API Key generated in the Dependency Control Project Settings.
+#    - Requires the DEP_CONTROL_API_KEY variable to be set in GitLab CI/CD Settings.
+# ---------------------------------------------------------------------------
+
 dependency-scan:
   stage: dependency-scan
   image: alpine:latest
   variables:
     # Configure these in your GitLab CI/CD Variables
     # DEP_CONTROL_URL: "https://your-dependency-control-instance.com"
+    
+    # Optional: Set if using API Key method
     # DEP_CONTROL_API_KEY: "your-project-api-key"
-    # PROJECT_NAME: "your-project-name"
   before_script:
     - apk add --no-cache curl jq bash
     - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
@@ -17,27 +34,27 @@ dependency-scan:
     - syft . -o json > sbom.json
     
     - echo "Preparing payload..."
+    # We use CI_PROJECT_PATH (e.g. "group/project") as the project name
     - |
-      jq -n \
-        --arg pn "$PROJECT_NAME" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --slurpfile sbom sbom.json \
-        '{project_name: $pn, branch: $br, commit_hash: $ch, sbom: $sbom[0]}' > payload.json
+      jq -n         --arg pn "$CI_PROJECT_PATH"         --arg br "$CI_COMMIT_REF_NAME"         --arg ch "$CI_COMMIT_SHA"         --slurpfile sbom sbom.json         '{project_name: $pn, branch: $br, commit_hash: $ch, sbom: $sbom[0]}' > payload.json
 
     - echo "Sending to Dependency Control..."
     - |
-      curl -X POST \
-        -H "Content-Type: application/json" \
-        -H "x-api-key: $DEP_CONTROL_API_KEY" \
-        -d @payload.json \
-        "$DEP_CONTROL_URL/api/v1/ingest"
+      # Method 1: GitLab Integration (Recommended)
+      if [ -z "$DEP_CONTROL_API_KEY" ]; then
+        echo "Using GitLab CI Token..."
+        curl -X POST           -H "Content-Type: application/json"           -H "JOB-TOKEN: $CI_JOB_TOKEN"           -d @payload.json           "$DEP_CONTROL_URL/api/v1/ingest"
+      else
+        # Method 2: API Key
+        echo "Using API Key..."
+        curl -X POST           -H "Content-Type: application/json"           -H "x-api-key: $DEP_CONTROL_API_KEY"           -d @payload.json           "$DEP_CONTROL_URL/api/v1/ingest"
+      fi
 
 secret-scan:
   stage: dependency-scan
   image: alpine:latest
   variables:
-    # DEP_CONTROL_URL, DEP_CONTROL_API_KEY, PROJECT_NAME defined in CI/CD settings
+    # DEP_CONTROL_URL defined in CI/CD settings
   before_script:
     - apk add --no-cache curl jq bash git
     - curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
@@ -49,7 +66,7 @@ secret-scan:
     
     - echo "Preparing payload..."
     - |
-      echo '{"project_name": "'"$PROJECT_NAME"'", "branch": "'"$CI_COMMIT_REF_NAME"'", "commit_hash": "'"$CI_COMMIT_SHA"'", "findings": [' > payload.json
+      echo '{"project_name": "'"$CI_PROJECT_PATH"'", "branch": "'"$CI_COMMIT_REF_NAME"'", "commit_hash": "'"$CI_COMMIT_SHA"'", "findings": [' > payload.json
       if [ -s trufflehog.json ]; then
         sed 's/$/,/' trufflehog.json | sed '$ s/,$//' >> payload.json
       fi
@@ -57,10 +74,13 @@ secret-scan:
       
     - echo "Uploading results..."
     - |
-      response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog" \
-        -H "Content-Type: application/json" \
-        -H "x-api-key: $DEP_CONTROL_API_KEY" \
-        -d @payload.json)
+      if [ -z "$DEP_CONTROL_API_KEY" ]; then
+        # Method 1: GitLab Integration
+        response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog"           -H "Content-Type: application/json"           -H "JOB-TOKEN: $CI_JOB_TOKEN"           -d @payload.json)
+      else
+        # Method 2: API Key
+        response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog"           -H "Content-Type: application/json"           -H "x-api-key: $DEP_CONTROL_API_KEY"           -d @payload.json)
+      fi
       
       echo "Response: $response"
       
@@ -74,7 +94,7 @@ opengrep-scan:
   stage: dependency-scan
   image: returntocorp/semgrep
   variables:
-    # DEP_CONTROL_URL, DEP_CONTROL_API_KEY, PROJECT_NAME defined in CI/CD settings
+    # DEP_CONTROL_URL defined in CI/CD settings
   script:
     - echo "Running OpenGrep..."
     - semgrep scan --config=auto --json --output opengrep.json . || true
@@ -84,76 +104,14 @@ opengrep-scan:
     
     - echo "Preparing payload..."
     - |
-      jq -n \
-        --arg pn "$PROJECT_NAME" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --slurpfile findings opengrep.json \
-        '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0].results}' > payload.json
+      jq -n         --arg pn "$CI_PROJECT_PATH"         --arg br "$CI_COMMIT_REF_NAME"         --arg ch "$CI_COMMIT_SHA"         --slurpfile findings opengrep.json         '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0].results}' > payload.json
       
     - echo "Uploading results..."
     - |
-      curl -X POST \
-        -H "Content-Type: application/json" \
-        -H "x-api-key: $DEP_CONTROL_API_KEY" \
-        -d @payload.json \
-        "$DEP_CONTROL_URL/api/v1/ingest/opengrep"
-
-kics-scan:
-  stage: dependency-scan
-  image: 
-    name: checkmarx/kics:latest
-    entrypoint: [""]
-  variables:
-    # DEP_CONTROL_URL, DEP_CONTROL_API_KEY, PROJECT_NAME defined in CI/CD settings
-  script:
-    - echo "Running KICS..."
-    - kics scan -p . -o . --output-name kics-results.json --report-formats json --ignore-on-exit all || true
-    
-    - echo "Preparing payload..."
-    - apk add --no-cache jq curl
-    - |
-      jq -n \
-        --arg pn "$PROJECT_NAME" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --slurpfile findings kics-results.json \
-        '{project_name: $pn, branch: $br, commit_hash: $ch, queries: $findings[0].queries, files: $findings[0].files}' > payload.json
-      
-    - echo "Uploading results..."
-    - |
-      curl -X POST \
-        -H "Content-Type: application/json" \
-        -H "x-api-key: $DEP_CONTROL_API_KEY" \
-        -d @payload.json \
-        "$DEP_CONTROL_URL/api/v1/ingest/kics"
-
-bearer-scan:
-  stage: dependency-scan
-  image: 
-    name: bearer/bearer
-    entrypoint: [""]
-  variables:
-    # DEP_CONTROL_URL, DEP_CONTROL_API_KEY, PROJECT_NAME defined in CI/CD settings
-  script:
-    - echo "Running Bearer..."
-    - bearer scan . --format json --output bearer.json || true
-    
-    - echo "Preparing payload..."
-    - apk add --no-cache jq curl
-    - |
-      jq -n \
-        --arg pn "$PROJECT_NAME" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --slurpfile findings bearer.json \
-        '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0]}' > payload.json
-      
-    - echo "Uploading results..."
-    - |
-      curl -X POST \
-        -H "Content-Type: application/json" \
-        -H "x-api-key: $DEP_CONTROL_API_KEY" \
-        -d @payload.json \
-        "$DEP_CONTROL_URL/api/v1/ingest/bearer"
-
+      if [ -z "$DEP_CONTROL_API_KEY" ]; then
+        # Method 1: GitLab Integration
+        curl -X POST           -H "Content-Type: application/json"           -H "JOB-TOKEN: $CI_JOB_TOKEN"           -d @payload.json           "$DEP_CONTROL_URL/api/v1/ingest/opengrep"
+      else
+        # Method 2: API Key
+        curl -X POST           -H "Content-Type: application/json"           -H "x-api-key: $DEP_CONTROL_API_KEY"           -d @payload.json           "$DEP_CONTROL_URL/api/v1/ingest/opengrep"
+      fi
