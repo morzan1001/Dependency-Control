@@ -22,7 +22,7 @@ async def search_dependencies(
     # 1. Get list of project IDs user has access to
     match_stage = {}
     
-    if not current_user.is_superuser:
+    if "*" not in current_user.permissions:
         # Find teams where user is a member
         user_teams = await db.teams.find({"members.user_id": str(current_user.id)}, {"_id": 1}).to_list(1000)
         user_team_ids = [str(t["_id"]) for t in user_teams]

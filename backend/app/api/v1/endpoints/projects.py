@@ -129,7 +129,7 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
 @router.post("/", response_model=ProjectApiKeyResponse, summary="Create a new project", status_code=201)
 async def create_project(
     project_in: ProjectCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker("project:create")),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
@@ -137,9 +137,6 @@ async def create_project(
     
     **Important**: The API Key is only returned once. Save it securely.
     """
-    if "*" not in current_user.permissions and "project:create" not in current_user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
     # If team_id is provided, check if user is member of that team
     if project_in.team_id:
         team = await db.teams.find_one({"_id": project_in.team_id, "members.user_id": str(current_user.id)})

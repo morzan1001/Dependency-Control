@@ -66,15 +66,12 @@ async def check_team_access(team_id: str, user: User, db: AsyncIOMotorDatabase, 
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
 async def create_team(
     team_in: TeamCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker("team:create")),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     Create a new team. The creator becomes the owner.
     """
-    if "*" not in current_user.permissions and "team:create" not in current_user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
     team = Team(
         name=team_in.name,
         description=team_in.description,

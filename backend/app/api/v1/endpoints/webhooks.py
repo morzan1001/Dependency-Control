@@ -46,15 +46,12 @@ async def list_webhooks(
 @router.post("/global/", response_model=WebhookResponse, status_code=201)
 async def create_global_webhook(
     webhook_in: WebhookCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker("system:manage")),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     Create a global webhook. Requires 'system:manage' permission.
     """
-    if "*" not in current_user.permissions and "system:manage" not in current_user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-    
     webhook = Webhook(
         project_id=None,
         **webhook_in.dict()
@@ -65,15 +62,12 @@ async def create_global_webhook(
 
 @router.get("/global/", response_model=List[WebhookResponse])
 async def list_global_webhooks(
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker("system:manage")),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     List global webhooks. Requires 'system:manage' permission.
     """
-    if "*" not in current_user.permissions and "system:manage" not in current_user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-    
     webhooks = await db.webhooks.find({"project_id": None}).to_list(100)
     return [Webhook(**w) for w in webhooks]
 

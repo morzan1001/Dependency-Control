@@ -26,15 +26,12 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
 @router.post("/system", status_code=status.HTTP_201_CREATED)
 async def create_system_invitation(
     email: str = Body(..., embed=True),
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker("user:manage")),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     Create a system invitation for a new user. Requires 'user:manage' permission.
     """
-    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
     # Check if user already exists
     existing_user = await db.users.find_one({"email": email})
     if existing_user:

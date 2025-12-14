@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union, List
 from datetime import datetime
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import OAuth2PasswordBearer
@@ -70,6 +70,24 @@ async def get_current_active_user(
     if not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return current_user
+
+class PermissionChecker:
+    def __init__(self, required_permissions: Union[str, List[str]]):
+        self.required_permissions = required_permissions if isinstance(required_permissions, list) else [required_permissions]
+
+    def __call__(self, current_user: User = Depends(get_current_active_user)) -> User:
+        if "*" in current_user.permissions:
+            return current_user
+            
+        # Check if user has ANY of the required permissions
+        for perm in self.required_permissions:
+            if perm in current_user.permissions:
+                return current_user
+                
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Not enough permissions. Required one of: {', '.join(self.required_permissions)}"
+        )
 
 async def get_project_by_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),

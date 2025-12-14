@@ -22,15 +22,12 @@ logger = logging.getLogger(__name__)
 @router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_in: UserCreate,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:create"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     Create a new user. Requires 'user:manage' or 'user:create' permissions.
     """
-    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions and "user:create" not in current_user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
     user = await db.users.find_one({"username": user_in.username})
     if user:
         raise HTTPException(
@@ -50,11 +47,9 @@ async def create_user(
 async def read_users(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:read_all"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
-    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions and "user:read_all" not in current_user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
     users = await db.users.find().skip(skip).limit(limit).to_list(limit)
     return users
 
@@ -102,6 +97,7 @@ async def read_user_by_id(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
+    # Check permissions: Admin OR Self
     has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:read" in current_user.permissions
     if not has_admin_perm and str(current_user.id) != user_id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
@@ -118,6 +114,7 @@ async def update_user(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
+    # Check permissions: Admin OR Self
     has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:update" in current_user.permissions
     if not has_admin_perm and str(current_user.id) != user_id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
@@ -143,7 +140,7 @@ async def update_user(
 @router.post("/{user_id}/migrate", response_model=UserSchema)
 async def migrate_user_to_local(
     user_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:update"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
@@ -151,10 +148,6 @@ async def migrate_user_to_local(
     This does not set a password, but changes the auth_provider to 'local'.
     The admin should then trigger a password reset.
     """
-    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:update" in current_user.permissions
-    if not has_admin_perm:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
     user = await db.users.find_one({"_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -174,7 +167,7 @@ async def migrate_user_to_local(
 @router.post("/{user_id}/reset-password")
 async def reset_user_password(
     user_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:update"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
@@ -183,10 +176,6 @@ async def reset_user_password(
     If SMTP is configured, sends an email.
     Always returns the link (so admin can send it manually if needed).
     """
-    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:update" in current_user.permissions
-    if not has_admin_perm:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
     user = await db.users.find_one({"_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -429,16 +418,12 @@ async def disable_2fa(
 @router.post("/{user_id}/2fa/disable", response_model=UserSchema)
 async def admin_disable_2fa(
     user_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:update"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     Admin only: Disable 2FA for a user (e.g. lost device).
     """
-    has_admin_perm = "*" in current_user.permissions or "user:manage" in current_user.permissions or "user:update" in current_user.permissions
-    if not has_admin_perm:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
     user = await db.users.find_one({"_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -472,15 +457,12 @@ async def admin_disable_2fa(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:delete"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     Delete a user. Requires 'user:manage' or 'user:delete' permissions.
     """
-    if "*" not in current_user.permissions and "user:manage" not in current_user.permissions and "user:delete" not in current_user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-        
     if user_id == str(current_user.id):
         raise HTTPException(status_code=400, detail="Users cannot delete themselves")
 
