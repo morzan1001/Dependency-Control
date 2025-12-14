@@ -1,7 +1,10 @@
 import httpx
 import asyncio
+import logging
 from typing import Dict, Any
 from .base import Analyzer
+
+logger = logging.getLogger(__name__)
 
 class OutdatedAnalyzer(Analyzer):
     name = "outdated_packages"
@@ -73,5 +76,5 @@ class OutdatedAnalyzer(Analyzer):
                     }
             return None
         except Exception as e:
-            print(f"Error checking outdated for {name}: {e}")
+            logger.error(f"Error checking outdated for {name}: {e}")
             return None

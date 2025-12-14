@@ -35,7 +35,7 @@ def main():
     pyproject_path = os.path.join(root_dir, 'backend', 'pyproject.toml')
     update_file(
         pyproject_path,
-        r'version = "[0-9]+\.[0-9]+\.[0-9]+"',
+        r'version = "[^"]+"',
         f'version = "{new_version}"'
     )
 
@@ -45,18 +45,13 @@ def main():
     chart_path = os.path.join(root_dir, 'helm', 'dependency-control', 'Chart.yaml')
     update_file(
         chart_path,
-        r'^version: [0-9]+\.[0-9]+\.[0-9]+',
+        r'^version: .+',
         f'version: {new_version}',
         flags=re.MULTILINE
     )
     update_file(
         chart_path,
-        r'appVersion: "[0-9]+\.[0-9]+\.[0-9]+"',
-        f'appVersion: "{new_version}"'
-    )
-    update_file(
-        chart_path,
-        r'appVersion: "[0-9]+\.[0-9]+\.[0-9]+"',
+        r'appVersion: "[^"]+"',
         f'appVersion: "{new_version}"'
     )
 
@@ -64,7 +59,7 @@ def main():
     main_py_path = os.path.join(root_dir, 'backend', 'app', 'main.py')
     update_file(
         main_py_path,
-        r'version="[0-9]+\.[0-9]+\.[0-9]+"',
+        r'version="[^"]+"',
         f'version="{new_version}"'
     )
 
@@ -72,7 +67,7 @@ def main():
     package_json_path = os.path.join(root_dir, 'frontend', 'package.json')
     update_file(
         package_json_path,
-        r'"version": "[0-9]+\.[0-9]+\.[0-9]+"',
+        r'"version": "[^"]+"',
         f'"version": "{new_version}"'
     )
 

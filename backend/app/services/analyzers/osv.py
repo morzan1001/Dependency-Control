@@ -1,7 +1,10 @@
 import httpx
 import asyncio
+import logging
 from typing import Dict, Any, List
 from .base import Analyzer
+
+logger = logging.getLogger(__name__)
 
 class OSVAnalyzer(Analyzer):
     name = "osv"
@@ -46,9 +49,9 @@ class OSVAnalyzer(Analyzer):
                                 "vulnerabilities": vulns
                             })
                 else:
-                    print(f"OSV Batch API error: {response.status_code}")
+                    logger.error(f"OSV Batch API error: {response.status_code}")
                     
             except Exception as e:
-                print(f"OSV Analysis Exception: {e}")
+                logger.error(f"OSV Analysis Exception: {e}")
 
         return {"osv_vulnerabilities": results}

@@ -1,11 +1,14 @@
 import httpx
 import secrets
+import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 from app.models.system import SystemSettings
 from app.models.team import Team, TeamMember
 from app.models.user import User
 from app.core import security
+
+logger = logging.getLogger(__name__)
 
 class GitLabService:
     def __init__(self, settings: SystemSettings):
@@ -29,7 +32,7 @@ class GitLabService:
                     return response.json()
                 return None
             except Exception as e:
-                print(f"Error validating GitLab token: {e}")
+                logger.error(f"Error validating GitLab token: {e}")
                 return None
 
     async def get_project_details(self, project_id: int, token: str) -> Optional[Dict[str, Any]]:
@@ -73,10 +76,10 @@ class GitLabService:
                 
                 # If failed with system token, or if we didn't use it, try the other one?
                 # For now, just return None if it fails.
-                print(f"Failed to fetch GitLab members: {response.status_code} {response.text}")
+                logger.error(f"Failed to fetch GitLab members: {response.status_code} {response.text}")
                 return None
             except Exception as e:
-                print(f"Error fetching GitLab members: {e}")
+                logger.error(f"Error fetching GitLab members: {e}")
                 return None
 
     async def sync_team_from_gitlab(self, db, gitlab_project_id: int, gitlab_project_path: str, token: str) -> Optional[str]:
@@ -142,7 +145,7 @@ class GitLabService:
                 return str(result.inserted_id)
                 
         except Exception as e:
-            print(f"Error syncing GitLab teams: {e}")
+            logger.error(f"Error syncing GitLab teams: {e}")
             return None
         
         return None

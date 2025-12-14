@@ -5,6 +5,7 @@ import pyotp
 import qrcode
 import io
 import base64
+import logging
 
 from app.api import deps
 from app.core import security
@@ -16,6 +17,7 @@ from app.services.notifications import templates
 from app.core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 @router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
 async def create_user(
@@ -222,7 +224,7 @@ async def reset_user_password(
             )
             email_sent = True
         except Exception as e:
-            print(f"Failed to send password reset email: {e}")
+            logger.error(f"Failed to send password reset email: {e}")
             # We continue to return the link
 
     response = {
@@ -462,7 +464,7 @@ async def admin_disable_2fa(
                 )
             )
         except Exception as e:
-            print(f"Failed to send 2FA disable email: {e}")
+            logger.error(f"Failed to send 2FA disable email: {e}")
 
     updated_user = await db.users.find_one({"_id": user_id})
     return updated_user

@@ -4,7 +4,6 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import logging
-from app.core.config import settings
 from app.services.notifications.base import NotificationProvider
 from app.models.system import SystemSettings
 from typing import Optional
@@ -13,12 +12,16 @@ logger = logging.getLogger(__name__)
 
 class EmailProvider(NotificationProvider):
     async def send(self, destination: str, subject: str, message: str, html_message: str = None, logo_path: str = None, system_settings: Optional[SystemSettings] = None) -> bool:
+        if not system_settings:
+            logger.warning("System settings not provided. Skipping email.")
+            return False
+
         # Determine configuration to use
-        smtp_host = system_settings.smtp_host if system_settings and system_settings.smtp_host else settings.SMTP_HOST
-        smtp_port = system_settings.smtp_port if system_settings else settings.SMTP_PORT
-        smtp_user = system_settings.smtp_user if system_settings and system_settings.smtp_user else settings.SMTP_USER
-        smtp_password = system_settings.smtp_password if system_settings and system_settings.smtp_password else settings.SMTP_PASSWORD
-        emails_from = system_settings.emails_from_email if system_settings else settings.EMAILS_FROM_EMAIL
+        smtp_host = system_settings.smtp_host
+        smtp_port = system_settings.smtp_port
+        smtp_user = system_settings.smtp_user
+        smtp_password = system_settings.smtp_password
+        emails_from = system_settings.emails_from_email
 
         if not smtp_host:
             logger.warning("SMTP_HOST not configured. Skipping email.")

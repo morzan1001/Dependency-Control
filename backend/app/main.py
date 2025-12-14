@@ -1,6 +1,14 @@
+import logging
 from fastapi import FastAPI
 from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
 from app.api.v1.endpoints import auth, ingest, projects, users, teams, waivers, webhooks, search, system, invitations

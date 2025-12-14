@@ -2,6 +2,7 @@ from typing import Dict, Any, List
 from datetime import datetime
 import uuid
 import asyncio
+import logging
 from app.services.analyzers import (
     Analyzer, 
     EndOfLifeAnalyzer, 
@@ -17,6 +18,8 @@ from app.services.analyzers import (
 from app.services.notifications import notification_service
 from app.models.project import Project
 from app.services.aggregator import ResultAggregator
+
+logger = logging.getLogger(__name__)
 
 analyzers: Dict[str, Analyzer] = {
     "end_of_life": EndOfLifeAnalyzer(),
@@ -46,10 +49,10 @@ async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[st
         # Aggregate result
         aggregator.aggregate(analyzer_name, result)
         
-        print(f"Analysis {analyzer_name} completed for {scan_id}")
+        logger.info(f"Analysis {analyzer_name} completed for {scan_id}")
         return f"{analyzer_name}: Success"
     except Exception as e:
-        print(f"Analysis {analyzer_name} failed: {e}")
+        logger.error(f"Analysis {analyzer_name} failed: {e}")
         return f"{analyzer_name}: Failed"
 
 async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: List[str], db):
@@ -63,7 +66,7 @@ async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: Lis
     5. Updates the 'scans' document with the aggregated summary.
     6. Sends notifications (Email/Slack) to project members.
     """
-    print(f"Starting analysis for scan {scan_id}")
+    logger.info(f"Starting analysis for scan {scan_id}")
     aggregator = ResultAggregator()
     
     tasks = []
@@ -220,5 +223,5 @@ async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: Lis
                     db=db
                 )
     except Exception as e:
-        print(f"Failed to send notifications: {e}")
+        logger.error(f"Failed to send notifications: {e}")
 

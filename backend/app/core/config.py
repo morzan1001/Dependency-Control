@@ -21,19 +21,6 @@ class Settings(BaseSettings):
     # Frontend
     FRONTEND_BASE_URL: str = "http://localhost:3000"
 
-    # Notifications
-    SMTP_HOST: str = ""
-    SMTP_PORT: int = 587
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-    EMAILS_FROM_EMAIL: str = "info@dependencycontrol.local"
-    
-    SLACK_BOT_TOKEN: str = ""
-    
-    # Mattermost
-    MATTERMOST_BOT_TOKEN: str = ""
-    MATTERMOST_URL: str = "" # e.g. https://mattermost.example.com
-
     class Config:
         case_sensitive = True
         env_file = ".env"

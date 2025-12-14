@@ -2,8 +2,11 @@ import json
 import tempfile
 import asyncio
 import os
+import logging
 from typing import Dict, Any
 from .base import Analyzer
+
+logger = logging.getLogger(__name__)
 
 class TrivyAnalyzer(Analyzer):
     name = "trivy"
@@ -31,7 +34,7 @@ class TrivyAnalyzer(Analyzer):
             
             if process.returncode != 0:
                 error_msg = stderr.decode()
-                print(f"Trivy failed: {error_msg}")
+                logger.error(f"Trivy failed: {error_msg}")
                 return {"error": "Trivy analysis failed", "details": error_msg}
             
             try:

@@ -1,13 +1,16 @@
 import httpx
 import logging
-from app.core.config import settings
+from typing import Optional
 from app.services.notifications.base import NotificationProvider
+from app.models.system import SystemSettings
 
 logger = logging.getLogger(__name__)
 
 class SlackProvider(NotificationProvider):
-    async def send(self, destination: str, subject: str, message: str) -> bool:
-        if not settings.SLACK_BOT_TOKEN:
+    async def send(self, destination: str, subject: str, message: str, system_settings: Optional[SystemSettings] = None) -> bool:
+        slack_token = system_settings.slack_bot_token if system_settings else None
+
+        if not slack_token:
             logger.warning("SLACK_BOT_TOKEN not configured. Skipping Slack notification.")
             return False
 
@@ -15,7 +18,7 @@ class SlackProvider(NotificationProvider):
         
         url = "https://slack.com/api/chat.postMessage"
         headers = {
-            "Authorization": f"Bearer {settings.SLACK_BOT_TOKEN}",
+            "Authorization": f"Bearer {slack_token}",
             "Content-Type": "application/json"
         }
         
@@ -28,6 +31,15 @@ class SlackProvider(NotificationProvider):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, headers=headers, json=payload)
+                if response.status_code == 200 and response.json().get("ok"):
+                    logger.info(f"Slack message sent to {destination}")
+                    return True
+                else:
+                    logger.error(f"Failed to send Slack message: {response.text}")
+                    return False
+        except Exception as e:
+            logger.error(f"Error sending Slack message: {e}")
+            return False
                 data = response.json()
                 
                 if data.get("ok"):

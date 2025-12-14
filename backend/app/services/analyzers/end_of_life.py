@@ -1,7 +1,10 @@
 import httpx
+import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from .base import Analyzer
+
+logger = logging.getLogger(__name__)
 
 class EndOfLifeAnalyzer(Analyzer):
     name = "end_of_life"
@@ -30,7 +33,7 @@ class EndOfLifeAnalyzer(Analyzer):
                                 "eol_info": eol_info
                             })
                 except Exception as e:
-                    print(f"Error checking {name}: {e}")
+                    logger.error(f"Error checking {name}: {e}")
                     continue
                     
         return {"eol_issues": results}

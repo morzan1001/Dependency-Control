@@ -83,17 +83,13 @@ async def get_notification_channels(
     # Check Email
     if settings.smtp_host and settings.smtp_user:
         channels.append("email")
-    # Fallback to env vars if not in DB (migration path)
-    elif env_settings.SMTP_HOST and env_settings.SMTP_USER:
-        channels.append("email")
         
     # Check Slack
-    if settings.slack_bot_token or env_settings.SLACK_BOT_TOKEN:
+    if settings.slack_bot_token:
         channels.append("slack")
         
     # Check Mattermost
-    if (settings.mattermost_bot_token and settings.mattermost_url) or \
-       (env_settings.MATTERMOST_BOT_TOKEN and env_settings.MATTERMOST_URL):
+    if settings.mattermost_bot_token and settings.mattermost_url:
         channels.append("mattermost")
         
     return channels
