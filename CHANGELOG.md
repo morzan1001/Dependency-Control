@@ -1,3 +1,11 @@
+# Release 0.2.9
+
+## 🚀 Features
+
+- feat: add project deletion functionality and retention settings management (#0)
+
+
+
 # Release 0.2.8
 
 ## 🐛 Fixes
