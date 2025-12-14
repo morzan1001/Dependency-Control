@@ -1,3 +1,11 @@
+# Release 0.3.5
+
+## 📦 Build & CI
+
+- chore: bump version to 0.3.5 (#0)
+
+
+
 # Release 0.3.4
 
 ## 🐛 Fixes
