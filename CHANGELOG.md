@@ -1,3 +1,11 @@
+# Release 0.4.3
+
+## 🚀 Features
+
+- feat: add Syft conversion support for unsupported SBOM formats in TrivyAnalyzer (#0)
+
+
+
 # Release 0.4.2
 
 ## 🚀 Features
