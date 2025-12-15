@@ -1,3 +1,11 @@
+# Release 0.4.5
+
+## 🚀 Features
+
+- feat: enhance vulnerability processing with severity mapping and fixed version extraction (#0)
+
+
+
 # Release 0.4.4
 
 ## 🚀 Features
