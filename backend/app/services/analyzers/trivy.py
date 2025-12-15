@@ -17,7 +17,38 @@ class TrivyAnalyzer(Analyzer):
             json.dump(sbom, tmp_sbom)
             tmp_sbom_path = tmp_sbom.name
 
+        target_sbom_path = tmp_sbom_path
+        converted_sbom_path = None
+
         try:
+            # Check if conversion is needed (Trivy supports CycloneDX and SPDX)
+            is_cyclonedx = "bomFormat" in sbom and sbom["bomFormat"] == "CycloneDX"
+            is_spdx = "spdxVersion" in sbom
+            
+            if not (is_cyclonedx or is_spdx):
+                # Attempt to convert using Syft
+                logger.info("SBOM format not natively supported by Trivy (likely Syft JSON). Attempting conversion...")
+                converted_sbom_path = tmp_sbom_path + ".cdx.json"
+                
+                convert_process = await asyncio.create_subprocess_exec(
+                    "syft",
+                    "convert",
+                    tmp_sbom_path,
+                    "-o", "cyclonedx-json",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await convert_process.communicate()
+                
+                if convert_process.returncode == 0:
+                    # Write the converted output to file
+                    with open(converted_sbom_path, "wb") as f:
+                        f.write(stdout)
+                    target_sbom_path = converted_sbom_path
+                    logger.info("Successfully converted SBOM to CycloneDX for Trivy.")
+                else:
+                    logger.warning(f"Syft conversion failed: {stderr.decode()}. Proceeding with original file.")
+
             # Run Trivy asynchronously
             # The SBOM file is scanned
             process = await asyncio.create_subprocess_exec(
@@ -25,7 +56,7 @@ class TrivyAnalyzer(Analyzer):
                 "sbom", 
                 "--format", "json", 
                 "--quiet",
-                tmp_sbom_path,
+                target_sbom_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -54,3 +85,5 @@ class TrivyAnalyzer(Analyzer):
             # Cleanup
             if os.path.exists(tmp_sbom_path):
                 os.remove(tmp_sbom_path)
+            if converted_sbom_path and os.path.exists(converted_sbom_path):
+                os.remove(converted_sbom_path)
