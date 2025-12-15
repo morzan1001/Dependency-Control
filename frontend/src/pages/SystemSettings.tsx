@@ -497,7 +497,12 @@ export default function SystemSettings() {
                                 />
                             </div>
                             <div className="flex items-center justify-between space-x-2">
-                                <Label htmlFor="gitlab-sync-teams">Sync Teams</Label>
+                                <div className="space-y-0.5">
+                                    <Label htmlFor="gitlab-sync-teams">Sync GitLab Groups</Label>
+                                    <p className="text-xs text-muted-foreground">
+                                        Automatically create Teams from GitLab Groups and assign members.
+                                    </p>
+                                </div>
                                 <Switch
                                     id="gitlab-sync-teams"
                                     checked={formData.gitlab_sync_teams || false}

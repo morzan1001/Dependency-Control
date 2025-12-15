@@ -232,6 +232,7 @@ async def create_project(
         team_id=project_in.team_id,
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
+        retention_days=project_in.retention_days if project_in.retention_days is not None else 90,
         members=[
             ProjectMember(
                 user_id=str(current_user.id),

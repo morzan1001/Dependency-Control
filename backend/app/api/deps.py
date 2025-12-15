@@ -162,7 +162,8 @@ async def get_project_for_ingest(
                     db, 
                     gitlab_project_id, 
                     gitlab_project["path_with_namespace"], 
-                    token
+                    token,
+                    gitlab_project_data=gitlab_project
                 )
                 if team_id and project.team_id != team_id:
                     await db.projects.update_one(
@@ -206,7 +207,8 @@ async def get_project_for_ingest(
                     db, 
                     gitlab_project_id, 
                     gitlab_project["path_with_namespace"], 
-                    token
+                    token,
+                    gitlab_project_data=gitlab_project
                 )
                 if team_id:
                     new_project.team_id = team_id

@@ -426,3 +426,16 @@ async def ingest_bearer(
         "stats": stats
     }
 
+@router.get("/ingest/config", summary="Get Project Configuration", status_code=200)
+async def get_project_config(
+    project: Project = Depends(deps.get_project_for_ingest),
+):
+    """
+    Get project configuration for CI/CD pipelines.
+    Returns active analyzers and other settings.
+    """
+    return {
+        "active_analyzers": project.active_analyzers,
+        "retention_days": project.retention_days
+    }
+

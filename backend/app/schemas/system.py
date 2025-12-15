@@ -30,6 +30,17 @@ class SystemSettingsBase(BaseModel):
     oidc_userinfo_endpoint: Optional[str] = None
     oidc_scopes: str = "openid profile email"
 
+    # GitLab Integration
+    gitlab_integration_enabled: bool = False
+    gitlab_url: str = "https://gitlab.com"
+    gitlab_access_token: Optional[str] = None
+    gitlab_auto_create_projects: bool = False
+    gitlab_sync_teams: bool = False
+
+    # Retention
+    retention_mode: str = "project"
+    global_retention_days: int = 90
+
 class SystemSettingsUpdate(SystemSettingsBase):
     pass
 

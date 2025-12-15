@@ -45,15 +45,36 @@ jobs:
         with:
           fetch-depth: 0 # Important for TruffleHog to see history
       
+      - name: Check Configuration
+        id: check
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          SCANNER_NAME: "trufflehog"
+        run: |
+          AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
+          CONFIG=$(curl -s -H "$AUTH_HEADER" "$DEP_CONTROL_URL/api/v1/ingest/config")
+          
+          if echo "$CONFIG" | jq -e ".active_analyzers | index(\"$SCANNER_NAME\")" > /dev/null; then
+            echo "Scanner $SCANNER_NAME is enabled."
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "Scanner $SCANNER_NAME is disabled."
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Install TruffleHog
+        if: steps.check.outputs.enabled == 'true'
         run: curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
           
       - name: Run TruffleHog
+        if: steps.check.outputs.enabled == 'true'
         run: |
           # Run TruffleHog and output JSON. Exit code is ignored to process results manually.
           trufflehog git file://. --json > trufflehog.json || true
           
       - name: Upload Secrets to Dependency Control
+        if: steps.check.outputs.enabled == 'true'
         env:
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
@@ -90,20 +111,40 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
-      - name: Run OpenGrep
-        run: semgrep scan --config=auto --json --output opengrep.json . || true
-        
-      - name: Upload SAST Results
+      - name: Check Configuration
+        id: check
         env:
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
-          PROJECT_NAME: "your-project-name"
+          SCANNER_NAME: "opengrep"
         run: |
           # Install jq/curl if missing
           if ! command -v jq &> /dev/null; then
              if [ -f /etc/alpine-release ]; then apk add --no-cache jq curl; else apt-get update && apt-get install -y jq curl; fi
           fi
+
+          AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
+          CONFIG=$(curl -s -H "$AUTH_HEADER" "$DEP_CONTROL_URL/api/v1/ingest/config")
           
+          if echo "$CONFIG" | jq -e ".active_analyzers | index(\"$SCANNER_NAME\")" > /dev/null; then
+            echo "Scanner $SCANNER_NAME is enabled."
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "Scanner $SCANNER_NAME is disabled."
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run OpenGrep
+        if: steps.check.outputs.enabled == 'true'
+        run: semgrep scan --config=auto --json --output opengrep.json . || true
+        
+      - name: Upload SAST Results
+        if: steps.check.outputs.enabled == 'true'
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          PROJECT_NAME: "your-project-name"
+        run: |
           jq -n \
             --arg pn "$PROJECT_NAME" \
             --arg br "${{ github.ref_name }}" \
@@ -124,23 +165,43 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
+      - name: Check Configuration
+        id: check
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          SCANNER_NAME: "kics"
+        run: |
+          # Install jq/curl if missing
+          if ! command -v jq &> /dev/null; then
+             apk add --no-cache jq curl
+          fi
+
+          AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
+          CONFIG=$(curl -s -H "$AUTH_HEADER" "$DEP_CONTROL_URL/api/v1/ingest/config")
+          
+          if echo "$CONFIG" | jq -e ".active_analyzers | index(\"$SCANNER_NAME\")" > /dev/null; then
+            echo "Scanner $SCANNER_NAME is enabled."
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "Scanner $SCANNER_NAME is disabled."
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+      
       - name: Run KICS
+        if: steps.check.outputs.enabled == 'true'
         run: |
           # Run KICS scan
           # --ignore-on-exit all ensures the step doesn't fail if vulnerabilities are found
           kics scan -p . -o . --output-name kics-results.json --report-formats json --ignore-on-exit all || true
         
       - name: Upload KICS Results
+        if: steps.check.outputs.enabled == 'true'
         env:
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
           PROJECT_NAME: "your-project-name"
         run: |
-          # Install jq/curl if missing (KICS image is Alpine based)
-          if ! command -v jq &> /dev/null; then
-             apk add --no-cache jq curl
-          fi
-          
           # Prepare payload
           # KICS output structure needs to be passed correctly
           jq -n \
@@ -162,13 +223,34 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       
+      - name: Check Configuration
+        id: check
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          SCANNER_NAME: "bearer"
+        run: |
+          AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
+          CONFIG=$(curl -s -H "$AUTH_HEADER" "$DEP_CONTROL_URL/api/v1/ingest/config")
+          
+          if echo "$CONFIG" | jq -e ".active_analyzers | index(\"$SCANNER_NAME\")" > /dev/null; then
+            echo "Scanner $SCANNER_NAME is enabled."
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "Scanner $SCANNER_NAME is disabled."
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+      
       - name: Install Bearer
+        if: steps.check.outputs.enabled == 'true'
         run: curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh -s -- -b /usr/local/bin
         
       - name: Run Bearer
+        if: steps.check.outputs.enabled == 'true'
         run: bearer scan . --format json --output bearer.json || true
         
       - name: Upload Bearer Results
+        if: steps.check.outputs.enabled == 'true'
         env:
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}

@@ -82,18 +82,62 @@ class GitLabService:
                 logger.error(f"Error fetching GitLab members: {e}")
                 return None
 
-    async def sync_team_from_gitlab(self, db, gitlab_project_id: int, gitlab_project_path: str, token: str) -> Optional[str]:
+    async def get_group_members(self, group_id: int, token: str) -> Optional[list[Dict[str, Any]]]:
+        """
+        Fetches group members.
+        """
+        auth_headers = {"JOB-TOKEN": token}
+        if self.settings.gitlab_access_token:
+            auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.api_url}/groups/{group_id}/members/all",
+                    headers=auth_headers,
+                    timeout=10.0
+                )
+                if response.status_code == 200:
+                    return response.json()
+                logger.error(f"Failed to fetch GitLab group members: {response.status_code} {response.text}")
+                return None
+            except Exception as e:
+                logger.error(f"Error fetching GitLab group members: {e}")
+                return None
+
+    async def sync_team_from_gitlab(self, db, gitlab_project_id: int, gitlab_project_path: str, token: str, gitlab_project_data: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """
         Syncs GitLab project members to a local Team.
         Returns the Team ID.
         """
         try:
-            members = await self.get_project_members(gitlab_project_id, token)
+            members = None
+            
+            # Only sync if it's a group
+            if gitlab_project_data and gitlab_project_data.get("namespace", {}).get("kind") == "group":
+                namespace = gitlab_project_data["namespace"]
+                group_id = namespace["id"]
+                group_path = namespace["full_path"]
+                team_name = f"GitLab Group: {group_path}"
+                description = f"Imported from GitLab Group {group_path}"
+                
+                members = await self.get_group_members(group_id, token)
+            else:
+                # Not a group project (e.g. user namespace), skip sync
+                return None
+            
+            if not members:
+                 logger.warning(f"Failed to fetch members for group {team_name}. Skipping sync.")
+                 # Try to find existing team to return its ID at least
+                 existing_team = await db.teams.find_one({"name": team_name})
+                 if existing_team:
+                     return str(existing_team["_id"])
+                 return None
+
             if not members:
                 return None
 
             # Create or Update Team
-            team_name = f"GitLab: {gitlab_project_path}"
             team = await db.teams.find_one({"name": team_name})
             
             team_members = []
@@ -138,7 +182,7 @@ class GitLabService:
             elif team_members:
                 new_team = Team(
                     name=team_name,
-                    description=f"Imported from GitLab Project {gitlab_project_path}",
+                    description=description,
                     members=team_members
                 )
                 result = await db.teams.insert_one(new_team.dict(by_alias=True))
