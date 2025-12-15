@@ -1,3 +1,15 @@
+# Release 0.4.1
+
+## 🚀 Features
+
+- feat(analyzers): add settings parameter to analyze methods for dynamic configuration (#0)
+
+## 📦 Build & CI
+
+- chore: update version to 0.4.1 and refactor SBOM handling in ingest and projects endpoints (#0)
+
+
+
 # Release 0.4.0
 
 ## 🐛 Fixes
