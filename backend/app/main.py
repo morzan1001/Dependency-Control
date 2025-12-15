@@ -1,4 +1,6 @@
 import logging
+import asyncio
+from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from app.core.config import settings
@@ -49,9 +51,28 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 async def startup_event():
-    await connect_to_mongo()
-    await init_db()
-    await worker_manager.start()
+    max_retries = 30
+    retry_interval = 5
+    
+    for i in range(max_retries):
+        try:
+            await connect_to_mongo()
+            await init_db()
+            await worker_manager.start()
+            logger.info("Application startup complete.")
+            break
+        except (ServerSelectionTimeoutError, ConnectionFailure) as e:
+            logger.warning(f"Database connection failed (Attempt {i+1}/{max_retries}): {e}")
+            await close_mongo_connection()
+            if i < max_retries - 1:
+                logger.info(f"Retrying in {retry_interval} seconds...")
+                await asyncio.sleep(retry_interval)
+            else:
+                logger.error("Could not connect to database after multiple attempts.")
+                raise e
+        except Exception as e:
+             logger.error(f"Unexpected error during startup: {e}")
+             raise e
 
 @app.on_event("shutdown")
 async def shutdown_event():

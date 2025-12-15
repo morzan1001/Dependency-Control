@@ -43,7 +43,6 @@ class Scan(BaseModel):
     pipeline_iid: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     
-    sbom: Optional[Dict[str, Any]] = None # Aggregated SBOM
     sboms: List[Dict[str, Any]] = [] # Raw SBOMs received
     
     created_at: datetime = Field(default_factory=datetime.utcnow)

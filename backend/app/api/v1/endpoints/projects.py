@@ -579,7 +579,11 @@ async def read_scans(
     Get all scans for a project.
     """
     await check_project_access(project_id, current_user, db)
-    scans = await db.scans.find({"project_id": project_id}).skip(skip).limit(limit).to_list(limit)
+    # Exclude large SBOM fields for list view
+    scans = await db.scans.find(
+        {"project_id": project_id},
+        {"sboms": 0}
+    ).skip(skip).limit(limit).to_list(limit)
     return scans
 
 @router.get("/scans/{scan_id}/results", response_model=List[AnalysisResult], summary="Get analysis results")
@@ -593,7 +597,11 @@ async def read_analysis_results(
     Also includes results from other scans on the same commit to provide a complete view.
     """
     # Need to find project_id from scan to check permissions
-    scan = await db.scans.find_one({"_id": scan_id})
+    # Projection to avoid fetching large SBOMs
+    scan = await db.scans.find_one(
+        {"_id": scan_id},
+        {"project_id": 1, "commit_hash": 1}
+    )
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
         
@@ -605,7 +613,7 @@ async def read_analysis_results(
     related_scans_cursor = db.scans.find({
         "project_id": scan["project_id"],
         "commit_hash": scan["commit_hash"]
-    })
+    }, {"_id": 1})
     related_scan_ids = [s["_id"] async for s in related_scans_cursor]
     
     if not related_scan_ids:

@@ -27,6 +27,4 @@ class SBOMIngest(BaseModel):
     
     metadata: PipelineMetadata
     sboms: List[Dict[str, Any]] = Field(default_factory=list, description="List of SBOM JSON contents")
-    
-    # Backward compatibility for single SBOM
-    sbom: Optional[Dict[str, Any]] = Field(None, description="Single SBOM JSON content (deprecated, use sboms)")
+

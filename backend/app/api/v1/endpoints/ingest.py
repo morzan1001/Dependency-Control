@@ -158,8 +158,6 @@ async def ingest_sbom(
     
     # Prepare SBOMs list
     new_sboms = data.sboms
-    if data.sbom:
-        new_sboms.append(data.sbom)
         
     if not new_sboms:
         raise HTTPException(status_code=400, detail="No SBOM provided")

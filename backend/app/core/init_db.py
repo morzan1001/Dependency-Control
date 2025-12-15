@@ -26,19 +26,29 @@ async def create_indexes(db):
 
     # Scans
     await db["scans"].create_index("project_id")
+    await db["scans"].create_index("pipeline_id") # For CI/CD lookups
+    await db["scans"].create_index("status") # For worker queue
     await db["scans"].create_index([("created_at", pymongo.DESCENDING)])
     # Compound index for efficient retrieval of project scans sorted by date
     await db["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
     
     # Indexes for SBOM analysis (finding components across projects)
     # Required for dependency usage queries.
-    await db["scans"].create_index("sbom.components.name")
-    await db["scans"].create_index("sbom.components.purl")
-    await db["scans"].create_index("sbom.components.version")
+    await db["scans"].create_index("sboms.components.name")
+    await db["scans"].create_index("sboms.components.purl")
+    await db["scans"].create_index("sboms.components.version")
 
     # Analysis Results
     await db["analysis_results"].create_index("scan_id")
     await db["analysis_results"].create_index([("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)])
+
+    # Waivers
+    await db["waivers"].create_index("project_id")
+    await db["waivers"].create_index("expiration_date")
+    await db["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
+
+    # Projects
+    await db["projects"].create_index("gitlab_project_id")
 
     # Invitations
     await db["project_invitations"].create_index("token", unique=True)

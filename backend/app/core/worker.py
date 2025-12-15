@@ -31,7 +31,8 @@ class AnalysisWorkerManager:
         try:
             db = await get_database()
             # Find scans that are pending
-            cursor = db.scans.find({"status": "pending"})
+            # Optimization: Only fetch _id, don't load full SBOMs
+            cursor = db.scans.find({"status": "pending"}, {"_id": 1})
             count = 0
             async for scan in cursor:
                 await self.queue.put(str(scan["_id"]))
@@ -97,8 +98,6 @@ class AnalysisWorkerManager:
                 try:
                     # Prepare SBOMs list
                     sboms = scan.get("sboms", [])
-                    if not sboms and scan.get("sbom"):
-                        sboms = [scan["sbom"]]
 
                     # Run the actual analysis
                     await run_analysis(
