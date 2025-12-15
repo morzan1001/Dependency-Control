@@ -52,7 +52,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
 
   const { data: teams } = useQuery({
     queryKey: ['teams'],
-    queryFn: getTeams,
+    queryFn: () => getTeams(),
   })
 
   const { data: branches } = useQuery({

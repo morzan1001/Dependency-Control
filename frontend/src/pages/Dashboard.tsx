@@ -20,7 +20,7 @@ export default function Dashboard() {
 
   const { data: projects, isLoading: isLoadingProjects } = useQuery({
     queryKey: ['projects'],
-    queryFn: getProjects,
+    queryFn: () => getProjects(),
   })
 
   if (isLoadingStats || isLoadingScans || isLoadingProjects) {

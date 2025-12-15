@@ -31,13 +31,13 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
 
   const { data: projects, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
     queryKey: ['projects'],
-    queryFn: getProjects,
+    queryFn: () => getProjects(),
     enabled: open && !!user,
   });
 
   const { data: teams, isLoading: isLoadingTeams, error: errorTeams } = useQuery({
     queryKey: ['teams'],
-    queryFn: getTeams,
+    queryFn: () => getTeams(),
     enabled: open && !!user,
   });
 

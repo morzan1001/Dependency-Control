@@ -48,7 +48,7 @@ export default function ProjectsPage() {
 
   const { data: teams } = useQuery({
     queryKey: ['teams'],
-    queryFn: getTeams,
+    queryFn: () => getTeams(),
   });
 
   const { data: systemSettings } = useQuery({
