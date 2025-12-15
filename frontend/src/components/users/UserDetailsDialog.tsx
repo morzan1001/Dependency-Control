@@ -29,11 +29,13 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [resetLink, setResetLink] = useState<string | null>(null);
 
-  const { data: projects, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
+  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
     queryKey: ['projects'],
-    queryFn: () => getProjects(),
+    queryFn: () => getProjects(undefined, 0, 100),
     enabled: open && !!user,
   });
+
+  const projects = projectsData?.items || [];
 
   const { data: teams, isLoading: isLoadingTeams, error: errorTeams } = useQuery({
     queryKey: ['teams'],

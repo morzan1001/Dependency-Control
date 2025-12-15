@@ -10,6 +10,7 @@ from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.kics import KicsIngest
 from app.schemas.bearer import BearerIngest
 from app.models.project import Project, Scan
+from app.models.stats import Stats
 from app.db.mongodb import get_database
 from app.core.worker import worker_manager
 from app.services.aggregator import ResultAggregator
@@ -31,9 +32,13 @@ async def ingest_trufflehog(
     Returns a summary of findings and pipeline failure status.
     """
     # Extract metadata
-    metadata = data.metadata.dict(by_alias=True)
-    pipeline_id = data.metadata.ci_pipeline_id
-    pipeline_iid = data.metadata.ci_pipeline_iid
+    pipeline_id = data.pipeline_id
+    pipeline_iid = data.pipeline_iid
+    
+    # Construct Pipeline URL if missing
+    pipeline_url = data.pipeline_url
+    if not pipeline_url and data.project_url and pipeline_id:
+        pipeline_url = f"{data.project_url}/-/pipelines/{pipeline_id}"
 
     # 1. Find or Create Scan Record (Pipeline)
     existing_scan = None
@@ -48,16 +53,33 @@ async def ingest_trufflehog(
         # Update metadata if needed
         await db.scans.update_one(
             {"_id": scan_id},
-            {"$set": {"metadata": metadata, "updated_at": datetime.utcnow()}}
+            {"$set": {
+                "updated_at": datetime.utcnow(),
+                "branch": data.branch or existing_scan.get("branch"),
+                "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                "project_url": data.project_url,
+                "pipeline_url": pipeline_url,
+                "job_id": data.job_id,
+                "job_started_at": data.job_started_at,
+                "project_name": data.project_name,
+                "commit_message": data.commit_message,
+                "commit_tag": data.commit_tag
+            }}
         )
     else:
         scan = Scan(
             project_id=str(project.id),
-            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            branch=data.branch or "unknown",
             commit_hash=data.commit_hash,
             pipeline_id=pipeline_id,
             pipeline_iid=pipeline_iid,
-            metadata=metadata,
+            project_url=data.project_url,
+            pipeline_url=pipeline_url,
+            job_id=data.job_id,
+            job_started_at=data.job_started_at,
+            project_name=data.project_name,
+            commit_message=data.commit_message,
+            commit_tag=data.commit_tag,
             status="processing",
             created_at=datetime.utcnow(),
             completed_at=datetime.utcnow()
@@ -92,25 +114,25 @@ async def ingest_trufflehog(
         for waiver in waivers:
             # Check if waiver matches finding
             # Match by ID (e.g. SECRET-AWS-...)
-            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
+            if waiver.get("finding_id") and waiver["finding_id"] == finding.id:
                 is_waived = True
                 break
             
             # Match by Type (e.g. "secret")
-            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
+            if waiver.get("finding_type") and waiver["finding_type"] == finding.type:
                 # Broad matching supported
                 is_waived = True
                 break
                 
             # Match by Package Name (mapped to file path for secrets)
-            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
+            if waiver.get("package_name") and waiver["package_name"] == finding.component:
                 is_waived = True
                 break
         
         if is_waived:
             waived_count += 1
             # It can be optionally stored but marked as waived
-            finding["waived"] = True
+            finding.waived = True
         else:
             final_findings.append(finding)
 
@@ -153,10 +175,14 @@ async def ingest_sbom(
     The analysis will be queued and processed by background workers.
     """
     # Extract metadata
-    metadata = data.metadata.dict(by_alias=True)
-    pipeline_id = data.metadata.ci_pipeline_id
-    pipeline_iid = data.metadata.ci_pipeline_iid
+    pipeline_id = data.pipeline_id
+    pipeline_iid = data.pipeline_iid
     
+    # Construct Pipeline URL if missing
+    pipeline_url = data.pipeline_url
+    if not pipeline_url and data.project_url and pipeline_id:
+        pipeline_url = f"{data.project_url}/-/pipelines/{pipeline_id}"
+
     # Prepare SBOMs list
     new_sboms = data.sboms
         
@@ -183,9 +209,15 @@ async def ingest_sbom(
                 {"_id": scan_id},
                 {
                     "$set": {
-                        "metadata": metadata,
-                        "branch": data.metadata.ci_commit_branch or data.branch or existing_scan.get("branch"),
+                        "branch": data.branch or existing_scan.get("branch"),
                         "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                        "project_url": data.project_url,
+                        "pipeline_url": pipeline_url,
+                        "job_id": data.job_id,
+                        "job_started_at": data.job_started_at,
+                        "project_name": data.project_name,
+                        "commit_message": data.commit_message,
+                        "commit_tag": data.commit_tag,
                         "status": "pending", # Reset status to pending to re-analyze with new data
                         "updated_at": datetime.utcnow()
                     },
@@ -198,11 +230,17 @@ async def ingest_sbom(
             # Create new scan
             scan = Scan(
                 project_id=str(project.id),
-                branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+                branch=data.branch or "unknown",
                 commit_hash=data.commit_hash,
                 pipeline_id=pipeline_id,
                 pipeline_iid=pipeline_iid,
-                metadata=metadata,
+                project_url=data.project_url,
+                pipeline_url=pipeline_url,
+                job_id=data.job_id,
+                job_started_at=data.job_started_at,
+                project_name=data.project_name,
+                commit_message=data.commit_message,
+                commit_tag=data.commit_tag,
                 sboms=new_sboms,
                 status="pending"
             )
@@ -231,9 +269,15 @@ async def ingest_sbom(
                     {"_id": scan_id},
                     {
                         "$set": {
-                            "metadata": metadata,
-                            "branch": data.metadata.ci_commit_branch or data.branch or existing_scan.get("branch"),
+                            "branch": data.branch or existing_scan.get("branch"),
                             "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                            "project_url": data.project_url,
+                            "pipeline_url": pipeline_url,
+                            "job_id": data.job_id,
+                            "job_started_at": data.job_started_at,
+                            "project_name": data.project_name,
+                            "commit_message": data.commit_message,
+                            "commit_tag": data.commit_tag,
                             "status": "pending",
                             "updated_at": datetime.utcnow()
                         },
@@ -246,11 +290,17 @@ async def ingest_sbom(
                 # Re-create scan object with GridFS references
                 scan = Scan(
                     project_id=str(project.id),
-                    branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+                    branch=data.branch or "unknown",
                     commit_hash=data.commit_hash,
                     pipeline_id=pipeline_id,
                     pipeline_iid=pipeline_iid,
-                    metadata=metadata,
+                    project_url=data.project_url,
+                    pipeline_url=pipeline_url,
+                    job_id=data.job_id,
+                    job_started_at=data.job_started_at,
+                    project_name=data.project_name,
+                    commit_message=data.commit_message,
+                    commit_tag=data.commit_tag,
                     sboms=gridfs_sboms,
                     status="pending"
                 )
@@ -280,9 +330,13 @@ async def ingest_opengrep(
     Returns a summary of findings.
     """
     # Extract metadata
-    metadata = data.metadata.dict(by_alias=True)
-    pipeline_id = data.metadata.ci_pipeline_id
-    pipeline_iid = data.metadata.ci_pipeline_iid
+    pipeline_id = data.pipeline_id
+    pipeline_iid = data.pipeline_iid
+    
+    # Construct Pipeline URL if missing
+    pipeline_url = data.pipeline_url
+    if not pipeline_url and data.project_url and pipeline_id:
+        pipeline_url = f"{data.project_url}/-/pipelines/{pipeline_id}"
 
     # 1. Find or Create Scan Record (Pipeline)
     existing_scan = None
@@ -297,16 +351,33 @@ async def ingest_opengrep(
         # Update metadata if needed
         await db.scans.update_one(
             {"_id": scan_id},
-            {"$set": {"metadata": metadata, "updated_at": datetime.utcnow()}}
+            {"$set": {
+                "updated_at": datetime.utcnow(),
+                "branch": data.branch or existing_scan.get("branch"),
+                "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                "project_url": data.project_url,
+                "pipeline_url": pipeline_url,
+                "job_id": data.job_id,
+                "job_started_at": data.job_started_at,
+                "project_name": data.project_name,
+                "commit_message": data.commit_message,
+                "commit_tag": data.commit_tag
+            }}
         )
     else:
         scan = Scan(
             project_id=str(project.id),
-            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            branch=data.branch or "unknown",
             commit_hash=data.commit_hash,
             pipeline_id=pipeline_id,
             pipeline_iid=pipeline_iid,
-            metadata=metadata,
+            project_url=data.project_url,
+            pipeline_url=pipeline_url,
+            job_id=data.job_id,
+            job_started_at=data.job_started_at,
+            project_name=data.project_name,
+            commit_message=data.commit_message,
+            commit_tag=data.commit_tag,
             status="processing", # Mark as processing as we are adding results
             created_at=datetime.utcnow(),
             completed_at=datetime.utcnow()
@@ -336,18 +407,18 @@ async def ingest_opengrep(
     for finding in findings:
         is_waived = False
         for waiver in waivers:
-            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
+            if waiver.get("finding_id") and waiver["finding_id"] == finding.id:
                 is_waived = True
                 break
-            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
+            if waiver.get("finding_type") and waiver["finding_type"] == finding.type:
                 is_waived = True
                 break
-            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
+            if waiver.get("package_name") and waiver["package_name"] == finding.component:
                 is_waived = True
                 break
         
         if is_waived:
-            finding["waived"] = True
+            finding.waived = True
         else:
             final_findings.append(finding)
 
@@ -367,13 +438,15 @@ async def ingest_opengrep(
     # Ideally, we should have a background task that aggregates all AnalysisResults for a scan_id.
     # But for simplicity, let's just return the stats for this run.
     
-    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
+    stats = Stats()
     for f in final_findings:
-        sev = f.get("severity", "UNKNOWN").lower()
-        if sev in stats:
-            stats[sev] += 1
-        else:
-            stats["unknown"] += 1
+        sev = f.severity.lower()
+        if sev == "critical": stats.critical += 1
+        elif sev == "high": stats.high += 1
+        elif sev == "medium": stats.medium += 1
+        elif sev == "low": stats.low += 1
+        elif sev == "info": stats.info += 1
+        else: stats.unknown += 1
             
     # We don't overwrite scan.findings_summary here because it might contain other analyzers' data.
     # We should probably trigger an aggregation task.
@@ -388,7 +461,7 @@ async def ingest_opengrep(
     return {
         "scan_id": scan_id,
         "findings_count": len(final_findings),
-        "stats": stats
+        "stats": stats.dict()
     }
 
 @router.post("/ingest/kics", summary="Ingest KICS Results", status_code=200)
@@ -401,9 +474,13 @@ async def ingest_kics(
     Ingest KICS IaC scan results.
     """
     # Extract metadata
-    metadata = data.metadata.dict(by_alias=True)
-    pipeline_id = data.metadata.ci_pipeline_id
-    pipeline_iid = data.metadata.ci_pipeline_iid
+    pipeline_id = data.pipeline_id
+    pipeline_iid = data.pipeline_iid
+    
+    # Construct Pipeline URL if missing
+    pipeline_url = data.pipeline_url
+    if not pipeline_url and data.project_url and pipeline_id:
+        pipeline_url = f"{data.project_url}/-/pipelines/{pipeline_id}"
 
     # 1. Find or Create Scan Record (Pipeline)
     existing_scan = None
@@ -417,16 +494,33 @@ async def ingest_kics(
         scan_id = existing_scan["_id"]
         await db.scans.update_one(
             {"_id": scan_id},
-            {"$set": {"metadata": metadata, "updated_at": datetime.utcnow()}}
+            {"$set": {
+                "updated_at": datetime.utcnow(),
+                "branch": data.branch or existing_scan.get("branch"),
+                "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                "project_url": data.project_url,
+                "pipeline_url": pipeline_url,
+                "job_id": data.job_id,
+                "job_started_at": data.job_started_at,
+                "project_name": data.project_name,
+                "commit_message": data.commit_message,
+                "commit_tag": data.commit_tag
+            }}
         )
     else:
         scan = Scan(
             project_id=str(project.id),
-            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            branch=data.branch or "unknown",
             commit_hash=data.commit_hash,
             pipeline_id=pipeline_id,
             pipeline_iid=pipeline_iid,
-            metadata=metadata,
+            project_url=data.project_url,
+            pipeline_url=pipeline_url,
+            job_id=data.job_id,
+            job_started_at=data.job_started_at,
+            project_name=data.project_name,
+            commit_message=data.commit_message,
+            commit_tag=data.commit_tag,
             status="processing",
             created_at=datetime.utcnow(),
             completed_at=datetime.utcnow()
@@ -455,18 +549,18 @@ async def ingest_kics(
     for finding in findings:
         is_waived = False
         for waiver in waivers:
-            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
+            if waiver.get("finding_id") and waiver["finding_id"] == finding.id:
                 is_waived = True
                 break
-            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
+            if waiver.get("finding_type") and waiver["finding_type"] == finding.type:
                 is_waived = True
                 break
-            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
+            if waiver.get("package_name") and waiver["package_name"] == finding.component:
                 is_waived = True
                 break
         
         if is_waived:
-            finding["waived"] = True
+            finding.waived = True
         else:
             final_findings.append(finding)
 
@@ -480,13 +574,15 @@ async def ingest_kics(
     })
     
     # Update Scan
-    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
+    stats = Stats()
     for f in final_findings:
-        sev = f.get("severity", "UNKNOWN").lower()
-        if sev in stats:
-            stats[sev] += 1
-        else:
-            stats["unknown"] += 1
+        sev = f.severity.lower()
+        if sev == "critical": stats.critical += 1
+        elif sev == "high": stats.high += 1
+        elif sev == "medium": stats.medium += 1
+        elif sev == "low": stats.low += 1
+        elif sev == "info": stats.info += 1
+        else: stats.unknown += 1
             
     await worker_manager.add_job(scan_id)
     
@@ -498,7 +594,7 @@ async def ingest_kics(
     return {
         "scan_id": scan_id,
         "findings_count": len(final_findings),
-        "stats": stats
+        "stats": stats.dict()
     }
 
 @router.post("/ingest/bearer", summary="Ingest Bearer Results", status_code=200)
@@ -511,9 +607,13 @@ async def ingest_bearer(
     Ingest Bearer SAST/Data Security scan results.
     """
     # Extract metadata
-    metadata = data.metadata.dict(by_alias=True)
-    pipeline_id = data.metadata.ci_pipeline_id
-    pipeline_iid = data.metadata.ci_pipeline_iid
+    pipeline_id = data.pipeline_id
+    pipeline_iid = data.pipeline_iid
+    
+    # Construct Pipeline URL if missing
+    pipeline_url = data.pipeline_url
+    if not pipeline_url and data.project_url and pipeline_id:
+        pipeline_url = f"{data.project_url}/-/pipelines/{pipeline_id}"
 
     # 1. Find or Create Scan Record (Pipeline)
     existing_scan = None
@@ -527,16 +627,33 @@ async def ingest_bearer(
         scan_id = existing_scan["_id"]
         await db.scans.update_one(
             {"_id": scan_id},
-            {"$set": {"metadata": metadata, "updated_at": datetime.utcnow()}}
+            {"$set": {
+                "updated_at": datetime.utcnow(),
+                "branch": data.branch or existing_scan.get("branch"),
+                "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                "project_url": data.project_url,
+                "pipeline_url": pipeline_url,
+                "job_id": data.job_id,
+                "job_started_at": data.job_started_at,
+                "project_name": data.project_name,
+                "commit_message": data.commit_message,
+                "commit_tag": data.commit_tag
+            }}
         )
     else:
         scan = Scan(
             project_id=str(project.id),
-            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            branch=data.branch or "unknown",
             commit_hash=data.commit_hash,
             pipeline_id=pipeline_id,
             pipeline_iid=pipeline_iid,
-            metadata=metadata,
+            project_url=data.project_url,
+            pipeline_url=pipeline_url,
+            job_id=data.job_id,
+            job_started_at=data.job_started_at,
+            project_name=data.project_name,
+            commit_message=data.commit_message,
+            commit_tag=data.commit_tag,
             status="processing",
             created_at=datetime.utcnow(),
             completed_at=datetime.utcnow()
@@ -565,18 +682,18 @@ async def ingest_bearer(
     for finding in findings:
         is_waived = False
         for waiver in waivers:
-            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
+            if waiver.get("finding_id") and waiver["finding_id"] == finding.id:
                 is_waived = True
                 break
-            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
+            if waiver.get("finding_type") and waiver["finding_type"] == finding.type:
                 is_waived = True
                 break
-            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
+            if waiver.get("package_name") and waiver["package_name"] == finding.component:
                 is_waived = True
                 break
         
         if is_waived:
-            finding["waived"] = True
+            finding.waived = True
         else:
             final_findings.append(finding)
 
@@ -590,13 +707,15 @@ async def ingest_bearer(
     })
     
     # Update Scan
-    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
+    stats = Stats()
     for f in final_findings:
-        sev = f.get("severity", "UNKNOWN").lower()
-        if sev in stats:
-            stats[sev] += 1
-        else:
-            stats["unknown"] += 1
+        sev = f.severity.lower()
+        if sev == "critical": stats.critical += 1
+        elif sev == "high": stats.high += 1
+        elif sev == "medium": stats.medium += 1
+        elif sev == "low": stats.low += 1
+        elif sev == "info": stats.info += 1
+        else: stats.unknown += 1
             
     await worker_manager.add_job(scan_id)
     
@@ -608,7 +727,7 @@ async def ingest_bearer(
     return {
         "scan_id": scan_id,
         "findings_count": len(final_findings),
-        "stats": stats
+        "stats": stats.dict()
     }
 
 

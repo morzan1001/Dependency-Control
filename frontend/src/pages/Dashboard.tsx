@@ -1,13 +1,20 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Activity, ShieldAlert, ShieldCheck, FolderGit2 } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { Activity, ShieldAlert, ShieldCheck, FolderGit2, ArrowUpDown } from 'lucide-react'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { getDashboardStats, getRecentScans, getProjects } from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const [page, setPage] = useState(1)
+  const [sortBy, setSortBy] = useState('created_at')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const limit = 10
+
   const { data: dashboardStats, isLoading: isLoadingStats, error: errorStats } = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: getDashboardStats,
@@ -18,10 +25,20 @@ export default function Dashboard() {
     queryFn: getRecentScans,
   })
 
-  const { data: projects, isLoading: isLoadingProjects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => getProjects(),
+  const { data: projectsData, isLoading: isLoadingProjects } = useQuery({
+    queryKey: ['projects', page, sortBy, sortOrder],
+    queryFn: () => getProjects(undefined, (page - 1) * limit, limit, sortBy, sortOrder),
+    placeholderData: keepPreviousData,
   })
+
+  const handleSort = (field: string) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(field)
+      setSortOrder('desc')
+    }
+  }
 
   if (isLoadingStats || isLoadingScans || isLoadingProjects) {
     return (
@@ -49,7 +66,8 @@ export default function Dashboard() {
   }
 
   const scanList = recentScans || []
-  const projectList = projects || []
+  const projectList = projectsData?.items || []
+  const totalPages = projectsData?.pages || 0
 
   const stats = [
     {
@@ -191,11 +209,19 @@ export default function Dashboard() {
                 <table className="w-full caption-bottom text-sm">
                     <thead className="[&_tr]:border-b">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Name</th>
+                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('name')}>
+                                Name {sortBy === 'name' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
+                            </th>
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Team</th>
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Last Scan</th>
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Critical</th>
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">High</th>
+                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('last_scan_at')}>
+                                Last Scan {sortBy === 'last_scan_at' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
+                            </th>
+                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('critical')}>
+                                Critical {sortBy === 'critical' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
+                            </th>
+                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('high')}>
+                                High {sortBy === 'high' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
+                            </th>
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Status</th>
                         </tr>
                     </thead>
@@ -224,6 +250,27 @@ export default function Dashboard() {
                         ))}
                     </tbody>
                 </table>
+            </div>
+            <div className="flex items-center justify-end space-x-2 py-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+              >
+                Previous
+              </Button>
+              <div className="text-sm text-muted-foreground">
+                Page {page} of {totalPages || 1}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages || totalPages === 0}
+              >
+                Next
+              </Button>
             </div>
         </CardContent>
       </Card>

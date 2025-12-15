@@ -188,10 +188,22 @@ export interface RecentScan extends Scan {
   project_name: string;
 }
 
-export const getProjects = async (search?: string) => {
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
+
+export const getProjects = async (search?: string, skip: number = 0, limit: number = 20, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc') => {
   const params = new URLSearchParams();
   if (search) params.append('search', search);
-  const response = await api.get<Project[]>('/projects/', { params });
+  params.append('skip', skip.toString());
+  params.append('limit', limit.toString());
+  params.append('sort_by', sortBy);
+  params.append('sort_order', sortOrder);
+  const response = await api.get<PaginatedResponse<Project>>('/projects/', { params });
   return response.data;
 };
 

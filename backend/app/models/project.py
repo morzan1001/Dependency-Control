@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
+from app.models.finding import Finding
+from app.models.stats import Stats
 
 class ProjectMember(BaseModel):
     user_id: str
@@ -20,7 +22,7 @@ class Project(BaseModel):
     api_key_hash: Optional[str] = Field(None, exclude=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     active_analyzers: List[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
-    stats: Optional[Dict[str, Any]] = None
+    stats: Optional[Stats] = None
     last_scan_at: Optional[datetime] = None
     latest_scan_id: Optional[str] = None
     retention_days: int = 90  # Default retention period in days
@@ -41,15 +43,23 @@ class Scan(BaseModel):
     # Pipeline identification
     pipeline_id: Optional[int] = None
     pipeline_iid: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
+    
+    # CI/CD Context
+    project_url: Optional[str] = None
+    pipeline_url: Optional[str] = None
+    job_id: Optional[int] = None
+    job_started_at: Optional[str] = None
+    project_name: Optional[str] = None
+    commit_message: Optional[str] = None
+    commit_tag: Optional[str] = None
     
     sboms: List[Dict[str, Any]] = [] # Raw SBOMs received
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
     status: str = "pending"
-    findings_summary: Optional[List[Dict[str, Any]]] = None
+    findings_summary: Optional[List[Finding]] = None
     findings_count: Optional[int] = None
-    stats: Optional[Dict[str, Any]] = None
+    stats: Optional[Stats] = None
     completed_at: Optional[datetime] = None
 
     class Config:

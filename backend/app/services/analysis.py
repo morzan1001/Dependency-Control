@@ -20,6 +20,7 @@ from app.services.analyzers import (
 )
 from app.services.notifications import notification_service
 from app.models.project import Project
+from app.models.stats import Stats
 from app.services.aggregator import ResultAggregator
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     """
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregator = ResultAggregator()
+    results_summary = []
     
     # 0. Cleanup previous results for internal analyzers
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
@@ -125,7 +127,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         
         # Wait for this batch to finish before moving to the next SBOM
         # This ensures we only hold one SBOM in memory at a time
-        await asyncio.gather(*tasks)
+        batch_results = await asyncio.gather(*tasks)
+        results_summary.extend(batch_results)
         
         # Explicitly release memory
         del current_sbom
@@ -176,8 +179,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         
         # Determine candidates: specific ID matches + component matches + generic waivers
         candidates = (
-            waivers_by_id.get(finding.get("id"), []) + 
-            waivers_by_component.get(finding.get("component"), []) + 
+            waivers_by_id.get(finding.id, []) + 
+            waivers_by_component.get(finding.component, []) + 
             waivers_generic
         )
         
@@ -188,13 +191,13 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             # Note: finding_id and package_name are implicitly checked by the lookup strategy 
             # for the respective lists, but we check everything to be safe and handle the generic/mixed cases correctly.
             
-            if waiver.get("finding_id") and waiver["finding_id"] != finding.get("id"):
+            if waiver.get("finding_id") and waiver["finding_id"] != finding.id:
                 match = False
-            if match and waiver.get("package_name") and waiver["package_name"] != finding.get("component"):
+            if match and waiver.get("package_name") and waiver["package_name"] != finding.component:
                 match = False
-            if match and waiver.get("package_version") and waiver["package_version"] != finding.get("version"):
+            if match and waiver.get("package_version") and waiver["package_version"] != finding.version:
                 match = False
-            if match and waiver.get("finding_type") and waiver["finding_type"] != finding.get("type"):
+            if match and waiver.get("finding_type") and waiver["finding_type"] != finding.type:
                 match = False
                 
             if match:
@@ -203,36 +206,36 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                 break
         
         if is_waived:
-            finding["waived"] = True
-            finding["waiver_reason"] = waiver_reason
+            finding.waived = True
+            finding.waiver_reason = waiver_reason
             ignored_count += 1
         else:
-            finding["waived"] = False
+            finding.waived = False
 
     # Calculate stats (excluding waived)
-    stats = {
-        "critical": 0,
-        "high": 0,
-        "medium": 0,
-        "low": 0,
-        "info": 0,
-        "unknown": 0,
-        "risk_score": 0.0
-    }
+    stats = Stats()
     
     for finding in aggregated_findings:
-        if finding.get("waived"):
+        if finding.waived:
             continue
 
-        severity = finding.get("severity", "UNKNOWN").lower()
-        if severity in stats:
-            stats[severity] += 1
+        severity = finding.severity.lower()
+        if severity == "critical":
+            stats.critical += 1
+        elif severity == "high":
+            stats.high += 1
+        elif severity == "medium":
+            stats.medium += 1
+        elif severity == "low":
+            stats.low += 1
+        elif severity == "info":
+            stats.info += 1
         else:
-            stats["unknown"] += 1
+            stats.unknown += 1
 
         # Calculate Risk Score
         # Prefer CVSS Score if available, otherwise map from Severity
-        score = finding.get("details", {}).get("cvss_score")
+        score = finding.details.get("cvss_score")
         
         if score is None:
             sev_upper = severity.upper()
@@ -242,19 +245,19 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             elif sev_upper == "LOW": score = 1.0
             else: score = 0.0
         
-        stats["risk_score"] += float(score)
+        stats.risk_score += float(score)
 
     # Round risk score
-    stats["risk_score"] = round(stats["risk_score"], 1)
+    stats.risk_score = round(stats.risk_score, 1)
 
     await db.scans.update_one(
         {"_id": scan_id},
         {"$set": {
             "status": "completed", 
-            "findings_summary": aggregated_findings,
+            "findings_summary": [f.dict() for f in aggregated_findings],
             "findings_count": len(aggregated_findings),
             "ignored_count": ignored_count,
-            "stats": stats,
+            "stats": stats.dict(),
             "completed_at": datetime.utcnow()
         }}
     )
@@ -265,7 +268,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         await db.projects.update_one(
             {"_id": scan["project_id"]},
             {"$set": {
-                "stats": stats, 
+                "stats": stats.dict(), 
                 "last_scan_at": datetime.utcnow(),
                 "latest_scan_id": scan_id
             }}

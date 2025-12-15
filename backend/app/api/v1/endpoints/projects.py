@@ -13,7 +13,7 @@ from app.core import security
 from app.models.project import Project, Scan, AnalysisResult, ProjectMember
 from app.models.user import User
 from app.models.invitation import ProjectInvitation
-from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectMemberInvite, ProjectNotificationSettings, ProjectApiKeyResponse, ProjectMemberUpdate
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectMemberInvite, ProjectNotificationSettings, ProjectApiKeyResponse, ProjectMemberUpdate, ProjectList
 from app.db.mongodb import get_database
 from pydantic import BaseModel
 
@@ -284,9 +284,13 @@ async def rotate_api_key(
         api_key=api_key
     )
 
-@router.get("/", response_model=List[Project], summary="List all projects")
+@router.get("/", response_model=ProjectList, summary="List all projects")
 async def read_projects(
     search: str = None,
+    skip: int = 0,
+    limit: int = 20,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -300,11 +304,14 @@ async def read_projects(
     if search:
         query["name"] = {"$regex": search, "$options": "i"}
 
-    if "*" in current_user.permissions or "project:read_all" in current_user.permissions:
-        projects = await db.projects.find(query).to_list(1000)
-    elif "project:read" in current_user.permissions:
+    final_query = query
+
+    if "*" not in current_user.permissions and "project:read_all" not in current_user.permissions:
+        if "project:read" not in current_user.permissions:
+             raise HTTPException(status_code=403, detail="Not enough permissions")
+
         # Get teams user is member of
-        user_teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
+        user_teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(None)
         team_ids = [t["_id"] for t in user_teams]
 
         # Find projects where user is owner OR is in members list OR project belongs to one of user's teams
@@ -321,11 +328,32 @@ async def read_projects(
         else:
             final_query = permission_query
 
-        projects = await db.projects.find(final_query).to_list(1000)
-    else:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-        
-    return projects
+    # Determine sort direction
+    direction = -1 if sort_order.lower() == "desc" else 1
+    
+    # Validate sort_by to prevent injection or errors
+    allowed_sort_fields = {
+        "name": "name",
+        "created_at": "created_at",
+        "last_scan_at": "last_scan_at",
+        "critical": "stats.critical",
+        "high": "stats.high",
+        "risk_score": "stats.risk_score"
+    }
+    
+    sort_field = allowed_sort_fields.get(sort_by, "created_at")
+
+    total = await db.projects.count_documents(final_query)
+    cursor = db.projects.find(final_query).sort(sort_field, direction).skip(skip).limit(limit)
+    projects = await cursor.to_list(length=limit)
+    
+    return {
+        "items": projects,
+        "total": total,
+        "page": (skip // limit) + 1 if limit > 0 else 1,
+        "size": limit,
+        "pages": (total + limit - 1) // limit if limit > 0 else 0
+    }
 
 @router.get("/recent-scans", response_model=List[RecentScan], summary="List recent scans across all accessible projects")
 async def read_recent_scans(

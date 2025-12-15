@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { getTeams, Team } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,10 +25,19 @@ export default function TeamsPage() {
   const [selectedTeamIdForAddMember, setSelectedTeamIdForAddMember] = useState<string | null>(null);
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const { data: teams, isLoading, error } = useQuery({
-    queryKey: ['teams', search],
-    queryFn: () => getTeams(search),
+    queryKey: ['teams', debouncedSearch],
+    queryFn: () => getTeams(debouncedSearch),
+    placeholderData: keepPreviousData,
   });
 
   const openEditDialog = (team: Team) => {

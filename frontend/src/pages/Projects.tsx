@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getProjects, createProject, getTeams, Project, getSystemSettings } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, Copy, Check } from 'lucide-react';
+import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, Copy, Check, ArrowUpDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from "sonner";
@@ -40,11 +40,28 @@ export default function ProjectsPage() {
   const [createdProjectData, setCreatedProjectData] = useState<{ project_id: string, api_key: string, note: string } | null>(null);
   const [hasCopied, setHasCopied] = useState(false);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const limit = 12;
 
-  const { data: projects, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
-    queryKey: ['projects', search],
-    queryFn: () => getProjects(search),
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1); // Reset page on search
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
+    queryKey: ['projects', debouncedSearch, page, sortBy, sortOrder],
+    queryFn: () => getProjects(debouncedSearch, (page - 1) * limit, limit, sortBy, sortOrder),
+    placeholderData: keepPreviousData,
   });
+
+  const projects = projectsData?.items || [];
+  const totalPages = projectsData?.pages || 0;
 
   const { data: teams } = useQuery({
     queryKey: ['teams'],
@@ -142,6 +159,27 @@ export default function ProjectsPage() {
             onChange={(e) => setSearch(e.target.value)}
             className="w-[250px]"
           />
+          <Select value={sortBy} onValueChange={setSortBy}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="created_at">Created Date</SelectItem>
+              <SelectItem value="name">Name</SelectItem>
+              <SelectItem value="last_scan_at">Last Scan</SelectItem>
+              <SelectItem value="critical">Critical Vulns</SelectItem>
+              <SelectItem value="high">High Vulns</SelectItem>
+              <SelectItem value="risk_score">Risk Score</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+            title={sortOrder === 'asc' ? "Ascending" : "Descending"}
+          >
+            <ArrowUpDown className="h-4 w-4" />
+          </Button>
           {hasPermission('project:create') && (
             <Dialog open={isCreateOpen} onOpenChange={(open) => {
             if (!open && createdProjectData) {
@@ -334,6 +372,28 @@ export default function ProjectsPage() {
             </Card>
           </Link>
         ))}
+      </div>
+      
+      <div className="flex items-center justify-center space-x-2 py-4">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+          disabled={page === 1}
+        >
+          Previous
+        </Button>
+        <div className="text-sm text-muted-foreground">
+          Page {page} of {totalPages || 1}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          disabled={page === totalPages || totalPages === 0}
+        >
+          Next
+        </Button>
       </div>
     </div>
   );

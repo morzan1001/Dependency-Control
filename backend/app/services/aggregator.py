@@ -1,5 +1,6 @@
 from typing import List, Dict, Any
 import hashlib
+from app.models.finding import Finding, Severity, FindingType
 
 SEVERITY_ORDER = {
     "CRITICAL": 5,
@@ -12,7 +13,7 @@ SEVERITY_ORDER = {
 
 class ResultAggregator:
     def __init__(self):
-        self.findings: Dict[str, Dict[str, Any]] = {}
+        self.findings: Dict[str, Finding] = {}
 
     def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: str = None):
         """
@@ -23,18 +24,18 @@ class ResultAggregator:
 
         # Check for scanner errors
         if "error" in result:
-            self._add_finding({
-                "id": f"SCAN-ERROR-{analyzer_name}",
-                "type": "system_warning",
-                "severity": "HIGH", # High visibility
-                "component": "Scanner System",
-                "version": "",
-                "description": f"Scanner '{analyzer_name}' failed: {result.get('error')}",
-                "scanners": [analyzer_name],
-                "details": {
+            self._add_finding(Finding(
+                id=f"SCAN-ERROR-{analyzer_name}",
+                type=FindingType.SYSTEM_WARNING,
+                severity=Severity.HIGH, # High visibility
+                component="Scanner System",
+                version="",
+                description=f"Scanner '{analyzer_name}' failed: {result.get('error')}",
+                scanners=[analyzer_name],
+                details={
                     "error_details": result.get("details", result.get("output", "No details provided"))
                 }
-            }, source=source)
+            ), source=source)
             return
 
         normalizers = {
@@ -56,7 +57,7 @@ class ResultAggregator:
         if analyzer_name in normalizers:
             normalizers[analyzer_name](result, source=source)
 
-    def get_findings(self) -> List[Dict[str, Any]]:
+    def get_findings(self) -> List[Finding]:
         """
         Returns the list of deduplicated findings.
         """
@@ -88,15 +89,15 @@ class ResultAggregator:
             
             finding_id = f"SECRET-{detector}-{secret_hash[:8]}"
             
-            self._add_finding({
-                "id": finding_id,
-                "type": "secret",
-                "severity": "CRITICAL",
-                "component": file_path,
-                "version": "", # No version for secrets in files
-                "description": f"Secret detected: {detector}",
-                "scanners": ["trufflehog"],
-                "details": {
+            self._add_finding(Finding(
+                id=finding_id,
+                type=FindingType.SECRET,
+                severity=Severity.CRITICAL,
+                component=file_path,
+                version="", # No version for secrets in files
+                description=f"Secret detected: {detector}",
+                scanners=["trufflehog"],
+                details={
                     "detector": detector,
                     "decoder": finding.get("DecoderName"),
                     "verified": finding.get("Verified"),
@@ -104,48 +105,45 @@ class ResultAggregator:
                     # TruffleHog provides "Redacted" field.
                     "redacted": finding.get("Redacted")
                 }
-            }, source=source)
+            ), source=source)
 
-    def _add_finding(self, finding: Dict[str, Any], source: str = None):
+    def _add_finding(self, finding: Finding, source: str = None):
         """
         Adds a finding to the map, merging if it already exists.
         Key for deduplication: type + id + component + version
         """
         # ID normalization (e.g. preferring CVE over GHSA) is handled in specific normalizers.
         
-        key = f"{finding['type']}:{finding['id']}:{finding['component']}:{finding['version']}"
+        key = f"{finding.type}:{finding.id}:{finding.component}:{finding.version}"
         
         # Add source to finding
         if source:
-            finding.setdefault("found_in", []).append(source)
+            if source not in finding.found_in:
+                finding.found_in.append(source)
         
         if key in self.findings:
             existing = self.findings[key]
             
             # 1. Merge scanners list
-            existing["scanners"] = list(set(existing["scanners"] + finding["scanners"]))
+            existing.scanners = list(set(existing.scanners + finding.scanners))
             
             # 2. Merge Severity (keep highest)
-            existing_severity_val = SEVERITY_ORDER.get(existing["severity"], 0)
-            new_severity_val = SEVERITY_ORDER.get(finding["severity"], 0)
+            existing_severity_val = SEVERITY_ORDER.get(existing.severity, 0)
+            new_severity_val = SEVERITY_ORDER.get(finding.severity, 0)
             
             if new_severity_val > existing_severity_val:
-                existing["severity"] = finding["severity"]
+                existing.severity = finding.severity
                 
             # 3. Merge Details
-            if "details" in finding:
-                existing["details"].update(finding["details"])
+            existing.details.update(finding.details)
                 
             # 4. Merge Aliases (if any)
-            if "aliases" in finding:
-                existing_aliases = existing.get("aliases", [])
-                existing["aliases"] = list(set(existing_aliases + finding.get("aliases", [])))
+            existing.aliases = list(set(existing.aliases + finding.aliases))
             
             # 5. Merge found_in
             if source:
-                existing.setdefault("found_in", [])
-                if source not in existing["found_in"]:
-                    existing["found_in"].append(source)
+                if source not in existing.found_in:
+                    existing.found_in.append(source)
                 
         else:
             self.findings[key] = finding
@@ -180,16 +178,16 @@ class ResultAggregator:
                                 cvss_score = data["V2Score"]
                                 cvss_vector = data.get("V2Vector")
 
-                self._add_finding({
-                    "id": vuln.get("VulnerabilityID"),
-                    "type": "vulnerability",
-                    "severity": vuln.get("Severity", "UNKNOWN").upper(),
-                    "component": vuln.get("PkgName"),
-                    "version": vuln.get("InstalledVersion"),
-                    "description": vuln.get("Title") or vuln.get("Description", ""),
-                    "fixed_version": vuln.get("FixedVersion"),
-                    "scanners": ["trivy"],
-                    "details": {
+                self._add_finding(Finding(
+                    id=vuln.get("VulnerabilityID"),
+                    type=FindingType.VULNERABILITY,
+                    severity=Severity(vuln.get("Severity", "UNKNOWN").upper()),
+                    component=vuln.get("PkgName"),
+                    version=vuln.get("InstalledVersion"),
+                    description=vuln.get("Title") or vuln.get("Description", ""),
+                    scanners=["trivy"],
+                    details={
+                        "fixed_version": vuln.get("FixedVersion"),
                         "cvss_score": cvss_score,
                         "cvss_vector": cvss_vector,
                         "references": references,
@@ -198,8 +196,8 @@ class ResultAggregator:
                         "cwe_ids": cwe_ids,
                         "layer_id": vuln.get("Layer", {}).get("Digest")
                     },
-                    "aliases": [] 
-                }, source=source)
+                    aliases=[] 
+                ), source=source)
 
     def _normalize_grype(self, result: Dict[str, Any], source: str = None):
         # Grype structure: {"matches": [{"vulnerability": {...}, "artifact": {...}}]}
@@ -234,24 +232,24 @@ class ResultAggregator:
                     cvss_score = float(best_cvss.get("metrics", {}).get("baseScore", 0))
                     cvss_vector = best_cvss.get("vector")
 
-            self._add_finding({
-                "id": vuln_id,
-                "type": "vulnerability",
-                "severity": vuln.get("severity", "UNKNOWN").upper(),
-                "component": artifact.get("name"),
-                "version": artifact.get("version"),
-                "description": vuln.get("description", ""),
-                "fixed_version": ", ".join(vuln.get("fix", {}).get("versions", [])),
-                "scanners": ["grype"],
-                "details": {
+            self._add_finding(Finding(
+                id=vuln_id,
+                type=FindingType.VULNERABILITY,
+                severity=Severity(vuln.get("severity", "UNKNOWN").upper()),
+                component=artifact.get("name"),
+                version=artifact.get("version"),
+                description=vuln.get("description", ""),
+                scanners=["grype"],
+                details={
+                    "fixed_version": ", ".join(vuln.get("fix", {}).get("versions", [])),
                     "datasource": vuln.get("dataSource"),
                     "urls": vuln.get("urls", []),
                     "cvss_score": cvss_score,
                     "cvss_vector": cvss_vector,
                     "namespace": vuln.get("namespace")
                 },
-                "aliases": aliases
-            }, source=source)
+                aliases=aliases
+            ), source=source)
 
     def _normalize_osv(self, result: Dict[str, Any], source: str = None):
         # OSV structure: {"osv_vulnerabilities": [{"component":..., "vulnerabilities": [...]}]}
@@ -298,105 +296,152 @@ class ResultAggregator:
                         aliases.append(vuln_id)
                     vuln_id = cve_alias
                 
-                self._add_finding({
-                    "id": vuln_id,
-                    "type": "vulnerability",
-                    "severity": severity, 
-                    "component": comp_name,
-                    "version": comp_version,
-                    "description": vuln.get("summary") or vuln.get("details", ""),
-                    "fixed_version": fixed_version,
-                    "scanners": ["osv"],
-                    "details": {
+                self._add_finding(Finding(
+                    id=vuln_id,
+                    type=FindingType.VULNERABILITY,
+                    severity=Severity(severity), 
+                    component=comp_name,
+                    version=comp_version,
+                    description=vuln.get("summary") or vuln.get("details", ""),
+                    scanners=["osv"],
+                    details={
+                        "fixed_version": fixed_version,
                         "references": vuln.get("references"),
                         "published": vuln.get("published"),
                         "modified": vuln.get("modified"),
                         "osv_url": f"https://osv.dev/vulnerability/{vuln.get('id')}"
                     },
-                    "aliases": aliases
-                }, source=source)
+                    aliases=aliases
+                ), source=source)
 
     def _normalize_outdated(self, result: Dict[str, Any], source: str = None):
         for item in result.get("outdated_dependencies", []):
-            self._add_finding({
-                "id": f"OUTDATED-{item['component']}",
-                "type": "outdated",
-                "severity": item.get("severity", "INFO"),
-                "component": item.get("component"),
-                "version": item.get("current_version"),
-                "description": item.get("message"),
-                "fixed_version": item.get("latest_version"),
-                "scanners": ["outdated_packages"],
-                "details": {}
-            }, source=source)
+            self._add_finding(Finding(
+                id=f"OUTDATED-{item['component']}",
+                type=FindingType.OUTDATED,
+                severity=Severity(item.get("severity", "INFO")),
+                component=item.get("component"),
+                version=item.get("current_version"),
+                description=item.get("message"),
+                scanners=["outdated_packages"],
+                details={
+                    "fixed_version": item.get("latest_version")
+                }
+            ), source=source)
 
     def _normalize_license(self, result: Dict[str, Any], source: str = None):
         for item in result.get("license_issues", []):
-            self._add_finding({
-                "id": f"LIC-{item['license']}",
-                "type": "license",
-                "severity": item.get("severity", "WARNING"),
-                "component": item.get("component"),
-                "version": item.get("version"),
-                "description": item.get("message"),
-                "scanners": ["license_compliance"],
-                "details": {"license": item.get("license")}
-            }, source=source)
+            self._add_finding(Finding(
+                id=f"LIC-{item['license']}",
+                type=FindingType.LICENSE,
+                severity=Severity(item.get("severity", "MEDIUM")), # Mapped WARNING to MEDIUM
+                component=item.get("component"),
+                version=item.get("version"),
+                description=item.get("message"),
+                scanners=["license_compliance"],
+                details={"license": item.get("license")}
+            ), source=source)
 
     def _normalize_scorecard(self, result: Dict[str, Any], source: str = None):
         for item in result.get("scorecard_issues", []):
-            self._add_finding({
-                "id": f"SCORE-{item['component']}",
-                "type": "quality",
-                "severity": "MEDIUM", # Default for low scorecard
-                "component": item.get("component"),
-                "version": item.get("version"),
-                "description": item.get("warning"),
-                "scanners": ["deps_dev"],
-                "details": {"scorecard": item.get("scorecard")}
-            }, source=source)
+            scorecard = item.get("scorecard", {})
+            overall = scorecard.get("overallScore", 0)
+            
+            # Extract failed checks
+            failed_checks = []
+            for check in scorecard.get("checks", []):
+                if check.get("score", 10) < 5:
+                    failed_checks.append(f"{check.get('name')}: {check.get('score')}/10")
+            
+            details_text = ", ".join(failed_checks[:3])
+            if len(failed_checks) > 3:
+                details_text += "..."
+                
+            description = f"Low OpenSSF Scorecard score: {overall}/10. Issues: {details_text}" if failed_checks else item.get("warning")
+
+            self._add_finding(Finding(
+                id=f"SCORE-{item['component']}",
+                type=FindingType.OTHER, # Quality not in enum yet
+                severity=Severity.MEDIUM, 
+                component=item.get("component"),
+                version=item.get("version"),
+                description=description,
+                scanners=["deps_dev"],
+                details={
+                    "scorecard": scorecard,
+                    "overall_score": overall,
+                    "failed_checks": failed_checks
+                }
+            ), source=source)
 
     def _normalize_malware(self, result: Dict[str, Any], source: str = None):
         for item in result.get("malware_issues", []):
-            self._add_finding({
-                "id": f"MALWARE-{item['component']}",
-                "type": "malware",
-                "severity": "CRITICAL",
-                "component": item.get("component"),
-                "version": item.get("version"),
-                "description": "Potential malware detected",
-                "scanners": ["os_malware"],
-                "details": {"info": item.get("malware_info")}
-            }, source=source)
+            malware_info = item.get("malware_info", {})
+            threats = malware_info.get("threats", [])
+            
+            description = "Potential malware detected"
+            if threats:
+                description = f"Malware detected: {', '.join(threats)}"
+            elif malware_info.get("description"):
+                description = f"Malware detected: {malware_info.get('description')}"
+
+            self._add_finding(Finding(
+                id=f"MALWARE-{item['component']}",
+                type=FindingType.MALWARE,
+                severity=Severity.CRITICAL,
+                component=item.get("component"),
+                version=item.get("version"),
+                description=description,
+                scanners=["os_malware"],
+                details={
+                    "info": malware_info,
+                    "threats": threats,
+                    "reference": malware_info.get("reference")
+                }
+            ), source=source)
 
     def _normalize_eol(self, result: Dict[str, Any], source: str = None):
         for item in result.get("eol_issues", []):
-            self._add_finding({
-                "id": f"EOL-{item['component']}",
-                "type": "eol",
-                "severity": "HIGH",
-                "component": item.get("component"),
-                "version": item.get("version"),
-                "description": f"End of Life reached on {item.get('eol_date')}",
-                "scanners": ["end_of_life"],
-                "details": {"eol_date": item.get("eol_date"), "cycle": item.get("cycle")}
-            }, source=source)
+            eol_info = item.get("eol_info", {})
+            eol_date = eol_info.get("eol")
+            cycle = eol_info.get("cycle")
+            latest = eol_info.get("latest")
+            
+            self._add_finding(Finding(
+                id=f"EOL-{item['component']}-{cycle}",
+                type=FindingType.EOL,
+                severity=Severity.HIGH,
+                component=item.get("component"),
+                version=item.get("version"),
+                description=f"End of Life reached on {eol_date} (Cycle {cycle}). Latest: {latest}",
+                scanners=["end_of_life"],
+                details={
+                    "fixed_version": latest,
+                    "eol_date": eol_date, 
+                    "cycle": cycle,
+                    "link": eol_info.get("link"),
+                    "lts": eol_info.get("lts")
+                }
+            ), source=source)
 
     def _normalize_typosquatting(self, result: Dict[str, Any], source: str = None):
         for item in result.get("typosquatting_issues", []):
-            self._add_finding({
-                "id": f"TYPO-{item['component']}",
-                "type": "typosquatting",
-                "severity": "CRITICAL", # Typosquatting is usually malicious
-                "component": item.get("component"),
-                "version": item.get("version"),
-                "description": f"Possible typosquatting detected! Looks like '{item.get('imitated_package')}'",
-                "scanners": ["typosquatting"],
-                "details": {
-                    "imitated_package": item.get("imitated_package"),
-                    "similarity": item.get("similarity")
+            similarity = item.get("similarity", 0)
+            imitated = item.get("imitated_package")
+            
+            self._add_finding(Finding(
+                id=f"TYPO-{item['component']}",
+                type=FindingType.MALWARE, # Typosquatting is a form of malware/attack
+                severity=Severity.CRITICAL, 
+                component=item.get("component"),
+                version=item.get("version"),
+                description=f"Possible typosquatting detected! '{item.get('component')}' is {similarity*100:.1f}% similar to popular package '{imitated}'",
+                scanners=["typosquatting"],
+                details={
+                    "imitated_package": imitated,
+                    "similarity": similarity
                 }
-            }, source=source)
+            ), source=source)
 
     def _normalize_opengrep(self, result: Dict[str, Any], source: str = None):
         # OpenGrep structure: {"findings": [OpenGrepFinding objects]}
@@ -419,21 +464,21 @@ class ResultAggregator:
             finding_hash = hashlib.md5(f"{check_id}:{path}:{message}".encode()).hexdigest()
             finding_id = f"SAST-{finding_hash[:8]}"
             
-            self._add_finding({
-                "id": finding_id,
-                "type": "sast",
-                "severity": severity,
-                "component": path,
-                "version": "",
-                "description": message,
-                "scanners": ["opengrep"],
-                "details": {
+            self._add_finding(Finding(
+                id=finding_id,
+                type=FindingType.SAST,
+                severity=Severity(severity),
+                component=path,
+                version="",
+                description=message,
+                scanners=["opengrep"],
+                details={
                     "check_id": check_id,
                     "start": finding.get("start"),
                     "end": finding.get("end"),
                     "metadata": extra.get("metadata")
                 }
-            }, source=source)
+            ), source=source)
 
     def _normalize_kics(self, result: Dict[str, Any], source: str = None):
         # KICS structure: {"queries": [{"query_name": "...", "files": [...]}]}
@@ -449,15 +494,15 @@ class ResultAggregator:
                 file_name = file_obj.get("file_name")
                 line = file_obj.get("line")
                 
-                self._add_finding({
-                    "id": query_id,
-                    "type": "sast", # Using sast for IaC/Misconfiguration to align with Security category
-                    "severity": severity,
-                    "component": file_name,
-                    "version": "",
-                    "description": f"{query_name}: {description}",
-                    "scanners": ["kics"],
-                    "details": {
+                self._add_finding(Finding(
+                    id=query_id,
+                    type=FindingType.IAC, # Using IAC for KICS
+                    severity=Severity(severity),
+                    component=file_name,
+                    version="",
+                    description=f"{query_name}: {description}",
+                    scanners=["kics"],
+                    details={
                         "category": category,
                         "platform": query.get("platform"),
                         "line": line,
@@ -465,7 +510,7 @@ class ResultAggregator:
                         "expected_value": file_obj.get("expected_value"),
                         "actual_value": file_obj.get("actual_value")
                     }
-                }, source=source)
+                ), source=source)
 
     def _normalize_bearer(self, result: Dict[str, Any], source: str = None):
         findings_data = result.get("findings", {})
@@ -492,19 +537,19 @@ class ResultAggregator:
             finding_hash = hashlib.md5(f"{rule_id}:{file_path}:{line}".encode()).hexdigest()
             finding_id = f"BEARER-{finding_hash[:8]}"
             
-            self._add_finding({
-                "id": finding_id,
-                "type": "sast",
-                "severity": severity,
-                "component": file_path,
-                "version": "",
-                "description": message,
-                "scanners": ["bearer"],
-                "details": {
+            self._add_finding(Finding(
+                id=finding_id,
+                type=FindingType.SAST,
+                severity=Severity(severity),
+                component=file_path,
+                version="",
+                description=message,
+                scanners=["bearer"],
+                details={
                     "rule_id": rule_id,
                     "line": line,
                     "cwe_ids": f.get("cwe_ids", []),
                     "documentation": f.get("documentation_url")
                 }
-            }, source=source)
+            ), source=source)
 

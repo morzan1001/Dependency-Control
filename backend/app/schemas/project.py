@@ -1,5 +1,13 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
+from app.models.project import Project
+
+class ProjectList(BaseModel):
+    items: List[Project]
+    total: int
+    page: int
+    size: int
+    pages: int
 
 class ProjectCreate(BaseModel):
     name: str = Field(..., description="The name of the project", example="My Awesome App")

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
-from app.schemas.ingest import PipelineMetadata
+from app.schemas.ingest import BaseIngest
 
 class TruffleHogFinding(BaseModel):
     SourceMetadata: Optional[Dict[str, Any]] = None
@@ -15,9 +15,5 @@ class TruffleHogFinding(BaseModel):
     ExtraData: Optional[Dict[str, Any]] = None
     StructuredData: Optional[Dict[str, Any]] = None
 
-class TruffleHogIngest(BaseModel):
-    project_name: Optional[str] = None
-    branch: Optional[str] = None
-    commit_hash: Optional[str] = None
-    metadata: PipelineMetadata
+class TruffleHogIngest(BaseIngest):
     findings: List[TruffleHogFinding]

@@ -522,7 +522,7 @@ export default function SystemSettings() {
                                     <div>
                                         <span className="font-semibold text-foreground">Why is this needed?</span>
                                         <p className="mt-1">
-                                            Projects are automatically created using the CI Pipeline Token. However, syncing team members often requires higher privileges that the CI token lacks.
+                                            Projects are automatically created using the GitLab Identity Token (OIDC). However, syncing team members often requires higher privileges that the Identity Token lacks.
                                             <br/>
                                             <strong>Note:</strong> If you leave this empty, automatic project creation will still work, but team members might not be synced.
                                         </p>

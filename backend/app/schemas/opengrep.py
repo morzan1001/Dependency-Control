@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
-from app.schemas.ingest import PipelineMetadata
+from app.schemas.ingest import BaseIngest
 
 class OpenGrepLocation(BaseModel):
     path: str
@@ -20,9 +20,5 @@ class OpenGrepFinding(BaseModel):
     end: Dict[str, int]
     extra: OpenGrepExtra
 
-class OpenGrepIngest(BaseModel):
-    project_name: Optional[str] = None
-    branch: Optional[str] = None
-    commit_hash: Optional[str] = None
-    metadata: PipelineMetadata
+class OpenGrepIngest(BaseIngest):
     findings: List[OpenGrepFinding]
