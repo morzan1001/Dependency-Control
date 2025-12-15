@@ -1,3 +1,11 @@
+# Release 0.3.6
+
+## 🚀 Features
+
+- feat: enhance GitLab integration settings and add project configuration endpoint (#0)
+
+
+
 # Release 0.3.5
 
 ## 📦 Build & CI
