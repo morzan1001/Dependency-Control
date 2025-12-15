@@ -1,3 +1,11 @@
+# Release 0.3.8
+
+## 🚀 Features
+
+- feat: Add search functionality to projects and teams endpoints, update default analyzers (#0)
+
+
+
 # Release 0.3.7
 
 
