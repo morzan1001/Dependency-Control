@@ -10,7 +10,7 @@ class OSVAnalyzer(Analyzer):
     api_url = "https://api.osv.dev/v1/query"
 
     async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
-        components = sbom.get("components", [])
+        components = self._get_components(sbom)
         results = []
         
         async with httpx.AsyncClient() as client:

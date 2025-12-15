@@ -9,7 +9,7 @@ class LicenseAnalyzer(Analyzer):
     WARN_LIST = ["LGPL-2.1", "LGPL-3.0", "MPL-2.0"]
 
     async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
-        components = sbom.get("components", [])
+        components = self._get_components(sbom)
         issues = []
 
         for component in components:
