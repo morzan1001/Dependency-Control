@@ -1,3 +1,11 @@
+# Release 0.4.0
+
+## 🐛 Fixes
+
+- fix: wrap query functions in arrow functions for consistent execution (#0)
+
+
+
 # Release 0.3.9
 
 
