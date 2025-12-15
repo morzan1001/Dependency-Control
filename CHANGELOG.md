@@ -1,3 +1,15 @@
+# Release 0.4.4
+
+## 🚀 Features
+
+- feat: refactor component extraction to use _get_components method across analyzers (#0)
+
+## 📦 Build & CI
+
+- chore: update version to 0.4.4 (#0)
+
+
+
 # Release 0.4.3
 
 ## 🚀 Features
