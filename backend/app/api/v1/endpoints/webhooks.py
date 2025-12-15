@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException
+from typing import List
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
 from app.models.user import User
 from app.models.webhook import Webhook
-from app.schemas.webhook import WebhookCreate, WebhookResponse, WebhookUpdate
+from app.schemas.webhook import WebhookCreate, WebhookResponse
 from app.db.mongodb import get_database
 from app.api.v1.endpoints.projects import check_project_access
 

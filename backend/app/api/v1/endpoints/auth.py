@@ -8,6 +8,7 @@ from jose import jwt, JWTError
 from pydantic import ValidationError
 import pyotp
 import httpx
+import os
 import secrets
 from urllib.parse import urlencode
 
@@ -16,6 +17,7 @@ from app.core.config import settings
 from app.db.mongodb import get_database
 from app.schemas.token import Token, TokenPayload
 from app.models.user import User
+from app.models.system import SystemSettings
 from app.schemas.user import UserCreate, User as UserSchema, UserSignup, UserPasswordReset
 from app.api import deps
 from app.services.notifications.email_provider import EmailProvider
@@ -362,7 +364,8 @@ async def verify_email(
 @router.post("/resend-verification", summary="Resend verification email (Public)")
 async def resend_verification_email_public(
     email: str = Body(..., embed=True),
-    db: AsyncIOMotorDatabase = Depends(get_database)
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    system_config: SystemSettings = Depends(deps.get_system_settings)
 ) -> Any:
     """
     Resend verification email to the user with the given email address.

@@ -91,11 +91,9 @@ async def check_project_access(project_id: str, user: User, db: AsyncIOMotorData
             break
             
     # Check team membership if project belongs to a team
-    is_team_member = False
     if project.team_id:
         team = await db.teams.find_one({"_id": project.team_id, "members.user_id": str(user.id)})
         if team:
-            is_team_member = True
             # Team members get 'viewer' access by default, 
             # Team admins/owners get 'admin' access on project.
             for tm in team["members"]:
@@ -267,9 +265,8 @@ async def rotate_api_key(
         project_data = await db.projects.find_one({"_id": project_id})
         if not project_data:
             raise HTTPException(status_code=404, detail="Project not found")
-        project = Project(**project_data)
     else:
-        project = await check_project_access(project_id, current_user, db, required_role="admin")
+        await check_project_access(project_id, current_user, db, required_role="admin")
     
     # Generate new key
     secret = secrets.token_urlsafe(32)

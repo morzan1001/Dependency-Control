@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any
 from .base import Analyzer
 
 class LicenseAnalyzer(Analyzer):

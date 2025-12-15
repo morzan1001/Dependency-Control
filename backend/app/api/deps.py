@@ -1,5 +1,4 @@
 from typing import Optional, Union, List
-from datetime import datetime
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -12,7 +11,6 @@ from app.models.system import SystemSettings
 from app.services.gitlab import GitLabService
 from app.db.mongodb import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from bson import ObjectId
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 

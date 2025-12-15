@@ -8,7 +8,3 @@ from .license import LicenseAnalyzer
 from .grype import GrypeAnalyzer
 from .outdated import OutdatedAnalyzer
 from .typosquatting import TyposquattingAnalyzer
-
-
-
-

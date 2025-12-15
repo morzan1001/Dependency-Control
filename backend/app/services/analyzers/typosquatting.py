@@ -1,6 +1,6 @@
 import httpx
 import logging
-from typing import Dict, Any, List, Set
+from typing import Dict, Any, Set
 from datetime import datetime, timedelta
 from .base import Analyzer
 import difflib

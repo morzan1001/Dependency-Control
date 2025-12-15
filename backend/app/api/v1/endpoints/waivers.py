@@ -1,12 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from datetime import datetime
 
 from app.api import deps
 from app.models.user import User
 from app.models.waiver import Waiver
-from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
+from app.schemas.waiver import WaiverCreate, WaiverResponse
 from app.db.mongodb import get_database
 from app.api.v1.endpoints.projects import check_project_access
 

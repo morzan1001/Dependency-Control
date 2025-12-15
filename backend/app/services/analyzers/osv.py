@@ -1,7 +1,6 @@
 import httpx
-import asyncio
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any
 from .base import Analyzer
 
 logger = logging.getLogger(__name__)
@@ -15,7 +14,6 @@ class OSVAnalyzer(Analyzer):
         results = []
         
         async with httpx.AsyncClient() as client:
-            tasks = []
             # OSV Batch API: POST https://api.osv.dev/v1/querybatch
             
             batch_payload = {"queries": []}

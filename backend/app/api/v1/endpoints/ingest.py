@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DocumentTooLarge
 import logging
@@ -8,7 +8,7 @@ from app.schemas.trufflehog import TruffleHogIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.kics import KicsIngest
 from app.schemas.bearer import BearerIngest
-from app.models.project import Project, Scan, AnalysisResult
+from app.models.project import Project, Scan
 from app.db.mongodb import get_database
 from app.core.worker import worker_manager
 from app.services.aggregator import ResultAggregator
@@ -61,7 +61,7 @@ async def ingest_trufflehog(
             created_at=datetime.utcnow(),
             completed_at=datetime.utcnow()
         )
-        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
     
     # 2. Normalize Findings
@@ -207,7 +207,7 @@ async def ingest_sbom(
                 sboms=new_sboms,
                 status="pending"
             )
-            result = await db.scans.insert_one(scan.dict(by_alias=True))
+            await db.scans.insert_one(scan.dict(by_alias=True))
             scan_id = scan.id
     except DocumentTooLarge:
         logger.error(f"SBOM content too large for pipeline {pipeline_id}")
@@ -263,7 +263,7 @@ async def ingest_opengrep(
             created_at=datetime.utcnow(),
             completed_at=datetime.utcnow()
         )
-        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
     
     # 2. Normalize Findings
@@ -383,7 +383,7 @@ async def ingest_kics(
             created_at=datetime.utcnow(),
             completed_at=datetime.utcnow()
         )
-        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
     
     aggregator = ResultAggregator()
@@ -493,7 +493,7 @@ async def ingest_bearer(
             created_at=datetime.utcnow(),
             completed_at=datetime.utcnow()
         )
-        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
     
     aggregator = ResultAggregator()
@@ -562,55 +562,7 @@ async def ingest_bearer(
         "findings_count": len(final_findings),
         "stats": stats
     }
-            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
-                is_waived = True
-                break
-            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
-                is_waived = True
-                break
-            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
-                is_waived = True
-                break
-        
-        if is_waived:
-            finding["waived"] = True
-        else:
-            final_findings.append(finding)
 
-    # Store Results
-    await db.analysis_results.insert_one({
-        "_id": str(uuid.uuid4()),
-        "scan_id": scan.id,
-        "analyzer_name": "bearer",
-        "result": bearer_result,
-        "created_at": datetime.utcnow()
-    })
-    
-    # Update Scan
-    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
-    for f in final_findings:
-        sev = f.get("severity", "UNKNOWN").lower()
-        if sev in stats:
-            stats[sev] += 1
-        else:
-            stats["unknown"] += 1
-            
-    scan.findings_summary = final_findings
-    scan.findings_count = len(final_findings)
-    scan.stats = stats
-    
-    await db.scans.insert_one(scan.dict(by_alias=True))
-    
-    await db.projects.update_one(
-        {"_id": str(project.id)},
-        {"$set": {"last_scan_at": datetime.utcnow()}}
-    )
-    
-    return {
-        "scan_id": scan.id,
-        "findings_count": len(final_findings),
-        "stats": stats
-    }
 
 @router.get("/ingest/config", summary="Get Project Configuration", status_code=200)
 async def get_project_config(

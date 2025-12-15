@@ -43,12 +43,12 @@ class EndOfLifeAnalyzer(Analyzer):
         # In production, use semantic versioning comparison
         for cycle in cycles:
             if version.startswith(cycle["cycle"]):
-                if cycle.get("eol") and cycle["eol"] != False:
+                if cycle.get("eol") and cycle["eol"] is not False:
                      # Check if EOL date is passed
                      try:
                          eol_date = datetime.strptime(cycle["eol"], "%Y-%m-%d")
                          if eol_date < datetime.now():
                              return cycle
-                     except:
+                     except ValueError:
                          pass
         return None

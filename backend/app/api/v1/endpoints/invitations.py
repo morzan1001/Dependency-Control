@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.models.user import User
 from app.models.invitation import SystemInvitation
 from app.models.system import SystemSettings
-from app.schemas.user import User as UserSchema, UserSignup
+from app.schemas.user import User as UserSchema
 from app.db.mongodb import get_database
 from app.services.notifications.service import notification_service
 from app.services.notifications import templates

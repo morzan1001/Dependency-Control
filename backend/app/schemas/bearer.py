@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any
 from app.schemas.ingest import PipelineMetadata
 
 class BearerIngest(BaseModel):

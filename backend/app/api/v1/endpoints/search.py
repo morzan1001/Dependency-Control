@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import List, Dict, Any
+from fastapi import APIRouter, Depends, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -20,7 +19,6 @@ async def search_dependencies(
     Optimized to use 'latest_scan_id' from Project document to avoid expensive aggregation.
     """
     # 1. Get list of project IDs user has access to
-    match_stage = {}
     
     if "*" not in current_user.permissions:
         # Find teams where user is a member
