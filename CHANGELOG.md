@@ -1,3 +1,15 @@
+# Release 0.4.2
+
+## 🚀 Features
+
+- feat: enhance SBOM handling with GridFS support and improve scan result aggregation (#0)
+
+## 📦 Build & CI
+
+- chore: update version to 0.4.2 (#0)
+
+
+
 # Release 0.4.1
 
 ## 🚀 Features
