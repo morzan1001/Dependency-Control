@@ -260,21 +260,39 @@ class ResultAggregator:
             comp_version = item.get("version")
             
             for vuln in item.get("vulnerabilities", []):
-                # OSV severity is often CVSS vector, mapping might be required. 
-                # For simplicity, let's default to UNKNOWN or parse if available.
+                # 1. Determine Severity
                 severity = "UNKNOWN"
-                # Try to extract severity from database_specific or ecosystem_specific
+                
+                # Check database_specific (common in GHSA)
                 if "database_specific" in vuln and "severity" in vuln["database_specific"]:
                      severity = vuln["database_specific"]["severity"].upper()
                 
-                # ID Normalization: Prefer CVE if available in aliases
+                # Map OSV specific terms
+                if severity == "MODERATE":
+                    severity = "MEDIUM"
+                
+                # 2. Extract Fixed Version
+                fixed_version = None
+                if "affected" in vuln:
+                    for affected in vuln["affected"]:
+                        # We assume the first fixed event we find is relevant
+                        if "ranges" in affected:
+                            for r in affected["ranges"]:
+                                if "events" in r:
+                                    for event in r["events"]:
+                                        if "fixed" in event:
+                                            fixed_version = event["fixed"]
+                                            break
+                                if fixed_version: break
+                        if fixed_version: break
+
+                # 3. ID Normalization: Prefer CVE if available in aliases
                 vuln_id = vuln.get("id")
                 aliases = vuln.get("aliases", [])
                 
                 # If current ID is GHSA/GO/etc and a CVE exists in aliases, use CVE as primary ID
-                # This helps deduplicate with Trivy/Grype which usually report CVEs
                 cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
-                if cve_alias and not vuln_id.startswith("CVE-"):
+                if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
                     # Add original ID to aliases list to preserve it
                     if vuln_id not in aliases:
                         aliases.append(vuln_id)
@@ -287,8 +305,14 @@ class ResultAggregator:
                     "component": comp_name,
                     "version": comp_version,
                     "description": vuln.get("summary") or vuln.get("details", ""),
+                    "fixed_version": fixed_version,
                     "scanners": ["osv"],
-                    "details": {"references": vuln.get("references")},
+                    "details": {
+                        "references": vuln.get("references"),
+                        "published": vuln.get("published"),
+                        "modified": vuln.get("modified"),
+                        "osv_url": f"https://osv.dev/vulnerability/{vuln.get('id')}"
+                    },
                     "aliases": aliases
                 }, source=source)
 
