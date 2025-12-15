@@ -88,16 +88,28 @@ async def create_team(
 
 @router.get("/", response_model=List[TeamResponse])
 async def read_teams(
+    search: str = None,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     List teams.
     """
+    query = {}
+    if search:
+        query["name"] = {"$regex": search, "$options": "i"}
+
     if "*" in current_user.permissions or "team:read_all" in current_user.permissions:
-        teams = await db.teams.find().to_list(1000)
+        teams = await db.teams.find(query).to_list(1000)
     elif "team:read" in current_user.permissions:
-        teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
+        permission_query = {"members.user_id": str(current_user.id)}
+        
+        if query:
+            final_query = {"$and": [query, permission_query]}
+        else:
+            final_query = permission_query
+            
+        teams = await db.teams.find(final_query).to_list(1000)
     else:
         raise HTTPException(status_code=403, detail="Not enough permissions")
         

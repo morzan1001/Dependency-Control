@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getTeams, Team } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
 import { CreateTeamDialog } from '@/components/teams/CreateTeamDialog';
 import { TeamCard } from '@/components/teams/TeamCard';
 import { EditTeamDialog } from '@/components/teams/EditTeamDialog';
@@ -23,10 +24,11 @@ export default function TeamsPage() {
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [selectedTeamIdForAddMember, setSelectedTeamIdForAddMember] = useState<string | null>(null);
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   const { data: teams, isLoading, error } = useQuery({
-    queryKey: ['teams'],
-    queryFn: getTeams,
+    queryKey: ['teams', search],
+    queryFn: () => getTeams(search),
   });
 
   const openEditDialog = (team: Team) => {
@@ -73,7 +75,15 @@ export default function TeamsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Teams</h1>
-        {hasPermission('team:create') && <CreateTeamDialog />}
+        <div className="flex items-center gap-2">
+          <Input 
+            placeholder="Search teams..." 
+            value={search} 
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-[250px]"
+          />
+          {hasPermission('team:create') && <CreateTeamDialog />}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

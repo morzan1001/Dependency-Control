@@ -188,8 +188,10 @@ export interface RecentScan extends Scan {
   project_name: string;
 }
 
-export const getProjects = async () => {
-  const response = await api.get<Project[]>('/projects/');
+export const getProjects = async (search?: string) => {
+  const params = new URLSearchParams();
+  if (search) params.append('search', search);
+  const response = await api.get<Project[]>('/projects/', { params });
   return response.data;
 };
 
@@ -326,8 +328,10 @@ export interface Team {
   updated_at: string;
 }
 
-export const getTeams = async () => {
-  const response = await api.get<Team[]>('/teams/');
+export const getTeams = async (search?: string) => {
+  const params = new URLSearchParams();
+  if (search) params.append('search', search);
+  const response = await api.get<Team[]>('/teams/', { params });
   return response.data;
 };
 

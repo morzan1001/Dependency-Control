@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DocumentTooLarge
+import logging
 from app.api import deps
 from app.schemas.ingest import SBOMIngest
 from app.schemas.trufflehog import TruffleHogIngest
@@ -12,6 +14,8 @@ from app.core.worker import worker_manager
 from app.services.aggregator import ResultAggregator
 from datetime import datetime
 import uuid
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -168,42 +172,49 @@ async def ingest_sbom(
             "pipeline_id": pipeline_id
         })
     
-    if existing_scan:
-        # Update existing scan
-        scan_id = existing_scan["_id"]
-        
-        # Check for duplicates based on job_id if we tracked it, but for now just append
-        # We could check if the exact same SBOM content is already there, but that's expensive.
-        
-        await db.scans.update_one(
-            {"_id": scan_id},
-            {
-                "$set": {
-                    "metadata": metadata,
-                    "branch": data.metadata.ci_commit_branch or data.branch or existing_scan.get("branch"),
-                    "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
-                    "status": "pending", # Reset status to pending to re-analyze with new data
-                    "updated_at": datetime.utcnow()
-                },
-                "$push": {
-                    "sboms": {"$each": new_sboms}
+    try:
+        if existing_scan:
+            # Update existing scan
+            scan_id = existing_scan["_id"]
+            
+            # Check for duplicates based on job_id if we tracked it, but for now just append
+            # We could check if the exact same SBOM content is already there, but that's expensive.
+            
+            await db.scans.update_one(
+                {"_id": scan_id},
+                {
+                    "$set": {
+                        "metadata": metadata,
+                        "branch": data.metadata.ci_commit_branch or data.branch or existing_scan.get("branch"),
+                        "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                        "status": "pending", # Reset status to pending to re-analyze with new data
+                        "updated_at": datetime.utcnow()
+                    },
+                    "$push": {
+                        "sboms": {"$each": new_sboms}
+                    }
                 }
-            }
-        )
-    else:
-        # Create new scan
-        scan = Scan(
-            project_id=str(project.id),
-            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
-            commit_hash=data.commit_hash,
-            pipeline_id=pipeline_id,
-            pipeline_iid=pipeline_iid,
-            metadata=metadata,
-            sboms=new_sboms,
-            status="pending"
-        )
-        result = await db.scans.insert_one(scan.dict(by_alias=True))
-        scan_id = scan.id
+            )
+        else:
+            # Create new scan
+            scan = Scan(
+                project_id=str(project.id),
+                branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+                commit_hash=data.commit_hash,
+                pipeline_id=pipeline_id,
+                pipeline_iid=pipeline_iid,
+                metadata=metadata,
+                sboms=new_sboms,
+                status="pending"
+            )
+            result = await db.scans.insert_one(scan.dict(by_alias=True))
+            scan_id = scan.id
+    except DocumentTooLarge:
+        logger.error(f"SBOM content too large for pipeline {pipeline_id}")
+        raise HTTPException(status_code=413, detail="SBOM content is too large to be stored directly.")
+    except Exception as e:
+        logger.error(f"Error ingesting SBOM for pipeline {pipeline_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal Server Error during ingestion: {str(e)}")
     
     # Add to Worker Queue
     await worker_manager.add_job(scan_id)

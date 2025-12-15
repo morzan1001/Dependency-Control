@@ -19,7 +19,7 @@ class Project(BaseModel):
     members: List[ProjectMember] = []
     api_key_hash: Optional[str] = Field(None, exclude=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    active_analyzers: List[str] = []
+    active_analyzers: List[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
     stats: Optional[Dict[str, Any]] = None
     last_scan_at: Optional[datetime] = None
     latest_scan_id: Optional[str] = None

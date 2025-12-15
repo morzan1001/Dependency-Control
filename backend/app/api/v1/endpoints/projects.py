@@ -288,6 +288,7 @@ async def rotate_api_key(
 
 @router.get("/", response_model=List[Project], summary="List all projects")
 async def read_projects(
+    search: str = None,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -297,21 +298,32 @@ async def read_projects(
     - **Superusers** see all projects.
     - **Regular users** see projects they own or are members of.
     """
+    query = {}
+    if search:
+        query["name"] = {"$regex": search, "$options": "i"}
+
     if "*" in current_user.permissions or "project:read_all" in current_user.permissions:
-        projects = await db.projects.find().to_list(1000)
+        projects = await db.projects.find(query).to_list(1000)
     elif "project:read" in current_user.permissions:
         # Get teams user is member of
         user_teams = await db.teams.find({"members.user_id": str(current_user.id)}).to_list(1000)
         team_ids = [t["_id"] for t in user_teams]
 
         # Find projects where user is owner OR is in members list OR project belongs to one of user's teams
-        projects = await db.projects.find({
+        permission_query = {
             "$or": [
                 {"owner_id": str(current_user.id)},
                 {"members.user_id": str(current_user.id)},
                 {"team_id": {"$in": team_ids}}
             ]
-        }).to_list(1000)
+        }
+        
+        if query:
+            final_query = {"$and": [query, permission_query]}
+        else:
+            final_query = permission_query
+
+        projects = await db.projects.find(final_query).to_list(1000)
     else:
         raise HTTPException(status_code=403, detail="Not enough permissions")
         

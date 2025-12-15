@@ -36,13 +36,14 @@ export default function ProjectsPage() {
   const [name, setName] = useState('');
   const [teamId, setTeamId] = useState<string | undefined>(undefined);
   const [retentionDays, setRetentionDays] = useState(90);
-  const [analyzers, setAnalyzers] = useState<string[]>(['end_of_life']);
+  const [analyzers, setAnalyzers] = useState<string[]>(['trivy', 'osv', 'license_compliance', 'end_of_life']);
   const [createdProjectData, setCreatedProjectData] = useState<{ project_id: string, api_key: string, note: string } | null>(null);
   const [hasCopied, setHasCopied] = useState(false);
+  const [search, setSearch] = useState('');
 
   const { data: projects, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: getProjects,
+    queryKey: ['projects', search],
+    queryFn: () => getProjects(search),
   });
 
   const { data: teams } = useQuery({
@@ -85,7 +86,7 @@ export default function ProjectsPage() {
     setName('');
     setTeamId(undefined);
     setRetentionDays(90);
-    setAnalyzers(['end_of_life']);
+    setAnalyzers(['trivy', 'osv', 'license_compliance', 'end_of_life']);
     setHasCopied(false);
   }
 
@@ -134,8 +135,15 @@ export default function ProjectsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
         
-        {hasPermission('project:create') && (
-          <Dialog open={isCreateOpen} onOpenChange={(open) => {
+        <div className="flex items-center gap-2">
+          <Input 
+            placeholder="Search projects..." 
+            value={search} 
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-[250px]"
+          />
+          {hasPermission('project:create') && (
+            <Dialog open={isCreateOpen} onOpenChange={(open) => {
             if (!open && createdProjectData) {
               handleCloseCreate();
             } else if (!open) {
@@ -279,6 +287,7 @@ export default function ProjectsPage() {
             </DialogContent>
           </Dialog>
         )}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

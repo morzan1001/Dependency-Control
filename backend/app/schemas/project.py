@@ -5,9 +5,9 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., description="The name of the project", example="My Awesome App")
     team_id: Optional[str] = Field(None, description="ID of the team this project belongs to")
     active_analyzers: List[str] = Field(
-        default=["end_of_life"], 
+        default=["trivy", "osv", "license_compliance", "end_of_life"], 
         description="List of analyzers to run on this project",
-        example=["end_of_life", "os_malware"]
+        example=["end_of_life", "os_malware", "trivy"]
     )
     retention_days: Optional[int] = Field(90, description="Number of days to keep scan history", ge=1)
 
