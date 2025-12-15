@@ -1,6 +1,7 @@
 import httpx
 import secrets
 import logging
+from jose import jwt
 from datetime import datetime
 from typing import Optional, Dict, Any
 from app.models.system import SystemSettings
@@ -15,35 +16,85 @@ class GitLabService:
         self.settings = settings
         self.base_url = settings.gitlab_url.rstrip("/")
         self.api_url = f"{self.base_url}/api/v4"
+        self._jwks_cache = None
+        self._jwks_cache_time = 0
 
-    async def validate_job_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def get_jwks(self) -> dict:
         """
-        Validates the CI_JOB_TOKEN by calling GitLab's /job endpoint.
-        Returns the job details if valid, None otherwise.
+        Fetches and caches the JWKS from GitLab.
         """
+        # Simple caching mechanism (e.g. 1 hour)
+        now = datetime.utcnow().timestamp()
+        if self._jwks_cache and (now - self._jwks_cache_time < 3600):
+            return self._jwks_cache
+
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(
-                    f"{self.api_url}/job",
-                    headers={"JOB-TOKEN": token},
-                    timeout=10.0
-                )
+                # GitLab JWKS endpoint
+                response = await client.get(f"{self.base_url}/-/jwks", timeout=10.0)
                 if response.status_code == 200:
-                    return response.json()
-                return None
+                    self._jwks_cache = response.json()
+                    self._jwks_cache_time = now
+                    return self._jwks_cache
             except Exception as e:
-                logger.error(f"Error validating GitLab token: {e}")
+                logger.error(f"Error fetching JWKS: {e}")
+        return {}
+
+    async def validate_oidc_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """
+        Validates a GitLab OIDC token (JWT).
+        """
+        try:
+            # 1. Get Key ID from Header
+            headers = jwt.get_unverified_header(token)
+            kid = headers.get("kid")
+            if not kid:
+                logger.warning("OIDC Token missing 'kid' in header")
                 return None
 
-    async def get_project_details(self, project_id: int, token: str) -> Optional[Dict[str, Any]]:
+            # 2. Fetch JWKS
+            jwks = await self.get_jwks()
+            
+            # 3. Find Key
+            key = None
+            for k in jwks.get("keys", []):
+                if k.get("kid") == kid:
+                    key = k
+                    break
+            
+            if not key:
+                logger.error(f"No matching key found for kid: {kid}")
+                return None
+
+            # 4. Verify
+            # We verify the issuer. Audience verification is disabled for now as we don't have a setting for it yet.
+            payload = jwt.decode(
+                token,
+                key,
+                algorithms=["RS256"],
+                issuer=self.settings.gitlab_url,
+                options={"verify_aud": False} 
+            )
+            return payload
+        except Exception as e:
+            logger.error(f"OIDC Token validation error: {e}")
+            return None
+
+
+    async def get_project_details(self, project_id: int) -> Optional[Dict[str, Any]]:
         """
-        Fetches project details using the token.
+        Fetches project details using the system token.
         """
+        if not self.settings.gitlab_access_token:
+            return None
+
+        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(
                     f"{self.api_url}/projects/{project_id}",
-                    headers={"JOB-TOKEN": token},
+                    headers=auth_headers,
                     timeout=10.0
                 )
                 if response.status_code == 200:
@@ -52,16 +103,15 @@ class GitLabService:
             except Exception:
                 return None
 
-    async def get_project_members(self, project_id: int, token: str) -> Optional[list[Dict[str, Any]]]:
+    async def get_project_members(self, project_id: int) -> Optional[list[Dict[str, Any]]]:
         """
-        Fetches project members. Tries to use the provided token (CI_JOB_TOKEN),
-        but falls back to the system-configured gitlab_access_token if available and needed.
+        Fetches project members using the system-configured gitlab_access_token.
         """
-        # Determine which token to use. CI_JOB_TOKEN often has limited permissions.
-        # If a system-wide access token is configured, it's more reliable for fetching members.
-        auth_headers = {"JOB-TOKEN": token}
-        if self.settings.gitlab_access_token:
-            auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+        if not self.settings.gitlab_access_token:
+            logger.warning("Cannot fetch project members: No system GitLab Access Token configured.")
+            return None
+
+        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
 
         async with httpx.AsyncClient() as client:
             try:
@@ -74,21 +124,21 @@ class GitLabService:
                 if response.status_code == 200:
                     return response.json()
                 
-                # If failed with system token, or if we didn't use it, try the other one?
-                # For now, just return None if it fails.
                 logger.error(f"Failed to fetch GitLab members: {response.status_code} {response.text}")
                 return None
             except Exception as e:
                 logger.error(f"Error fetching GitLab members: {e}")
                 return None
 
-    async def get_group_members(self, group_id: int, token: str) -> Optional[list[Dict[str, Any]]]:
+    async def get_group_members(self, group_id: int) -> Optional[list[Dict[str, Any]]]:
         """
-        Fetches group members.
+        Fetches group members using the system-configured gitlab_access_token.
         """
-        auth_headers = {"JOB-TOKEN": token}
-        if self.settings.gitlab_access_token:
-            auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+        if not self.settings.gitlab_access_token:
+            logger.warning("Cannot fetch group members: No system GitLab Access Token configured.")
+            return None
+
+        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
 
         async with httpx.AsyncClient() as client:
             try:
@@ -105,7 +155,7 @@ class GitLabService:
                 logger.error(f"Error fetching GitLab group members: {e}")
                 return None
 
-    async def sync_team_from_gitlab(self, db, gitlab_project_id: int, gitlab_project_path: str, token: str, gitlab_project_data: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    async def sync_team_from_gitlab(self, db, gitlab_project_id: int, gitlab_project_path: str, gitlab_project_data: Optional[Dict[str, Any]] = None) -> Optional[str]:
         """
         Syncs GitLab project members to a local Team.
         Returns the Team ID.
@@ -121,7 +171,7 @@ class GitLabService:
                 team_name = f"GitLab Group: {group_path}"
                 description = f"Imported from GitLab Group {group_path}"
                 
-                members = await self.get_group_members(group_id, token)
+                members = await self.get_group_members(group_id)
             else:
                 # Not a group project (e.g. user namespace), skip sync
                 return None

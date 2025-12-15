@@ -142,11 +142,30 @@ export interface Project {
   last_scan_at?: string;
 }
 
+export interface PipelineMetadata {
+  CI_COMMIT_BRANCH?: string;
+  CI_DEFAULT_BRANCH?: string;
+  CI_PROJECT_PATH?: string;
+  CI_PROJECT_ID?: number;
+  CI_PIPELINE_ID: number;
+  CI_PIPELINE_IID?: number;
+  CI_PROJECT_TITLE?: string;
+  CI_COMMIT_MESSAGE?: string;
+  CI_PROJECT_URL?: string;
+  CI_COMMIT_TAG?: string;
+  CI_JOB_STARTED_AT?: string;
+  CI_JOB_ID?: number;
+  CI_PROJECT_NAME?: string;
+}
+
 export interface Scan {
   _id: string;
   project_id: string;
   branch: string;
   commit_hash?: string;
+  pipeline_id?: number;
+  pipeline_iid?: number;
+  metadata?: PipelineMetadata;
   created_at: string;
   status: string;
   findings_summary?: any[];
@@ -162,6 +181,7 @@ export interface Scan {
   } | null;
   completed_at?: string;
   sbom?: any;
+  sboms?: any[];
 }
 
 export interface RecentScan extends Scan {

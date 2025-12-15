@@ -46,8 +46,15 @@ async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[st
             "created_at": datetime.utcnow()
         })
         
+        # Extract source name from SBOM metadata
+        source = "unknown-sbom"
+        if sbom.get("metadata") and sbom["metadata"].get("component"):
+             source = sbom["metadata"]["component"].get("name", "unknown-sbom")
+        elif sbom.get("serialNumber"):
+             source = sbom.get("serialNumber")
+
         # Aggregate result
-        aggregator.aggregate(analyzer_name, result)
+        aggregator.aggregate(analyzer_name, result, source=source)
         
         logger.info(f"Analysis {analyzer_name} completed for {scan_id}")
         return f"{analyzer_name}: Success"
@@ -55,7 +62,7 @@ async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[st
         logger.error(f"Analysis {analyzer_name} failed: {e}")
         return f"{analyzer_name}: Failed"
 
-async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: List[str], db):
+async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db):
     """
     Orchestrates the analysis process for a given SBOM scan.
     
@@ -69,13 +76,32 @@ async def run_analysis(scan_id: str, sbom: Dict[str, Any], active_analyzers: Lis
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregator = ResultAggregator()
     
+    # 0. Cleanup previous results for internal analyzers
+    internal_analyzers = [name for name in active_analyzers if name in analyzers]
+    if internal_analyzers:
+        await db.analysis_results.delete_many({
+            "scan_id": scan_id,
+            "analyzer_name": {"$in": internal_analyzers}
+        })
+
     tasks = []
-    for analyzer_name in active_analyzers:
-        if analyzer_name in analyzers:
-            analyzer = analyzers[analyzer_name]
-            tasks.append(process_analyzer(analyzer_name, analyzer, sbom, scan_id, db, aggregator))
+    for sbom in sboms:
+        for analyzer_name in active_analyzers:
+            if analyzer_name in analyzers:
+                analyzer = analyzers[analyzer_name]
+                tasks.append(process_analyzer(analyzer_name, analyzer, sbom, scan_id, db, aggregator))
             
     results_summary = await asyncio.gather(*tasks)
+
+    # 1. Fetch and Aggregate External Results (TruffleHog, OpenGrep, etc.)
+    # These are results that were pushed via API endpoints directly to analysis_results
+    external_results_cursor = db.analysis_results.find({"scan_id": scan_id})
+    async for res in external_results_cursor:
+        name = res["analyzer_name"]
+        # Only aggregate if it's NOT one of the internal analyzers we just ran
+        # (ResultAggregator handles deduplication, but let's be explicit)
+        if name not in analyzers:
+             aggregator.aggregate(name, res["result"])
 
     # Save aggregated findings to the scan document
     aggregated_findings = aggregator.get_findings()

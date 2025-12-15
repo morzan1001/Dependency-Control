@@ -14,7 +14,7 @@ class ResultAggregator:
     def __init__(self):
         self.findings: Dict[str, Dict[str, Any]] = {}
 
-    def aggregate(self, analyzer_name: str, result: Dict[str, Any]):
+    def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: str = None):
         """
         Dispatches the result to the specific normalizer based on analyzer name.
         """
@@ -38,7 +38,7 @@ class ResultAggregator:
         }
 
         if analyzer_name in normalizers:
-            normalizers[analyzer_name](result)
+            normalizers[analyzer_name](result, source=source)
 
     def get_findings(self) -> List[Dict[str, Any]]:
         """
@@ -46,7 +46,7 @@ class ResultAggregator:
         """
         return list(self.findings.values())
 
-    def _normalize_trufflehog(self, result: Dict[str, Any]):
+    def _normalize_trufflehog(self, result: Dict[str, Any], source: str = None):
         # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
         # The result dict is expected to contain a list of findings under "findings" key
         for finding in result.get("findings", []):
@@ -88,9 +88,9 @@ class ResultAggregator:
                     # TruffleHog provides "Redacted" field.
                     "redacted": finding.get("Redacted")
                 }
-            })
+            }, source=source)
 
-    def _add_finding(self, finding: Dict[str, Any]):
+    def _add_finding(self, finding: Dict[str, Any], source: str = None):
         """
         Adds a finding to the map, merging if it already exists.
         Key for deduplication: type + id + component + version
@@ -98,6 +98,10 @@ class ResultAggregator:
         # ID normalization (e.g. preferring CVE over GHSA) is handled in specific normalizers.
         
         key = f"{finding['type']}:{finding['id']}:{finding['component']}:{finding['version']}"
+        
+        # Add source to finding
+        if source:
+            finding.setdefault("found_in", []).append(source)
         
         if key in self.findings:
             existing = self.findings[key]
@@ -120,11 +124,17 @@ class ResultAggregator:
             if "aliases" in finding:
                 existing_aliases = existing.get("aliases", [])
                 existing["aliases"] = list(set(existing_aliases + finding.get("aliases", [])))
+            
+            # 5. Merge found_in
+            if source:
+                existing.setdefault("found_in", [])
+                if source not in existing["found_in"]:
+                    existing["found_in"].append(source)
                 
         else:
             self.findings[key] = finding
 
-    def _normalize_trivy(self, result: Dict[str, Any]):
+    def _normalize_trivy(self, result: Dict[str, Any], source: str = None):
         # Trivy structure: {"Results": [{"Vulnerabilities": [...]}]}
         if "Results" not in result:
             return
@@ -143,9 +153,9 @@ class ResultAggregator:
                 if "CVSS" in vuln:
                     # Trivy CVSS structure varies, usually {"nvd": {"V3Score": ...}, "redhat": ...}
                     # We prefer NVD V3, then V2, then Vendor
-                    for source in ["nvd", "redhat", "ghsa", "bitnami"]:
-                        if source in vuln["CVSS"]:
-                            data = vuln["CVSS"][source]
+                    for source_cvss in ["nvd", "redhat", "ghsa", "bitnami"]:
+                        if source_cvss in vuln["CVSS"]:
+                            data = vuln["CVSS"][source_cvss]
                             if "V3Score" in data:
                                 cvss_score = data["V3Score"]
                                 cvss_vector = data.get("V3Vector")
@@ -173,9 +183,9 @@ class ResultAggregator:
                         "layer_id": vuln.get("Layer", {}).get("Digest")
                     },
                     "aliases": [] 
-                })
+                }, source=source)
 
-    def _normalize_grype(self, result: Dict[str, Any]):
+    def _normalize_grype(self, result: Dict[str, Any], source: str = None):
         # Grype structure: {"matches": [{"vulnerability": {...}, "artifact": {...}}]}
         for match in result.get("matches", []):
             vuln = match.get("vulnerability", {})
@@ -225,9 +235,9 @@ class ResultAggregator:
                     "namespace": vuln.get("namespace")
                 },
                 "aliases": aliases
-            })
+            }, source=source)
 
-    def _normalize_osv(self, result: Dict[str, Any]):
+    def _normalize_osv(self, result: Dict[str, Any], source: str = None):
         # OSV structure: {"osv_vulnerabilities": [{"component":..., "vulnerabilities": [...]}]}
         for item in result.get("osv_vulnerabilities", []):
             comp_name = item.get("component")
@@ -264,9 +274,9 @@ class ResultAggregator:
                     "scanners": ["osv"],
                     "details": {"references": vuln.get("references")},
                     "aliases": aliases
-                })
+                }, source=source)
 
-    def _normalize_outdated(self, result: Dict[str, Any]):
+    def _normalize_outdated(self, result: Dict[str, Any], source: str = None):
         for item in result.get("outdated_dependencies", []):
             self._add_finding({
                 "id": f"OUTDATED-{item['component']}",
@@ -278,9 +288,9 @@ class ResultAggregator:
                 "fixed_version": item.get("latest_version"),
                 "scanners": ["outdated_packages"],
                 "details": {}
-            })
+            }, source=source)
 
-    def _normalize_license(self, result: Dict[str, Any]):
+    def _normalize_license(self, result: Dict[str, Any], source: str = None):
         for item in result.get("license_issues", []):
             self._add_finding({
                 "id": f"LIC-{item['license']}",
@@ -291,9 +301,9 @@ class ResultAggregator:
                 "description": item.get("message"),
                 "scanners": ["license_compliance"],
                 "details": {"license": item.get("license")}
-            })
+            }, source=source)
 
-    def _normalize_scorecard(self, result: Dict[str, Any]):
+    def _normalize_scorecard(self, result: Dict[str, Any], source: str = None):
         for item in result.get("scorecard_issues", []):
             self._add_finding({
                 "id": f"SCORE-{item['component']}",
@@ -304,9 +314,9 @@ class ResultAggregator:
                 "description": item.get("warning"),
                 "scanners": ["deps_dev"],
                 "details": {"scorecard": item.get("scorecard")}
-            })
+            }, source=source)
 
-    def _normalize_malware(self, result: Dict[str, Any]):
+    def _normalize_malware(self, result: Dict[str, Any], source: str = None):
         for item in result.get("malware_issues", []):
             self._add_finding({
                 "id": f"MALWARE-{item['component']}",
@@ -317,9 +327,9 @@ class ResultAggregator:
                 "description": "Potential malware detected",
                 "scanners": ["os_malware"],
                 "details": {"info": item.get("malware_info")}
-            })
+            }, source=source)
 
-    def _normalize_eol(self, result: Dict[str, Any]):
+    def _normalize_eol(self, result: Dict[str, Any], source: str = None):
         for item in result.get("eol_issues", []):
             self._add_finding({
                 "id": f"EOL-{item['component']}",
@@ -330,9 +340,9 @@ class ResultAggregator:
                 "description": f"End of Life reached on {item.get('eol_date')}",
                 "scanners": ["end_of_life"],
                 "details": {"eol_date": item.get("eol_date"), "cycle": item.get("cycle")}
-            })
+            }, source=source)
 
-    def _normalize_typosquatting(self, result: Dict[str, Any]):
+    def _normalize_typosquatting(self, result: Dict[str, Any], source: str = None):
         for item in result.get("typosquatting_issues", []):
             self._add_finding({
                 "id": f"TYPO-{item['component']}",
@@ -346,9 +356,9 @@ class ResultAggregator:
                     "imitated_package": item.get("imitated_package"),
                     "similarity": item.get("similarity")
                 }
-            })
+            }, source=source)
 
-    def _normalize_opengrep(self, result: Dict[str, Any]):
+    def _normalize_opengrep(self, result: Dict[str, Any], source: str = None):
         # OpenGrep structure: {"findings": [OpenGrepFinding objects]}
         for finding in result.get("findings", []):
             # finding is a dict
@@ -383,9 +393,9 @@ class ResultAggregator:
                     "end": finding.get("end"),
                     "metadata": extra.get("metadata")
                 }
-            })
+            }, source=source)
 
-    def _normalize_kics(self, result: Dict[str, Any]):
+    def _normalize_kics(self, result: Dict[str, Any], source: str = None):
         # KICS structure: {"queries": [{"query_name": "...", "files": [...]}]}
         for query in result.get("queries", []):
             severity = query.get("severity", "INFO").upper()
@@ -415,9 +425,9 @@ class ResultAggregator:
                         "expected_value": file_obj.get("expected_value"),
                         "actual_value": file_obj.get("actual_value")
                     }
-                })
+                }, source=source)
 
-    def _normalize_bearer(self, result: Dict[str, Any]):
+    def _normalize_bearer(self, result: Dict[str, Any], source: str = None):
         findings_data = result.get("findings", {})
         
         all_findings = []
@@ -456,5 +466,5 @@ class ResultAggregator:
                     "cwe_ids": f.get("cwe_ids", []),
                     "documentation": f.get("documentation_url")
                 }
-            })
+            }, source=source)
 

@@ -8,7 +8,7 @@ stages:
 #
 # Authentication Methods:
 # 1. GitLab Integration (Recommended):
-#    - Uses the automatic $CI_JOB_TOKEN.
+#    - Uses GitLab Identity Tokens (OIDC) for secure authentication.
 #    - Requires "GitLab Integration" to be enabled in Dependency Control System Settings.
 #    - Can automatically create projects and sync teams.
 #
@@ -20,7 +20,8 @@ stages:
 .check_scanner: &check_scanner |
   echo "Checking if scanner is enabled..."
   if [ -z "$DEP_CONTROL_API_KEY" ]; then
-    AUTH_HEADER="JOB-TOKEN: $CI_JOB_TOKEN"
+    # Use OIDC Token
+    AUTH_HEADER="Job-Token: $DEP_CONTROL_TOKEN"
   else
     AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
   fi
@@ -37,6 +38,9 @@ stages:
 dependency-scan:
   stage: dependency-scan
   image: alpine:latest
+  id_tokens:
+    DEP_CONTROL_TOKEN:
+      aud: dependency-control
   variables:
     # Configure these in your GitLab CI/CD Variables
     # DEP_CONTROL_URL: "https://your-dependency-control-instance.com"
@@ -64,10 +68,10 @@ dependency-scan:
     - |
       # Method 1: GitLab Integration (Recommended)
       if [ -z "$DEP_CONTROL_API_KEY" ]; then
-        echo "Using GitLab CI Token..."
+        echo "Using GitLab Identity Token (OIDC)..."
         curl -X POST \
           -H "Content-Type: application/json" \
-          -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          -H "Job-Token: $DEP_CONTROL_TOKEN" \
           -d @payload.json \
           "$DEP_CONTROL_URL/api/v1/ingest"
       else
@@ -83,6 +87,9 @@ dependency-scan:
 secret-scan:
   stage: dependency-scan
   image: alpine:latest
+  id_tokens:
+    DEP_CONTROL_TOKEN:
+      aud: dependency-control
   variables:
     SCANNER_NAME: "trufflehog"
   before_script:
@@ -110,7 +117,7 @@ secret-scan:
         # Method 1: GitLab Integration
         response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog" \
           -H "Content-Type: application/json" \
-          -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          -H "Job-Token: $DEP_CONTROL_TOKEN" \
           -d @payload.json)
       else
         # Method 2: API Key
@@ -131,6 +138,9 @@ secret-scan:
 opengrep-scan:
   stage: dependency-scan
   image: returntocorp/semgrep
+  id_tokens:
+    DEP_CONTROL_TOKEN:
+      aud: dependency-control
   variables:
     SCANNER_NAME: "opengrep"
   script:
@@ -156,7 +166,7 @@ opengrep-scan:
       if [ -z "$DEP_CONTROL_API_KEY" ]; then
         curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/opengrep" \
           -H "Content-Type: application/json" \
-          -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          -H "Job-Token: $DEP_CONTROL_TOKEN" \
           -d @payload.json
       else
         curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/opengrep" \
@@ -170,6 +180,9 @@ kics-scan:
   image: 
     name: checkmarx/kics:latest
     entrypoint: [""]
+  id_tokens:
+    DEP_CONTROL_TOKEN:
+      aud: dependency-control
   variables:
     SCANNER_NAME: "kics"
   script:
@@ -195,7 +208,7 @@ kics-scan:
       if [ -z "$DEP_CONTROL_API_KEY" ]; then
         curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/kics" \
           -H "Content-Type: application/json" \
-          -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          -H "Job-Token: $DEP_CONTROL_TOKEN" \
           -d @payload.json
       else
         curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/kics" \
@@ -207,6 +220,9 @@ kics-scan:
 bearer-scan:
   stage: dependency-scan
   image: alpine:latest
+  id_tokens:
+    DEP_CONTROL_TOKEN:
+      aud: dependency-control
   variables:
     SCANNER_NAME: "bearer"
   before_script:
@@ -232,7 +248,7 @@ bearer-scan:
       if [ -z "$DEP_CONTROL_API_KEY" ]; then
         curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/bearer" \
           -H "Content-Type: application/json" \
-          -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          -H "Job-Token: $DEP_CONTROL_TOKEN" \
           -d @payload.json
       else
         curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/bearer" \

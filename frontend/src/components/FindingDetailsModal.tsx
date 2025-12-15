@@ -23,6 +23,8 @@ export interface Finding {
     installed_version?: string;
     fixed_version?: string;
     description?: string;
+    scanners?: string[];
+    found_in?: string[];
     details?: any;
     [key: string]: any;
 }
@@ -96,6 +98,30 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                     <h4 className="text-sm font-medium text-muted-foreground mb-1">ID</h4>
                                     <p className="font-mono text-sm">{getFindingId(finding)}</p>
                                 </div>
+                                {finding.scanners && finding.scanners.length > 0 && (
+                                    <div className="col-span-2">
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Detected By</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {finding.scanners.map((scanner) => (
+                                                <Badge key={scanner} variant="outline" className="font-mono text-xs">
+                                                    {scanner}
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {finding.found_in && finding.found_in.length > 0 && (
+                                    <div className="col-span-2">
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Found In Sources</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {finding.found_in.map((source) => (
+                                                <Badge key={source} variant="secondary" className="font-mono text-xs">
+                                                    {source}
+                                                </Badge>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <div>

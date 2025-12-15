@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
+from app.schemas.ingest import PipelineMetadata
 
 class KicsFile(BaseModel):
     file_name: str
@@ -26,7 +27,8 @@ class KicsQuery(BaseModel):
     files: List[KicsFile]
 
 class KicsIngest(BaseModel):
-    branch: str
-    commit_hash: str
+    branch: Optional[str] = None
+    commit_hash: Optional[str] = None
+    metadata: PipelineMetadata
     kics_version: Optional[str] = None
     queries: List[KicsQuery] = []

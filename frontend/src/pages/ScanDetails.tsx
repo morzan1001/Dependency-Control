@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ArrowLeft, FileJson, CheckCircle, Package, Scale, ShieldAlert, Activity, AlertTriangle, Info, GitBranch, GitCommit, Calendar, ArrowUpDown, Lock, Code } from 'lucide-react'
+import { ArrowLeft, FileJson, CheckCircle, Package, Scale, ShieldAlert, Activity, AlertTriangle, Info, GitBranch, GitCommit, Calendar, ArrowUpDown, Lock, Code, ExternalLink } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -155,7 +155,9 @@ export default function ScanDetails() {
           </Link>
         </Button>
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Scan Details</h2>
+          <h2 className="text-3xl font-bold tracking-tight">
+            {scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan Details'}
+          </h2>
           <p className="text-muted-foreground text-sm">ID: {scanId}</p>
         </div>
       </div>
@@ -200,6 +202,20 @@ export default function ScanDetails() {
                                     <GitCommit className="h-4 w-4" />
                                     <span className="font-medium font-mono text-xs">{scan.commit_hash.substring(0, 7)}</span>
                                 </div>
+                            </div>
+                        )}
+                        {scan.metadata?.CI_PROJECT_URL && (
+                            <div className="flex flex-col space-y-1">
+                                <span className="text-sm text-muted-foreground">Pipeline</span>
+                                <a 
+                                    href={scan.metadata.CI_PROJECT_URL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-2 hover:underline text-primary"
+                                >
+                                    <ExternalLink className="h-4 w-4" />
+                                    <span className="font-medium">View in GitLab</span>
+                                </a>
                             </div>
                         )}
                         <div className="flex flex-col space-y-1">

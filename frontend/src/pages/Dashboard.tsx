@@ -165,7 +165,7 @@ export default function Dashboard() {
                             <div className="space-y-1">
                                 <p className="text-sm font-medium leading-none">{scan.project_name}</p>
                                 <p className="text-sm text-muted-foreground">
-                                    Scan on {scan.branch} - {scan.status}
+                                    {scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch} - {scan.status}
                                 </p>
                             </div>
                             <div className="ml-auto font-medium text-sm text-muted-foreground">

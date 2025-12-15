@@ -114,8 +114,7 @@ async def get_project_by_api_key(
 
 async def get_project_for_ingest(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    ci_job_token: Optional[str] = Header(None, alias="CI-Job-Token"),
-    job_token: Optional[str] = Header(None, alias="Job-Token"),
+    oidc_token: Optional[str] = Header(None, alias="Job-Token"),
     db: AsyncIOMotorDatabase = Depends(get_database),
     settings: SystemSettings = Depends(get_system_settings)
 ):
@@ -133,23 +132,26 @@ async def get_project_for_ingest(
              raise HTTPException(status_code=403, detail="Invalid API Key")
         return Project(**project_data)
 
-    # 2. Try GitLab Token
-    token = ci_job_token or job_token
-    if token:
+    # 2. Try GitLab OIDC Token
+    if oidc_token:
         if not settings.gitlab_integration_enabled:
              raise HTTPException(status_code=403, detail="GitLab integration is disabled")
         
         gitlab_service = GitLabService(settings)
-        job_data = await gitlab_service.validate_job_token(token)
         
-        if not job_data:
-             raise HTTPException(status_code=403, detail="Invalid GitLab Token")
+        # Check if token is OIDC (JWT)
+        is_oidc = len(oidc_token.split(".")) == 3
         
-        gitlab_project = job_data.get("project")
-        if not gitlab_project:
-             raise HTTPException(status_code=403, detail="Could not retrieve project info from GitLab")
-             
-        gitlab_project_id = gitlab_project["id"]
+        if not is_oidc:
+             raise HTTPException(status_code=403, detail="Invalid Token. Only GitLab Identity Tokens (OIDC) are supported.")
+
+        payload = await gitlab_service.validate_oidc_token(oidc_token)
+        if not payload:
+             raise HTTPException(status_code=403, detail="Invalid GitLab OIDC Token")
+        
+        gitlab_project_id = int(payload["project_id"])
+        gitlab_project_path = payload["project_path"]
+        gitlab_user_email = payload.get("user_email")
         
         # Find project by gitlab_project_id
         project_data = await db.projects.find_one({"gitlab_project_id": gitlab_project_id})
@@ -158,12 +160,15 @@ async def get_project_for_ingest(
             project = Project(**project_data)
             # Sync Teams/Members if enabled (even for existing projects)
             if settings.gitlab_sync_teams:
+                # We need project details to know if it's a group project
+                # Try to fetch details using system token
+                gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
+                
                 team_id = await gitlab_service.sync_team_from_gitlab(
                     db, 
                     gitlab_project_id, 
-                    gitlab_project["path_with_namespace"], 
-                    token,
-                    gitlab_project_data=gitlab_project
+                    gitlab_project_path, 
+                    gitlab_project_data=gitlab_project_data
                 )
                 if team_id and project.team_id != team_id:
                     await db.projects.update_one(
@@ -178,9 +183,8 @@ async def get_project_for_ingest(
             owner_id = None
             
             # Try to match user by email
-            gitlab_user = job_data.get("user")
-            if gitlab_user and gitlab_user.get("email"):
-                 user = await db.users.find_one({"email": gitlab_user["email"]})
+            if gitlab_user_email:
+                 user = await db.users.find_one({"email": gitlab_user_email})
                  if user:
                      owner_id = str(user["_id"])
             
@@ -194,21 +198,22 @@ async def get_project_for_ingest(
                  raise HTTPException(status_code=500, detail="Cannot auto-create project: No suitable owner found")
 
             new_project = Project(
-                name=gitlab_project["path_with_namespace"],
+                name=gitlab_project_path,
                 owner_id=owner_id,
                 gitlab_project_id=gitlab_project_id,
-                gitlab_project_path=gitlab_project["path_with_namespace"],
-                default_branch=gitlab_project.get("default_branch")
+                gitlab_project_path=gitlab_project_path,
+                default_branch=None # We don't know default branch from OIDC token
             )
             
             # Sync Teams/Members if enabled
             if settings.gitlab_sync_teams:
+                gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
+                
                 team_id = await gitlab_service.sync_team_from_gitlab(
                     db, 
                     gitlab_project_id, 
-                    gitlab_project["path_with_namespace"], 
-                    token,
-                    gitlab_project_data=gitlab_project
+                    gitlab_project_path, 
+                    gitlab_project_data=gitlab_project_data
                 )
                 if team_id:
                     new_project.team_id = team_id

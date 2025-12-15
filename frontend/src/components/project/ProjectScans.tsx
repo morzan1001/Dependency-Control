@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink } from 'lucide-react'
 
 interface ProjectScansProps {
   projectId: string
@@ -49,8 +49,8 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>Scan History</CardTitle>
-            <CardDescription>View past security scans and their results.</CardDescription>
+            <CardTitle>Pipeline History</CardTitle>
+            <CardDescription>View past pipelines and their security results.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             {selectedBranch && (
@@ -93,6 +93,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
+                <TableHead>Pipeline</TableHead>
                 <TableHead>Branch</TableHead>
                 <TableHead>Commit</TableHead>
                 <TableHead>Findings</TableHead>
@@ -110,6 +111,24 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     <div className="flex items-center gap-2">
                       <Calendar className="h-4 w-4 text-muted-foreground" />
                       {new Date(scan.created_at).toLocaleString()}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs">
+                        {scan.pipeline_iid ? `#${scan.pipeline_iid}` : 'N/A'}
+                      </span>
+                      {scan.metadata?.CI_PROJECT_URL && (
+                        <a 
+                          href={scan.metadata.CI_PROJECT_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-muted-foreground hover:text-primary"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>

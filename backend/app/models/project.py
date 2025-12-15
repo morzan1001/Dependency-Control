@@ -37,7 +37,15 @@ class Scan(BaseModel):
     project_id: str
     branch: str
     commit_hash: Optional[str] = None
-    sbom: Optional[Dict[str, Any]] = None # Made optional for secret-only scans
+    
+    # Pipeline identification
+    pipeline_id: Optional[int] = None
+    pipeline_iid: Optional[int] = None
+    metadata: Optional[Dict[str, Any]] = None
+    
+    sbom: Optional[Dict[str, Any]] = None # Aggregated SBOM
+    sboms: List[Dict[str, Any]] = [] # Raw SBOMs received
+    
     created_at: datetime = Field(default_factory=datetime.utcnow)
     status: str = "pending"
     findings_summary: Optional[List[Dict[str, Any]]] = None

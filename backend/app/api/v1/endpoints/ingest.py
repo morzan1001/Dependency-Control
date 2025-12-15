@@ -25,20 +25,40 @@ async def ingest_trufflehog(
     Ingest TruffleHog secret scan results.
     Returns a summary of findings and pipeline failure status.
     """
-    # 1. Create or Update Scan
-    # Attempts to find a pending scan for this commit, or create a new one.
-    # Since this is a specific "secret scan", a new completed scan entry is created
-    # to store the results history.
-    
-    scan = Scan(
-        project_id=str(project.id),
-        branch=data.branch,
-        commit_hash=data.commit_hash,
-        sbom=None, # Secret scan doesn't have SBOM
-        status="completed", # Processed immediately
-        created_at=datetime.utcnow(),
-        completed_at=datetime.utcnow()
-    )
+    # Extract metadata
+    metadata = data.metadata.dict(by_alias=True)
+    pipeline_id = data.metadata.ci_pipeline_id
+    pipeline_iid = data.metadata.ci_pipeline_iid
+
+    # 1. Find or Create Scan Record (Pipeline)
+    existing_scan = None
+    if pipeline_id:
+        existing_scan = await db.scans.find_one({
+            "project_id": str(project.id),
+            "pipeline_id": pipeline_id
+        })
+
+    if existing_scan:
+        scan_id = existing_scan["_id"]
+        # Update metadata if needed
+        await db.scans.update_one(
+            {"_id": scan_id},
+            {"$set": {"metadata": metadata, "updated_at": datetime.utcnow()}}
+        )
+    else:
+        scan = Scan(
+            project_id=str(project.id),
+            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            commit_hash=data.commit_hash,
+            pipeline_id=pipeline_id,
+            pipeline_iid=pipeline_iid,
+            metadata=metadata,
+            status="processing",
+            created_at=datetime.utcnow(),
+            completed_at=datetime.utcnow()
+        )
+        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        scan_id = scan.id
     
     # 2. Normalize Findings
     aggregator = ResultAggregator()
@@ -90,27 +110,18 @@ async def ingest_trufflehog(
             final_findings.append(finding)
 
     # 4. Store Results
-    # Store raw result
+    # We append results to allow multiple reports from the same tool (e.g. multiple jobs)
     await db.analysis_results.insert_one({
         "_id": str(uuid.uuid4()),
-        "scan_id": scan.id,
+        "scan_id": scan_id,
         "analyzer_name": "trufflehog",
         "result": trufflehog_result,
         "created_at": datetime.utcnow()
     })
     
     # Update Scan with summary
-    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
-    for f in final_findings:
-        severity = f.get("severity", "UNKNOWN").lower()
-        if severity in stats:
-            stats[severity] += 1
-            
-    scan.findings_summary = final_findings
-    scan.findings_count = len(final_findings)
-    scan.stats = stats
-    
-    await db.scans.insert_one(scan.dict(by_alias=True))
+    # We trigger aggregation via worker
+    await worker_manager.add_job(scan_id)
     
     # 5. Return Status
     # Fail if any critical findings remain
@@ -133,19 +144,66 @@ async def ingest_sbom(
     """
     Upload an SBOM for analysis.
     
-    Requires a valid **API Key** in the `X-API-Key` header.
+    Requires a valid **API Key** in the `X-API-Key` header or **GitLab OIDC Token**.
     The analysis will be queued and processed by background workers.
     """
-    # Create Scan record
-    scan = Scan(
-        project_id=str(project.id),
-        branch=data.branch,
-        commit_hash=data.commit_hash,
-        sbom=data.sbom,
-        status="pending" # Explicitly set status to pending
-    )
-    result = await db.scans.insert_one(scan.dict(by_alias=True))
-    scan_id = scan.id
+    # Extract metadata
+    metadata = data.metadata.dict(by_alias=True)
+    pipeline_id = data.metadata.ci_pipeline_id
+    pipeline_iid = data.metadata.ci_pipeline_iid
+    
+    # Prepare SBOMs list
+    new_sboms = data.sboms
+    if data.sbom:
+        new_sboms.append(data.sbom)
+        
+    if not new_sboms:
+        raise HTTPException(status_code=400, detail="No SBOM provided")
+
+    # Check for existing scan for this pipeline
+    existing_scan = None
+    if pipeline_id:
+        existing_scan = await db.scans.find_one({
+            "project_id": str(project.id),
+            "pipeline_id": pipeline_id
+        })
+    
+    if existing_scan:
+        # Update existing scan
+        scan_id = existing_scan["_id"]
+        
+        # Check for duplicates based on job_id if we tracked it, but for now just append
+        # We could check if the exact same SBOM content is already there, but that's expensive.
+        
+        await db.scans.update_one(
+            {"_id": scan_id},
+            {
+                "$set": {
+                    "metadata": metadata,
+                    "branch": data.metadata.ci_commit_branch or data.branch or existing_scan.get("branch"),
+                    "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                    "status": "pending", # Reset status to pending to re-analyze with new data
+                    "updated_at": datetime.utcnow()
+                },
+                "$push": {
+                    "sboms": {"$each": new_sboms}
+                }
+            }
+        )
+    else:
+        # Create new scan
+        scan = Scan(
+            project_id=str(project.id),
+            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            commit_hash=data.commit_hash,
+            pipeline_id=pipeline_id,
+            pipeline_iid=pipeline_iid,
+            metadata=metadata,
+            sboms=new_sboms,
+            status="pending"
+        )
+        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        scan_id = scan.id
     
     # Add to Worker Queue
     await worker_manager.add_job(scan_id)
@@ -162,16 +220,40 @@ async def ingest_opengrep(
     Ingest OpenGrep SAST scan results.
     Returns a summary of findings.
     """
-    # 1. Create Scan Record
-    scan = Scan(
-        project_id=str(project.id),
-        branch=data.branch,
-        commit_hash=data.commit_hash,
-        sbom=None,
-        status="completed",
-        created_at=datetime.utcnow(),
-        completed_at=datetime.utcnow()
-    )
+    # Extract metadata
+    metadata = data.metadata.dict(by_alias=True)
+    pipeline_id = data.metadata.ci_pipeline_id
+    pipeline_iid = data.metadata.ci_pipeline_iid
+
+    # 1. Find or Create Scan Record (Pipeline)
+    existing_scan = None
+    if pipeline_id:
+        existing_scan = await db.scans.find_one({
+            "project_id": str(project.id),
+            "pipeline_id": pipeline_id
+        })
+
+    if existing_scan:
+        scan_id = existing_scan["_id"]
+        # Update metadata if needed
+        await db.scans.update_one(
+            {"_id": scan_id},
+            {"$set": {"metadata": metadata, "updated_at": datetime.utcnow()}}
+        )
+    else:
+        scan = Scan(
+            project_id=str(project.id),
+            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            commit_hash=data.commit_hash,
+            pipeline_id=pipeline_id,
+            pipeline_iid=pipeline_iid,
+            metadata=metadata,
+            status="processing", # Mark as processing as we are adding results
+            created_at=datetime.utcnow(),
+            completed_at=datetime.utcnow()
+        )
+        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        scan_id = scan.id
     
     # 2. Normalize Findings
     aggregator = ResultAggregator()
@@ -211,15 +293,21 @@ async def ingest_opengrep(
             final_findings.append(finding)
 
     # 4. Store Results
+    # We append results to allow multiple reports from the same tool
     await db.analysis_results.insert_one({
         "_id": str(uuid.uuid4()),
-        "scan_id": scan.id,
+        "scan_id": scan_id,
         "analyzer_name": "opengrep",
         "result": opengrep_result,
         "created_at": datetime.utcnow()
     })
     
-    # Update Scan with summary
+    # Update Scan with summary (This needs to be smarter to aggregate with other analyzers)
+    # For now, we just trigger a re-calculation of the total stats if possible, 
+    # or we just return the stats for THIS ingestion.
+    # Ideally, we should have a background task that aggregates all AnalysisResults for a scan_id.
+    # But for simplicity, let's just return the stats for this run.
+    
     stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
     for f in final_findings:
         sev = f.get("severity", "UNKNOWN").lower()
@@ -228,11 +316,9 @@ async def ingest_opengrep(
         else:
             stats["unknown"] += 1
             
-    scan.findings_summary = final_findings
-    scan.findings_count = len(final_findings)
-    scan.stats = stats
-    
-    await db.scans.insert_one(scan.dict(by_alias=True))
+    # We don't overwrite scan.findings_summary here because it might contain other analyzers' data.
+    # We should probably trigger an aggregation task.
+    await worker_manager.add_job(scan_id) # Re-run aggregation
     
     # Update Project Stats
     await db.projects.update_one(
@@ -241,7 +327,7 @@ async def ingest_opengrep(
     )
     
     return {
-        "scan_id": scan.id,
+        "scan_id": scan_id,
         "findings_count": len(final_findings),
         "stats": stats
     }
@@ -255,15 +341,39 @@ async def ingest_kics(
     """
     Ingest KICS IaC scan results.
     """
-    scan = Scan(
-        project_id=str(project.id),
-        branch=data.branch,
-        commit_hash=data.commit_hash,
-        sbom=None,
-        status="completed",
-        created_at=datetime.utcnow(),
-        completed_at=datetime.utcnow()
-    )
+    # Extract metadata
+    metadata = data.metadata.dict(by_alias=True)
+    pipeline_id = data.metadata.ci_pipeline_id
+    pipeline_iid = data.metadata.ci_pipeline_iid
+
+    # 1. Find or Create Scan Record (Pipeline)
+    existing_scan = None
+    if pipeline_id:
+        existing_scan = await db.scans.find_one({
+            "project_id": str(project.id),
+            "pipeline_id": pipeline_id
+        })
+
+    if existing_scan:
+        scan_id = existing_scan["_id"]
+        await db.scans.update_one(
+            {"_id": scan_id},
+            {"$set": {"metadata": metadata, "updated_at": datetime.utcnow()}}
+        )
+    else:
+        scan = Scan(
+            project_id=str(project.id),
+            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            commit_hash=data.commit_hash,
+            pipeline_id=pipeline_id,
+            pipeline_iid=pipeline_iid,
+            metadata=metadata,
+            status="processing",
+            created_at=datetime.utcnow(),
+            completed_at=datetime.utcnow()
+        )
+        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        scan_id = scan.id
     
     aggregator = ResultAggregator()
     kics_result = data.dict()
@@ -304,7 +414,7 @@ async def ingest_kics(
     # Store Results
     await db.analysis_results.insert_one({
         "_id": str(uuid.uuid4()),
-        "scan_id": scan.id,
+        "scan_id": scan_id,
         "analyzer_name": "kics",
         "result": kics_result,
         "created_at": datetime.utcnow()
@@ -319,11 +429,7 @@ async def ingest_kics(
         else:
             stats["unknown"] += 1
             
-    scan.findings_summary = final_findings
-    scan.findings_count = len(final_findings)
-    scan.stats = stats
-    
-    await db.scans.insert_one(scan.dict(by_alias=True))
+    await worker_manager.add_job(scan_id)
     
     await db.projects.update_one(
         {"_id": str(project.id)},
@@ -331,7 +437,7 @@ async def ingest_kics(
     )
     
     return {
-        "scan_id": scan.id,
+        "scan_id": scan_id,
         "findings_count": len(final_findings),
         "stats": stats
     }
@@ -345,15 +451,39 @@ async def ingest_bearer(
     """
     Ingest Bearer SAST/Data Security scan results.
     """
-    scan = Scan(
-        project_id=str(project.id),
-        branch=data.branch,
-        commit_hash=data.commit_hash,
-        sbom=None,
-        status="completed",
-        created_at=datetime.utcnow(),
-        completed_at=datetime.utcnow()
-    )
+    # Extract metadata
+    metadata = data.metadata.dict(by_alias=True)
+    pipeline_id = data.metadata.ci_pipeline_id
+    pipeline_iid = data.metadata.ci_pipeline_iid
+
+    # 1. Find or Create Scan Record (Pipeline)
+    existing_scan = None
+    if pipeline_id:
+        existing_scan = await db.scans.find_one({
+            "project_id": str(project.id),
+            "pipeline_id": pipeline_id
+        })
+
+    if existing_scan:
+        scan_id = existing_scan["_id"]
+        await db.scans.update_one(
+            {"_id": scan_id},
+            {"$set": {"metadata": metadata, "updated_at": datetime.utcnow()}}
+        )
+    else:
+        scan = Scan(
+            project_id=str(project.id),
+            branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+            commit_hash=data.commit_hash,
+            pipeline_id=pipeline_id,
+            pipeline_iid=pipeline_iid,
+            metadata=metadata,
+            status="processing",
+            created_at=datetime.utcnow(),
+            completed_at=datetime.utcnow()
+        )
+        result = await db.scans.insert_one(scan.dict(by_alias=True))
+        scan_id = scan.id
     
     aggregator = ResultAggregator()
     bearer_result = data.dict()
@@ -376,6 +506,51 @@ async def ingest_bearer(
     for finding in findings:
         is_waived = False
         for waiver in waivers:
+            if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
+                is_waived = True
+                break
+            if waiver.get("finding_type") and waiver["finding_type"] == finding["type"]:
+                is_waived = True
+                break
+            if waiver.get("package_name") and waiver["package_name"] == finding["component"]:
+                is_waived = True
+                break
+        
+        if is_waived:
+            finding["waived"] = True
+        else:
+            final_findings.append(finding)
+
+    # Store Results
+    await db.analysis_results.insert_one({
+        "_id": str(uuid.uuid4()),
+        "scan_id": scan_id,
+        "analyzer_name": "bearer",
+        "result": bearer_result,
+        "created_at": datetime.utcnow()
+    })
+    
+    # Update Scan
+    stats = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "unknown": 0}
+    for f in final_findings:
+        sev = f.get("severity", "UNKNOWN").lower()
+        if sev in stats:
+            stats[sev] += 1
+        else:
+            stats["unknown"] += 1
+            
+    await worker_manager.add_job(scan_id)
+    
+    await db.projects.update_one(
+        {"_id": str(project.id)},
+        {"$set": {"last_scan_at": datetime.utcnow()}}
+    )
+    
+    return {
+        "scan_id": scan_id,
+        "findings_count": len(final_findings),
+        "stats": stats
+    }
             if waiver.get("finding_id") and waiver["finding_id"] == finding["id"]:
                 is_waived = True
                 break

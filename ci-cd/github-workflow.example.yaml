@@ -28,8 +28,27 @@ jobs:
             --arg pn "$PROJECT_NAME" \
             --arg br "${{ github.ref_name }}" \
             --arg ch "${{ github.sha }}" \
+            --arg pipeline_id "${{ github.run_id }}" \
+            --arg pipeline_iid "${{ github.run_number }}" \
+            --arg project_url "${{ github.server_url }}/${{ github.repository }}" \
+            --arg project_path "${{ github.repository }}" \
+            --arg default_branch "${{ github.event.repository.default_branch }}" \
             --slurpfile sbom sbom.json \
-            '{project_name: $pn, branch: $br, commit_hash: $ch, sbom: $sbom[0]}' > payload.json
+            '{
+              project_name: $pn, 
+              branch: $br, 
+              commit_hash: $ch, 
+              sboms: $sbom,
+              metadata: {
+                CI_PIPELINE_ID: ($pipeline_id | tonumber),
+                CI_PIPELINE_IID: ($pipeline_iid | tonumber),
+                CI_COMMIT_BRANCH: $br,
+                CI_PROJECT_URL: $project_url,
+                CI_PROJECT_PATH: $project_path,
+                CI_DEFAULT_BRANCH: $default_branch,
+                CI_JOB_STARTED_AT: (now | todate)
+              }
+            }' > payload.json
 
           # Send to Backend
           curl -X POST \
@@ -80,13 +99,32 @@ jobs:
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
           PROJECT_NAME: "your-project-name"
         run: |
-          # Convert JSON lines to JSON array
-          echo '{"project_name": "'"$PROJECT_NAME"'", "branch": "${{ github.ref_name }}", "commit_hash": "${{ github.sha }}", "findings": [' > payload.json
-          # Add comma to end of each line, remove last comma, then append
-          if [ -s trufflehog.json ]; then
-            sed 's/$/,/' trufflehog.json | sed '$ s/,$//' >> payload.json
-          fi
-          echo ']}' >> payload.json
+          # Prepare JSON payload using jq
+          jq -n \
+            --arg pn "$PROJECT_NAME" \
+            --arg br "${{ github.ref_name }}" \
+            --arg ch "${{ github.sha }}" \
+            --arg pipeline_id "${{ github.run_id }}" \
+            --arg pipeline_iid "${{ github.run_number }}" \
+            --arg project_url "${{ github.server_url }}/${{ github.repository }}" \
+            --arg project_path "${{ github.repository }}" \
+            --arg default_branch "${{ github.event.repository.default_branch }}" \
+            --slurpfile findings trufflehog.json \
+            '{
+              project_name: $pn, 
+              branch: $br, 
+              commit_hash: $ch, 
+              findings: $findings,
+              metadata: {
+                CI_PIPELINE_ID: ($pipeline_id | tonumber),
+                CI_PIPELINE_IID: ($pipeline_iid | tonumber),
+                CI_COMMIT_BRANCH: $br,
+                CI_PROJECT_URL: $project_url,
+                CI_PROJECT_PATH: $project_path,
+                CI_DEFAULT_BRANCH: $default_branch,
+                CI_JOB_STARTED_AT: (now | todate)
+              }
+            }' > payload.json
           
           # Send to Backend
           response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog" \

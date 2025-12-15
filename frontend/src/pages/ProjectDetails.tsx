@@ -165,7 +165,7 @@ export default function ProjectDetails() {
         <div className="flex items-center justify-between">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="scans">Scans</TabsTrigger>
+            <TabsTrigger value="scans">Pipelines</TabsTrigger>
             <TabsTrigger value="waivers">Waivers</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>

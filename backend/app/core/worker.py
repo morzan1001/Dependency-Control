@@ -95,10 +95,15 @@ class AnalysisWorkerManager:
                     continue
 
                 try:
+                    # Prepare SBOMs list
+                    sboms = scan.get("sboms", [])
+                    if not sboms and scan.get("sbom"):
+                        sboms = [scan["sbom"]]
+
                     # Run the actual analysis
                     await run_analysis(
                         scan_id=scan_id,
-                        sbom=scan["sbom"],
+                        sboms=sboms,
                         active_analyzers=project.get("active_analyzers", []),
                         db=db
                     )
