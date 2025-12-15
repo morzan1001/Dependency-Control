@@ -10,7 +10,7 @@ class EndOfLifeAnalyzer(Analyzer):
     name = "end_of_life"
     api_url = "https://endoflife.date/api/v1"
 
-    async def analyze(self, sbom: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
         components = sbom.get("components", [])
         results = []
         

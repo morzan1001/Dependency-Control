@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class TrivyAnalyzer(Analyzer):
     name = "trivy"
 
-    async def analyze(self, sbom: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
         # Create a temporary file for the SBOM
         with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_sbom:
             json.dump(sbom, tmp_sbom)

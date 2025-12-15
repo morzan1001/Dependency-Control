@@ -8,7 +8,7 @@ from .base import Analyzer
 class GrypeAnalyzer(Analyzer):
     name = "grype"
 
-    async def analyze(self, sbom: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
         with tempfile.NamedTemporaryFile(mode='w+', suffix='.json', delete=False) as tmp_sbom:
             json.dump(sbom, tmp_sbom)
             tmp_sbom_path = tmp_sbom.name

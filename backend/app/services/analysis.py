@@ -33,9 +33,9 @@ analyzers: Dict[str, Analyzer] = {
     "typosquatting": TyposquattingAnalyzer()
 }
 
-async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[str, Any], scan_id: str, db, aggregator: ResultAggregator) -> str:
+async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[str, Any], scan_id: str, db, aggregator: ResultAggregator, settings: Dict[str, Any] = None) -> str:
     try:
-        result = await analyzer.analyze(sbom)
+        result = await analyzer.analyze(sbom, settings=settings)
         
         # Store raw result
         await db.analysis_results.insert_one({
@@ -84,12 +84,16 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             "analyzer_name": {"$in": internal_analyzers}
         })
 
+    # Fetch system settings for dynamic configuration (e.g. API keys)
+    system_settings_doc = await db.system_settings.find_one({"_id": "current"})
+    system_settings = system_settings_doc if system_settings_doc else {}
+
     tasks = []
     for sbom in sboms:
         for analyzer_name in active_analyzers:
             if analyzer_name in analyzers:
                 analyzer = analyzers[analyzer_name]
-                tasks.append(process_analyzer(analyzer_name, analyzer, sbom, scan_id, db, aggregator))
+                tasks.append(process_analyzer(analyzer_name, analyzer, sbom, scan_id, db, aggregator, settings=system_settings))
             
     results_summary = await asyncio.gather(*tasks)
 

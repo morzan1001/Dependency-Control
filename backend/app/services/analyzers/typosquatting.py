@@ -68,7 +68,7 @@ class TyposquattingAnalyzer(Analyzer):
             "aws-sdk", "typescript", "fs-extra", "mkdirp", "glob", "minimist"
         }
 
-    async def analyze(self, sbom: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
         await self._ensure_popular_packages()
         
         components = sbom.get("components", [])

@@ -10,7 +10,7 @@ class OutdatedAnalyzer(Analyzer):
     name = "outdated_packages"
     base_url = "https://api.deps.dev/v3/systems"
 
-    async def analyze(self, sbom: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
         components = sbom.get("components", [])
         results = []
         
