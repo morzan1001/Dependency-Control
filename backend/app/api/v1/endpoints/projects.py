@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from typing import List, Dict, Any
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+from bson import ObjectId
 import secrets
 import csv
 import io
@@ -621,24 +622,52 @@ async def read_analysis_results(
     
     results = await db.analysis_results.find({"scan_id": {"$in": related_scan_ids}}).to_list(1000)
     
-    # Deduplicate results by analyzer_name (preferring the one from the requested scan_id, or latest)
-    # Since we might have multiple runs for the same commit.
-    unique_results = {}
+    # Group results by analyzer_name
+    grouped_results = {}
     for res in results:
         name = res["analyzer_name"]
-        # If we already have a result for this analyzer
-        if name in unique_results:
-            existing = unique_results[name]
-            # If the current res is from the requested scan_id, prioritize it
-            if res["scan_id"] == scan_id:
-                unique_results[name] = res
-            # Else if existing is NOT from requested scan_id, and res is newer, take res
-            elif existing["scan_id"] != scan_id and res["created_at"] > existing["created_at"]:
-                unique_results[name] = res
-        else:
-            unique_results[name] = res
+        grouped_results.setdefault(name, []).append(res)
+    
+    final_results = []
+    
+    for name, group in grouped_results.items():
+        # 1. Prefer results from the requested scan_id
+        current_scan_results = [r for r in group if r["scan_id"] == scan_id]
+        
+        if current_scan_results:
+            # If we have multiple results for the same analyzer in the same scan,
+            # it means we processed multiple SBOMs. We should merge them for the "Raw Data" view.
+            base_result = current_scan_results[0]
             
-    return list(unique_results.values())
+            if len(current_scan_results) > 1:
+                for other in current_scan_results[1:]:
+                    # Merge logic based on analyzer type
+                    if name == "trivy":
+                        if "Results" in other["result"] and isinstance(other["result"]["Results"], list):
+                            if "Results" not in base_result["result"]:
+                                base_result["result"]["Results"] = []
+                            base_result["result"]["Results"].extend(other["result"]["Results"])
+                            
+                    elif name == "grype":
+                        if "matches" in other["result"] and isinstance(other["result"]["matches"], list):
+                            if "matches" not in base_result["result"]:
+                                base_result["result"]["matches"] = []
+                            base_result["result"]["matches"].extend(other["result"]["matches"])
+                            
+                    elif name == "osv":
+                        if "results" in other["result"] and isinstance(other["result"]["results"], list):
+                            if "results" not in base_result["result"]:
+                                base_result["result"]["results"] = []
+                            base_result["result"]["results"].extend(other["result"]["results"])
+            
+            final_results.append(base_result)
+        else:
+            # 2. Fallback to newest result from related scans
+            if group:
+                newest = max(group, key=lambda x: x["created_at"])
+                final_results.append(newest)
+            
+    return final_results
 
 @router.get("/scans/{scan_id}", response_model=Scan, summary="Get scan details")
 async def read_scan(
@@ -654,6 +683,32 @@ async def read_scan(
         raise HTTPException(status_code=404, detail="Scan not found")
         
     await check_project_access(scan_data["project_id"], current_user, db)
+    
+    # Resolve GridFS references in sboms
+    if "sboms" in scan_data:
+        resolved_sboms = []
+        fs = AsyncIOMotorGridFSBucket(db)
+        for item in scan_data["sboms"]:
+            if isinstance(item, dict) and item.get("type") == "gridfs_reference":
+                # We generally don't want to return the FULL content of massive SBOMs in this detail view
+                # if it's going to crash the frontend or timeout.
+                # However, the model expects the full dict.
+                # For now, let's return a placeholder or lightweight version if possible, 
+                # OR fetch it if the client really needs it.
+                # Given the error was 413 on INGEST, the read might also be heavy.
+                # Let's try to fetch it, but be aware this might be slow.
+                try:
+                    gridfs_id = item.get("gridfs_id")
+                    stream = await fs.open_download_stream(ObjectId(gridfs_id))
+                    content = await stream.read()
+                    resolved_sboms.append(json.loads(content))
+                except Exception:
+                    # If we can't load it, keep the reference or skip
+                    resolved_sboms.append(item)
+            else:
+                resolved_sboms.append(item)
+        scan_data["sboms"] = resolved_sboms
+
     return Scan(**scan_data)
 
 @router.put("/{project_id}/members/{user_id}", response_model=Project, summary="Update project member role")

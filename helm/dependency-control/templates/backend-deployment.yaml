@@ -5,7 +5,9 @@ metadata:
   labels:
     {{- include "dependency-control.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.backend.autoscaling.enabled }}
   replicas: {{ .Values.backend.replicaCount }}
+  {{- end }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -29,18 +31,20 @@ spec:
       # Ensure pods are spread across nodes for HA
       affinity:
         podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: app.kubernetes.io/name
-                    operator: In
-                    values:
-                      - "{{ include "dependency-control.name" . }}"
-                  - key: app.kubernetes.io/component
-                    operator: In
-                    values:
-                      - backend
-              topologyKey: "kubernetes.io/hostname"
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - "{{ include "dependency-control.name" . }}"
+                    - key: app.kubernetes.io/component
+                      operator: In
+                      values:
+                        - backend
+                topologyKey: "kubernetes.io/hostname"
       securityContext:
         fsGroup: {{ .Values.backend.securityContext.fsGroup }}
       containers:

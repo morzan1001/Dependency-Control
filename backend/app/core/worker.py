@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import json
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from app.db.mongodb import get_database
 from app.services.analysis import run_analysis
 from app.core.config import settings
@@ -96,13 +99,13 @@ class AnalysisWorkerManager:
                     continue
 
                 try:
-                    # Prepare SBOMs list
-                    sboms = scan.get("sboms", [])
+                    # Prepare SBOMs list (pass raw list, let run_analysis handle loading)
+                    raw_sboms = scan.get("sboms", [])
 
                     # Run the actual analysis
                     await run_analysis(
                         scan_id=scan_id,
-                        sboms=sboms,
+                        sboms=raw_sboms,
                         active_analyzers=project.get("active_analyzers", []),
                         db=db
                     )

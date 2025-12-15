@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pymongo.errors import DocumentTooLarge
 import logging
+import json
 from app.api import deps
 from app.schemas.ingest import SBOMIngest
 from app.schemas.trufflehog import TruffleHogIngest
@@ -208,8 +209,57 @@ async def ingest_sbom(
             await db.scans.insert_one(scan.dict(by_alias=True))
             scan_id = scan.id
     except DocumentTooLarge:
-        logger.error(f"SBOM content too large for pipeline {pipeline_id}")
-        raise HTTPException(status_code=413, detail="SBOM content is too large to be stored directly.")
+        logger.warning(f"SBOM content too large for pipeline {pipeline_id}, attempting to offload to GridFS")
+        try:
+            # Initialize GridFS
+            fs = AsyncIOMotorGridFSBucket(db)
+            gridfs_sboms = []
+            
+            for sbom in new_sboms:
+                sbom_str = json.dumps(sbom)
+                sbom_bytes = sbom_str.encode('utf-8')
+                file_id = await fs.upload_from_stream(
+                    f"sbom-{uuid.uuid4()}.json",
+                    sbom_bytes,
+                    metadata={"contentType": "application/json"}
+                )
+                gridfs_sboms.append({"gridfs_id": str(file_id), "type": "gridfs_reference"})
+            
+            if existing_scan:
+                scan_id = existing_scan["_id"]
+                await db.scans.update_one(
+                    {"_id": scan_id},
+                    {
+                        "$set": {
+                            "metadata": metadata,
+                            "branch": data.metadata.ci_commit_branch or data.branch or existing_scan.get("branch"),
+                            "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                            "status": "pending",
+                            "updated_at": datetime.utcnow()
+                        },
+                        "$push": {
+                            "sboms": {"$each": gridfs_sboms}
+                        }
+                    }
+                )
+            else:
+                # Re-create scan object with GridFS references
+                scan = Scan(
+                    project_id=str(project.id),
+                    branch=data.metadata.ci_commit_branch or data.branch or "unknown",
+                    commit_hash=data.commit_hash,
+                    pipeline_id=pipeline_id,
+                    pipeline_iid=pipeline_iid,
+                    metadata=metadata,
+                    sboms=gridfs_sboms,
+                    status="pending"
+                )
+                await db.scans.insert_one(scan.dict(by_alias=True))
+                scan_id = scan.id
+                
+        except Exception as e2:
+             logger.error(f"Error offloading SBOM to GridFS: {e2}", exc_info=True)
+             raise HTTPException(status_code=413, detail="SBOM content is too large and failed to offload to GridFS.")
     except Exception as e:
         logger.error(f"Error ingesting SBOM for pipeline {pipeline_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal Server Error during ingestion: {str(e)}")

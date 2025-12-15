@@ -3,6 +3,9 @@ from datetime import datetime
 import uuid
 import asyncio
 import logging
+import json
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from app.services.analyzers import (
     Analyzer, 
     EndOfLifeAnalyzer, 
@@ -88,14 +91,44 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     system_settings_doc = await db.system_settings.find_one({"_id": "current"})
     system_settings = system_settings_doc if system_settings_doc else {}
 
-    tasks = []
-    for sbom in sboms:
+    # Initialize GridFS
+    fs = AsyncIOMotorGridFSBucket(db)
+
+    # Process SBOMs sequentially to save memory
+    for item in sboms:
+        current_sbom = None
+        
+        # Resolve GridFS reference if needed
+        if isinstance(item, dict) and item.get("type") == "gridfs_reference":
+            gridfs_id = item.get("gridfs_id")
+            try:
+                stream = await fs.open_download_stream(ObjectId(gridfs_id))
+                content = await stream.read()
+                current_sbom = json.loads(content)
+            except Exception as gridfs_err:
+                logger.error(f"Failed to fetch SBOM from GridFS {gridfs_id}: {gridfs_err}")
+                # Log a system warning finding
+                aggregator.aggregate("system", {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"})
+                continue
+        else:
+            current_sbom = item
+
+        if not current_sbom:
+            continue
+
+        # Run analyzers for THIS SBOM concurrently
+        tasks = []
         for analyzer_name in active_analyzers:
             if analyzer_name in analyzers:
                 analyzer = analyzers[analyzer_name]
-                tasks.append(process_analyzer(analyzer_name, analyzer, sbom, scan_id, db, aggregator, settings=system_settings))
-            
-    results_summary = await asyncio.gather(*tasks)
+                tasks.append(process_analyzer(analyzer_name, analyzer, current_sbom, scan_id, db, aggregator, settings=system_settings))
+        
+        # Wait for this batch to finish before moving to the next SBOM
+        # This ensures we only hold one SBOM in memory at a time
+        await asyncio.gather(*tasks)
+        
+        # Explicitly release memory
+        del current_sbom
 
     # 1. Fetch and Aggregate External Results (TruffleHog, OpenGrep, etc.)
     # These are results that were pushed via API endpoints directly to analysis_results

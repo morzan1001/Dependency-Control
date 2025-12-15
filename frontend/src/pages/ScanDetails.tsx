@@ -369,13 +369,33 @@ export default function ScanDetails() {
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
                                 <FileJson className="h-5 w-5" />
-                                SBOM (Software Bill of Materials)
+                                SBOMs (Software Bill of Materials)
                             </CardTitle>
+                            <CardDescription>
+                                This scan contains {scan.sboms?.length || 0} SBOM(s).
+                            </CardDescription>
                         </CardHeader>
-                        <CardContent>
-                            <pre className="bg-muted p-4 rounded-lg overflow-auto max-h-[600px] text-xs">
-                                {JSON.stringify(scan.sbom, null, 2)}
-                            </pre>
+                        <CardContent className="space-y-4">
+                            {scan.sboms && scan.sboms.length > 0 ? (
+                                scan.sboms.map((sbom: any, index: number) => (
+                                    <div key={index} className="border rounded-lg p-4">
+                                        <h4 className="font-medium mb-2 flex items-center gap-2">
+                                            <Package className="h-4 w-4" />
+                                            SBOM #{index + 1}
+                                            {sbom.metadata?.component?.name && (
+                                                <Badge variant="outline">{sbom.metadata.component.name}</Badge>
+                                            )}
+                                        </h4>
+                                        <pre className="bg-muted p-4 rounded-lg overflow-auto max-h-[400px] text-xs">
+                                            {JSON.stringify(sbom, null, 2)}
+                                        </pre>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="text-center text-muted-foreground py-8">
+                                    No SBOM data available.
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>

@@ -21,6 +21,22 @@ class ResultAggregator:
         if not result:
             return
 
+        # Check for scanner errors
+        if "error" in result:
+            self._add_finding({
+                "id": f"SCAN-ERROR-{analyzer_name}",
+                "type": "system_warning",
+                "severity": "HIGH", # High visibility
+                "component": "Scanner System",
+                "version": "",
+                "description": f"Scanner '{analyzer_name}' failed: {result.get('error')}",
+                "scanners": [analyzer_name],
+                "details": {
+                    "error_details": result.get("details", result.get("output", "No details provided"))
+                }
+            }, source=source)
+            return
+
         normalizers = {
             "trivy": self._normalize_trivy,
             "grype": self._normalize_grype,
