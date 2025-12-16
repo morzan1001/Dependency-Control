@@ -1,3 +1,11 @@
+# Release 0.5.1
+
+## 🚀 Features
+
+- feat: add sorting and searching capabilities to teams and users pages; enhance FindingsTable with sorting options (#0)
+
+
+
 # Release 0.5.0
 
 ## 🚀 Features
