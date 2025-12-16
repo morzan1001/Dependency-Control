@@ -109,6 +109,18 @@ class ResultAggregator:
                 }
             ), source=source)
 
+    def _normalize_version(self, version: str) -> str:
+        if not version:
+            return "unknown"
+        v = version.strip().lower()
+        # Handle go1.25.4 -> 1.25.4
+        if v.startswith("go") and len(v) > 2 and v[2].isdigit():
+            return v[2:]
+        # Handle v1.25.4 -> 1.25.4
+        if v.startswith("v") and len(v) > 1 and v[1].isdigit():
+            return v[1:]
+        return v
+
     def _add_finding(self, finding: Finding, source: str = None):
         """
         Adds a finding to the map, merging if it already exists.
@@ -121,7 +133,10 @@ class ResultAggregator:
     def _add_vulnerability_finding(self, finding: Finding, source: str = None):
         # Normalize keys
         comp_key = finding.component.lower() if finding.component else "unknown"
-        version_key = finding.version if finding.version else "unknown"
+        
+        # Normalize version (handle go1.25.4 vs 1.25.4)
+        raw_version = finding.version if finding.version else "unknown"
+        version_key = self._normalize_version(raw_version)
         
         # Primary key for the AGGREGATED finding (The Package)
         agg_key = f"AGG:VULN:{comp_key}:{version_key}"
@@ -174,6 +189,12 @@ class ResultAggregator:
                     v_sev_val = SEVERITY_ORDER.get(v["severity"], 0)
                     if new_severity_val > v_sev_val:
                         v["severity"] = finding.severity
+                    
+                    # Merge Fixed Version (prefer non-empty)
+                    new_fixed = finding.details.get("fixed_version")
+                    current_fixed = v.get("fixed_version")
+                    if not current_fixed and new_fixed:
+                        v["fixed_version"] = new_fixed
                         
                     vuln_list[idx] = v
                     merged = True

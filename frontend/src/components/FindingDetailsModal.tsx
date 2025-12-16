@@ -25,9 +25,15 @@ interface FindingDetailsModalProps {
 
 export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: FindingDetailsModalProps) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
+    const [selectedVulnId, setSelectedVulnId] = useState<string | null>(null)
     const { hasPermission } = useAuth()
     
     if (!finding) return null
+
+    const handleWaive = (vulnId?: string) => {
+        setSelectedVulnId(vulnId || null)
+        setShowWaiverForm(true)
+    }
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -56,6 +62,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                     {showWaiverForm ? (
                         <WaiverForm 
                             finding={finding} 
+                            vulnId={selectedVulnId}
                             projectId={projectId} 
                             onCancel={() => setShowWaiverForm(false)} 
                             onSuccess={() => {
@@ -163,7 +170,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
 
                             {finding.type === 'vulnerability' && (
                                 <div className="space-y-4">
-                                    {finding.details?.vulnerabilities ? (
+                                    {finding.details?.vulnerabilities && finding.details.vulnerabilities.length > 1 ? (
                                         <div className="space-y-4">
                                             <h4 className="text-sm font-medium text-muted-foreground">Aggregated Vulnerabilities</h4>
                                             {finding.details.vulnerabilities.map((vuln: any, idx: number) => (
@@ -178,23 +185,59 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                                                 'secondary'
                                                             }>{vuln.severity}</Badge>
                                                         </div>
-                                                        <span className="text-xs text-muted-foreground">
-                                                            Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || "None"}</span>
-                                                        </span>
-                                                    </div>
-                                                    <p className="text-sm text-muted-foreground">{vuln.description}</p>
-                                                    {vuln.cvss_score && (
-                                                        <div className="flex items-center gap-2 text-xs">
-                                                            <span className="font-medium">CVSS: {vuln.cvss_score}</span>
-                                                            {vuln.cvss_vector && <span className="font-mono text-muted-foreground">{vuln.cvss_vector}</span>}
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-xs text-muted-foreground">
+                                                                Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || "None"}</span>
+                                                            </span>
+                                                            {hasPermission('waiver:manage') && (
+                                                                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => handleWaive(vuln.id)}>
+                                                                    <ShieldAlert className="h-3 w-3 mr-1" />
+                                                                    Waive
+                                                                </Button>
+                                                            )}
                                                         </div>
-                                                    )}
+                                                    </div>
+                                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{vuln.description}</p>
+                                                    
+                                                    <div className="flex flex-wrap gap-4 text-xs">
+                                                        {vuln.cvss_score && (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-medium">CVSS: {vuln.cvss_score}</span>
+                                                                {vuln.cvss_vector && <span className="font-mono text-muted-foreground">{vuln.cvss_vector}</span>}
+                                                            </div>
+                                                        )}
+                                                        {vuln.details?.published_date && (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-medium text-muted-foreground">Published:</span>
+                                                                <span>{new Date(vuln.details.published_date).toLocaleDateString()}</span>
+                                                            </div>
+                                                        )}
+                                                        {vuln.details?.cwe_ids && vuln.details.cwe_ids.length > 0 && (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-medium text-muted-foreground">CWE:</span>
+                                                                <span className="font-mono">{vuln.details.cwe_ids.join(', ')}</span>
+                                                            </div>
+                                                        )}
+                                                        {vuln.aliases && vuln.aliases.length > 0 && (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-medium text-muted-foreground">Aliases:</span>
+                                                                <span className="font-mono">{vuln.aliases.join(', ')}</span>
+                                                            </div>
+                                                        )}
+                                                        {vuln.scanners && (
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-medium text-muted-foreground">Detected by:</span>
+                                                                <span className="font-mono">{vuln.scanners.join(', ')}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
                                                     {vuln.references && vuln.references.length > 0 && (
                                                         <div className="pt-2">
                                                             <p className="text-xs font-medium mb-1">References</p>
-                                                            <div className="flex flex-wrap gap-2">
-                                                                {vuln.references.slice(0, 3).map((ref: string, i: number) => (
-                                                                    <a key={i} href={ref} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline truncate max-w-[200px]">
+                                                            <div className="flex flex-col gap-1">
+                                                                {vuln.references.map((ref: string, i: number) => (
+                                                                    <a key={i} href={ref} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline truncate">
                                                                         {ref}
                                                                     </a>
                                                                 ))}
@@ -206,70 +249,84 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                         </div>
                                     ) : (
                                         <>
-                                            <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
-                                                <div>
-                                                    <h4 className="text-sm font-medium text-muted-foreground mb-1">CVSS Score</h4>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className={`text-lg font-bold ${
-                                                            (finding.details?.cvss_score || 0) >= 9 ? 'text-red-600' :
-                                                            (finding.details?.cvss_score || 0) >= 7 ? 'text-orange-600' :
-                                                            (finding.details?.cvss_score || 0) >= 4 ? 'text-yellow-600' :
-                                                            'text-blue-600'
-                                                        }`}>
-                                                            {finding.details?.cvss_score || "N/A"}
-                                                        </span>
-                                                        {finding.details?.cvss_vector && (
-                                                            <span className="text-xs text-muted-foreground font-mono bg-background px-1 rounded border">
-                                                                {finding.details.cvss_vector}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                <div>
-                                                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Published</h4>
-                                                    <p className="text-sm">
-                                                        {finding.details?.published_date ? new Date(finding.details.published_date).toLocaleDateString() : "Unknown"}
-                                                    </p>
-                                                </div>
-                                            </div>
+                                            {(() => {
+                                                // Helper to get data from either the single vuln in list OR top-level details (legacy)
+                                                const singleVuln = finding.details?.vulnerabilities?.[0] || finding.details || {};
+                                                const cvssScore = singleVuln.cvss_score || finding.details?.cvss_score;
+                                                const cvssVector = singleVuln.cvss_vector || finding.details?.cvss_vector;
+                                                const publishedDate = singleVuln.details?.published_date || finding.details?.published_date;
+                                                const references = singleVuln.references || finding.details?.references || [];
+                                                const urls = singleVuln.details?.urls || finding.details?.urls || [];
+                                                
+                                                return (
+                                                    <>
+                                                        <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
+                                                            <div>
+                                                                <h4 className="text-sm font-medium text-muted-foreground mb-1">CVSS Score</h4>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={`text-lg font-bold ${
+                                                                        (cvssScore || 0) >= 9 ? 'text-red-600' :
+                                                                        (cvssScore || 0) >= 7 ? 'text-orange-600' :
+                                                                        (cvssScore || 0) >= 4 ? 'text-yellow-600' :
+                                                                        'text-blue-600'
+                                                                    }`}>
+                                                                        {cvssScore || "N/A"}
+                                                                    </span>
+                                                                    {cvssVector && (
+                                                                        <span className="text-xs text-muted-foreground font-mono bg-background px-1 rounded border">
+                                                                            {cvssVector}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            <div>
+                                                                <h4 className="text-sm font-medium text-muted-foreground mb-1">Published</h4>
+                                                                <p className="text-sm">
+                                                                    {publishedDate ? new Date(publishedDate).toLocaleDateString() : "Unknown"}
+                                                                </p>
+                                                            </div>
+                                                        </div>
 
-                                            {finding.details?.references && finding.details.references.length > 0 && (
-                                                <div>
-                                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">References</h4>
-                                                    <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
-                                                        {finding.details.references.map((ref: string, i: number) => (
-                                                            <a 
-                                                                key={i} 
-                                                                href={ref} 
-                                                                target="_blank" 
-                                                                rel="noopener noreferrer"
-                                                                className="text-blue-600 hover:underline break-all"
-                                                            >
-                                                                {ref}
-                                                            </a>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-                                            
-                                            {finding.details?.urls && finding.details.urls.length > 0 && (
-                                                <div>
-                                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">URLs</h4>
-                                                    <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
-                                                        {finding.details.urls.map((url: string, i: number) => (
-                                                            <a 
-                                                                key={i} 
-                                                                href={url} 
-                                                                target="_blank" 
-                                                                rel="noopener noreferrer"
-                                                                className="text-blue-600 hover:underline break-all"
-                                                            >
-                                                                {url}
-                                                            </a>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
+                                                        {references && references.length > 0 && (
+                                                            <div>
+                                                                <h4 className="text-sm font-medium text-muted-foreground mb-2">References</h4>
+                                                                <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
+                                                                    {references.map((ref: string, i: number) => (
+                                                                        <a 
+                                                                            key={i} 
+                                                                            href={ref} 
+                                                                            target="_blank" 
+                                                                            rel="noopener noreferrer"
+                                                                            className="text-blue-600 hover:underline break-all"
+                                                                        >
+                                                                            {ref}
+                                                                        </a>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                        
+                                                        {urls && urls.length > 0 && (
+                                                            <div>
+                                                                <h4 className="text-sm font-medium text-muted-foreground mb-2">URLs</h4>
+                                                                <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
+                                                                    {urls.map((url: string, i: number) => (
+                                                                        <a 
+                                                                            key={i} 
+                                                                            href={url} 
+                                                                            target="_blank" 
+                                                                            rel="noopener noreferrer"
+                                                                            className="text-blue-600 hover:underline break-all"
+                                                                        >
+                                                                            {url}
+                                                                        </a>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                );
+                                            })()}
                                         </>
                                     )}
                                 </div>
@@ -303,7 +360,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
     )
 }
 
-function WaiverForm({ finding, projectId, onCancel, onSuccess }: { finding: Finding, projectId: string, onCancel: () => void, onSuccess: () => void }) {
+function WaiverForm({ finding, vulnId, projectId, onCancel, onSuccess }: { finding: Finding, vulnId: string | null, projectId: string, onCancel: () => void, onSuccess: () => void }) {
     const [reason, setReason] = useState("")
     const [date, setDate] = useState("")
     const queryClient = useQueryClient()
@@ -326,19 +383,45 @@ function WaiverForm({ finding, projectId, onCancel, onSuccess }: { finding: Find
         e.preventDefault()
         if (!reason) return
 
+        // If waiving a specific vulnerability, we might need to adjust the finding_id or pass extra data
+        // For now, we assume the backend can handle the specific ID if we pass it, 
+        // OR we are waiving the whole package but noting the specific vuln in the reason.
+        // Ideally, the backend API should support a 'vulnerability_id' field.
+        // Since we can't change the backend right now, we'll append it to the reason or use it as ID if appropriate.
+        
+        // Strategy: If vulnId is present, we use it as the finding_id for the waiver? 
+        // No, finding_id links to the finding record. 
+        // If the backend matches waivers by finding_id string, and we want to waive just one CVE,
+        // we might need to change the backend. 
+        // BUT, if we assume the user wants to waive THIS specific CVE, and the system uses CVEs as IDs usually...
+        // Let's try passing the vulnId as finding_id if present, assuming the backend might check against it.
+        // If not, we fall back to finding.id.
+        
+        // Actually, better approach for now without backend changes:
+        // We waive the whole finding (Package) but auto-fill the reason with the specific CVE.
+        
+        const targetId = vulnId || getFindingId(finding)
+        const finalReason = vulnId ? `[${vulnId}] ${reason}` : reason
+
         createWaiverMutation.mutate({
             project_id: projectId,
-            finding_id: getFindingId(finding),
+            finding_id: targetId, 
             package_name: getFindingPackage(finding),
             package_version: getFindingVersion(finding),
             finding_type: finding.type || "unknown",
-            reason,
+            reason: finalReason,
             expiration_date: date ? new Date(date).toISOString() : undefined
         })
     }
 
     return (
         <form onSubmit={handleSubmit} className="space-y-4 py-4">
+            {vulnId && (
+                <div className="bg-blue-50 p-3 rounded-md border border-blue-100 text-sm text-blue-800 flex items-center gap-2">
+                    <ShieldAlert className="h-4 w-4" />
+                    Creating waiver specifically for <strong>{vulnId}</strong>
+                </div>
+            )}
             <div className="space-y-2">
                 <Label>Reason for Waiver</Label>
                 <textarea 

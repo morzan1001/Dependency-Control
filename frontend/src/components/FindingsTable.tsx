@@ -213,7 +213,11 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                             <SeverityBadge severity={finding.severity} />
                                         </TableCell>
                                         <TableCell className="p-4 align-middle font-mono text-xs truncate" title={finding.id}>
-                                            {finding.type === 'vulnerability' ? 'Multiple Vulnerabilities' : finding.id}
+                                            {finding.type === 'vulnerability' && finding.details?.vulnerabilities?.length > 1 
+                                                ? 'Multiple Vulnerabilities' 
+                                                : (finding.type === 'vulnerability' && finding.details?.vulnerabilities?.length === 1 
+                                                    ? finding.details.vulnerabilities[0].id 
+                                                    : finding.id)}
                                         </TableCell>
                                         <TableCell className="p-4 align-middle">
                                             <div className="flex flex-col truncate">
