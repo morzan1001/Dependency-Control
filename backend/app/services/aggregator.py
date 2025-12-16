@@ -112,6 +112,106 @@ class ResultAggregator:
     def _add_finding(self, finding: Finding, source: str = None):
         """
         Adds a finding to the map, merging if it already exists.
+        """
+        if finding.type == FindingType.VULNERABILITY:
+            self._add_vulnerability_finding(finding, source)
+        else:
+            self._add_generic_finding(finding, source)
+
+    def _add_vulnerability_finding(self, finding: Finding, source: str = None):
+        # Normalize keys
+        comp_key = finding.component.lower() if finding.component else "unknown"
+        version_key = finding.version if finding.version else "unknown"
+        
+        # Primary key for the AGGREGATED finding (The Package)
+        agg_key = f"AGG:VULN:{comp_key}:{version_key}"
+        
+        # Prepare the vulnerability entry for the details list
+        vuln_entry = {
+            "id": finding.id,
+            "severity": finding.severity,
+            "description": finding.description,
+            "fixed_version": finding.details.get("fixed_version"),
+            "cvss_score": finding.details.get("cvss_score"),
+            "cvss_vector": finding.details.get("cvss_vector"),
+            "references": finding.details.get("references", []),
+            "aliases": finding.aliases,
+            "scanners": finding.scanners,
+            "source": source,
+            "details": finding.details # nested details
+        }
+
+        if agg_key in self.findings:
+            existing = self.findings[agg_key]
+            
+            # 1. Update Scanners of the aggregate
+            existing.scanners = list(set(existing.scanners + finding.scanners))
+            
+            # 2. Update Severity of the aggregate (Max of all vulns)
+            existing_severity_val = SEVERITY_ORDER.get(existing.severity, 0)
+            new_severity_val = SEVERITY_ORDER.get(finding.severity, 0)
+            if new_severity_val > existing_severity_val:
+                existing.severity = finding.severity
+            
+            # 3. Merge into vulnerabilities list
+            vuln_list = existing.details.get("vulnerabilities", [])
+            merged = False
+            
+            for idx, v in enumerate(vuln_list):
+                # Check match by ID or Alias
+                v_ids = set([v["id"]] + v.get("aliases", []))
+                new_ids = set([finding.id] + finding.aliases)
+                
+                if not v_ids.isdisjoint(new_ids):
+                    # Match found! Merge details
+                    v["scanners"] = list(set(v.get("scanners", []) + finding.scanners))
+                    
+                    all_aliases = set(v.get("aliases", []) + finding.aliases)
+                    if finding.id != v["id"]:
+                        all_aliases.add(finding.id)
+                    v["aliases"] = list(all_aliases)
+                    
+                    v_sev_val = SEVERITY_ORDER.get(v["severity"], 0)
+                    if new_severity_val > v_sev_val:
+                        v["severity"] = finding.severity
+                        
+                    vuln_list[idx] = v
+                    merged = True
+                    break
+            
+            if not merged:
+                vuln_list.append(vuln_entry)
+                
+            existing.details["vulnerabilities"] = vuln_list
+            
+            # Update description
+            count = len(vuln_list)
+            existing.description = f"Found {count} vulnerabilities in {finding.component}"
+            
+            # Update found_in
+            if source and source not in existing.found_in:
+                existing.found_in.append(source)
+                
+        else:
+            # Create new Aggregate Finding
+            agg_finding = Finding(
+                id=f"{finding.component}:{finding.version}", 
+                type=FindingType.VULNERABILITY,
+                severity=finding.severity,
+                component=finding.component,
+                version=finding.version,
+                description=f"Found 1 vulnerabilities in {finding.component}",
+                scanners=finding.scanners,
+                details={
+                    "vulnerabilities": [vuln_entry]
+                },
+                found_in=[source] if source else []
+            )
+            self.findings[agg_key] = agg_finding
+
+    def _add_generic_finding(self, finding: Finding, source: str = None):
+        """
+        Adds a finding to the map, merging if it already exists.
         Key for deduplication: type + id + component + version
         """
         # Add source to finding

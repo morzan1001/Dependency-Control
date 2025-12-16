@@ -163,69 +163,114 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
 
                             {finding.type === 'vulnerability' && (
                                 <div className="space-y-4">
-                                    <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">CVSS Score</h4>
-                                            <div className="flex items-center gap-2">
-                                                <span className={`text-lg font-bold ${
-                                                    (finding.details?.cvss_score || 0) >= 9 ? 'text-red-600' :
-                                                    (finding.details?.cvss_score || 0) >= 7 ? 'text-orange-600' :
-                                                    (finding.details?.cvss_score || 0) >= 4 ? 'text-yellow-600' :
-                                                    'text-blue-600'
-                                                }`}>
-                                                    {finding.details?.cvss_score || "N/A"}
-                                                </span>
-                                                {finding.details?.cvss_vector && (
-                                                    <span className="text-xs text-muted-foreground font-mono bg-background px-1 rounded border">
-                                                        {finding.details.cvss_vector}
-                                                    </span>
-                                                )}
+                                    {finding.details?.vulnerabilities ? (
+                                        <div className="space-y-4">
+                                            <h4 className="text-sm font-medium text-muted-foreground">Aggregated Vulnerabilities</h4>
+                                            {finding.details.vulnerabilities.map((vuln: any, idx: number) => (
+                                                <div key={idx} className="border rounded-lg p-4 space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <Badge variant="outline">{vuln.id}</Badge>
+                                                            <Badge variant={
+                                                                vuln.severity === 'CRITICAL' ? 'destructive' :
+                                                                vuln.severity === 'HIGH' ? 'destructive' :
+                                                                vuln.severity === 'MEDIUM' ? 'default' : 
+                                                                'secondary'
+                                                            }>{vuln.severity}</Badge>
+                                                        </div>
+                                                        <span className="text-xs text-muted-foreground">
+                                                            Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || "None"}</span>
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-sm text-muted-foreground">{vuln.description}</p>
+                                                    {vuln.cvss_score && (
+                                                        <div className="flex items-center gap-2 text-xs">
+                                                            <span className="font-medium">CVSS: {vuln.cvss_score}</span>
+                                                            {vuln.cvss_vector && <span className="font-mono text-muted-foreground">{vuln.cvss_vector}</span>}
+                                                        </div>
+                                                    )}
+                                                    {vuln.references && vuln.references.length > 0 && (
+                                                        <div className="pt-2">
+                                                            <p className="text-xs font-medium mb-1">References</p>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                {vuln.references.slice(0, 3).map((ref: string, i: number) => (
+                                                                    <a key={i} href={ref} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline truncate max-w-[200px]">
+                                                                        {ref}
+                                                                    </a>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
+                                                <div>
+                                                    <h4 className="text-sm font-medium text-muted-foreground mb-1">CVSS Score</h4>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className={`text-lg font-bold ${
+                                                            (finding.details?.cvss_score || 0) >= 9 ? 'text-red-600' :
+                                                            (finding.details?.cvss_score || 0) >= 7 ? 'text-orange-600' :
+                                                            (finding.details?.cvss_score || 0) >= 4 ? 'text-yellow-600' :
+                                                            'text-blue-600'
+                                                        }`}>
+                                                            {finding.details?.cvss_score || "N/A"}
+                                                        </span>
+                                                        {finding.details?.cvss_vector && (
+                                                            <span className="text-xs text-muted-foreground font-mono bg-background px-1 rounded border">
+                                                                {finding.details.cvss_vector}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Published</h4>
+                                                    <p className="text-sm">
+                                                        {finding.details?.published_date ? new Date(finding.details.published_date).toLocaleDateString() : "Unknown"}
+                                                    </p>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Published</h4>
-                                            <p className="text-sm">
-                                                {finding.details?.published_date ? new Date(finding.details.published_date).toLocaleDateString() : "Unknown"}
-                                            </p>
-                                        </div>
-                                    </div>
 
-                                    {finding.details?.references && finding.details.references.length > 0 && (
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-2">References</h4>
-                                            <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
-                                                {finding.details.references.map((ref: string, i: number) => (
-                                                    <a 
-                                                        key={i} 
-                                                        href={ref} 
-                                                        target="_blank" 
-                                                        rel="noopener noreferrer"
-                                                        className="text-blue-600 hover:underline break-all"
-                                                    >
-                                                        {ref}
-                                                    </a>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                    
-                                    {finding.details?.urls && finding.details.urls.length > 0 && (
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-2">URLs</h4>
-                                            <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
-                                                {finding.details.urls.map((url: string, i: number) => (
-                                                    <a 
-                                                        key={i} 
-                                                        href={url} 
-                                                        target="_blank" 
-                                                        rel="noopener noreferrer"
-                                                        className="text-blue-600 hover:underline break-all"
-                                                    >
-                                                        {url}
-                                                    </a>
-                                                ))}
-                                            </div>
-                                        </div>
+                                            {finding.details?.references && finding.details.references.length > 0 && (
+                                                <div>
+                                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">References</h4>
+                                                    <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
+                                                        {finding.details.references.map((ref: string, i: number) => (
+                                                            <a 
+                                                                key={i} 
+                                                                href={ref} 
+                                                                target="_blank" 
+                                                                rel="noopener noreferrer"
+                                                                className="text-blue-600 hover:underline break-all"
+                                                            >
+                                                                {ref}
+                                                            </a>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
+                                            {finding.details?.urls && finding.details.urls.length > 0 && (
+                                                <div>
+                                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">URLs</h4>
+                                                    <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
+                                                        {finding.details.urls.map((url: string, i: number) => (
+                                                            <a 
+                                                                key={i} 
+                                                                href={url} 
+                                                                target="_blank" 
+                                                                rel="noopener noreferrer"
+                                                                className="text-blue-600 hover:underline break-all"
+                                                            >
+                                                                {url}
+                                                            </a>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
                                     )}
                                 </div>
                             )}
