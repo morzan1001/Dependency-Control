@@ -36,6 +36,7 @@ class Finding(BaseModel):
     # Additional metadata
     found_in: List[str] = Field(default_factory=list, description="Source files where this was found")
     aliases: List[str] = Field(default_factory=list, description="Alternative IDs (e.g. GHSA vs CVE)")
+    related_findings: List[str] = Field(default_factory=list, description="IDs of related findings (e.g. same CVEs in different packages)")
 
     # Status fields
     waived: bool = False

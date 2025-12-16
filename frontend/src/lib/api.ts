@@ -199,6 +199,7 @@ export interface Finding {
   details: Record<string, any>;
   found_in: string[];
   aliases: string[];
+  related_findings?: string[];
   waived: boolean;
   waiver_reason?: string;
 }

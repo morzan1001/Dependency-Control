@@ -21,9 +21,10 @@ interface FindingDetailsModalProps {
     isOpen: boolean
     onClose: () => void
     projectId: string
+    onSelectFinding?: (id: string) => void
 }
 
-export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: FindingDetailsModalProps) {
+export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSelectFinding }: FindingDetailsModalProps) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
     const [selectedVulnId, setSelectedVulnId] = useState<string | null>(null)
     const { hasPermission } = useAuth()
@@ -111,6 +112,35 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                                 </Badge>
                                             ))}
                                         </div>
+                                    </div>
+                                )}
+                                {finding.related_findings && finding.related_findings.length > 0 && (
+                                    <div className="col-span-2">
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Related Findings</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {finding.related_findings.map((relatedId) => {
+                                                let label = relatedId;
+                                                if (relatedId.startsWith("AGG:VULN:")) {
+                                                    const parts = relatedId.split(":");
+                                                    if (parts.length >= 4) {
+                                                        label = `${parts[2]} (${parts[3]})`;
+                                                    }
+                                                }
+                                                return (
+                                                    <Badge 
+                                                        key={relatedId} 
+                                                        variant="outline" 
+                                                        className="font-mono text-xs border-blue-200 bg-blue-50 text-blue-700 cursor-pointer hover:bg-blue-100"
+                                                        onClick={() => onSelectFinding?.(relatedId)}
+                                                    >
+                                                        {label}
+                                                    </Badge>
+                                                );
+                                            })}
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                            These components share the exact same version and set of vulnerabilities.
+                                        </p>
                                     </div>
                                 )}
                             </div>

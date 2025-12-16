@@ -61,9 +61,43 @@ class ResultAggregator:
 
     def get_findings(self) -> List[Finding]:
         """
-        Returns the list of deduplicated findings.
+        Returns the list of deduplicated findings with post-processing for related findings.
         """
-        return list(self.findings.values())
+        results = list(self.findings.values())
+        
+        # Post-processing: Link related findings (e.g. curl vs libcurl with same version and CVEs)
+        # Group by version first to reduce comparisons
+        by_version = {}
+        for f in results:
+            if f.type == FindingType.VULNERABILITY and f.version and f.version != "unknown":
+                if f.version not in by_version:
+                    by_version[f.version] = []
+                by_version[f.version].append(f)
+        
+        for ver, group in by_version.items():
+            if len(group) < 2:
+                continue
+            
+            # Compare every pair in the group
+            for i in range(len(group)):
+                f1 = group[i]
+                vulns1 = set(v["id"] for v in f1.details.get("vulnerabilities", []))
+                if not vulns1: continue
+
+                for j in range(i + 1, len(group)):
+                    f2 = group[j]
+                    vulns2 = set(v["id"] for v in f2.details.get("vulnerabilities", []))
+                    if not vulns2: continue
+                    
+                    # Check for exact match of vulnerabilities
+                    # This is a strong indicator that they are the same underlying software split into packages
+                    if vulns1 == vulns2:
+                        if f2.id not in f1.related_findings:
+                            f1.related_findings.append(f2.id)
+                        if f1.id not in f2.related_findings:
+                            f2.related_findings.append(f1.id)
+
+        return results
 
     def _normalize_trufflehog(self, result: Dict[str, Any], source: str = None):
         # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
@@ -108,6 +142,105 @@ class ResultAggregator:
                     "redacted": finding.get("Redacted")
                 }
             ), source=source)
+
+    def _parse_version_key(self, v: str):
+        """Helper to parse version string into a comparable tuple."""
+        # Remove common prefixes
+        v = v.lower()
+        if v.startswith("v"): v = v[1:]
+        
+        # Split by non-alphanumeric characters
+        parts = []
+        for part in re.split(r'[^a-z0-9]+', v):
+            if not part: continue
+            if part.isdigit():
+                parts.append(int(part))
+            else:
+                parts.append(part)
+        return tuple(parts)
+
+    def _calculate_aggregated_fixed_version(self, fixed_versions_list: List[str]) -> str:
+        """
+        Calculates the best fixed version(s) considering multiple vulnerabilities and major versions.
+        Input: List of fixed version strings (e.g. ["1.2.5, 2.0.1", "1.2.6"])
+        Output: String (e.g. "1.2.6, 2.0.1")
+        """
+        if not fixed_versions_list:
+            return None
+
+        # 1. Parse all available fixes
+        # Structure: { MajorVersion: { VulnIndex: [VersionTuple, OriginalString] } }
+        major_buckets = {}
+        
+        for i, fv_str in enumerate(fixed_versions_list):
+            # Split by comma to handle "1.2.5, 2.0.1"
+            candidates = [c.strip() for c in fv_str.split(",") if c.strip()]
+            
+            for cand in candidates:
+                try:
+                    parsed = self._parse_version_key(cand)
+                    if not parsed: continue
+                    
+                    # Use first element as major version bucket key
+                    # If it's a string (e.g. 'release'), it goes to its own bucket
+                    major = parsed[0] if len(parsed) > 0 else 0
+                    
+                    if major not in major_buckets:
+                        major_buckets[major] = {}
+                    
+                    if i not in major_buckets[major]:
+                        major_buckets[major][i] = []
+                    
+                    major_buckets[major][i].append((parsed, cand))
+                except Exception:
+                    continue
+
+        # 2. Find valid major versions (must cover ALL vulnerabilities)
+        valid_majors = []
+        num_vulns = len(fixed_versions_list)
+        
+        for major, vulns_map in major_buckets.items():
+            # Check if this major version has a fix for every vulnerability
+            if len(vulns_map) == num_vulns:
+                # Find the MAX required version for this major line
+                max_ver_tuple = None
+                max_ver_str = None
+                
+                for vuln_idx, fixes in vulns_map.items():
+                    # Sort fixes for this vuln by version tuple (ascending)
+                    # We pick the lowest version that fixes the vuln (conservative approach)
+                    fixes.sort(key=lambda x: x[0])
+                    best_fix_for_vuln = fixes[0] 
+                    
+                    if max_ver_tuple is None or best_fix_for_vuln[0] > max_ver_tuple:
+                        max_ver_tuple = best_fix_for_vuln[0]
+                        max_ver_str = best_fix_for_vuln[1]
+                
+                valid_majors.append((major, max_ver_tuple, max_ver_str))
+
+        # 3. Sort and format results
+        if not valid_majors:
+            # Fallback: Just take the max of everything if our strict logic fails
+            all_candidates = []
+            for fv in fixed_versions_list:
+                all_candidates.extend([c.strip() for c in fv.split(",")])
+            if not all_candidates: return None
+            return max(all_candidates, key=lambda x: self._parse_version_key(x) or (0,))
+
+        # Sort by major version (try to sort numerically if possible)
+        try:
+            valid_majors.sort(key=lambda x: x[0] if isinstance(x[0], int) else str(x[0]))
+        except:
+            valid_majors.sort(key=lambda x: str(x[0]))
+            
+        return ", ".join([vm[2] for vm in valid_majors])
+
+    def _resolve_fixed_versions(self, versions: List[str]) -> str:
+        """
+        Resolves the best fixed version(s) considering multiple vulnerabilities and major versions.
+        Replaces legacy _get_latest_version.
+        """
+        return self._calculate_aggregated_fixed_version(versions)
 
     def _normalize_version(self, version: str) -> str:
         if not version:
@@ -212,6 +345,16 @@ class ResultAggregator:
             # Update found_in
             if source and source not in existing.found_in:
                 existing.found_in.append(source)
+
+            # Update top-level fixed_version
+            # Only consider vulnerabilities that actually HAVE a fixed version
+            fvs = [v.get("fixed_version") for v in vuln_list if v.get("fixed_version")]
+            
+            if not fvs:
+                 existing.details["fixed_version"] = None
+            else:
+                 # Calculate the best fixed version(s) covering all vulnerabilities
+                 existing.details["fixed_version"] = self._resolve_fixed_versions(fvs)
                 
         else:
             # Create new Aggregate Finding
@@ -224,7 +367,8 @@ class ResultAggregator:
                 description=f"Found 1 vulnerabilities in {finding.component}",
                 scanners=finding.scanners,
                 details={
-                    "vulnerabilities": [vuln_entry]
+                    "vulnerabilities": [vuln_entry],
+                    "fixed_version": finding.details.get("fixed_version")
                 },
                 found_in=[source] if source else []
             )

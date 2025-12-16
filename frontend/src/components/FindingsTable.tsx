@@ -249,6 +249,10 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                     projectId={projectId}
                     isOpen={!!selectedFinding} 
                     onClose={() => setSelectedFinding(null)} 
+                    onSelectFinding={(id) => {
+                        const found = data.find(f => f.id === id);
+                        if (found) setSelectedFinding(found);
+                    }}
                 />
             )}
         </div>
