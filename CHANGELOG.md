@@ -1,3 +1,11 @@
+# Release 0.5.3
+
+## 🚀 Features
+
+- feat: enhance invitation email handling with error logging; update API routes for password reset and OIDC login (#0)
+
+
+
 # Release 0.5.2
 
 
