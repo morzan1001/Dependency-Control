@@ -1,3 +1,11 @@
+# Release 0.5.5
+
+## 🚀 Features
+
+- feat: enhance findings aggregation and display for vulnerabilities in detail views (#0)
+
+
+
 # Release 0.5.4
 
 ## 🚀 Features
