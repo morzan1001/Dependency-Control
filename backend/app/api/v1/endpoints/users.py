@@ -47,10 +47,24 @@ async def create_user(
 async def read_users(
     skip: int = 0,
     limit: int = 100,
+    search: str = None,
+    sort_by: str = "username",
+    sort_order: str = "asc",
     current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:read_all"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
-    users = await db.users.find().skip(skip).limit(limit).to_list(limit)
+    query = {}
+    if search:
+        query = {
+            "$or": [
+                {"username": {"$regex": search, "$options": "i"}},
+                {"email": {"$regex": search, "$options": "i"}}
+            ]
+        }
+    
+    sort_direction = 1 if sort_order == "asc" else -1
+    
+    users = await db.users.find(query).sort(sort_by, sort_direction).skip(skip).limit(limit).to_list(limit)
     return users
 
 @router.get("/me", response_model=UserSchema)

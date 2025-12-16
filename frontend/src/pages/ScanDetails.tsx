@@ -1,11 +1,11 @@
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getScan, getProject } from '@/lib/api'
+import { getScan, getProject, getScanResults } from '@/lib/api'
 import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
@@ -23,6 +23,12 @@ export default function ScanDetails() {
     queryKey: ['project', projectId],
     queryFn: () => getProject(projectId!),
     enabled: !!projectId
+  })
+
+  const { data: scanResults, isLoading: isResultsLoading } = useQuery({
+    queryKey: ['scan-results', scanId],
+    queryFn: () => getScanResults(scanId!),
+    enabled: !!scanId
   })
 
   if (isScanLoading || isProjectLoading) {
@@ -135,6 +141,44 @@ export default function ScanDetails() {
                                 </div>
                             </div>
                         )}
+                        {scan.metadata?.CI_PIPELINE_ID && scan.metadata?.CI_PROJECT_URL && (
+                            <div className="flex flex-col space-y-1">
+                                <span className="text-sm text-muted-foreground">Pipeline</span>
+                                <a 
+                                    href={`${scan.metadata.CI_PROJECT_URL}/-/pipelines/${scan.metadata.CI_PIPELINE_ID}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-2 text-primary hover:underline"
+                                >
+                                    <PlayCircle className="h-4 w-4" />
+                                    <span className="font-medium">#{scan.metadata.CI_PIPELINE_ID}</span>
+                                    <ExternalLink className="h-3 w-3" />
+                                </a>
+                            </div>
+                        )}
+                        {scan.metadata?.CI_JOB_ID && scan.metadata?.CI_PROJECT_URL && (
+                            <div className="flex flex-col space-y-1">
+                                <span className="text-sm text-muted-foreground">Job</span>
+                                <a 
+                                    href={`${scan.metadata.CI_PROJECT_URL}/-/jobs/${scan.metadata.CI_JOB_ID}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-2 text-primary hover:underline"
+                                >
+                                    <FileJson className="h-4 w-4" />
+                                    <span className="font-medium">#{scan.metadata.CI_JOB_ID}</span>
+                                    <ExternalLink className="h-3 w-3" />
+                                </a>
+                            </div>
+                        )}
+                        {scan.metadata?.CI_COMMIT_MESSAGE && (
+                            <div className="col-span-2 flex flex-col space-y-1 border-t pt-2 mt-2">
+                                <span className="text-sm text-muted-foreground">Commit Message</span>
+                                <span className="text-sm font-medium truncate" title={scan.metadata.CI_COMMIT_MESSAGE}>
+                                    {scan.metadata.CI_COMMIT_MESSAGE}
+                                </span>
+                            </div>
+                        )}
                     </div>
                 </CardContent>
             </Card>
@@ -213,16 +257,93 @@ export default function ScanDetails() {
         )}
 
         <TabsContent value="raw" className="space-y-4">
-            <Card>
-                <CardHeader>
-                    <CardTitle>Raw Scan Data</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <pre className="bg-muted p-4 rounded-md overflow-auto max-h-[600px] text-xs">
-                        {JSON.stringify(scan, null, 2)}
-                    </pre>
-                </CardContent>
-            </Card>
+            {isResultsLoading ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                    <Skeleton className="h-[200px]" />
+                    <Skeleton className="h-[200px]" />
+                </div>
+            ) : (
+                <div className="grid gap-4">
+                    {/* Analysis Results */}
+                    {scanResults && scanResults.length > 0 && (
+                        <div className="space-y-4">
+                            <h3 className="text-lg font-medium">Analysis Results</h3>
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                {scanResults.map((result) => (
+                                    <Card key={result._id} className="overflow-hidden">
+                                        <CardHeader className="bg-muted/50 pb-2">
+                                            <CardTitle className="text-base flex items-center justify-between">
+                                                <span className="capitalize">{result.analyzer_name}</span>
+                                                <Badge variant="outline">Result</Badge>
+                                            </CardTitle>
+                                        </CardHeader>
+                                        <CardContent className="p-0">
+                                            <div className="max-h-[300px] overflow-auto p-4 text-xs font-mono">
+                                                <pre>{JSON.stringify(result.result, null, 2)}</pre>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Raw SBOMs */}
+                    <div className="space-y-4">
+                        <h3 className="text-lg font-medium flex items-center gap-2">
+                            <FileJson className="h-5 w-5" />
+                            Raw SBOMs
+                        </h3>
+                        {scan.sboms && scan.sboms.length > 0 ? (
+                            <div className="grid gap-4 md:grid-cols-1">
+                                {scan.sboms.map((sbom: any, index: number) => {
+                                    let toolName = "Unknown Scanner";
+                                    try {
+                                        if (sbom.metadata?.tools) {
+                                            if (Array.isArray(sbom.metadata.tools)) {
+                                                // CycloneDX 1.4
+                                                toolName = sbom.metadata.tools.map((t: any) => t.name || t.vendor).join(', ');
+                                            } else if (sbom.metadata.tools.components) {
+                                                // CycloneDX 1.5
+                                                toolName = sbom.metadata.tools.components.map((c: any) => c.name).join(', ');
+                                            }
+                                        }
+                                    } catch (e) {
+                                        console.warn("Failed to extract tool name", e);
+                                    }
+
+                                    return (
+                                        <Card key={index}>
+                                            <CardHeader>
+                                                <CardTitle className="text-base flex items-center justify-between">
+                                                    <span>SBOM #{index + 1}</span>
+                                                    <Badge variant="outline">{toolName || 'Unknown'}</Badge>
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent>
+                                                <pre className="bg-muted p-4 rounded-md overflow-auto max-h-[400px] text-xs">
+                                                    {JSON.stringify(sbom, null, 2)}
+                                                </pre>
+                                            </CardContent>
+                                        </Card>
+                                    )
+                                })}
+                            </div>
+                        ) : (
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle>Raw Scan Data</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <pre className="bg-muted p-4 rounded-md overflow-auto max-h-[600px] text-xs">
+                                        {JSON.stringify(scan, null, 2)}
+                                    </pre>
+                                </CardContent>
+                            </Card>
+                        )}
+                    </div>
+                </div>
+            )}
         </TabsContent>
       </Tabs>
     </div>

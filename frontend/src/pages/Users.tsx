@@ -7,17 +7,24 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { InviteUserDialog } from '@/components/users/InviteUserDialog';
 import { UserTable } from '@/components/users/UserTable';
 import { UserDetailsDialog } from '@/components/users/UserDetailsDialog';
+import { Input } from '@/components/ui/input';
+import { Search } from 'lucide-react';
+import { useDebounce } from '@/hooks/use-debounce'; // Assuming we have this or I'll implement a simple debounce
 
 export default function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("username");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
+  const debouncedSearch = useDebounce(search, 500);
   const limit = 20;
   
   const { hasPermission } = useAuth();
 
   const { data: users, isLoading: isLoadingUsers, error } = useQuery({
-    queryKey: ['users', page],
-    queryFn: () => getUsers(page * limit, limit),
+    queryKey: ['users', page, debouncedSearch, sortBy, sortOrder],
+    queryFn: () => getUsers(page * limit, limit, debouncedSearch, sortBy, sortOrder),
   });
 
   const { data: invitations, isLoading: isLoadingInvitations } = useQuery({
@@ -27,8 +34,12 @@ export default function UsersPage() {
 
   const isLoading = isLoadingUsers || isLoadingInvitations;
 
+  const filteredInvitations = invitations?.filter(invite => 
+    !debouncedSearch || invite.email.toLowerCase().includes(debouncedSearch.toLowerCase())
+  ) || [];
+
   const allUsers: User[] = [
-    ...(invitations?.map(invite => ({
+    ...filteredInvitations.map(invite => ({
       id: invite._id,
       email: invite.email,
       username: invite.email,
@@ -36,7 +47,7 @@ export default function UsersPage() {
       permissions: [],
       totp_enabled: false,
       status: 'invited' as const
-    })) || []),
+    })),
     ...(users || []).map(u => ({ ...u, status: 'active' as const }))
   ];
 
@@ -83,7 +94,16 @@ export default function UsersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Users</h1>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          <div className="relative w-64">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search users..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-8"
+            />
+          </div>
           {hasPermission('user:create') && (
             <InviteUserDialog />
           )}
@@ -100,7 +120,17 @@ export default function UsersPage() {
             page={page} 
             limit={limit} 
             onPageChange={setPage} 
-            onSelectUser={setSelectedUser} 
+            onSelectUser={setSelectedUser}
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={(column) => {
+              if (sortBy === column) {
+                setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+              } else {
+                setSortBy(column);
+                setSortOrder("asc");
+              }
+            }}
           />
         </CardContent>
       </Card>

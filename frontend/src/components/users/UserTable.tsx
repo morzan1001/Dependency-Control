@@ -1,7 +1,7 @@
 import { User, deleteUser, inviteUser } from '@/lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { Check, X, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Check, X, Trash2, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -21,9 +21,12 @@ interface UserTableProps {
   limit: number;
   onPageChange: (page: number) => void;
   onSelectUser: (user: User) => void;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
+  onSort?: (column: string) => void;
 }
 
-export function UserTable({ users, page, limit, onPageChange, onSelectUser }: UserTableProps) {
+export function UserTable({ users, page, limit, onPageChange, onSelectUser, sortBy, sortOrder, onSort }: UserTableProps) {
   const { hasPermission } = useAuth();
   const queryClient = useQueryClient();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -56,15 +59,43 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser }: Us
     }
   });
 
+  const renderSortIcon = (column: string) => {
+    if (!onSort) return null;
+    if (sortBy !== column) return <ArrowUpDown className="ml-2 h-4 w-4 opacity-50" />;
+    if (sortOrder === 'asc') return <ArrowUp className="ml-2 h-4 w-4" />;
+    return <ArrowDown className="ml-2 h-4 w-4" />;
+  };
+
+  const handleSort = (column: string) => {
+    if (onSort) {
+      onSort(column);
+    }
+  };
+
   return (
     <>
       <div className="relative w-full overflow-auto">
         <table className="w-full caption-bottom text-sm">
           <thead className="[&_tr]:border-b">
             <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Username</th>
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Email</th>
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => handleSort('username')}>
+                <div className="flex items-center">
+                  Username
+                  {renderSortIcon('username')}
+                </div>
+              </th>
+              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => handleSort('email')}>
+                <div className="flex items-center">
+                  Email
+                  {renderSortIcon('email')}
+                </div>
+              </th>
+              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
+                <div className="flex items-center">
+                  Status
+                  {renderSortIcon('status')}
+                </div>
+              </th>
               <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">2FA</th>
               <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Permissions</th>
               <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Actions</th>

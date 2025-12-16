@@ -4,12 +4,21 @@ import { getTeams, Team } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { CreateTeamDialog } from '@/components/teams/CreateTeamDialog';
 import { TeamCard } from '@/components/teams/TeamCard';
 import { EditTeamDialog } from '@/components/teams/EditTeamDialog';
 import { TeamMembersDialog } from '@/components/teams/TeamMembersDialog';
 import { AddMemberDialog } from '@/components/teams/AddMemberDialog';
 import { DeleteTeamDialog } from '@/components/teams/DeleteTeamDialog';
+import { ArrowUp, ArrowDown } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 export default function TeamsPage() {
   const { hasPermission } = useAuth();
@@ -26,6 +35,8 @@ export default function TeamsPage() {
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [sortBy, setSortBy] = useState("name");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -35,8 +46,8 @@ export default function TeamsPage() {
   }, [search]);
 
   const { data: teams, isLoading, error } = useQuery({
-    queryKey: ['teams', debouncedSearch],
-    queryFn: () => getTeams(debouncedSearch),
+    queryKey: ['teams', debouncedSearch, sortBy, sortOrder],
+    queryFn: () => getTeams(debouncedSearch, sortBy, sortOrder),
     placeholderData: keepPreviousData,
   });
 
@@ -91,6 +102,22 @@ export default function TeamsPage() {
             onChange={(e) => setSearch(e.target.value)}
             className="w-[250px]"
           />
+          <Select value={sortBy} onValueChange={setSortBy}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="name">Name</SelectItem>
+              <SelectItem value="created_at">Created Date</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
+          >
+            {sortOrder === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+          </Button>
           {hasPermission('team:create') && <CreateTeamDialog />}
         </div>
       </div>

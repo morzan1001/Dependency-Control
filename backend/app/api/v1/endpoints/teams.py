@@ -89,6 +89,8 @@ async def create_team(
 @router.get("/", response_model=List[TeamResponse])
 async def read_teams(
     search: str = None,
+    sort_by: str = "name",
+    sort_order: str = "asc",
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -111,8 +113,11 @@ async def read_teams(
     else:
         raise HTTPException(status_code=403, detail="Not enough permissions")
         
+    sort_direction = 1 if sort_order == "asc" else -1
+
     pipeline = [
         {"$match": final_query},
+        {"$sort": {sort_by: sort_direction}},
         {"$lookup": {
             "from": "users",
             "let": {"member_ids": "$members.user_id"},

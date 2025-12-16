@@ -6,6 +6,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
+import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 interface FindingsTableProps {
     scanId: string;
@@ -19,6 +20,8 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
     const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
     const [tableOffset, setTableOffset] = useState(0)
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
+    const [sortBy, setSortBy] = useState("severity")
+    const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
 
     useLayoutEffect(() => {
         if (!parentRef.current) return
@@ -49,13 +52,15 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
         isLoading,
         isError
     } = useInfiniteQuery({
-        queryKey: ['findings', scanId, category, search],
+        queryKey: ['findings', scanId, category, search, sortBy, sortOrder],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await getScanFindings(scanId, {
                 skip: pageParam,
                 limit: 50,
                 category,
-                search
+                search,
+                sort_by: sortBy,
+                sort_order: sortOrder
             });
             return res;
         },
@@ -111,11 +116,49 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
         rowVirtualizer.getVirtualItems(),
     ])
 
-    if (isLoading) return <div className="space-y-2">
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-10 w-full" />
-    </div>
+    const renderSortIcon = (column: string) => {
+        if (sortBy !== column) return <ArrowUpDown className="ml-2 h-4 w-4 opacity-50" />;
+        if (sortOrder === 'asc') return <ArrowUp className="ml-2 h-4 w-4" />;
+        return <ArrowDown className="ml-2 h-4 w-4" />;
+    };
+
+    const handleSort = (column: string) => {
+        if (sortBy === column) {
+            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortBy(column);
+            setSortOrder('asc');
+        }
+    };
+
+    if (isLoading) {
+        return (
+            <div className="relative">
+                <table className="w-full text-sm">
+                    <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
+                        <TableRow className="flex w-full">
+                            <TableHead className="w-[100px] flex-none bg-background">Severity</TableHead>
+                            <TableHead className="w-[150px] flex-none bg-background">ID</TableHead>
+                            <TableHead className="w-[200px] flex-none bg-background">Component</TableHead>
+                            <TableHead className="w-[120px] flex-none bg-background">Type</TableHead>
+                            <TableHead className="w-[120px] flex-none bg-background">Scanner</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {Array.from({ length: 10 }).map((_, i) => (
+                            <TableRow key={i} className="flex w-full border-b">
+                                <TableCell className="w-[100px] flex-none"><Skeleton className="h-6 w-16" /></TableCell>
+                                <TableCell className="w-[150px] flex-none"><Skeleton className="h-6 w-24" /></TableCell>
+                                <TableCell className="w-[200px] flex-none"><Skeleton className="h-6 w-32" /></TableCell>
+                                <TableCell className="w-[120px] flex-none"><Skeleton className="h-6 w-20" /></TableCell>
+                                <TableCell className="w-[120px] flex-none"><Skeleton className="h-6 w-20" /></TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </table>
+            </div>
+        )
+    }
 
     if (isError) return <div>Error loading findings</div>
 
@@ -124,14 +167,23 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
     return (
         <div ref={parentRef} className="relative">
             <table className="w-full text-sm">
-                <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
+                <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
                     <TableRow className="flex w-full">
-                        <TableHead className="w-[100px] flex-none">Severity</TableHead>
-                        <TableHead className="w-[150px] flex-none">ID</TableHead>
-                        <TableHead className="w-[200px] flex-none">Component</TableHead>
-                        <TableHead className="w-[120px] flex-none">Type</TableHead>
-                        <TableHead className="w-[120px] flex-none">Scanner</TableHead>
-                        <TableHead className="flex-1">Description</TableHead>
+                        <TableHead className="w-[100px] flex-none cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('severity')}>
+                            <div className="flex items-center">Severity {renderSortIcon('severity')}</div>
+                        </TableHead>
+                        <TableHead className="w-[150px] flex-none cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('vuln_id')}>
+                            <div className="flex items-center">ID {renderSortIcon('vuln_id')}</div>
+                        </TableHead>
+                        <TableHead className="w-[200px] flex-none cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('component')}>
+                            <div className="flex items-center">Component {renderSortIcon('component')}</div>
+                        </TableHead>
+                        <TableHead className="w-[120px] flex-none cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('type')}>
+                            <div className="flex items-center">Type {renderSortIcon('type')}</div>
+                        </TableHead>
+                        <TableHead className="w-[120px] flex-none cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('scanner')}>
+                            <div className="flex items-center">Scanner {renderSortIcon('scanner')}</div>
+                        </TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', display: 'block' }}>
@@ -154,7 +206,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                 }}
                             >
                                 {isLoaderRow ? (
-                                    <TableCell colSpan={6} className="w-full text-center">Loading more...</TableCell>
+                                    <TableCell colSpan={5} className="w-full text-center">Loading more...</TableCell>
                                 ) : (
                                     <>
                                         <TableCell className="w-[100px] flex-none">
@@ -174,9 +226,6 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                         </TableCell>
                                         <TableCell className="w-[120px] flex-none text-sm text-muted-foreground">
                                             {finding.scanners?.join(', ') || 'Unknown'}
-                                        </TableCell>
-                                        <TableCell className="flex-1 truncate" title={finding.description}>
-                                            {finding.description}
                                         </TableCell>
                                     </>
                                 )}

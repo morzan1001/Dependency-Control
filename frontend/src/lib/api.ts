@@ -203,6 +203,19 @@ export interface Finding {
   waiver_reason?: string;
 }
 
+export interface AnalysisResult {
+  _id: string;
+  scan_id: string;
+  analyzer_name: string;
+  result: any;
+  created_at: string;
+}
+
+export const getScanResults = async (scanId: string) => {
+  const response = await api.get<AnalysisResult[]>(`/projects/scans/${scanId}/results`);
+  return response.data;
+};
+
 export interface Scan {
   _id: string;
   project_id: string;
@@ -323,26 +336,20 @@ export const getProjectBranches = async (id: string) => {
   return response.data;
 };
 
-export interface AnalysisResult {
-  _id: string;
-  scan_id: string;
-  analyzer_name: string;
-  result: any;
-  created_at: string;
-}
-
-export const getScanResults = async (scanId: string) => {
-  const response = await api.get<AnalysisResult[]>(`/projects/scans/${scanId}/results`);
-  return response.data;
-};
-
 export const getScan = async (scanId: string) => {
   const response = await api.get<Scan>(`/projects/scans/${scanId}`);
   return response.data;
 };
 
-export const getUsers = async (skip = 0, limit = 20) => {
-  const response = await api.get<User[]>(`/users/?skip=${skip}&limit=${limit}`);
+export const getUsers = async (skip = 0, limit = 20, search?: string, sortBy = 'username', sortOrder = 'asc') => {
+  const params = new URLSearchParams();
+  params.append('skip', skip.toString());
+  params.append('limit', limit.toString());
+  if (search) params.append('search', search);
+  params.append('sort_by', sortBy);
+  params.append('sort_order', sortOrder);
+  
+  const response = await api.get<User[]>('/users/', { params });
   return response.data;
 };
 
@@ -385,9 +392,11 @@ export interface Team {
   updated_at: string;
 }
 
-export const getTeams = async (search?: string) => {
+export const getTeams = async (search?: string, sortBy = 'name', sortOrder = 'asc') => {
   const params = new URLSearchParams();
   if (search) params.append('search', search);
+  params.append('sort_by', sortBy);
+  params.append('sort_order', sortOrder);
   const response = await api.get<Team[]>('/teams/', { params });
   return response.data;
 };
