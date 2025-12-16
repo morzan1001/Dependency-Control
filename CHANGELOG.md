@@ -1,3 +1,11 @@
+# Release 0.5.6
+
+## 🚀 Features
+
+- feat: update version to 0.5.6 and enhance vulnerability handling in UI components (#0)
+
+
+
 # Release 0.5.5
 
 ## 🚀 Features
