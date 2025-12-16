@@ -1,3 +1,11 @@
+# Release 0.5.7
+
+## 🚀 Features
+
+- feat: add related findings field to Finding model and enhance UI to display related findings (#0)
+
+
+
 # Release 0.5.6
 
 ## 🚀 Features
