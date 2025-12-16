@@ -401,10 +401,9 @@ async def read_recent_scans(
     for scan_data in scans:
         scan = Scan(**scan_data)
         # Create RecentScan object
-        recent_scan = RecentScan(
-            **scan.dict(by_alias=True),
-            project_name=project_map.get(scan.project_id, "Unknown Project")
-        )
+        scan_dict = scan.dict(by_alias=True)
+        scan_dict['project_name'] = project_map.get(scan.project_id, "Unknown Project")
+        recent_scan = RecentScan(**scan_dict)
         result.append(recent_scan)
         
     return result
