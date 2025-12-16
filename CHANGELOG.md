@@ -1,3 +1,16 @@
+# Release 0.4.6
+
+## 🚀 Features
+
+- feat: add system invitation endpoint and enhance user management with invitation handling (#0)
+- feat: update error handling to use AxiosError type and enhance type definitions across components (#0)
+
+## 🐛 Fixes
+
+- fix: streamline recent scan creation by simplifying object initialization (#0)
+
+
+
 # Release 0.4.5
 
 ## 🚀 Features
