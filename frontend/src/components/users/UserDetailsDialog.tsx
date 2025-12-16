@@ -160,7 +160,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
         if (!val) setResetLink(null);
         onOpenChange(val);
       }}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>User Details: {user?.username}</DialogTitle>
           </DialogHeader>

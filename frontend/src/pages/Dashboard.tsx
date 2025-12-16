@@ -5,7 +5,7 @@ import { getDashboardStats, getRecentScans, getProjects } from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useState, useRef } from 'react'
+import { useState, useRef, useLayoutEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { useVirtualizer } from '@tanstack/react-virtual'
 
@@ -47,12 +47,50 @@ export default function Dashboard() {
 
   // Virtual Scroll Setup
   const parentRef = useRef<HTMLDivElement>(null)
+  const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
+  const [tableOffset, setTableOffset] = useState(0)
+
+  useLayoutEffect(() => {
+      if (!parentRef.current) return
+      
+      const container = parentRef.current.closest('main') as HTMLElement
+      setScrollContainer(container)
+
+      if (container) {
+           const updateOffset = () => {
+              if (parentRef.current && container) {
+                  const rect = parentRef.current.getBoundingClientRect()
+                  const containerRect = container.getBoundingClientRect()
+                  setTableOffset(rect.top - containerRect.top + container.scrollTop)
+              }
+           }
+           
+           updateOffset()
+           window.addEventListener('resize', updateOffset)
+           return () => window.removeEventListener('resize', updateOffset)
+      }
+  }, [])
   
   const rowVirtualizer = useVirtualizer({
     count: projectList.length,
-    getScrollElement: () => parentRef.current,
+    getScrollElement: () => scrollContainer,
     estimateSize: () => 73, // Approximate row height
     overscan: 5,
+    observeElementOffset: (_instance, cb) => {
+        const element = scrollContainer
+        if (!element) return undefined
+
+        const onScroll = () => {
+            const offset = element.scrollTop - tableOffset
+            cb(Math.max(0, offset), false)
+        }
+
+        element.addEventListener('scroll', onScroll, { passive: true })
+        onScroll()
+        return () => {
+            element.removeEventListener('scroll', onScroll)
+        }
+    },
   })
 
   const stats = [
@@ -217,7 +255,7 @@ export default function Dashboard() {
         <CardContent>
             <div 
                 ref={parentRef}
-                className="relative w-full overflow-auto max-h-[600px]"
+                className="relative w-full"
             >
                 <table className="w-full caption-bottom text-sm">
                     <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">

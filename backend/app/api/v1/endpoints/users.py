@@ -461,15 +461,25 @@ async def delete_user(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
-    Delete a user. Requires 'user:manage' or 'user:delete' permissions.
+    Delete a user or revoke a pending invitation.
+    Requires 'user:manage' or 'user:delete' permissions.
     """
     if user_id == str(current_user.id):
         raise HTTPException(status_code=400, detail="Users cannot delete themselves")
 
+    # 1. Try to find and delete a real user
     user = await db.users.find_one({"_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-        
-    await db.users.delete_one({"_id": user_id})
-    return None
+    if user:
+        await db.users.delete_one({"_id": user_id})
+        return None
+
+    # 2. If not found, try to find and delete a pending invitation
+    # Invitations use their _id as the user_id in the frontend list
+    invitation = await db.system_invitations.find_one({"_id": user_id})
+    if invitation:
+        await db.system_invitations.delete_one({"_id": user_id})
+        return None
+
+    # 3. If neither found, return 404
+    raise HTTPException(status_code=404, detail="User or invitation not found")
 

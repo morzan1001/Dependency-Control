@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getProjectScans, getProject, getWaivers, Finding, Waiver, Scan } from '@/lib/api'
+import { getProjectScans, getWaivers, Scan } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Activity, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
@@ -12,11 +12,6 @@ interface ProjectOverviewProps {
 }
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
-  const { data: project } = useQuery({
-    queryKey: ['project', projectId],
-    queryFn: () => getProject(projectId),
-  })
-
   const { data: scans, isLoading } = useQuery({
     queryKey: ['project-scans-overview', projectId],
     queryFn: () => getProjectScans(projectId, 0, 100), // Fetch last 100 for charts
@@ -32,95 +27,53 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   // Filter scans based on selection
   const filteredScans = scanList.filter(s => selectedBranches.includes(s.branch))
 
-  // Calculate Project Stats (Deduplicated across latest scan of each branch)
+  // Calculate Project Stats (Using pre-calculated stats from scans)
   const projectStats = useMemo(() => {
       if (!filteredScans.length) return null;
 
-      // Helper to check if finding is active (not waived, analyzer enabled)
-      const isFindingActive = (finding: Finding) => {
-          // Check waivers
-          let isWaived = finding.waived;
-          if (!isWaived && waivers) {
-              isWaived = waivers.some((waiver: Waiver) => {
-                  if (waiver.expiration_date && new Date(waiver.expiration_date) < new Date()) return false;
-                  let match = true;
-                  if (waiver.finding_id && waiver.finding_id !== finding.id) match = false;
-                  if (match && waiver.package_name && waiver.package_name !== finding.component) match = false;
-                  if (match && waiver.package_version && waiver.package_version !== finding.version) match = false;
-                  if (match && waiver.finding_type && waiver.finding_type !== finding.type) match = false;
-                  return match;
-              });
-          }
-          if (isWaived) return false;
-
-          // Check active analyzers
-          const activeAnalyzers = project?.active_analyzers || [];
-          const findingScanners = finding.scanners || [];
-          if (findingScanners.length > 0) {
-              const isActive = findingScanners.some((scanner: string) => activeAnalyzers.includes(scanner));
-              if (!isActive) return false;
-          }
-          return true;
-      };
-
-      // 1. Group by branch
-      const scansByBranch: Record<string, Scan[]> = {};
+      // 1. Group by branch and find latest scan for each
+      const latestScansByBranch: Record<string, Scan> = {};
+      
       filteredScans.forEach(scan => {
           if (scan.status !== 'completed') return;
-          if (!scansByBranch[scan.branch]) scansByBranch[scan.branch] = [];
-          scansByBranch[scan.branch].push(scan);
+          
+          const currentLatest = latestScansByBranch[scan.branch];
+          if (!currentLatest || new Date(scan.created_at) > new Date(currentLatest.created_at)) {
+              latestScansByBranch[scan.branch] = scan;
+          }
       });
 
-      const uniqueFindings = new Map(); // Global unique findings
-      const branchStatsData: { name: string; critical: number; high: number; medium: number; low: number }[] = [];
+      const branchStatsData = Object.values(latestScansByBranch).map(scan => ({
+          name: scan.branch,
+          critical: scan.stats?.critical || 0,
+          high: scan.stats?.high || 0,
+          medium: scan.stats?.medium || 0,
+          low: scan.stats?.low || 0,
+          info: scan.stats?.info || 0,
+          unknown: scan.stats?.unknown || 0
+      }));
 
-      Object.entries(scansByBranch).forEach(([branch, branchScans]) => {
-          // Sort by date desc
-          branchScans.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-          if (branchScans.length === 0) return;
+      // 2. Calculate Global Stats (Use the absolute latest scan across all selected branches)
+      let globalStats = { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
+      
+      // Find the most recent scan overall
+      const latestScan = Object.values(latestScansByBranch).sort((a, b) => 
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )[0];
 
-          const latestScan = branchScans[0];
-          const latestCommit = latestScan.commit_hash;
-          const commitScans = branchScans.filter(s => s.commit_hash === latestCommit);
+      if (latestScan && latestScan.stats) {
+          globalStats = { 
+              critical: latestScan.stats.critical || 0,
+              high: latestScan.stats.high || 0,
+              medium: latestScan.stats.medium || 0,
+              low: latestScan.stats.low || 0,
+              info: latestScan.stats.info || 0,
+              unknown: latestScan.stats.unknown || 0
+          };
+      }
 
-          const currentBranchStats = { name: branch, critical: 0, high: 0, medium: 0, low: 0 };
-          const branchUniqueFindings = new Set<string>();
-
-          commitScans.forEach(scan => {
-              if (!scan.findings_summary) return;
-              scan.findings_summary.forEach((finding: Finding) => {
-                  if (!isFindingActive(finding)) return;
-
-                  const key = `${finding.type}:${finding.id}:${finding.component}:${finding.version}`;
-                  
-                  // Add to global stats
-                  if (!uniqueFindings.has(key)) {
-                      uniqueFindings.set(key, finding);
-                  }
-
-                  // Add to branch stats (deduplicated locally)
-                  if (!branchUniqueFindings.has(key)) {
-                      branchUniqueFindings.add(key);
-                      const severity = (finding.severity || 'UNKNOWN').toLowerCase();
-                      if (currentBranchStats[severity as keyof typeof currentBranchStats] !== undefined) {
-                          (currentBranchStats as any)[severity]++;
-                      }
-                  }
-              });
-          });
-          branchStatsData.push(currentBranchStats);
-      });
-
-      // 3. Calculate Global Stats
-      const stats: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
-      uniqueFindings.forEach(finding => {
-          const severity = (finding.severity || 'UNKNOWN').toLowerCase();
-          if (stats[severity] !== undefined) stats[severity]++;
-          else stats.unknown++;
-      });
-
-      return { stats, branchStats: branchStatsData };
-  }, [filteredScans, project, waivers]);
+      return { stats: globalStats, branchStats: branchStatsData };
+  }, [filteredScans]);
 
   if (isLoading) {
     return (

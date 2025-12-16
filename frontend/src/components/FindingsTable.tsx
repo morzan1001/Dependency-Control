@@ -1,19 +1,45 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useRef, useEffect } from 'react'
-import { getScanFindings } from '@/lib/api'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useRef, useEffect, useState, useLayoutEffect } from 'react'
+import { getScanFindings, Finding } from '@/lib/api'
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { FindingDetailsModal } from '@/components/FindingDetailsModal'
 
 interface FindingsTableProps {
     scanId: string;
+    projectId: string;
     category?: string;
     search?: string;
 }
 
-export function FindingsTable({ scanId, category, search }: FindingsTableProps) {
+export function FindingsTable({ scanId, projectId, category, search }: FindingsTableProps) {
     const parentRef = useRef<HTMLDivElement>(null)
+    const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
+    const [tableOffset, setTableOffset] = useState(0)
+    const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
+
+    useLayoutEffect(() => {
+        if (!parentRef.current) return
+        
+        const container = parentRef.current.closest('main') as HTMLElement
+        setScrollContainer(container)
+
+        if (container) {
+             const updateOffset = () => {
+                if (parentRef.current && container) {
+                    const rect = parentRef.current.getBoundingClientRect()
+                    const containerRect = container.getBoundingClientRect()
+                    setTableOffset(rect.top - containerRect.top + container.scrollTop)
+                }
+             }
+             
+             updateOffset()
+             window.addEventListener('resize', updateOffset)
+             return () => window.removeEventListener('resize', updateOffset)
+        }
+    }, [])
 
     const {
         data,
@@ -44,9 +70,24 @@ export function FindingsTable({ scanId, category, search }: FindingsTableProps) 
 
     const rowVirtualizer = useVirtualizer({
         count: hasNextPage ? allRows.length + 1 : allRows.length,
-        getScrollElement: () => parentRef.current,
+        getScrollElement: () => scrollContainer,
         estimateSize: () => 60,
         overscan: 5,
+        observeElementOffset: (_instance, cb) => {
+            const element = scrollContainer
+            if (!element) return undefined
+
+            const onScroll = () => {
+                const offset = element.scrollTop - tableOffset
+                cb(Math.max(0, offset), false)
+            }
+
+            element.addEventListener('scroll', onScroll, { passive: true })
+            onScroll()
+            return () => {
+                element.removeEventListener('scroll', onScroll)
+            }
+        },
     })
 
     useEffect(() => {
@@ -81,25 +122,28 @@ export function FindingsTable({ scanId, category, search }: FindingsTableProps) 
     if (allRows.length === 0) return <div className="p-4 text-center text-muted-foreground">No findings found</div>
 
     return (
-        <div ref={parentRef} className="h-[600px] overflow-auto border rounded-md">
-            <Table>
-                <TableHeader className="sticky top-0 bg-background z-10">
-                    <TableRow>
-                        <TableHead>Severity</TableHead>
-                        <TableHead>ID</TableHead>
-                        <TableHead>Component</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Description</TableHead>
+        <div ref={parentRef} className="relative">
+            <table className="w-full text-sm">
+                <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
+                    <TableRow className="flex w-full">
+                        <TableHead className="w-[100px] flex-none">Severity</TableHead>
+                        <TableHead className="w-[150px] flex-none">ID</TableHead>
+                        <TableHead className="w-[200px] flex-none">Component</TableHead>
+                        <TableHead className="w-[120px] flex-none">Type</TableHead>
+                        <TableHead className="w-[120px] flex-none">Scanner</TableHead>
+                        <TableHead className="flex-1">Description</TableHead>
                     </TableRow>
                 </TableHeader>
-                <TableBody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+                <TableBody style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', display: 'block' }}>
                     {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                         const isLoaderRow = virtualRow.index > allRows.length - 1
                         const finding = allRows[virtualRow.index]
 
                         return (
                             <TableRow
+                                onClick={() => !isLoaderRow && setSelectedFinding(finding)}
                                 key={virtualRow.index}
+                                className="cursor-pointer hover:bg-muted/50 flex w-full border-b"
                                 style={{
                                     position: 'absolute',
                                     top: 0,
@@ -110,23 +154,28 @@ export function FindingsTable({ scanId, category, search }: FindingsTableProps) 
                                 }}
                             >
                                 {isLoaderRow ? (
-                                    <TableCell colSpan={5}>Loading more...</TableCell>
+                                    <TableCell colSpan={6} className="w-full text-center">Loading more...</TableCell>
                                 ) : (
                                     <>
-                                        <TableCell>
+                                        <TableCell className="w-[100px] flex-none">
                                             <SeverityBadge severity={finding.severity} />
                                         </TableCell>
-                                        <TableCell className="font-mono text-xs">{finding.id}</TableCell>
-                                        <TableCell>
-                                            <div className="flex flex-col">
-                                                <span className="font-medium">{finding.component}</span>
-                                                <span className="text-xs text-muted-foreground">{finding.version}</span>
+                                        <TableCell className="w-[150px] flex-none font-mono text-xs truncate" title={finding.id}>
+                                            {finding.id}
+                                        </TableCell>
+                                        <TableCell className="w-[200px] flex-none">
+                                            <div className="flex flex-col truncate">
+                                                <span className="font-medium truncate" title={finding.component}>{finding.component}</span>
+                                                <span className="text-xs text-muted-foreground truncate" title={finding.version}>{finding.version}</span>
                                             </div>
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell className="w-[120px] flex-none">
                                             <Badge variant="outline">{finding.type}</Badge>
                                         </TableCell>
-                                        <TableCell className="max-w-[400px] truncate" title={finding.description}>
+                                        <TableCell className="w-[120px] flex-none text-sm text-muted-foreground">
+                                            {finding.scanners?.join(', ') || 'Unknown'}
+                                        </TableCell>
+                                        <TableCell className="flex-1 truncate" title={finding.description}>
                                             {finding.description}
                                         </TableCell>
                                     </>
@@ -135,7 +184,15 @@ export function FindingsTable({ scanId, category, search }: FindingsTableProps) 
                         )
                     })}
                 </TableBody>
-            </Table>
+            </table>
+            {selectedFinding && (
+                <FindingDetailsModal 
+                    finding={selectedFinding} 
+                    projectId={projectId}
+                    isOpen={!!selectedFinding} 
+                    onClose={() => setSelectedFinding(null)} 
+                />
+            )}
         </div>
     )
 }

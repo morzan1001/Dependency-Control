@@ -143,7 +143,7 @@ export default function ScanDetails() {
                 <CardHeader>
                     <CardTitle>Severity Distribution</CardTitle>
                 </CardHeader>
-                <CardContent className="h-[200px]">
+                <CardContent className="h-[300px]">
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                             <Pie
@@ -160,7 +160,7 @@ export default function ScanDetails() {
                                 ))}
                             </Pie>
                             <Tooltip />
-                            <Legend />
+                            <Legend verticalAlign="bottom" height={36}/>
                         </PieChart>
                     </ResponsiveContainer>
                 </CardContent>
@@ -175,41 +175,55 @@ export default function ScanDetails() {
             {showSast && <TabsTrigger value="sast">SAST</TabsTrigger>}
             {showCompliance && <TabsTrigger value="compliance">Compliance</TabsTrigger>}
             {showQuality && <TabsTrigger value="quality">Quality</TabsTrigger>}
+            <TabsTrigger value="raw">Raw Data</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-            <FindingsTable scanId={scanId!} />
+            <FindingsTable scanId={scanId!} projectId={projectId!} />
         </TabsContent>
 
         {showSecurity && (
             <TabsContent value="security" className="space-y-4">
-                <FindingsTable scanId={scanId!} category="security" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" />
             </TabsContent>
         )}
 
         {showSecrets && (
             <TabsContent value="secrets" className="space-y-4">
-                <FindingsTable scanId={scanId!} category="secret" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" />
             </TabsContent>
         )}
 
         {showSast && (
             <TabsContent value="sast" className="space-y-4">
-                <FindingsTable scanId={scanId!} category="sast" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" />
             </TabsContent>
         )}
 
         {showCompliance && (
             <TabsContent value="compliance" className="space-y-4">
-                <FindingsTable scanId={scanId!} category="compliance" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="compliance" />
             </TabsContent>
         )}
 
         {showQuality && (
             <TabsContent value="quality" className="space-y-4">
-                <FindingsTable scanId={scanId!} category="quality" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" />
             </TabsContent>
         )}
+
+        <TabsContent value="raw" className="space-y-4">
+            <Card>
+                <CardHeader>
+                    <CardTitle>Raw Scan Data</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <pre className="bg-muted p-4 rounded-md overflow-auto max-h-[600px] text-xs">
+                        {JSON.stringify(scan, null, 2)}
+                    </pre>
+                </CardContent>
+            </Card>
+        </TabsContent>
       </Tabs>
     </div>
   )

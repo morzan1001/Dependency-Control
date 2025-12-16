@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,13 @@ interface UserPermissionsDialogProps {
 
 export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissionsDialogProps) {
   const queryClient = useQueryClient();
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (user && open) {
+      setSelectedPermissions(user.permissions || []);
+    }
+  }, [user, open]);
 
   const updateUserMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: UserUpdate }) => updateUser(id, data),
@@ -31,6 +39,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
       toast.success("Success", {
         description: "User permissions updated successfully.",
       });
+      onOpenChange(false);
     },
     onError: (error: AxiosError<any>) => {
       toast.error("Error", {
@@ -39,21 +48,19 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
     },
   });
 
-  const handlePermissionChange = (permission: string, hasPermission: boolean) => {
-    if (!user) return;
-    
-    let newPermissions = [...user.permissions];
-    if (hasPermission) {
-      if (!newPermissions.includes(permission)) {
-        newPermissions.push(permission);
-      }
+  const handlePermissionChange = (permission: string, checked: boolean) => {
+    if (checked) {
+      setSelectedPermissions(prev => [...prev, permission]);
     } else {
-      newPermissions = newPermissions.filter(p => p !== permission);
+      setSelectedPermissions(prev => prev.filter(p => p !== permission));
     }
-    
+  };
+
+  const handleSave = () => {
+    if (!user) return;
     updateUserMutation.mutate({
       id: user._id || user.id,
-      data: { permissions: newPermissions }
+      data: { permissions: selectedPermissions }
     });
   };
 
@@ -77,7 +84,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
                               <div key={perm.id} className="flex items-start space-x-2">
                                   <Checkbox 
                                       id={`perm-dialog-${perm.id}`} 
-                                      checked={user.permissions.includes(perm.id)}
+                                      checked={selectedPermissions.includes(perm.id)}
                                       onCheckedChange={(checked: boolean) => handlePermissionChange(perm.id, checked)}
                                   />
                                   <div className="grid gap-1.5 leading-none">
@@ -96,7 +103,10 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
           </div>
         )}
         <DialogFooter>
-          <Button onClick={() => onOpenChange(false)}>Close</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={handleSave} disabled={updateUserMutation.isPending}>
+            {updateUserMutation.isPending ? "Saving..." : "Save Changes"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
