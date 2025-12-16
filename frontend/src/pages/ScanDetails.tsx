@@ -5,7 +5,7 @@ import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ExternalLink, ShieldAlert, Calendar, CheckCircle } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
@@ -57,12 +57,12 @@ export default function ScanDetails() {
   const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
   
   const severityData = [
-      { name: 'Critical', value: stats.critical, color: '#ef4444' },
-      { name: 'High', value: stats.high, color: '#f97316' },
-      { name: 'Medium', value: stats.medium, color: '#eab308' },
-      { name: 'Low', value: stats.low, color: '#3b82f6' },
-      { name: 'Info', value: stats.info, color: '#60a5fa' },
-      { name: 'Unknown', value: stats.unknown, color: '#9ca3af' },
+      { name: 'Critical', value: stats.critical || 0, color: '#ef4444' },
+      { name: 'High', value: stats.high || 0, color: '#f97316' },
+      { name: 'Medium', value: stats.medium || 0, color: '#eab308' },
+      { name: 'Low', value: stats.low || 0, color: '#3b82f6' },
+      { name: 'Info', value: stats.info || 0, color: '#60a5fa' },
+      { name: 'Unknown', value: stats.unknown || 0, color: '#9ca3af' },
   ].filter(d => d.value > 0);
 
   return (

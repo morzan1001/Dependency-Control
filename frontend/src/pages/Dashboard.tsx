@@ -16,7 +16,7 @@ export default function Dashboard() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const limit = 50 // Optimized for virtual scrolling
 
-  const { data: dashboardStats, isLoading: isLoadingStats, error: errorStats } = useQuery({
+  const { data: dashboardStats, isLoading: isLoadingStats } = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: getDashboardStats,
   })
