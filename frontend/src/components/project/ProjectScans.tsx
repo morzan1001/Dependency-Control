@@ -110,20 +110,20 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('created_at')}>
+                <TableHead className="w-[200px] cursor-pointer hover:text-foreground" onClick={() => handleSort('created_at')}>
                   Date {renderSortIcon('created_at')}
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('pipeline_iid')}>
+                <TableHead className="w-[120px] cursor-pointer hover:text-foreground" onClick={() => handleSort('pipeline_iid')}>
                   Pipeline {renderSortIcon('pipeline_iid')}
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('branch')}>
+                <TableHead className="w-[200px] cursor-pointer hover:text-foreground" onClick={() => handleSort('branch')}>
                   Branch {renderSortIcon('branch')}
                 </TableHead>
-                <TableHead>Commit</TableHead>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('findings_count')}>
+                <TableHead className="w-[120px]">Commit</TableHead>
+                <TableHead className="w-[250px] cursor-pointer hover:text-foreground" onClick={() => handleSort('findings_count')}>
                   Findings {renderSortIcon('findings_count')}
                 </TableHead>
-                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
+                <TableHead className="w-[120px] cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
                   Status {renderSortIcon('status')}
                 </TableHead>
                 <TableHead className="text-right">Actions</TableHead>

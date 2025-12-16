@@ -441,7 +441,7 @@ export const adminDisableUser2FA = async (userId: string) => {
 };
 
 export const resetPassword = async (token: string, newPassword: string) => {
-  const response = await api.post<{ message: string }>('/auth/reset-password', { token, new_password: newPassword });
+  const response = await api.post<{ message: string }>('/reset-password', { token, new_password: newPassword });
   return response.data;
 };
 

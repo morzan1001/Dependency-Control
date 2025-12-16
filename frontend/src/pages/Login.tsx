@@ -159,7 +159,7 @@ export default function Login() {
                   variant="outline" 
                   type="button" 
                   className="w-full mt-4"
-                  onClick={() => window.location.href = `${import.meta.env.VITE_API_URL || '/api/v1'}/auth/login/oidc/authorize`}
+                  onClick={() => window.location.href = `${import.meta.env.VITE_API_URL || '/api/v1'}/login/oidc/authorize`}
                 >
                   {oidcConfig.providerName}
                 </Button>
