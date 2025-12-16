@@ -250,7 +250,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                     isOpen={!!selectedFinding} 
                     onClose={() => setSelectedFinding(null)} 
                     onSelectFinding={(id) => {
-                        const found = data.find(f => f.id === id);
+                        const found = allRows.find(f => f.id === id);
                         if (found) setSelectedFinding(found);
                     }}
                 />
