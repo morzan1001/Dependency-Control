@@ -1,3 +1,11 @@
+# Release 0.4.9
+
+## 📦 Build & CI
+
+- chore: update version to 0.4.8 in main.py and package.json; adjust regex in propagate_version.py (#0)
+
+
+
 # Release 0.4.8
 
 
