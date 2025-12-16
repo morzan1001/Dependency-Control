@@ -148,12 +148,12 @@ export function WebhookManager({
         )}
       </CardHeader>
       <CardContent>
-        <Table>
+        <Table className="table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead>URL</TableHead>
-              <TableHead>Events</TableHead>
-              <TableHead>Created At</TableHead>
+              <TableHead className="w-auto">URL</TableHead>
+              <TableHead className="w-[200px]">Events</TableHead>
+              <TableHead className="w-[150px]">Created At</TableHead>
               <TableHead className="w-[50px]"></TableHead>
             </TableRow>
           </TableHeader>

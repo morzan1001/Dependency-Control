@@ -80,14 +80,14 @@ export default function SearchPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Table>
+            <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Project</TableHead>
-                  <TableHead>Package</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>License</TableHead>
+                  <TableHead className="w-auto">Project</TableHead>
+                  <TableHead className="w-[200px]">Package</TableHead>
+                  <TableHead className="w-[150px]">Version</TableHead>
+                  <TableHead className="w-[100px]">Type</TableHead>
+                  <TableHead className="w-[150px]">License</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

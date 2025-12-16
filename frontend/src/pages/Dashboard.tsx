@@ -262,23 +262,23 @@ export default function Dashboard() {
                 ref={parentRef}
                 className="relative w-full"
             >
-                <table className="w-full caption-bottom text-sm">
+                <table className="w-full caption-bottom text-sm table-fixed">
                     <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('name')}>
+                            <th className="w-auto h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('name')}>
                                 Name {renderSortIcon('name')}
                             </th>
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Team</th>
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('last_scan_at')}>
+                            <th className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Team</th>
+                            <th className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('last_scan_at')}>
                                 Last Scan {renderSortIcon('last_scan_at')}
                             </th>
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('critical')}>
+                            <th className="w-[100px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('critical')}>
                                 Critical {renderSortIcon('critical')}
                             </th>
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('high')}>
+                            <th className="w-[100px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('high')}>
                                 High {renderSortIcon('high')}
                             </th>
-                            <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Status</th>
+                            <th className="w-[120px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Status</th>
                         </tr>
                     </thead>
                     <tbody className="[&_tr:last-child]:border-0">

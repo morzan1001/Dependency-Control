@@ -135,24 +135,24 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
     if (isLoading) {
         return (
             <div className="relative">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm table-fixed">
                     <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
-                        <TableRow className="flex w-full">
-                            <TableHead className="w-[100px] flex-none bg-background">Severity</TableHead>
-                            <TableHead className="w-[150px] flex-none bg-background">ID</TableHead>
-                            <TableHead className="w-[200px] flex-none bg-background">Component</TableHead>
-                            <TableHead className="w-[120px] flex-none bg-background">Type</TableHead>
-                            <TableHead className="w-[120px] flex-none bg-background">Scanner</TableHead>
+                        <TableRow className="w-full">
+                            <TableHead className="w-[100px] bg-background">Severity</TableHead>
+                            <TableHead className="w-[180px] bg-background">ID</TableHead>
+                            <TableHead className="w-auto bg-background">Component</TableHead>
+                            <TableHead className="w-[120px] bg-background">Type</TableHead>
+                            <TableHead className="w-[150px] bg-background">Scanner</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {Array.from({ length: 10 }).map((_, i) => (
-                            <TableRow key={i} className="flex w-full border-b">
-                                <TableCell className="w-[100px] flex-none"><Skeleton className="h-6 w-16" /></TableCell>
-                                <TableCell className="w-[150px] flex-none"><Skeleton className="h-6 w-24" /></TableCell>
-                                <TableCell className="w-[200px] flex-none"><Skeleton className="h-6 w-32" /></TableCell>
-                                <TableCell className="w-[120px] flex-none"><Skeleton className="h-6 w-20" /></TableCell>
-                                <TableCell className="w-[120px] flex-none"><Skeleton className="h-6 w-20" /></TableCell>
+                            <TableRow key={i} className="w-full border-b">
+                                <TableCell className="p-4"><Skeleton className="h-6 w-16" /></TableCell>
+                                <TableCell className="p-4"><Skeleton className="h-6 w-24" /></TableCell>
+                                <TableCell className="p-4"><Skeleton className="h-6 w-32" /></TableCell>
+                                <TableCell className="p-4"><Skeleton className="h-6 w-20" /></TableCell>
+                                <TableCell className="p-4"><Skeleton className="h-6 w-20" /></TableCell>
                             </TableRow>
                         ))}
                     </TableBody>
@@ -167,22 +167,22 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
 
     return (
         <div ref={parentRef} className="relative w-full">
-            <table className="w-full caption-bottom text-sm">
+            <table className="w-full caption-bottom text-sm table-fixed">
                 <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
                     <TableRow className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                        <TableHead className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('severity')}>
+                        <TableHead className="w-[100px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('severity')}>
                             Severity {renderSortIcon('severity')}
                         </TableHead>
-                        <TableHead className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('vuln_id')}>
+                        <TableHead className="w-[180px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('vuln_id')}>
                             ID {renderSortIcon('vuln_id')}
                         </TableHead>
-                        <TableHead className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('component')}>
+                        <TableHead className="w-auto h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('component')}>
                             Component {renderSortIcon('component')}
                         </TableHead>
-                        <TableHead className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('type')}>
+                        <TableHead className="w-[120px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('type')}>
                             Type {renderSortIcon('type')}
                         </TableHead>
-                        <TableHead className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('scanner')}>
+                        <TableHead className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('scanner')}>
                             Scanner {renderSortIcon('scanner')}
                         </TableHead>
                     </TableRow>

@@ -1,5 +1,6 @@
 from typing import List, Dict, Any
 import hashlib
+import re
 from app.models.finding import Finding, Severity, FindingType
 
 SEVERITY_ORDER = {
@@ -14,6 +15,7 @@ SEVERITY_ORDER = {
 class ResultAggregator:
     def __init__(self):
         self.findings: Dict[str, Finding] = {}
+        self.alias_map: Dict[str, str] = {}
 
     def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: str = None):
         """
@@ -112,17 +114,37 @@ class ResultAggregator:
         Adds a finding to the map, merging if it already exists.
         Key for deduplication: type + id + component + version
         """
-        # ID normalization (e.g. preferring CVE over GHSA) is handled in specific normalizers.
-        
-        key = f"{finding.type}:{finding.id}:{finding.component}:{finding.version}"
-        
         # Add source to finding
         if source:
             if source not in finding.found_in:
                 finding.found_in.append(source)
+
+        # Construct a unique key for the finding itself (as if it were new)
+        comp_key = finding.component.lower() if finding.component else "unknown"
+        primary_key = f"{finding.type}:{finding.id}:{comp_key}:{finding.version}"
         
-        if key in self.findings:
-            existing = self.findings[key]
+        # Check if we already have a record for this finding via ID or Aliases
+        existing_key = None
+        
+        # 1. Check exact ID match (fast path)
+        lookup_key_id = f"{finding.type}:{comp_key}:{finding.version}:{finding.id}"
+        if lookup_key_id in self.alias_map:
+            existing_key = self.alias_map[lookup_key_id]
+            
+        # 2. If not found, check aliases
+        if not existing_key:
+            for alias in finding.aliases:
+                lookup_key_alias = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
+                if lookup_key_alias in self.alias_map:
+                    existing_key = self.alias_map[lookup_key_alias]
+                    break
+        
+        # 3. Fallback to primary key check (legacy/safety)
+        if not existing_key and primary_key in self.findings:
+            existing_key = primary_key
+
+        if existing_key and existing_key in self.findings:
+            existing = self.findings[existing_key]
             
             # 1. Merge scanners list
             existing.scanners = list(set(existing.scanners + finding.scanners))
@@ -138,15 +160,32 @@ class ResultAggregator:
             existing.details.update(finding.details)
                 
             # 4. Merge Aliases (if any)
-            existing.aliases = list(set(existing.aliases + finding.aliases))
+            new_aliases = set(existing.aliases)
+            new_aliases.update(finding.aliases)
+            # If the IDs are different, add the other ID as alias
+            if finding.id != existing.id:
+                new_aliases.add(finding.id)
+            existing.aliases = list(new_aliases)
             
             # 5. Merge found_in
             if source:
                 if source not in existing.found_in:
                     existing.found_in.append(source)
+            
+            # Update alias_map with new aliases pointing to existing_key
+            self.alias_map[lookup_key_id] = existing_key
+            for alias in finding.aliases:
+                k = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
+                self.alias_map[k] = existing_key
                 
         else:
-            self.findings[key] = finding
+            self.findings[primary_key] = finding
+            
+            # Populate alias_map
+            self.alias_map[lookup_key_id] = primary_key
+            for alias in finding.aliases:
+                k = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
+                self.alias_map[k] = primary_key
 
     def _normalize_trivy(self, result: Dict[str, Any], source: str = None):
         # Trivy structure: {"Results": [{"Vulnerabilities": [...]}]}
@@ -160,6 +199,26 @@ class ResultAggregator:
                 published_date = vuln.get("PublishedDate")
                 last_modified_date = vuln.get("LastModifiedDate")
                 cwe_ids = vuln.get("CweIDs", [])
+                
+                # Extract aliases from references
+                aliases = set()
+                vuln_id = vuln.get("VulnerabilityID")
+                
+                for ref in references:
+                    match = re.search(r'(CVE-\d{4}-\d{4,})', ref)
+                    if match:
+                        cve = match.group(1)
+                        if cve != vuln_id:
+                            aliases.add(cve)
+
+                # ID Normalization: Prefer CVE if available in aliases
+                aliases_list = list(aliases)
+                cve_alias = next((a for a in aliases_list if a.startswith("CVE-")), None)
+                
+                if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
+                    if vuln_id not in aliases_list:
+                        aliases_list.append(vuln_id)
+                    vuln_id = cve_alias
                 
                 # CVSS Parsing
                 cvss_score = None
@@ -179,7 +238,7 @@ class ResultAggregator:
                                 cvss_vector = data.get("V2Vector")
 
                 self._add_finding(Finding(
-                    id=vuln.get("VulnerabilityID"),
+                    id=vuln_id,
                     type=FindingType.VULNERABILITY,
                     severity=Severity(vuln.get("Severity", "UNKNOWN").upper()),
                     component=vuln.get("PkgName"),
@@ -196,7 +255,7 @@ class ResultAggregator:
                         "cwe_ids": cwe_ids,
                         "layer_id": vuln.get("Layer", {}).get("Digest")
                     },
-                    aliases=[] 
+                    aliases=aliases_list 
                 ), source=source)
 
     def _normalize_grype(self, result: Dict[str, Any], source: str = None):
