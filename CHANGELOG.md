@@ -1,3 +1,15 @@
+# Release 0.4.7
+
+## 🚀 Features
+
+- feat: enhance recent scans retrieval by excluding unnecessary fields and improve loading states in dashboard (#0)
+
+## 📦 Build & CI
+
+- chore: bump version to 0.4.7 (#0)
+
+
+
 # Release 0.4.6
 
 ## 🚀 Features
