@@ -1,3 +1,11 @@
+# Release 0.5.8
+
+## 🐛 Fixes
+
+- fix: update finding selection logic to use allRows instead of data (#0)
+
+
+
 # Release 0.5.7
 
 ## 🚀 Features
