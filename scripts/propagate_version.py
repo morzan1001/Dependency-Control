@@ -60,7 +60,7 @@ def main():
     main_py_path = os.path.join(root_dir, 'backend', 'app', 'main.py')
     update_file(
         main_py_path,
-        r'version="[^"]+"',
+        r'version\s*=\s*"[^"]+"',
         f'version="{new_version}"'
     )
 

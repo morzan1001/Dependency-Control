@@ -308,7 +308,6 @@ async def ingest_sbom(
             status="pending"
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
-        raise HTTPException(status_code=500, detail=f"Internal Server Error during ingestion: {str(e)}")
     
     # Add to Worker Queue
     await worker_manager.add_job(scan_id)
