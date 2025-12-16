@@ -1,7 +1,7 @@
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
-import { getScanResults, getScan, getProject, AnalysisResult } from '@/lib/api'
+import { getScanResults, getScan, getProject, AnalysisResult, Finding } from '@/lib/api'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -77,7 +77,7 @@ export default function ScanDetails() {
   const showQuality = activeAnalyzers.includes('outdated_packages');
 
   // Filter findings based on active analyzers
-  const filteredFindings = (scan.findings_summary || []).filter((f: any) => {
+  const filteredFindings = (scan.findings_summary || []).filter((f: Finding) => {
       const scanners = f.scanners || [];
       if (scanners.length === 0) return true; 
       return scanners.some((s: string) => activeAnalyzers.includes(s));
@@ -96,11 +96,12 @@ export default function ScanDetails() {
       HIGH: 0,
       MEDIUM: 0,
       LOW: 0,
+      NEGLIGIBLE: 0,
       INFO: 0,
       UNKNOWN: 0
   };
   
-  filteredFindings.forEach((finding: any) => {
+  filteredFindings.forEach((finding: Finding) => {
       if (finding.waived) return;
 
       const type = finding.type || 'unknown';
@@ -134,6 +135,7 @@ export default function ScanDetails() {
       { name: 'High', value: severityCounts.HIGH, color: '#f97316' },
       { name: 'Medium', value: severityCounts.MEDIUM, color: '#eab308' },
       { name: 'Low', value: severityCounts.LOW, color: '#3b82f6' },
+      { name: 'Negligible', value: severityCounts.NEGLIGIBLE, color: '#94a3b8' },
       { name: 'Info', value: severityCounts.INFO, color: '#60a5fa' },
       { name: 'Unknown', value: severityCounts.UNKNOWN, color: '#9ca3af' },
   ].filter(d => d.value > 0);
@@ -406,8 +408,8 @@ export default function ScanDetails() {
   )
 }
 
-function SecurityTab({ findings, projectId }: { findings: any[], projectId: string }) {
-    const [selectedFinding, setSelectedFinding] = useState<any>(null)
+function SecurityTab({ findings, projectId }: { findings: Finding[], projectId: string }) {
+    const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
 
     const securityFindings = findings.filter(f => ['vulnerability', 'malware', 'typosquatting'].includes(f.type) && !f.waived);
@@ -523,8 +525,8 @@ function SecurityTab({ findings, projectId }: { findings: any[], projectId: stri
     );
 }
 
-function SecretsTab({ findings, projectId }: { findings: any[], projectId: string }) {
-    const [selectedFinding, setSelectedFinding] = useState<any>(null)
+function SecretsTab({ findings, projectId }: { findings: Finding[], projectId: string }) {
+    const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
 
     const secretFindings = findings.filter(f => f.type === 'secret' && !f.waived);
@@ -584,8 +586,8 @@ function SecretsTab({ findings, projectId }: { findings: any[], projectId: strin
     );
 }
 
-function ComplianceTab({ findings, projectId }: { findings: any[], projectId: string }) {
-    const [selectedFinding, setSelectedFinding] = useState<any>(null)
+function ComplianceTab({ findings, projectId }: { findings: Finding[], projectId: string }) {
+    const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
 
     const complianceFindings = findings.filter(f => ['license', 'eol'].includes(f.type) && !f.waived);
@@ -643,8 +645,8 @@ function ComplianceTab({ findings, projectId }: { findings: any[], projectId: st
     );
 }
 
-function QualityTab({ findings, projectId }: { findings: any[], projectId: string }) {
-    const [selectedFinding, setSelectedFinding] = useState<any>(null)
+function QualityTab({ findings, projectId }: { findings: Finding[], projectId: string }) {
+    const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
 
     const qualityFindings = findings.filter(f => ['outdated', 'quality'].includes(f.type) && !f.waived);
@@ -702,8 +704,8 @@ function QualityTab({ findings, projectId }: { findings: any[], projectId: strin
     );
 }
 
-function SastTab({ findings, projectId }: { findings: any[], projectId: string }) {
-    const [selectedFinding, setSelectedFinding] = useState<any>(null)
+function SastTab({ findings, projectId }: { findings: Finding[], projectId: string }) {
+    const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
 
     const sastFindings = findings.filter(f => f.type === 'sast' && !f.waived);
@@ -779,9 +781,9 @@ function AnalyzerResultView({ result }: { result: AnalysisResult }) {
     )
 }
 
-function FindingsTable({ findings, showSeverity = false, onFindingClick }: { findings: any[], showSeverity?: boolean, onFindingClick: (f: any) => void }) {
+function FindingsTable({ findings, showSeverity = false, onFindingClick }: { findings: Finding[], showSeverity?: boolean, onFindingClick: (f: Finding) => void }) {
     const [searchQuery, setSearchQuery] = useState('')
-    const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
+    const [sortConfig, setSortConfig] = useState<{ key: keyof Finding, direction: 'asc' | 'desc' } | null>(null)
 
     const sortedFindings = useMemo(() => {
         let result = [...findings]
@@ -797,7 +799,8 @@ function FindingsTable({ findings, showSeverity = false, onFindingClick }: { fin
 
         if (sortConfig) {
             result.sort((a, b) => {
-                let aValue = a[sortConfig.key]
+                let aValue = a[sortConfig.key] as any
+                let bValue = b[sortConfig.key] as any
                 let bValue = b[sortConfig.key]
 
                 if (sortConfig.key === 'severity') {

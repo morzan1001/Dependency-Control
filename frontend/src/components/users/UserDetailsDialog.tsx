@@ -312,7 +312,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                   ) : errorProjects ? (
                     <div className="text-sm text-destructive">Failed to load projects.</div>
                   ) : getUserProjects(user._id || user.id).length > 0 ? (
-                    <ul className="space-y-2">
+                    <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
                       {getUserProjects(user._id || user.id).map(project => (
                         <li 
                           key={project._id} 
@@ -342,7 +342,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                   ) : errorTeams ? (
                     <div className="text-sm text-destructive">Failed to load teams.</div>
                   ) : getUserTeams(user._id || user.id).length > 0 ? (
-                    <ul className="space-y-2">
+                    <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
                       {getUserTeams(user._id || user.id).map(team => (
                         <li 
                           key={team._id} 

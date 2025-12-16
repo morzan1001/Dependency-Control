@@ -5,34 +5,15 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { createWaiver } from "@/lib/api"
+import { createWaiver, Finding } from "@/lib/api"
 import { toast } from "sonner"
 import { ShieldAlert } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 
-export interface Finding {
-    id: string;
-    title?: string;
-    vuln_id?: string;
-    severity?: string;
-    type?: string;
-    package?: string;
-    pkg_name?: string;
-    component?: string;
-    version?: string;
-    installed_version?: string;
-    fixed_version?: string;
-    description?: string;
-    scanners?: string[];
-    found_in?: string[];
-    details?: any;
-    [key: string]: any;
-}
-
-const getFindingTitle = (f: Finding) => f.title || f.vuln_id || f.id || "Finding Details";
-const getFindingPackage = (f: Finding) => f.pkg_name || f.package || f.component || "Unknown";
-const getFindingVersion = (f: Finding) => f.installed_version || f.version || "Unknown";
-const getFindingId = (f: Finding) => f.vuln_id || f.id;
+const getFindingTitle = (f: Finding) => f.id || "Finding Details";
+const getFindingPackage = (f: Finding) => f.component || "Unknown";
+const getFindingVersion = (f: Finding) => f.version || "Unknown";
+const getFindingId = (f: Finding) => f.id;
 
 interface FindingDetailsModalProps {
     finding: Finding | null
@@ -56,7 +37,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                             <Badge variant={
                                 finding.severity === 'CRITICAL' ? 'destructive' :
                                 finding.severity === 'HIGH' ? 'destructive' :
-                                finding.severity === 'MEDIUM' ? 'default' : 'secondary'
+                                finding.severity === 'MEDIUM' ? 'default' : 
+                                finding.severity === 'LOW' ? 'secondary' :
+                                'outline'
                             }>
                                 {finding.severity}
                             </Badge>

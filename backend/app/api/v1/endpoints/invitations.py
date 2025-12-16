@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
+from typing import List
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timedelta
 import uuid
@@ -22,6 +23,21 @@ async def get_system_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
     if not data:
         return SystemSettings()
     return SystemSettings(**data)
+
+@router.get("/system", response_model=List[SystemInvitation])
+async def read_system_invitations(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(deps.PermissionChecker("user:manage")),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    List all pending system invitations.
+    """
+    invitations = await db.system_invitations.find(
+        {"is_used": False, "expires_at": {"$gt": datetime.utcnow()}}
+    ).skip(skip).limit(limit).to_list(limit)
+    return invitations
 
 @router.post("/system", status_code=status.HTTP_201_CREATED)
 async def create_system_invitation(

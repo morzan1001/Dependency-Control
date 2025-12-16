@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getUsers, User } from '@/lib/api';
+import { getUsers, getPendingInvitations, User } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,10 +15,30 @@ export default function UsersPage() {
   
   const { hasPermission } = useAuth();
 
-  const { data: users, isLoading, error } = useQuery({
+  const { data: users, isLoading: isLoadingUsers } = useQuery({
     queryKey: ['users', page],
     queryFn: () => getUsers(page * limit, limit),
   });
+
+  const { data: invitations, isLoading: isLoadingInvitations } = useQuery({
+    queryKey: ['invitations'],
+    queryFn: getPendingInvitations,
+  });
+
+  const isLoading = isLoadingUsers || isLoadingInvitations;
+
+  const allUsers: User[] = [
+    ...(invitations?.map(invite => ({
+      id: invite._id,
+      email: invite.email,
+      username: invite.email,
+      is_active: false,
+      permissions: [],
+      totp_enabled: false,
+      status: 'invited' as const
+    })) || []),
+    ...(users || []).map(u => ({ ...u, status: 'active' as const }))
+  ];
 
   if (isLoading) {
     return (
@@ -76,7 +96,7 @@ export default function UsersPage() {
         </CardHeader>
         <CardContent>
           <UserTable 
-            users={users} 
+            users={allUsers} 
             page={page} 
             limit={limit} 
             onPageChange={setPage} 

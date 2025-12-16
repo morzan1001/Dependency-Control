@@ -1,7 +1,7 @@
-import { User, deleteUser } from '@/lib/api';
+import { User, deleteUser, inviteUser } from '@/lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { Check, X, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Check, X, Trash2, ChevronLeft, ChevronRight, Mail } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -43,6 +43,18 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser }: Us
     }
   });
 
+  const resendInviteMutation = useMutation({
+    mutationFn: (email: string) => inviteUser(email),
+    onSuccess: () => {
+      toast.success("Invitation resent successfully");
+    },
+    onError: (error: any) => {
+      toast.error("Failed to resend invitation", {
+        description: error.response?.data?.detail || "An error occurred"
+      })
+    }
+  });
+
   return (
     <>
       <div className="relative w-full overflow-auto">
@@ -76,7 +88,11 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser }: Us
                 </td>
                 <td className="p-4 align-middle">{user.email}</td>
                 <td className="p-4 align-middle">
-                  {user.is_active ? (
+                  {user.status === 'invited' ? (
+                    <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800">
+                      Invited
+                    </span>
+                  ) : user.is_active ? (
                     <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
                       Active
                     </span>
@@ -103,6 +119,20 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser }: Us
                   </div>
                 </td>
                 <td className="p-4 align-middle" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center gap-2">
+                    {user.status === 'invited' && hasPermission('user:manage') && (
+                       <Button 
+                         variant="outline" 
+                         size="sm"
+                         onClick={(e) => {
+                           e.stopPropagation();
+                           resendInviteMutation.mutate(user.email);
+                         }}
+                         disabled={resendInviteMutation.isPending}
+                       >
+                         {resendInviteMutation.isPending ? "Sending..." : "Resend"}
+                       </Button>
+                    )}
                     {hasPermission('user:delete') && (
                       <Button 
                           variant="ghost" 
@@ -116,6 +146,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser }: Us
                           <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
+                  </div>
                 </td>
               </tr>
             ))}

@@ -104,7 +104,23 @@ export interface User {
   totp_enabled: boolean;
   slack_username?: string;
   mattermost_username?: string;
+  status?: 'active' | 'invited';
 }
+
+export interface SystemInvitation {
+  _id: string;
+  email: string;
+  token: string;
+  invited_by: string;
+  created_at: string;
+  expires_at: string;
+  is_used: boolean;
+}
+
+export const getPendingInvitations = async () => {
+  const response = await api.get<SystemInvitation[]>('/invitations/system');
+  return response.data;
+};
 
 export const getMe = async () => {
   const response = await api.get<User>('/users/me');
@@ -158,6 +174,35 @@ export interface PipelineMetadata {
   CI_PROJECT_NAME?: string;
 }
 
+export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "NEGLIGIBLE" | "INFO" | "UNKNOWN";
+
+export type FindingType = 
+  | "vulnerability"
+  | "license"
+  | "secret"
+  | "malware"
+  | "eol"
+  | "iac"
+  | "sast"
+  | "system_warning"
+  | "outdated"
+  | "other";
+
+export interface Finding {
+  id: string;
+  type: FindingType;
+  severity: Severity;
+  component: string;
+  version?: string;
+  description: string;
+  scanners: string[];
+  details: Record<string, any>;
+  found_in: string[];
+  aliases: string[];
+  waived: boolean;
+  waiver_reason?: string;
+}
+
 export interface Scan {
   _id: string;
   project_id: string;
@@ -168,7 +213,7 @@ export interface Scan {
   metadata?: PipelineMetadata;
   created_at: string;
   status: string;
-  findings_summary?: any[];
+  findings_summary?: Finding[];
   findings_count?: number;
   ignored_count?: number;
   stats?: {
