@@ -393,7 +393,8 @@ async def read_recent_scans(
 
     # 2. Get recent scans for these projects
     scans = await db.scans.find(
-        {"project_id": {"$in": project_ids}}
+        {"project_id": {"$in": project_ids}},
+        {"sboms": 0, "findings_summary": 0}
     ).sort("created_at", -1).limit(limit).to_list(limit)
 
     # 3. Enrich with project name

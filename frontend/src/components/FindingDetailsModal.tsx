@@ -97,7 +97,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                 {finding.found_in && finding.found_in.length > 0 && (
                                     <div className="col-span-2">
                                         <h4 className="text-sm font-medium text-muted-foreground mb-1">Found In Sources</h4>
-                                        <div className="flex flex-wrap gap-2">
+                                        <div className="flex flex-wrap gap-2 max-h-[100px] overflow-y-auto p-1 border rounded-md bg-muted/20">
                                             {finding.found_in.map((source) => (
                                                 <Badge key={source} variant="secondary" className="font-mono text-xs">
                                                     {source}
@@ -193,14 +193,14 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                     {finding.details?.references && finding.details.references.length > 0 && (
                                         <div>
                                             <h4 className="text-sm font-medium text-muted-foreground mb-2">References</h4>
-                                            <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm">
+                                            <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
                                                 {finding.details.references.map((ref: string, i: number) => (
                                                     <a 
                                                         key={i} 
                                                         href={ref} 
                                                         target="_blank" 
                                                         rel="noopener noreferrer"
-                                                        className="text-blue-600 hover:underline truncate"
+                                                        className="text-blue-600 hover:underline break-all"
                                                     >
                                                         {ref}
                                                     </a>
@@ -212,14 +212,14 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                     {finding.details?.urls && finding.details.urls.length > 0 && (
                                         <div>
                                             <h4 className="text-sm font-medium text-muted-foreground mb-2">URLs</h4>
-                                            <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm">
+                                            <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
                                                 {finding.details.urls.map((url: string, i: number) => (
                                                     <a 
                                                         key={i} 
                                                         href={url} 
                                                         target="_blank" 
                                                         rel="noopener noreferrer"
-                                                        className="text-blue-600 hover:underline truncate"
+                                                        className="text-blue-600 hover:underline break-all"
                                                     >
                                                         {url}
                                                     </a>

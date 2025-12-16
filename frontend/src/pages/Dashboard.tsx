@@ -40,31 +40,6 @@ export default function Dashboard() {
     }
   }
 
-  if (isLoadingStats || isLoadingScans || isLoadingProjects) {
-    return (
-      <div className="space-y-8">
-        <div className="space-y-2">
-          <Skeleton className="h-10 w-48" />
-          <Skeleton className="h-4 w-64" />
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Skeleton className="h-32 rounded-xl" />
-          <Skeleton className="h-32 rounded-xl" />
-          <Skeleton className="h-32 rounded-xl" />
-          <Skeleton className="h-32 rounded-xl" />
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-          <Skeleton className="col-span-4 h-[400px] rounded-xl" />
-          <Skeleton className="col-span-3 h-[400px] rounded-xl" />
-        </div>
-      </div>
-    )
-  }
-
-  if (errorStats) {
-    return <div className="text-destructive">Error loading dashboard: {errorStats.message}</div>
-  }
-
   const scanList = recentScans || []
   const projectList = projectsData?.items || []
   const totalPages = projectsData?.pages || 0
@@ -111,28 +86,34 @@ export default function Dashboard() {
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => {
-          const Icon = stat.icon
-          return (
-            <Card key={stat.title} title={stat.tooltip}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  {stat.title}
-                  {stat.tooltip && (
-                    <span className="sr-only">{stat.tooltip}</span>
-                  )}
-                </CardTitle>
-                <Icon className={`h-4 w-4 text-muted-foreground ${stat.className || ''}`} />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{stat.value}</div>
-                <p className="text-xs text-muted-foreground">
-                  {stat.description}
-                </p>
-              </CardContent>
-            </Card>
-          )
-        })}
+        {isLoadingStats ? (
+          Array(4).fill(0).map((_, i) => (
+            <Skeleton key={i} className="h-32 rounded-xl" />
+          ))
+        ) : (
+          stats.map((stat) => {
+            const Icon = stat.icon
+            return (
+              <Card key={stat.title} title={stat.tooltip}>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    {stat.title}
+                    {stat.tooltip && (
+                      <span className="sr-only">{stat.tooltip}</span>
+                    )}
+                  </CardTitle>
+                  <Icon className={`h-4 w-4 text-muted-foreground ${stat.className || ''}`} />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{stat.value}</div>
+                  <p className="text-xs text-muted-foreground">
+                    {stat.description}
+                  </p>
+                </CardContent>
+              </Card>
+            )
+          })
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
@@ -142,32 +123,36 @@ export default function Dashboard() {
             <CardTitle>Top 5 Riskiest Projects</CardTitle>
             </CardHeader>
             <CardContent className="pl-2">
-            <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis 
-                    dataKey="name" 
-                    stroke="#888888" 
-                    fontSize={12} 
-                    tickLine={false} 
-                    axisLine={false} 
-                    />
-                    <YAxis
-                    stroke="#888888"
-                    fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => `${value}`}
-                    />
-                    <Tooltip 
-                        cursor={{fill: 'transparent'}}
-                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    />
-                    <Bar dataKey="risk" fill="currentColor" radius={[4, 4, 0, 0]} className="fill-primary" barSize={40} />
-                </BarChart>
-                </ResponsiveContainer>
-            </div>
+            {isLoadingStats ? (
+                <Skeleton className="h-[300px] w-full rounded-xl" />
+            ) : (
+                <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis 
+                        dataKey="name" 
+                        stroke="#888888" 
+                        fontSize={12} 
+                        tickLine={false} 
+                        axisLine={false} 
+                        />
+                        <YAxis
+                        stroke="#888888"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(value) => `${value}`}
+                        />
+                        <Tooltip 
+                            cursor={{fill: 'transparent'}}
+                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                        />
+                        <Bar dataKey="risk" fill="currentColor" radius={[4, 4, 0, 0]} className="fill-primary" barSize={40} />
+                    </BarChart>
+                    </ResponsiveContainer>
+                </div>
+            )}
             </CardContent>
         </Card>
 
@@ -178,21 +163,35 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
                 <div className="space-y-6 max-h-[300px] overflow-y-auto pr-2">
-                    {scanList.map((scan) => (
-                        <div key={scan._id} className="flex items-center">
-                            <div className="space-y-1">
-                                <p className="text-sm font-medium leading-none">{scan.project_name}</p>
-                                <p className="text-sm text-muted-foreground">
-                                    {scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch} - {scan.status}
-                                </p>
+                    {isLoadingScans ? (
+                        Array.from({ length: 5 }).map((_, i) => (
+                            <div key={i} className="flex items-center">
+                                <div className="space-y-1 w-full">
+                                    <Skeleton className="h-4 w-[200px]" />
+                                    <Skeleton className="h-3 w-[150px]" />
+                                </div>
+                                <Skeleton className="ml-auto h-4 w-[80px]" />
                             </div>
-                            <div className="ml-auto font-medium text-sm text-muted-foreground">
-                                {new Date(scan.created_at).toLocaleDateString()}
-                            </div>
-                        </div>
-                    ))}
-                    {scanList.length === 0 && (
-                        <div className="text-sm text-muted-foreground">No recent activity.</div>
+                        ))
+                    ) : (
+                        <>
+                            {scanList.map((scan) => (
+                                <div key={scan._id} className="flex items-center">
+                                    <div className="space-y-1">
+                                        <p className="text-sm font-medium leading-none">{scan.project_name}</p>
+                                        <p className="text-sm text-muted-foreground">
+                                            {scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch} - {scan.status}
+                                        </p>
+                                    </div>
+                                    <div className="ml-auto font-medium text-sm text-muted-foreground">
+                                        {new Date(scan.created_at).toLocaleDateString()}
+                                    </div>
+                                </div>
+                            ))}
+                            {scanList.length === 0 && (
+                                <div className="text-sm text-muted-foreground">No recent activity.</div>
+                            )}
+                        </>
                     )}
                 </div>
             </CardContent>
@@ -226,28 +225,41 @@ export default function Dashboard() {
                         </tr>
                     </thead>
                     <tbody className="[&_tr:last-child]:border-0">
-                        {projectList.map((project) => (
-                            <tr 
-                                key={project._id} 
-                                className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
-                                onClick={() => navigate(`/projects/${project._id}`)}
-                            >
-                                <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
-                                <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_id || '-'}</td>
-                                <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? new Date(project.last_scan_at).toLocaleDateString() : 'Never'}</td>
-                                <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
-                                <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-orange-500 font-bold">{project.stats?.high || 0}</td>
-                                <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
-                                    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
-                                        (project.stats?.critical || 0) > 0 ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80' :
-                                        (project.stats?.high || 0) > 0 ? 'bg-orange-500 text-white hover:bg-orange-500/80' :
-                                        'bg-green-500 text-white hover:bg-green-500/80'
-                                    }`}>
-                                        {(project.stats?.critical || 0) > 0 ? 'Critical' : (project.stats?.high || 0) > 0 ? 'High Risk' : 'Secure'}
-                                    </span>
-                                </td>
-                            </tr>
-                        ))}
+                        {isLoadingProjects ? (
+                            Array.from({ length: 5 }).map((_, i) => (
+                                <tr key={i} className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                                    <td className="p-4 align-middle"><Skeleton className="h-4 w-[150px]" /></td>
+                                    <td className="p-4 align-middle"><Skeleton className="h-4 w-[100px]" /></td>
+                                    <td className="p-4 align-middle"><Skeleton className="h-4 w-[100px]" /></td>
+                                    <td className="p-4 align-middle"><Skeleton className="h-4 w-[40px]" /></td>
+                                    <td className="p-4 align-middle"><Skeleton className="h-4 w-[40px]" /></td>
+                                    <td className="p-4 align-middle"><Skeleton className="h-6 w-[80px] rounded-full" /></td>
+                                </tr>
+                            ))
+                        ) : (
+                            projectList.map((project) => (
+                                <tr 
+                                    key={project._id} 
+                                    className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
+                                    onClick={() => navigate(`/projects/${project._id}`)}
+                                >
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_id || '-'}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? new Date(project.last_scan_at).toLocaleDateString() : 'Never'}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-orange-500 font-bold">{project.stats?.high || 0}</td>
+                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
+                                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                                            (project.stats?.critical || 0) > 0 ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80' :
+                                            (project.stats?.high || 0) > 0 ? 'bg-orange-500 text-white hover:bg-orange-500/80' :
+                                            'bg-green-500 text-white hover:bg-green-500/80'
+                                        }`}>
+                                            {(project.stats?.critical || 0) > 0 ? 'Critical' : (project.stats?.high || 0) > 0 ? 'High Risk' : 'Secure'}
+                                        </span>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
                     </tbody>
                 </table>
             </div>
