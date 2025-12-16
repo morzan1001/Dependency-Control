@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
+import { AxiosError } from 'axios';
 
 interface UserDetailsCardProps {
   user: User | undefined;
@@ -42,7 +43,7 @@ export function UserDetailsCard({ user, systemSettings }: UserDetailsCardProps) 
         description: "Your profile has been updated successfully.",
       });
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Error", {
         description: getErrorMessage(error),
       });

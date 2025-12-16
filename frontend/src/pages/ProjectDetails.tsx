@@ -240,9 +240,11 @@ export default function ProjectDetails() {
           <ProjectMembers project={project} projectId={project._id} />
         </TabsContent>
         
-        <TabsContent value="settings" className="space-y-4">
-          <ProjectSettings project={project} projectId={project._id} user={user} />
-        </TabsContent>
+        {user && (
+          <TabsContent value="settings" className="space-y-4">
+            <ProjectSettings project={project} projectId={project._id} user={user} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   )

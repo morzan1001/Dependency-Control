@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getWaivers, deleteWaiver } from '@/lib/api'
+import { getWaivers, deleteWaiver, Waiver } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ArrowUpDown, Trash2 } from 'lucide-react'
 import { toast } from "sonner"
+import { AxiosError } from 'axios'
 
 interface ProjectWaiversProps {
   projectId: string
@@ -30,7 +31,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
             toast.success("Waiver deleted successfully")
             queryClient.invalidateQueries({ queryKey: ['waivers', projectId] })
         },
-        onError: (error: any) => {
+        onError: (error: AxiosError<any>) => {
             toast.error("Failed to delete waiver", {
                 description: error.response?.data?.detail || "An error occurred"
             })
@@ -43,7 +44,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
         
         if (searchQuery) {
             const lower = searchQuery.toLowerCase()
-            result = result.filter((w: any) => 
+            result = result.filter((w: Waiver) => 
                 (w.package_name || '').toLowerCase().includes(lower) ||
                 (w.reason || '').toLowerCase().includes(lower) ||
                 (w.finding_id || '').toLowerCase().includes(lower)
@@ -51,17 +52,17 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
         }
 
         if (sortConfig) {
-            result.sort((a: any, b: any) => {
-                let aValue = a[sortConfig.key]
-                let bValue = b[sortConfig.key]
+            result.sort((a: Waiver, b: Waiver) => {
+                let aValue: any = a[sortConfig.key as keyof Waiver]
+                let bValue: any = b[sortConfig.key as keyof Waiver]
                 
                 if (sortConfig.key === 'expires') {
                     aValue = a.expiration_date ? new Date(a.expiration_date).getTime() : 9999999999999
                     bValue = b.expiration_date ? new Date(b.expiration_date).getTime() : 9999999999999
                 }
 
-                if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1
-                if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1
+                if (aValue! < bValue!) return sortConfig.direction === 'asc' ? -1 : 1
+                if (aValue! > bValue!) return sortConfig.direction === 'asc' ? 1 : -1
                 return 0
             })
         }
@@ -121,7 +122,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                             </tr>
                         </thead>
                         <tbody className="[&_tr:last-child]:border-0">
-                            {filteredWaivers.map((waiver: any) => (
+                            {filteredWaivers.map((waiver: Waiver) => (
                                 <tr key={waiver._id} className="border-b transition-colors hover:bg-muted/50">
                                     <td className="p-4 align-middle font-mono">{waiver.finding_id || "Any"}</td>
                                     <td className="p-4 align-middle">

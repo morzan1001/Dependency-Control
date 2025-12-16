@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { searchDependencies } from '@/lib/api'
+import { searchDependencies, SearchResult } from '@/lib/api'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -91,7 +91,7 @@ export default function SearchPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {results.map((result: any, index: number) => (
+                {results.map((result: SearchResult, index: number) => (
                   <TableRow key={index}>
                     <TableCell>
                       <Link to={`/projects/${result.project_id}`} className="hover:underline font-medium flex items-center gap-2">
@@ -99,7 +99,7 @@ export default function SearchPage() {
                         {result.project_name}
                       </Link>
                     </TableCell>
-                    <TableCell>{result.package_name}</TableCell>
+                    <TableCell>{result.package}</TableCell>
                     <TableCell>{result.version}</TableCell>
                     <TableCell>{result.type}</TableCell>
                     <TableCell>{result.license || 'Unknown'}</TableCell>

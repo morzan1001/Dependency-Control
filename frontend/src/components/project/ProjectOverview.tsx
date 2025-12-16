@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getProjectScans, getProject, getWaivers } from '@/lib/api'
+import { getProjectScans, getProject, getWaivers, Finding, Waiver, Scan } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Activity, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
@@ -37,16 +37,16 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       if (!filteredScans.length) return null;
 
       // Helper to check if finding is active (not waived, analyzer enabled)
-      const isFindingActive = (finding: any) => {
+      const isFindingActive = (finding: Finding) => {
           // Check waivers
           let isWaived = finding.waived;
           if (!isWaived && waivers) {
-              isWaived = waivers.some((waiver: any) => {
+              isWaived = waivers.some((waiver: Waiver) => {
                   if (waiver.expiration_date && new Date(waiver.expiration_date) < new Date()) return false;
                   let match = true;
-                  if (waiver.finding_id && waiver.finding_id !== finding.id && waiver.finding_id !== finding.vuln_id) match = false;
-                  if (match && waiver.package_name && waiver.package_name !== finding.component && waiver.package_name !== finding.pkg_name) match = false;
-                  if (match && waiver.package_version && waiver.package_version !== finding.version && waiver.package_version !== finding.installed_version) match = false;
+                  if (waiver.finding_id && waiver.finding_id !== finding.id) match = false;
+                  if (match && waiver.package_name && waiver.package_name !== finding.component) match = false;
+                  if (match && waiver.package_version && waiver.package_version !== finding.version) match = false;
                   if (match && waiver.finding_type && waiver.finding_type !== finding.type) match = false;
                   return match;
               });
@@ -64,7 +64,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       };
 
       // 1. Group by branch
-      const scansByBranch: Record<string, any[]> = {};
+      const scansByBranch: Record<string, Scan[]> = {};
       filteredScans.forEach(scan => {
           if (scan.status !== 'completed') return;
           if (!scansByBranch[scan.branch]) scansByBranch[scan.branch] = [];
@@ -72,7 +72,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       });
 
       const uniqueFindings = new Map(); // Global unique findings
-      const branchStatsData: any[] = [];
+      const branchStatsData: { name: string; critical: number; high: number; medium: number; low: number }[] = [];
 
       Object.entries(scansByBranch).forEach(([branch, branchScans]) => {
           // Sort by date desc
@@ -88,7 +88,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
           commitScans.forEach(scan => {
               if (!scan.findings_summary) return;
-              scan.findings_summary.forEach((finding: any) => {
+              scan.findings_summary.forEach((finding: Finding) => {
                   if (!isFindingActive(finding)) return;
 
                   const key = `${finding.type}:${finding.id}:${finding.component}:${finding.version}`;

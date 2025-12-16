@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { updateProject, rotateProjectApiKey, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getTeams, getSystemSettings, Project, getProjectBranches, deleteProject } from '@/lib/api'
+import { updateProject, rotateProjectApiKey, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getTeams, getSystemSettings, Project, getProjectBranches, deleteProject, User, ProjectUpdate } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { AlertTriangle, RefreshCw, Copy, Trash2 } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { AVAILABLE_ANALYZERS } from '@/lib/constants'
+import { AxiosError } from 'axios'
 import {
   Select,
   SelectContent,
@@ -31,7 +32,7 @@ import {
 interface ProjectSettingsProps {
   project: Project
   projectId: string
-  user: any
+  user: User
 }
 
 export function ProjectSettings({ project, projectId, user }: ProjectSettingsProps) {
@@ -93,18 +94,18 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       toast.success("Project Deleted", { description: "The project has been permanently deleted." })
       navigate('/projects')
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Delete Failed", { description: error.response?.data?.detail || "Failed to delete project." })
     }
   })
 
   const updateProjectMutation = useMutation({
-    mutationFn: (data: any) => updateProject(projectId, data),
+    mutationFn: (data: ProjectUpdate) => updateProject(projectId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Project updated successfully")
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Failed to update project", {
         description: error.response?.data?.detail || "An error occurred"
       })
@@ -129,7 +130,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       setIsApiKeyDialogOpen(true)
       toast.success("API Key rotated successfully")
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Failed to rotate API key", {
         description: error.response?.data?.detail || "An error occurred"
       })

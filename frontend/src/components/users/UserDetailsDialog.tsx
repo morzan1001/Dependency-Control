@@ -1,4 +1,4 @@
-import { User, updateUser, getProjects, getTeams, adminMigrateUserToLocal, adminResetUserPassword, adminDisableUser2FA } from '@/lib/api';
+import { User, updateUser, getProjects, getTeams, adminMigrateUserToLocal, adminResetUserPassword, adminDisableUser2FA, UserUpdate } from '@/lib/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { toast } from "sonner"
 import { useAuth } from '@/context/AuthContext';
+import { AxiosError } from 'axios';
 import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
 
@@ -44,14 +45,14 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   });
 
   const updateUserMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => updateUser(id, data),
+    mutationFn: ({ id, data }: { id: string; data: UserUpdate }) => updateUser(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       toast.success("Success", {
         description: "User updated successfully.",
       });
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Error", {
         description: error.response?.data?.detail || "Failed to update user.",
       });
@@ -66,7 +67,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
         description: "User authentication provider set to 'local'. You can now reset their password.",
       });
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Migration Failed", {
         description: error.response?.data?.detail || "Failed to migrate user.",
       });
@@ -87,7 +88,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
       }
       setResetLink(data.reset_link || null);
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Reset Failed", {
         description: error.response?.data?.detail || "Failed to initiate password reset.",
       });
@@ -102,7 +103,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
         description: "Two-Factor Authentication has been disabled for this user.",
       });
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Action Failed", {
         description: error.response?.data?.detail || "Failed to disable 2FA.",
       });

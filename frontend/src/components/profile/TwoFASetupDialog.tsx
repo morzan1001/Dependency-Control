@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
+import { AxiosError } from 'axios';
 
 interface TwoFASetupDialogProps {
   setupData: TwoFASetup | null;
@@ -37,7 +38,7 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: TwoFASetupDialo
         description: "Two-factor authentication has been enabled.",
       });
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Error", {
         description: getErrorMessage(error),
       });

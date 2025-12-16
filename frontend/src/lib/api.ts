@@ -752,12 +752,21 @@ export const acceptInvitation = async (token: string, username: string, password
 };
 
 // Search Endpoints
+export interface SearchResult {
+  project_id: string;
+  project_name: string;
+  package: string;
+  version: string;
+  type: string;
+  license?: string;
+}
+
 export const searchDependencies = async (query: string, version?: string) => {
   const params = new URLSearchParams();
   params.append('q', query);
   if (version) params.append('version', version);
   
-  const response = await api.get<any>('/search/dependencies', { params });
+  const response = await api.get<SearchResult[]>('/search/dependencies', { params });
   return response.data;
 };
 

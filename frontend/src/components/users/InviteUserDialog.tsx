@@ -15,6 +15,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
+import { AxiosError } from 'axios';
 
 export function InviteUserDialog() {
   const [isOpen, setIsOpen] = useState(false);
@@ -45,7 +46,7 @@ export function InviteUserDialog() {
         });
       }
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Error", {
         description: error.response?.data?.detail || "Failed to send invitation",
       });

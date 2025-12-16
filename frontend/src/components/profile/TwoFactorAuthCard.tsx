@@ -8,6 +8,7 @@ import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 import { TwoFASetupDialog } from './TwoFASetupDialog';
 import { TwoFADisableDialog } from './TwoFADisableDialog';
+import { AxiosError } from 'axios';
 
 interface TwoFactorAuthCardProps {
   user: User | undefined;
@@ -24,7 +25,7 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
       setSetupData(data);
       setIsSetupOpen(true);
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Error", {
         description: getErrorMessage(error),
       });

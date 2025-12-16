@@ -15,7 +15,7 @@ export default function UsersPage() {
   
   const { hasPermission } = useAuth();
 
-  const { data: users, isLoading: isLoadingUsers } = useQuery({
+  const { data: users, isLoading: isLoadingUsers, error } = useQuery({
     queryKey: ['users', page],
     queryFn: () => getUsers(page * limit, limit),
   });

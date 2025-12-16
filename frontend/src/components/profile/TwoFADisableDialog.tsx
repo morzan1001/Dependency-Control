@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
+import { AxiosError } from 'axios'
 
 interface TwoFADisableDialogProps {
   isOpen: boolean;
@@ -34,7 +35,7 @@ export function TwoFADisableDialog({ isOpen, onClose }: TwoFADisableDialogProps)
         description: "Two-factor authentication has been disabled.",
       });
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Error", {
         description: getErrorMessage(error),
       });

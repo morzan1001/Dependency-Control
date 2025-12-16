@@ -649,11 +649,11 @@ function QualityTab({ findings, projectId }: { findings: Finding[], projectId: s
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
 
-    const qualityFindings = findings.filter(f => ['outdated', 'quality'].includes(f.type) && !f.waived);
+    const qualityFindings = findings.filter(f => ['outdated', 'quality'].includes(f.type as string) && !f.waived);
     
     const stats = {
         outdated: qualityFindings.filter(f => f.type === 'outdated').length,
-        quality: qualityFindings.filter(f => f.type === 'quality').length,
+        quality: qualityFindings.filter(f => (f.type as string) === 'quality').length,
     };
 
     return (
@@ -783,7 +783,7 @@ function AnalyzerResultView({ result }: { result: AnalysisResult }) {
 
 function FindingsTable({ findings, showSeverity = false, onFindingClick }: { findings: Finding[], showSeverity?: boolean, onFindingClick: (f: Finding) => void }) {
     const [searchQuery, setSearchQuery] = useState('')
-    const [sortConfig, setSortConfig] = useState<{ key: keyof Finding, direction: 'asc' | 'desc' } | null>(null)
+    const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
 
     const sortedFindings = useMemo(() => {
         let result = [...findings]
@@ -799,9 +799,8 @@ function FindingsTable({ findings, showSeverity = false, onFindingClick }: { fin
 
         if (sortConfig) {
             result.sort((a, b) => {
-                let aValue = a[sortConfig.key] as any
-                let bValue = b[sortConfig.key] as any
-                let bValue = b[sortConfig.key]
+                let aValue = a[sortConfig.key as keyof Finding] as any
+                let bValue = b[sortConfig.key as keyof Finding] as any
 
                 if (sortConfig.key === 'severity') {
                     const severityOrder: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0, UNKNOWN: -1 }

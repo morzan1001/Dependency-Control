@@ -1,7 +1,7 @@
 import { User, deleteUser, inviteUser } from '@/lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { Check, X, Trash2, ChevronLeft, ChevronRight, Mail } from 'lucide-react';
+import { Check, X, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner"
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
+import { AxiosError } from 'axios';
 
 interface UserTableProps {
   users: User[] | undefined;
@@ -36,7 +37,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser }: Us
       setUserToDelete(null);
       toast.success("User deleted successfully");
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Failed to delete user", {
         description: error.response?.data?.detail || "An error occurred"
       })
@@ -48,7 +49,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser }: Us
     onSuccess: () => {
       toast.success("Invitation resent successfully");
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<any>) => {
       toast.error("Failed to resend invitation", {
         description: error.response?.data?.detail || "An error occurred"
       })
@@ -124,7 +125,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser }: Us
                        <Button 
                          variant="outline" 
                          size="sm"
-                         onClick={(e) => {
+                         onClick={(e: React.MouseEvent) => {
                            e.stopPropagation();
                            resendInviteMutation.mutate(user.email);
                          }}
