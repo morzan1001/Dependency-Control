@@ -100,7 +100,7 @@ async def read_teams(
         query["name"] = {"$regex": search, "$options": "i"}
 
     if "*" in current_user.permissions or "team:read_all" in current_user.permissions:
-        teams = await db.teams.find(query).to_list(1000)
+        final_query = query
     elif "team:read" in current_user.permissions:
         permission_query = {"members.user_id": str(current_user.id)}
         
@@ -108,14 +108,57 @@ async def read_teams(
             final_query = {"$and": [query, permission_query]}
         else:
             final_query = permission_query
-            
-        teams = await db.teams.find(final_query).to_list(1000)
     else:
         raise HTTPException(status_code=403, detail="Not enough permissions")
         
-    for team in teams:
-        await enrich_team_with_usernames(team, db)
-        
+    pipeline = [
+        {"$match": final_query},
+        {"$lookup": {
+            "from": "users",
+            "let": {"member_ids": "$members.user_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}}},
+                {"$project": {"_id": 1, "username": 1}}
+            ],
+            "as": "users_info"
+        }},
+        {"$addFields": {
+            "members": {
+                "$map": {
+                    "input": "$members",
+                    "as": "m",
+                    "in": {
+                        "$mergeObjects": [
+                            "$$m",
+                            {
+                                "username": {
+                                    "$let": {
+                                        "vars": {
+                                            "u": {
+                                                "$arrayElemAt": [
+                                                    {
+                                                        "$filter": {
+                                                            "input": "$users_info",
+                                                            "cond": {"$eq": [{"$toString": "$$this._id"}, "$$m.user_id"]}
+                                                        }
+                                                    },
+                                                    0
+                                                ]
+                                            }
+                                        },
+                                        "in": "$$u.username"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }},
+        {"$project": {"users_info": 0}}
+    ]
+
+    teams = await db.teams.aggregate(pipeline).to_list(1000)
     return teams
 
 @router.get("/{team_id}", response_model=TeamResponse)
@@ -128,9 +171,59 @@ async def read_team(
     Get team details.
     """
     await check_team_access(team_id, current_user, db)
-    team_data = await db.teams.find_one({"_id": team_id})
-    await enrich_team_with_usernames(team_data, db)
-    return team_data
+    
+    pipeline = [
+        {"$match": {"_id": team_id}},
+        {"$lookup": {
+            "from": "users",
+            "let": {"member_ids": "$members.user_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}}},
+                {"$project": {"_id": 1, "username": 1}}
+            ],
+            "as": "users_info"
+        }},
+        {"$addFields": {
+            "members": {
+                "$map": {
+                    "input": "$members",
+                    "as": "m",
+                    "in": {
+                        "$mergeObjects": [
+                            "$$m",
+                            {
+                                "username": {
+                                    "$let": {
+                                        "vars": {
+                                            "u": {
+                                                "$arrayElemAt": [
+                                                    {
+                                                        "$filter": {
+                                                            "input": "$users_info",
+                                                            "cond": {"$eq": [{"$toString": "$$this._id"}, "$$m.user_id"]}
+                                                        }
+                                                    },
+                                                    0
+                                                ]
+                                            }
+                                        },
+                                        "in": "$$u.username"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }},
+        {"$project": {"users_info": 0}}
+    ]
+    
+    result = await db.teams.aggregate(pipeline).to_list(1)
+    if not result:
+        raise HTTPException(status_code=404, detail="Team not found")
+        
+    return result[0]
 
 @router.put("/{team_id}", response_model=TeamResponse)
 async def update_team(

@@ -53,7 +53,11 @@ class Scan(BaseModel):
     commit_message: Optional[str] = None
     commit_tag: Optional[str] = None
     
-    sboms: List[Dict[str, Any]] = [] # Raw SBOMs received
+    sboms: List[Dict[str, Any]] = [] # Raw SBOMs (Deprecated: use sbom_refs for new scans)
+    
+    # New: Reference to stored SBOM files (GridFS/S3)
+    # This allows us to keep the Scan document small while preserving the raw data.
+    sbom_refs: List[Dict[str, Any]] = [] 
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
     status: str = "pending"

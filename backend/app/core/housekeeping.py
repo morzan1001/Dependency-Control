@@ -20,52 +20,71 @@ async def run_housekeeping():
         settings_data = await db.system_settings.find_one({"_id": "current"})
         system_settings = SystemSettings(**settings_data) if settings_data else SystemSettings()
         
-        # Iterate over all projects
-        async for project_data in db.projects.find({}):
-            try:
-                project = Project(**project_data)
+        # Determine retention strategy
+        if system_settings.retention_mode == "global":
+            retention_days = system_settings.global_retention_days
+            if retention_days > 0:
+                cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+                logger.info(f"Running global housekeeping. Deleting scans older than {cutoff_date}")
                 
-                # Determine retention days
-                if system_settings.retention_mode == "global":
-                    retention_days = system_settings.global_retention_days
-                else:
-                    retention_days = project.retention_days
+                # Find old scans
+                cursor = db.scans.find(
+                    {"created_at": {"$lt": cutoff_date}},
+                    {"_id": 1}
+                )
                 
-                # If retention is 0 or less, it means "keep forever"
-                if retention_days <= 0:
+                scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
+                
+                if scan_ids_to_delete:
+                    # Bulk delete
+                    await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.findings.delete_many({"scan_id": {"$in": scan_ids_to_delete}}) # Also delete findings
+                    await db.dependencies.delete_many({"scan_id": {"$in": scan_ids_to_delete}}) # Also delete dependencies
+                    result = await db.scans.delete_many({"_id": {"$in": scan_ids_to_delete}})
+                    logger.info(f"Global housekeeping: Deleted {result.deleted_count} scans.")
+                    
+        else:
+            # Project-specific retention (Optimized: Group by retention_days)
+            logger.info("Running project-specific housekeeping...")
+            
+            # Group projects by retention_days to minimize DB queries
+            pipeline = [
+                {"$match": {"retention_days": {"$gt": 0}}}, # Ignore keep-forever
+                {"$group": {
+                    "_id": "$retention_days",
+                    "project_ids": {"$push": "$_id"}
+                }}
+            ]
+            
+            async for group in db.projects.aggregate(pipeline):
+                days = group["_id"]
+                project_ids = group["project_ids"]
+                
+                if not days or days <= 0: 
                     continue
                     
-                cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+                cutoff_date = datetime.utcnow() - timedelta(days=days)
                 
-                # Find scans older than cutoff_date to get their IDs
+                # Find scans for this batch of projects that are too old
                 cursor = db.scans.find(
                     {
-                        "project_id": project.id,
+                        "project_id": {"$in": project_ids},
                         "created_at": {"$lt": cutoff_date}
                     },
                     {"_id": 1}
                 )
                 
-                scan_ids_to_delete = []
-                async for scan in cursor:
-                    scan_ids_to_delete.append(str(scan["_id"]))
+                scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
                 
                 if scan_ids_to_delete:
-                    # Delete Analysis Results first
-                    ar_delete_result = await db.analysis_results.delete_many({
-                        "scan_id": {"$in": scan_ids_to_delete}
-                    })
+                    # Bulk delete for this retention group
+                    await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.findings.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.dependencies.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    result = await db.scans.delete_many({"_id": {"$in": scan_ids_to_delete}})
                     
-                    # Delete Scans
-                    scan_delete_result = await db.scans.delete_many({
-                        "_id": {"$in": scan_ids_to_delete}
-                    })
-                    
-                    logger.info(f"Project {project.id}: Deleted {scan_delete_result.deleted_count} old scans and {ar_delete_result.deleted_count} analysis results.")
-                    
-            except Exception as e:
-                logger.error(f"Error performing housekeeping for project {project_data.get('_id')}: {e}")
-                
+                    logger.info(f"Retention {days} days: Deleted {result.deleted_count} scans from {len(project_ids)} projects.")
+
     except Exception as e:
         logger.error(f"Housekeeping task failed: {e}")
 

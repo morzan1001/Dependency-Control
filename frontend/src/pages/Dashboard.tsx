@@ -5,15 +5,16 @@ import { getDashboardStats, getRecentScans, getProjects } from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Button } from '@/components/ui/button'
+import { useVirtualizer } from '@tanstack/react-virtual'
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const [page, setPage] = useState(1)
   const [sortBy, setSortBy] = useState('created_at')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-  const limit = 10
+  const limit = 50 // Optimized for virtual scrolling
 
   const { data: dashboardStats, isLoading: isLoadingStats, error: errorStats } = useQuery({
     queryKey: ['dashboard-stats'],
@@ -43,6 +44,16 @@ export default function Dashboard() {
   const scanList = recentScans || []
   const projectList = projectsData?.items || []
   const totalPages = projectsData?.pages || 0
+
+  // Virtual Scroll Setup
+  const parentRef = useRef<HTMLDivElement>(null)
+  
+  const rowVirtualizer = useVirtualizer({
+    count: projectList.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 73, // Approximate row height
+    overscan: 5,
+  })
 
   const stats = [
     {
@@ -204,9 +215,12 @@ export default function Dashboard() {
           <CardTitle>Projects</CardTitle>
         </CardHeader>
         <CardContent>
-            <div className="relative w-full overflow-auto">
+            <div 
+                ref={parentRef}
+                className="relative w-full overflow-auto max-h-[600px]"
+            >
                 <table className="w-full caption-bottom text-sm">
-                    <thead className="[&_tr]:border-b">
+                    <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('name')}>
                                 Name {sortBy === 'name' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
@@ -237,28 +251,45 @@ export default function Dashboard() {
                                 </tr>
                             ))
                         ) : (
-                            projectList.map((project) => (
-                                <tr 
-                                    key={project._id} 
-                                    className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
-                                    onClick={() => navigate(`/projects/${project._id}`)}
-                                >
-                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
-                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_id || '-'}</td>
-                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? new Date(project.last_scan_at).toLocaleDateString() : 'Never'}</td>
-                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
-                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-orange-500 font-bold">{project.stats?.high || 0}</td>
-                                    <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
-                                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
-                                            (project.stats?.critical || 0) > 0 ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80' :
-                                            (project.stats?.high || 0) > 0 ? 'bg-orange-500 text-white hover:bg-orange-500/80' :
-                                            'bg-green-500 text-white hover:bg-green-500/80'
-                                        }`}>
-                                            {(project.stats?.critical || 0) > 0 ? 'Critical' : (project.stats?.high || 0) > 0 ? 'High Risk' : 'Secure'}
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))
+                            <>
+                                {rowVirtualizer.getVirtualItems().length > 0 && (
+                                    <tr style={{ height: `${rowVirtualizer.getVirtualItems()[0].start}px` }}>
+                                        <td colSpan={6} />
+                                    </tr>
+                                )}
+                                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                                    const project = projectList[virtualRow.index]
+                                    return (
+                                        <tr 
+                                            key={project._id} 
+                                            data-index={virtualRow.index}
+                                            ref={rowVirtualizer.measureElement}
+                                            className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
+                                            onClick={() => navigate(`/projects/${project._id}`)}
+                                        >
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_id || '-'}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? new Date(project.last_scan_at).toLocaleDateString() : 'Never'}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-orange-500 font-bold">{project.stats?.high || 0}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
+                                                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                                                    (project.stats?.critical || 0) > 0 ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80' :
+                                                    (project.stats?.high || 0) > 0 ? 'bg-orange-500 text-white hover:bg-orange-500/80' :
+                                                    'bg-green-500 text-white hover:bg-green-500/80'
+                                                }`}>
+                                                    {(project.stats?.critical || 0) > 0 ? 'Critical' : (project.stats?.high || 0) > 0 ? 'High Risk' : 'Secure'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
+                                {rowVirtualizer.getVirtualItems().length > 0 && (
+                                    <tr style={{ height: `${rowVirtualizer.getTotalSize() - rowVirtualizer.getVirtualItems()[rowVirtualizer.getVirtualItems().length - 1].end}px` }}>
+                                        <td colSpan={6} />
+                                    </tr>
+                                )}
+                            </>
                         )}
                     </tbody>
                 </table>

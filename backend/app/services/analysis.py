@@ -21,6 +21,7 @@ from app.services.analyzers import (
 from app.services.notifications import notification_service
 from app.models.project import Project
 from app.models.stats import Stats
+from app.models.finding_record import FindingRecord
 from app.services.aggregator import ResultAggregator
 
 logger = logging.getLogger(__name__)
@@ -155,111 +156,100 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     if project_id:
         waivers = await db.waivers.find({"project_id": project_id}).to_list(length=None)
 
-    # Pre-process waivers for O(1) lookup
-    # We group waivers by finding_id and package_name to reduce the search space
+    # Filter active waivers
     active_waivers = [w for w in waivers if not (w.get("expiration_date") and w["expiration_date"] < datetime.utcnow())]
+
+    # Save Findings to 'findings' collection (Point B)
+    # First, clear old findings for this scan (idempotency)
+    await db.findings.delete_many({"scan_id": scan_id})
     
-    waivers_by_id = {}
-    waivers_by_component = {}
-    waivers_generic = []
-
-    for w in active_waivers:
-        if w.get("finding_id"):
-            waivers_by_id.setdefault(w["finding_id"], []).append(w)
-        elif w.get("package_name"):
-            waivers_by_component.setdefault(w["package_name"], []).append(w)
-        else:
-            waivers_generic.append(w)
-
-    # Apply waivers
-    ignored_count = 0
-    for finding in aggregated_findings:
-        is_waived = False
-        waiver_reason = None
+    findings_to_insert = []
+    for f in aggregated_findings:
+        # Convert Finding to FindingRecord dict
+        # We use the Pydantic model to validate/transform if needed, or just construct dict
+        record = f.dict()
+        record["scan_id"] = scan_id
+        record["project_id"] = project_id
+        record["finding_id"] = f.id # Map logical ID
+        record["_id"] = str(uuid.uuid4()) # New Mongo ID
+        findings_to_insert.append(record)
         
-        # Determine candidates: specific ID matches + component matches + generic waivers
-        candidates = (
-            waivers_by_id.get(finding.id, []) + 
-            waivers_by_component.get(finding.component, []) + 
-            waivers_generic
+    if findings_to_insert:
+        await db.findings.insert_many(findings_to_insert)
+
+    # Apply waivers via DB updates (Optimization: Bulk updates instead of loop)
+    for waiver in active_waivers:
+        query = {"scan_id": scan_id}
+        if waiver.get("finding_id"):
+            query["finding_id"] = waiver["finding_id"]
+        if waiver.get("package_name"):
+            query["component"] = waiver["package_name"]
+        if waiver.get("package_version"):
+            query["version"] = waiver["package_version"]
+        if waiver.get("finding_type"):
+            query["type"] = waiver["finding_type"]
+            
+        await db.findings.update_many(
+            query, 
+            {"$set": {"waived": True, "waiver_reason": waiver.get("reason")}}
         )
-        
-        for waiver in candidates:
-            # Check criteria (expiration already checked)
-            match = True
-            
-            # Note: finding_id and package_name are implicitly checked by the lookup strategy 
-            # for the respective lists, but we check everything to be safe and handle the generic/mixed cases correctly.
-            
-            if waiver.get("finding_id") and waiver["finding_id"] != finding.id:
-                match = False
-            if match and waiver.get("package_name") and waiver["package_name"] != finding.component:
-                match = False
-            if match and waiver.get("package_version") and waiver["package_version"] != finding.version:
-                match = False
-            if match and waiver.get("finding_type") and waiver["finding_type"] != finding.type:
-                match = False
-                
-            if match:
-                is_waived = True
-                waiver_reason = waiver.get("reason")
-                break
-        
-        if is_waived:
-            finding.waived = True
-            finding.waiver_reason = waiver_reason
-            ignored_count += 1
-        else:
-            finding.waived = False
 
-    # Calculate stats (excluding waived)
-    stats = Stats()
+    ignored_count = await db.findings.count_documents({"scan_id": scan_id, "waived": True})
+
+    # Calculate stats via Aggregation (Optimization: Calculation in DB)
+    pipeline = [
+        {"$match": {"scan_id": scan_id, "waived": False}},
+        {"$project": {
+            "severity": 1,
+            "cvss_score": "$details.cvss_score",
+            "calculated_score": {
+                "$switch": {
+                    "branches": [
+                        {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 10.0},
+                        {"case": {"$eq": ["$severity", "HIGH"]}, "then": 7.5},
+                        {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 4.0},
+                        {"case": {"$eq": ["$severity", "LOW"]}, "then": 1.0}
+                    ],
+                    "default": 0.0
+                }
+            }
+        }},
+        {"$group": {
+            "_id": None,
+            "critical": {"$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}},
+            "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
+            "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
+            "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
+            "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
+            "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
+            "risk_score": {"$sum": {"$toDouble": {"$ifNull": ["$cvss_score", "$calculated_score"]}}}
+        }}
+    ]
+
+    stats_result = await db.findings.aggregate(pipeline).to_list(1)
     
-    for finding in aggregated_findings:
-        if finding.waived:
-            continue
-
-        severity = finding.severity.lower()
-        if severity == "critical":
-            stats.critical += 1
-        elif severity == "high":
-            stats.high += 1
-        elif severity == "medium":
-            stats.medium += 1
-        elif severity == "low":
-            stats.low += 1
-        elif severity == "info":
-            stats.info += 1
-        else:
-            stats.unknown += 1
-
-        # Calculate Risk Score
-        # Prefer CVSS Score if available, otherwise map from Severity
-        score = finding.details.get("cvss_score")
-        
-        if score is None:
-            sev_upper = severity.upper()
-            if sev_upper == "CRITICAL": score = 10.0
-            elif sev_upper == "HIGH": score = 7.5
-            elif sev_upper == "MEDIUM": score = 4.0
-            elif sev_upper == "LOW": score = 1.0
-            else: score = 0.0
-        
-        stats.risk_score += float(score)
-
-    # Round risk score
-    stats.risk_score = round(stats.risk_score, 1)
+    stats = Stats()
+    if stats_result:
+        res = stats_result[0]
+        stats.critical = res.get("critical", 0)
+        stats.high = res.get("high", 0)
+        stats.medium = res.get("medium", 0)
+        stats.low = res.get("low", 0)
+        stats.info = res.get("info", 0)
+        stats.unknown = res.get("unknown", 0)
+        stats.risk_score = round(res.get("risk_score", 0.0), 1)
 
     await db.scans.update_one(
         {"_id": scan_id},
         {"$set": {
             "status": "completed", 
-            "findings_summary": [f.dict() for f in aggregated_findings],
             "findings_count": len(aggregated_findings),
             "ignored_count": ignored_count,
             "stats": stats.dict(),
             "completed_at": datetime.utcnow()
-        }}
+        },
+        "$unset": {"findings_summary": ""} # Remove legacy field if it exists
+        }
     )
     
     # Update Project stats

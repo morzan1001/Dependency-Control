@@ -11,6 +11,7 @@ from app.schemas.kics import KicsIngest
 from app.schemas.bearer import BearerIngest
 from app.models.project import Project, Scan
 from app.models.stats import Stats
+from app.models.dependency import Dependency
 from app.db.mongodb import get_database
 from app.core.worker import worker_manager
 from app.services.aggregator import ResultAggregator
@@ -197,121 +198,116 @@ async def ingest_sbom(
             "pipeline_id": pipeline_id
         })
     
-    try:
-        if existing_scan:
-            # Update existing scan
-            scan_id = existing_scan["_id"]
-            
-            # Check for duplicates based on job_id if we tracked it, but for now just append
-            # We could check if the exact same SBOM content is already there, but that's expensive.
-            
-            await db.scans.update_one(
-                {"_id": scan_id},
-                {
-                    "$set": {
-                        "branch": data.branch or existing_scan.get("branch"),
-                        "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
-                        "project_url": data.project_url,
-                        "pipeline_url": pipeline_url,
-                        "job_id": data.job_id,
-                        "job_started_at": data.job_started_at,
-                        "project_name": data.project_name,
-                        "commit_message": data.commit_message,
-                        "commit_tag": data.commit_tag,
-                        "status": "pending", # Reset status to pending to re-analyze with new data
-                        "updated_at": datetime.utcnow()
-                    },
-                    "$push": {
-                        "sboms": {"$each": new_sboms}
-                    }
-                }
-            )
-        else:
-            # Create new scan
-            scan = Scan(
-                project_id=str(project.id),
-                branch=data.branch or "unknown",
-                commit_hash=data.commit_hash,
-                pipeline_id=pipeline_id,
-                pipeline_iid=pipeline_iid,
-                project_url=data.project_url,
-                pipeline_url=pipeline_url,
-                job_id=data.job_id,
-                job_started_at=data.job_started_at,
-                project_name=data.project_name,
-                commit_message=data.commit_message,
-                commit_tag=data.commit_tag,
-                sboms=new_sboms,
-                status="pending"
-            )
-            await db.scans.insert_one(scan.dict(by_alias=True))
-            scan_id = scan.id
-    except DocumentTooLarge:
-        logger.warning(f"SBOM content too large for pipeline {pipeline_id}, attempting to offload to GridFS")
+    # Initialize GridFS
+    fs = AsyncIOMotorGridFSBucket(db)
+    sbom_refs = []
+    dependencies_to_insert = []
+    
+    # Determine scan_id (either existing or new)
+    scan_id = existing_scan["_id"] if existing_scan else str(uuid.uuid4())
+
+    for sbom in new_sboms:
+        # 1. Upload to GridFS (Always)
         try:
-            # Initialize GridFS
-            fs = AsyncIOMotorGridFSBucket(db)
-            gridfs_sboms = []
-            
-            for sbom in new_sboms:
-                sbom_str = json.dumps(sbom)
-                sbom_bytes = sbom_str.encode('utf-8')
-                file_id = await fs.upload_from_stream(
-                    f"sbom-{uuid.uuid4()}.json",
-                    sbom_bytes,
-                    metadata={"contentType": "application/json"}
-                )
-                gridfs_sboms.append({"gridfs_id": str(file_id), "type": "gridfs_reference"})
-            
-            if existing_scan:
-                scan_id = existing_scan["_id"]
-                await db.scans.update_one(
-                    {"_id": scan_id},
-                    {
-                        "$set": {
-                            "branch": data.branch or existing_scan.get("branch"),
-                            "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
-                            "project_url": data.project_url,
-                            "pipeline_url": pipeline_url,
-                            "job_id": data.job_id,
-                            "job_started_at": data.job_started_at,
-                            "project_name": data.project_name,
-                            "commit_message": data.commit_message,
-                            "commit_tag": data.commit_tag,
-                            "status": "pending",
-                            "updated_at": datetime.utcnow()
-                        },
-                        "$push": {
-                            "sboms": {"$each": gridfs_sboms}
-                        }
-                    }
-                )
-            else:
-                # Re-create scan object with GridFS references
-                scan = Scan(
-                    project_id=str(project.id),
-                    branch=data.branch or "unknown",
-                    commit_hash=data.commit_hash,
-                    pipeline_id=pipeline_id,
-                    pipeline_iid=pipeline_iid,
-                    project_url=data.project_url,
-                    pipeline_url=pipeline_url,
-                    job_id=data.job_id,
-                    job_started_at=data.job_started_at,
-                    project_name=data.project_name,
-                    commit_message=data.commit_message,
-                    commit_tag=data.commit_tag,
-                    sboms=gridfs_sboms,
-                    status="pending"
-                )
-                await db.scans.insert_one(scan.dict(by_alias=True))
-                scan_id = scan.id
+            sbom_str = json.dumps(sbom)
+            sbom_bytes = sbom_str.encode('utf-8')
+            file_id = await fs.upload_from_stream(
+                f"sbom-{uuid.uuid4()}.json",
+                sbom_bytes,
+                metadata={"contentType": "application/json", "scan_id": scan_id}
+            )
+            sbom_refs.append({
+                "storage": "gridfs",
+                "file_id": str(file_id),
+                "filename": f"sbom-{uuid.uuid4()}.json",
+                "type": "gridfs_reference", # Keep for compatibility with analysis.py
+                "gridfs_id": str(file_id)   # Keep for compatibility with analysis.py
+            })
+        except Exception as e:
+            logger.error(f"Failed to upload SBOM to GridFS: {e}")
+            continue
+
+        # 2. Extract Dependencies for Indexing
+        try:
+            components = sbom.get("components", [])
+            for comp in components:
+                purl = comp.get("purl")
+                if not purl:
+                    continue # Skip components without PURL (can't uniquely identify)
                 
-        except Exception as e2:
-             logger.error(f"Error offloading SBOM to GridFS: {e2}", exc_info=True)
-             raise HTTPException(status_code=413, detail="SBOM content is too large and failed to offload to GridFS.")
-    except Exception as e:
-        logger.error(f"Error ingesting SBOM for pipeline {pipeline_id}: {e}", exc_info=True)
+                dep = Dependency(
+                    project_id=str(project.id),
+                    scan_id=scan_id,
+                    name=comp.get("name", "unknown"),
+                    version=comp.get("version", "unknown"),
+                    purl=purl,
+                    type=comp.get("type", "unknown"),
+                    license=str(comp.get("licenses", [])), # Simplified license handling
+                    scope=comp.get("scope"),
+                    direct=False # TODO: Determine if direct from metadata
+                )
+                dependencies_to_insert.append(dep.dict(by_alias=True))
+        except Exception as e:
+            logger.error(f"Failed to extract dependencies from SBOM: {e}")
+
+    # Bulk insert dependencies
+    if dependencies_to_insert:
+        try:
+            # Optional: Delete old dependencies for this scan if it's a re-run
+            if existing_scan:
+                await db.dependencies.delete_many({"scan_id": scan_id})
+            
+            await db.dependencies.insert_many(dependencies_to_insert)
+        except Exception as e:
+            logger.error(f"Failed to insert dependencies: {e}")
+
+    if existing_scan:
+        # Update existing scan
+        await db.scans.update_one(
+            {"_id": scan_id},
+            {
+                "$set": {
+                    "branch": data.branch or existing_scan.get("branch"),
+                    "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
+                    "project_url": data.project_url,
+                    "pipeline_url": pipeline_url,
+                    "job_id": data.job_id,
+                    "job_started_at": data.job_started_at,
+                    "project_name": data.project_name,
+                    "commit_message": data.commit_message,
+                    "commit_tag": data.commit_tag,
+                    "status": "pending", # Reset status to pending to re-analyze with new data
+                    "updated_at": datetime.utcnow()
+                },
+                "$push": {
+                    "sbom_refs": {"$each": sbom_refs},
+                    # Keep 'sboms' for backward compatibility if needed, or just use sbom_refs
+                    # For now, we populate 'sboms' with the refs so analysis.py works without changes
+                    "sboms": {"$each": sbom_refs} 
+                }
+            }
+        )
+    else:
+        # Create new scan
+        scan = Scan(
+            id=scan_id,
+            project_id=str(project.id),
+            branch=data.branch or "unknown",
+            commit_hash=data.commit_hash,
+            pipeline_id=pipeline_id,
+            pipeline_iid=pipeline_iid,
+            project_url=data.project_url,
+            pipeline_url=pipeline_url,
+            job_id=data.job_id,
+            job_started_at=data.job_started_at,
+            project_name=data.project_name,
+            commit_message=data.commit_message,
+            commit_tag=data.commit_tag,
+            sbom_refs=sbom_refs,
+            sboms=sbom_refs, # Populate sboms with refs for analysis.py compatibility
+            status="pending"
+        )
+        await db.scans.insert_one(scan.dict(by_alias=True))
         raise HTTPException(status_code=500, detail=f"Internal Server Error during ingestion: {str(e)}")
     
     # Add to Worker Queue

@@ -47,6 +47,24 @@ async def create_indexes(db):
     await db["waivers"].create_index("expiration_date")
     await db["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
 
+    # Dependencies (New Normalized Collection)
+    await db["dependencies"].create_index("project_id")
+    await db["dependencies"].create_index("scan_id")
+    await db["dependencies"].create_index("name")
+    await db["dependencies"].create_index("purl")
+    await db["dependencies"].create_index("version")
+    # Compound index for fast search within a project
+    await db["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
+
+    # Findings (New Normalized Collection)
+    await db["findings"].create_index("project_id")
+    await db["findings"].create_index("scan_id")
+    await db["findings"].create_index("severity")
+    await db["findings"].create_index("type")
+    await db["findings"].create_index("finding_id") # Logical ID (CVE)
+    # Compound for fast retrieval of scan results
+    await db["findings"].create_index([("scan_id", pymongo.ASCENDING), ("severity", pymongo.DESCENDING)])
+
     # Projects
     await db["projects"].create_index("gitlab_project_id")
 

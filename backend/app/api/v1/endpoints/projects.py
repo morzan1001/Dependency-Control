@@ -22,51 +22,6 @@ router = APIRouter()
 class RecentScan(Scan):
     project_name: str
 
-async def enrich_project_details(project: Project, db: AsyncIOMotorDatabase):
-    # 1. Get all direct member user IDs
-    user_ids = [m.user_id for m in project.members]
-    
-    # 2. If project has a team, get team members
-    team_members_map = {}
-    if project.team_id:
-        team = await db.teams.find_one({"_id": project.team_id})
-        if team:
-            for tm in team.get("members", []):
-                # Map team role to project role
-                # owner/admin -> admin, member -> viewer
-                role = "admin" if tm.get("role") in ["admin", "owner"] else "viewer"
-                
-                team_members_map[tm["user_id"]] = {
-                    "user_id": tm["user_id"],
-                    "role": role,
-                    "inherited_from": f"Team: {team.get('name', 'Unknown')}"
-                }
-                if tm["user_id"] not in user_ids:
-                    user_ids.append(tm["user_id"])
-
-    # 3. Fetch all users
-    users = await db.users.find({"_id": {"$in": user_ids}}).to_list(None)
-    user_map = {u["_id"]: u["username"] for u in users}
-
-    # 4. Enrich direct members
-    for m in project.members:
-        m.username = user_map.get(m.user_id)
-
-    # 5. Add team-only members to the list
-    existing_member_ids = set(m.user_id for m in project.members)
-    
-    for uid, tm_data in team_members_map.items():
-        if uid not in existing_member_ids:
-            pm = ProjectMember(
-                user_id=uid,
-                role=tm_data["role"],
-                username=user_map.get(uid),
-                inherited_from=tm_data["inherited_from"]
-            )
-            project.members.append(pm)
-            
-    return project
-
 async def check_project_access(project_id: str, user: User, db: AsyncIOMotorDatabase, required_role: str = None) -> Project:
     project_data = await db.projects.find_one({"_id": project_id})
     if not project_data:
@@ -152,50 +107,71 @@ async def get_dashboard_stats(
             ]
         }
 
-    projects_cursor = db.projects.find(query)
-    projects = await projects_cursor.to_list(None)
-    
-    total_projects = len(projects)
-    total_critical = 0
-    total_high = 0
-    total_risk_score = 0.0
-    
-    risky_projects = []
+    # Use aggregation for performance instead of fetching all projects
+    pipeline = [
+        {"$match": query},
+        {"$project": {
+            "name": 1,
+            "stats": 1,
+            # Calculate risk if missing (fallback logic)
+            "calculated_risk": {
+                "$ifNull": [
+                    "$stats.risk_score",
+                    {"$add": [
+                        {"$multiply": [{"$ifNull": ["$stats.critical", 0]}, 10]},
+                        {"$multiply": [{"$ifNull": ["$stats.high", 0]}, 7.5]},
+                        {"$multiply": [{"$ifNull": ["$stats.medium", 0]}, 4]},
+                        {"$multiply": [{"$ifNull": ["$stats.low", 0]}, 1]}
+                    ]}
+                ]
+            }
+        }},
+        {"$facet": {
+            "totals": [
+                {"$group": {
+                    "_id": None,
+                    "total_projects": {"$sum": 1},
+                    "total_critical": {"$sum": "$stats.critical"},
+                    "total_high": {"$sum": "$stats.high"},
+                    "total_risk_score": {"$sum": "$calculated_risk"}
+                }}
+            ],
+            "top_risky": [
+                {"$sort": {"calculated_risk": -1}},
+                {"$limit": 5},
+                {"$project": {"name": 1, "risk": "$calculated_risk", "id": "$_id"}}
+            ]
+        }}
+    ]
 
-    for p in projects:
-        stats = p.get("stats", {}) or {}
-        crit = stats.get("critical", 0)
-        high = stats.get("high", 0)
-        
-        total_critical += crit
-        total_high += high
-        
-        risk = stats.get("risk_score")
-        if risk is None:
-            # Fallback calculation
-            risk = (crit * 10) + (high * 7.5) + (stats.get("medium", 0) * 4) + (stats.get("low", 0) * 1)
-        
-        total_risk_score += risk
-        
-        risky_projects.append({
-            "name": p.get("name"),
-            "risk": risk,
-            "id": p.get("_id")
-        })
+    result = await db.projects.aggregate(pipeline).to_list(1)
+    
+    if not result:
+        return {
+            "total_projects": 0,
+            "total_critical": 0,
+            "total_high": 0,
+            "avg_risk_score": 0.0,
+            "top_risky_projects": []
+        }
 
+    data = result[0]
+    totals = data["totals"][0] if data["totals"] else {}
+    top_risky = data["top_risky"]
+
+    total_projects = totals.get("total_projects", 0)
+    total_risk_score = totals.get("total_risk_score", 0.0)
+    
     avg_risk = 0.0
     if total_projects > 0:
         avg_risk = round(total_risk_score / total_projects, 1)
-        
-    # Sort by risk desc
-    risky_projects.sort(key=lambda x: x["risk"], reverse=True)
-    
+
     return {
         "total_projects": total_projects,
-        "total_critical": total_critical,
-        "total_high": total_high,
+        "total_critical": totals.get("total_critical", 0),
+        "total_high": totals.get("total_high", 0),
         "avg_risk_score": avg_risk,
-        "top_risky_projects": risky_projects[:5]
+        "top_risky_projects": top_risky
     }
 
 @router.post("/", response_model=ProjectApiKeyResponse, summary="Create a new project", status_code=201)
@@ -392,22 +368,25 @@ async def read_recent_scans(
         return []
 
     # 2. Get recent scans for these projects
-    scans = await db.scans.find(
-        {"project_id": {"$in": project_ids}},
-        {"sboms": 0, "findings_summary": 0}
-    ).sort("created_at", -1).limit(limit).to_list(limit)
+    pipeline = [
+        {"$match": {"project_id": {"$in": project_ids}}},
+        {"$sort": {"created_at": -1}},
+        {"$limit": limit},
+        {"$lookup": {
+            "from": "projects",
+            "localField": "project_id",
+            "foreignField": "_id",
+            "as": "project_info"
+        }},
+        {"$unwind": "$project_info"},
+        {"$addFields": {
+            "project_name": "$project_info.name"
+        }},
+        {"$project": {"project_info": 0, "sboms": 0, "findings_summary": 0}}
+    ]
 
-    # 3. Enrich with project name
-    result = []
-    for scan_data in scans:
-        scan = Scan(**scan_data)
-        # Create RecentScan object
-        scan_dict = scan.dict(by_alias=True)
-        scan_dict['project_name'] = project_map.get(scan.project_id, "Unknown Project")
-        recent_scan = RecentScan(**scan_dict)
-        result.append(recent_scan)
-        
-    return result
+    scans = await db.scans.aggregate(pipeline).to_list(limit)
+    return scans
 
 @router.get("/{project_id}", response_model=Project, summary="Get project details")
 async def read_project(
@@ -418,8 +397,90 @@ async def read_project(
     """
     Get a specific project by ID.
     """
-    project = await check_project_access(project_id, current_user, db)
-    await enrich_project_details(project, db)
+    # Optimized fetch with aggregation to avoid N+1 queries
+    pipeline = [
+        {"$match": {"_id": project_id}},
+        # Lookup Team
+        {"$lookup": {
+            "from": "teams",
+            "localField": "team_id",
+            "foreignField": "_id",
+            "as": "team_data"
+        }},
+        {"$unwind": {"path": "$team_data", "preserveNullAndEmptyArrays": True}},
+        # Lookup Users (for project members)
+        {"$lookup": {
+            "from": "users",
+            "let": {"member_ids": "$members.user_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}}},
+                {"$project": {"_id": 1, "username": 1}}
+            ],
+            "as": "project_users"
+        }},
+        # Lookup Users (for team members)
+        {"$lookup": {
+            "from": "users",
+            "let": {"team_member_ids": {"$ifNull": ["$team_data.members.user_id", []]}},
+            "pipeline": [
+                {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$team_member_ids"]}}},
+                {"$project": {"_id": 1, "username": 1}}
+            ],
+            "as": "team_users"
+        }}
+    ]
+    
+    result = await db.projects.aggregate(pipeline).to_list(1)
+    if not result:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    data = result[0]
+    
+    # Map users
+    p_users = {str(u["_id"]): u["username"] for u in data.get("project_users", [])}
+    t_users = {str(u["_id"]): u["username"] for u in data.get("team_users", [])}
+    
+    # Enrich direct members
+    for m in data.get("members", []):
+        m["username"] = p_users.get(m["user_id"])
+        
+    # Merge team members
+    team_data = data.get("team_data")
+    if team_data:
+        existing_ids = set(m["user_id"] for m in data["members"])
+        
+        for tm in team_data.get("members", []):
+            uid = tm["user_id"]
+            if uid not in existing_ids:
+                role = "admin" if tm.get("role") in ["admin", "owner"] else "viewer"
+                data["members"].append({
+                    "user_id": uid,
+                    "role": role,
+                    "username": t_users.get(uid),
+                    "inherited_from": f"Team: {team_data.get('name')}"
+                })
+
+    # Construct Project object
+    # We need to remove aux fields that are not in Project model
+    data.pop("team_data", None)
+    data.pop("project_users", None)
+    data.pop("team_users", None)
+    
+    project = Project(**data)
+    
+    # Verify Access (Logic from check_project_access but using loaded data)
+    if "*" in current_user.permissions or "project:read_all" in current_user.permissions:
+        pass
+    else:
+        is_owner = project.owner_id == str(current_user.id)
+        is_member = any(m.user_id == str(current_user.id) for m in project.members)
+        
+        if not (is_owner or is_member):
+             raise HTTPException(status_code=403, detail="Not enough permissions")
+
+        if "project:read" not in current_user.permissions:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+
     return project
 
 @router.put("/{project_id}", response_model=Project, summary="Update project details")
@@ -713,29 +774,136 @@ async def read_scan(
     await check_project_access(scan_data["project_id"], current_user, db)
     
     # Resolve GridFS references in sboms
+    # Note: For performance, we might want to make this optional or separate endpoint
     if "sboms" in scan_data:
         resolved_sboms = []
         fs = AsyncIOMotorGridFSBucket(db)
         for item in scan_data["sboms"]:
             if isinstance(item, dict) and item.get("type") == "gridfs_reference":
-                # We generally don't want to return the FULL content of massive SBOMs in this detail view
-                # if it's going to crash the frontend or timeout.
-                # However, the model expects the full dict.
-                # For now, let's return a placeholder or lightweight version if possible, 
-                # OR fetch it if the client really needs it.
-                # Given the error was 413 on INGEST, the read might also be heavy.
-                # Let's try to fetch it, but be aware this might be slow.
                 try:
                     gridfs_id = item.get("gridfs_id")
                     stream = await fs.open_download_stream(ObjectId(gridfs_id))
                     content = await stream.read()
                     resolved_sboms.append(json.loads(content))
                 except Exception:
-                    # If we can't load it, keep the reference or skip
                     resolved_sboms.append(item)
             else:
                 resolved_sboms.append(item)
         scan_data["sboms"] = resolved_sboms
+
+    # Fetch findings from separate collection (Point B)
+    # We only fetch if findings_summary is missing (new architecture)
+    # OPTIMIZATION: Do NOT fetch findings here. Use /scans/{scan_id}/findings endpoint.
+    # if "findings_summary" not in scan_data or not scan_data["findings_summary"]:
+    #    findings_cursor = db.findings.find({"scan_id": scan_id})
+    #    findings = await findings_cursor.to_list(None)
+    #    
+    #    mapped_findings = []
+    #    for f in findings:
+    #        # Map logical ID back to 'id' for the API response
+    #        f["id"] = f.get("finding_id", f.get("_id")) 
+    #        mapped_findings.append(f)
+    #        
+    #    scan_data["findings_summary"] = mapped_findings
+
+    return scan_data
+
+@router.get("/scans/{scan_id}/findings", response_model=Dict[str, Any], summary="Get scan findings with pagination")
+async def read_scan_findings(
+    scan_id: str,
+    skip: int = 0,
+    limit: int = 50,
+    sort_by: str = "severity", # severity, type, component
+    sort_order: str = "desc", # asc, desc
+    type: str = None,
+    category: str = None, # security, secret, sast, compliance, quality
+    severity: str = None,
+    search: str = None,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Get paginated findings for a scan.
+    """
+    # Check access
+    scan = await db.scans.find_one({"_id": scan_id}, {"project_id": 1})
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    await check_project_access(scan["project_id"], current_user, db)
+
+    query = {"scan_id": scan_id}
+    
+    if type:
+        query["type"] = type
+        
+    if category:
+        if category == "security":
+            query["type"] = {"$in": ["vulnerability", "malware", "typosquatting"]}
+        elif category == "secret":
+            query["type"] = "secret"
+        elif category == "sast":
+            query["type"] = {"$in": ["sast", "iac"]}
+        elif category == "compliance":
+            query["type"] = {"$in": ["license", "eol"]}
+        elif category == "quality":
+            query["type"] = {"$in": ["outdated", "quality"]}
+            
+    if severity:
+        query["severity"] = severity.upper()
+    if search:
+        query["$or"] = [
+            {"component": {"$regex": search, "$options": "i"}},
+            {"finding_id": {"$regex": search, "$options": "i"}},
+            {"description": {"$regex": search, "$options": "i"}}
+        ]
+
+    # Severity Ranking for sorting
+    pipeline = [
+        {"$match": query},
+        {"$addFields": {
+            "severity_rank": {
+                "$switch": {
+                    "branches": [
+                        {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 5},
+                        {"case": {"$eq": ["$severity", "HIGH"]}, "then": 4},
+                        {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 3},
+                        {"case": {"$eq": ["$severity", "LOW"]}, "then": 2},
+                        {"case": {"$eq": ["$severity", "INFO"]}, "then": 1}
+                    ],
+                    "default": 0
+                }
+            },
+            # Map finding_id to id for frontend compatibility
+            "id": "$finding_id"
+        }}
+    ]
+
+    # Sorting
+    sort_dir = -1 if sort_order == "desc" else 1
+    if sort_by == "severity":
+        pipeline.append({"$sort": {"severity_rank": sort_dir, "component": 1}})
+    else:
+        pipeline.append({"$sort": {sort_by: sort_dir}})
+
+    # Pagination
+    pipeline.append({"$facet": {
+        "metadata": [{"$count": "total"}],
+        "data": [{"$skip": skip}, {"$limit": limit}]
+    }})
+
+    result = await db.findings.aggregate(pipeline).to_list(1)
+    
+    data = result[0]["data"]
+    metadata = result[0]["metadata"]
+    total = metadata[0]["total"] if metadata else 0
+
+    return {
+        "items": data,
+        "total": total,
+        "page": (skip // limit) + 1,
+        "size": limit,
+        "pages": (total + limit - 1) // limit if limit > 0 else 0
+    }
 
     return Scan(**scan_data)
 

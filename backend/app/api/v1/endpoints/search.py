@@ -50,56 +50,32 @@ async def search_dependencies(
     if not latest_scan_ids:
         return []
 
-    # 2. Aggregate directly on scans collection using the known IDs
-    # This avoids sorting and grouping all scans.
+    # 2. Query the normalized 'dependencies' collection
+    # This is much faster than aggregating over the 'scans' collection
     
-    pipeline = [
-        {
-            "$match": {
-                "_id": {"$in": latest_scan_ids},
-                "sbom.components.name": {"$regex": q, "$options": "i"}
-            }
-        },
-        {
-            "$project": {
-                "project_id": 1,
-                "created_at": 1,
-                # Filter the components array to only include matching items
-                # This prevents unwinding thousands of non-matching components
-                "matching_components": {
-                    "$filter": {
-                        "input": "$sbom.components",
-                        "as": "comp",
-                        "cond": {
-                            "$regexMatch": {
-                                "input": "$$comp.name",
-                                "regex": q,
-                                "options": "i"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        {"$unwind": "$matching_components"},
-        {"$project": {
-            "project_id": 1,
-            "component": "$matching_components",
-            "scan_date": "$created_at"
-        }}
-    ]
-    
+    query = {
+        "scan_id": {"$in": latest_scan_ids},
+        "name": {"$regex": q, "$options": "i"}
+    }
     if version:
-        pipeline.append({
-            "$match": {"component.version": version}
-        })
+        query["version"] = version
         
-    results = await db.scans.aggregate(pipeline).to_list(100)
+    dependencies = await db.dependencies.find(query).limit(100).to_list(100)
     
     # Enrich with project names
     enriched_results = []
-    for res in results:
-        res["project_name"] = project_map.get(res["project_id"], "Unknown")
-        enriched_results.append(res)
+    for dep in dependencies:
+        enriched_results.append({
+            "project_name": project_map.get(dep["project_id"], "Unknown"),
+            "project_id": dep["project_id"],
+            "component": {
+                "name": dep["name"],
+                "version": dep["version"],
+                "purl": dep["purl"],
+                "type": dep["type"],
+                "licenses": [dep.get("license")] if dep.get("license") else []
+            },
+            "scan_date": dep["created_at"]
+        })
             
     return enriched_results

@@ -787,5 +787,29 @@ export const getDashboardStats = async () => {
     return response.data;
 };
 
+export interface ScanFindingsParams {
+  skip?: number;
+  limit?: number;
+  sort_by?: string;
+  sort_order?: string;
+  type?: string;
+  category?: string;
+  severity?: string;
+  search?: string;
+}
+
+export interface ScanFindingsResponse {
+  items: Finding[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
+
+export const getScanFindings = async (scanId: string, params: ScanFindingsParams = {}) => {
+  const response = await api.get<ScanFindingsResponse>(`/projects/scans/${scanId}/findings`, { params });
+  return response.data;
+};
+
 export default api;
 

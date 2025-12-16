@@ -3,6 +3,7 @@ import asyncio
 from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
 from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection
 
@@ -40,6 +41,9 @@ app = FastAPI(
     },
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
+
+# Add GZip Middleware for response compression
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
