@@ -1,3 +1,11 @@
+# Release 0.5.0
+
+## 🚀 Features
+
+- feat: enhance user deletion functionality and improve FindingsTable component with projectId prop (#0)
+
+
+
 # Release 0.4.9
 
 ## 📦 Build & CI
