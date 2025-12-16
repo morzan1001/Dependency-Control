@@ -1,14 +1,41 @@
 import { useParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { getScan, getProject, getScanResults } from '@/lib/api'
+import { useState } from 'react'
+import { getScan, getProject, getScanResults, getScanStats } from '@/lib/api'
 import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, Copy, Check } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
+
+function CodeBlock({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const onCopy = () => {
+    navigator.clipboard.writeText(code)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="relative rounded-md bg-muted p-4">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="absolute right-2 top-2 h-8 w-8 bg-background/50 hover:bg-background"
+        onClick={onCopy}
+      >
+        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+      </Button>
+      <pre className="overflow-auto max-h-[600px] text-xs font-mono whitespace-pre-wrap break-all">
+        {code}
+      </pre>
+    </div>
+  )
+}
 
 export default function ScanDetails() {
   const { projectId, scanId } = useParams<{ projectId: string, scanId: string }>()
@@ -28,6 +55,12 @@ export default function ScanDetails() {
   const { data: scanResults, isLoading: isResultsLoading } = useQuery({
     queryKey: ['scan-results', scanId],
     queryFn: () => getScanResults(scanId!),
+    enabled: !!scanId
+  })
+
+  const { data: categoryStats } = useQuery({
+    queryKey: ['scan-stats', scanId],
+    queryFn: () => getScanStats(scanId!),
     enabled: !!scanId
   })
 
@@ -71,6 +104,15 @@ export default function ScanDetails() {
       { name: 'Unknown', value: stats.unknown || 0, color: '#9ca3af' },
   ].filter(d => d.value > 0);
 
+  const categoryData = categoryStats ? [
+      { name: 'Security', value: categoryStats.security, color: '#ef4444' },
+      { name: 'Secrets', value: categoryStats.secret, color: '#f97316' },
+      { name: 'SAST', value: categoryStats.sast, color: '#8b5cf6' },
+      { name: 'Compliance', value: categoryStats.compliance, color: '#3b82f6' },
+      { name: 'Quality', value: categoryStats.quality, color: '#10b981' },
+      { name: 'Other', value: categoryStats.other, color: '#9ca3af' },
+  ].filter(d => d.value > 0) : [];
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
@@ -87,7 +129,7 @@ export default function ScanDetails() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
           <Card>
                 <CardHeader>
                     <CardTitle>Scan Metadata</CardTitle>
@@ -209,6 +251,33 @@ export default function ScanDetails() {
                     </ResponsiveContainer>
                 </CardContent>
             </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>Category Distribution</CardTitle>
+                </CardHeader>
+                <CardContent className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                            <Pie
+                                data={categoryData}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={60}
+                                outerRadius={80}
+                                paddingAngle={5}
+                                dataKey="value"
+                            >
+                                {categoryData.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                ))}
+                            </Pie>
+                            <Tooltip />
+                            <Legend verticalAlign="bottom" height={36}/>
+                        </PieChart>
+                    </ResponsiveContainer>
+                </CardContent>
+            </Card>
       </div>
 
       <Tabs defaultValue="overview" className="space-y-4">
@@ -258,29 +327,28 @@ export default function ScanDetails() {
 
         <TabsContent value="raw" className="space-y-4">
             {isResultsLoading ? (
-                <div className="grid gap-4 md:grid-cols-2">
-                    <Skeleton className="h-[200px]" />
-                    <Skeleton className="h-[200px]" />
+                <div className="grid gap-4 md:grid-cols-1">
+                    <Skeleton className="h-[400px]" />
+                    <Skeleton className="h-[400px]" />
                 </div>
             ) : (
-                <div className="grid gap-4">
+                <div className="space-y-8">
                     {/* Analysis Results */}
                     {scanResults && scanResults.length > 0 && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Analysis Results</h3>
-                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                                {scanResults.map((result) => (
+                            <div className="grid gap-6">
+                                {scanResults
+                                    .map((result) => (
                                     <Card key={result._id} className="overflow-hidden">
-                                        <CardHeader className="bg-muted/50 pb-2">
-                                            <CardTitle className="text-base flex items-center justify-between">
+                                        <CardHeader className="bg-muted/50 pb-4">
+                                            <CardTitle className="text-lg flex items-center justify-between">
                                                 <span className="capitalize">{result.analyzer_name}</span>
                                                 <Badge variant="outline">Result</Badge>
                                             </CardTitle>
                                         </CardHeader>
                                         <CardContent className="p-0">
-                                            <div className="max-h-[300px] overflow-auto p-4 text-xs font-mono">
-                                                <pre>{JSON.stringify(result.result, null, 2)}</pre>
-                                            </div>
+                                            <CodeBlock code={JSON.stringify(result.result, null, 2)} />
                                         </CardContent>
                                     </Card>
                                 ))}
@@ -295,10 +363,19 @@ export default function ScanDetails() {
                             Raw SBOMs
                         </h3>
                         {scan.sboms && scan.sboms.length > 0 ? (
-                            <div className="grid gap-4 md:grid-cols-1">
+                            <div className="grid gap-6">
                                 {scan.sboms.map((sbom: any, index: number) => {
                                     let toolName = "Unknown Scanner";
+                                    let sbomName = `SBOM #${index + 1}`;
+                                    
                                     try {
+                                        // Determine SBOM Name (matching backend logic)
+                                        if (sbom.metadata?.component?.name) {
+                                            sbomName = sbom.metadata.component.name;
+                                        } else if (sbom.serialNumber) {
+                                            sbomName = sbom.serialNumber;
+                                        }
+
                                         if (sbom.metadata?.tools) {
                                             if (Array.isArray(sbom.metadata.tools)) {
                                                 // CycloneDX 1.4
@@ -314,16 +391,14 @@ export default function ScanDetails() {
 
                                     return (
                                         <Card key={index}>
-                                            <CardHeader>
-                                                <CardTitle className="text-base flex items-center justify-between">
-                                                    <span>SBOM #{index + 1}</span>
+                                            <CardHeader className="bg-muted/50 pb-4">
+                                                <CardTitle className="text-lg flex items-center justify-between">
+                                                    <span>{sbomName}</span>
                                                     <Badge variant="outline">{toolName || 'Unknown'}</Badge>
                                                 </CardTitle>
                                             </CardHeader>
-                                            <CardContent>
-                                                <pre className="bg-muted p-4 rounded-md overflow-auto max-h-[400px] text-xs">
-                                                    {JSON.stringify(sbom, null, 2)}
-                                                </pre>
+                                            <CardContent className="p-0">
+                                                <CodeBlock code={JSON.stringify(sbom, null, 2)} />
                                             </CardContent>
                                         </Card>
                                     )
@@ -334,10 +409,8 @@ export default function ScanDetails() {
                                 <CardHeader>
                                     <CardTitle>Raw Scan Data</CardTitle>
                                 </CardHeader>
-                                <CardContent>
-                                    <pre className="bg-muted p-4 rounded-md overflow-auto max-h-[600px] text-xs">
-                                        {JSON.stringify(scan, null, 2)}
-                                    </pre>
+                                <CardContent className="p-0">
+                                    <CodeBlock code={JSON.stringify(scan, null, 2)} />
                                 </CardContent>
                             </Card>
                         )}

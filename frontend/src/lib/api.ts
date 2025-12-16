@@ -324,9 +324,9 @@ export const getProject = async (id: string) => {
   return response.data;
 };
 
-export const getProjectScans = async (id: string, skip: number = 0, limit: number = 20, branch?: string) => {
+export const getProjectScans = async (id: string, skip: number = 0, limit: number = 20, branch?: string, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc') => {
   const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
-    params: { skip, limit, branch }
+    params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder }
   });
   return response.data;
 };
@@ -817,6 +817,11 @@ export interface ScanFindingsResponse {
 
 export const getScanFindings = async (scanId: string, params: ScanFindingsParams = {}) => {
   const response = await api.get<ScanFindingsResponse>(`/projects/scans/${scanId}/findings`, { params });
+  return response.data;
+};
+
+export const getScanStats = async (scanId: string) => {
+  const response = await api.get<Record<string, number>>(`/projects/scans/${scanId}/stats`);
   return response.data;
 };
 

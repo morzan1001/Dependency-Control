@@ -38,7 +38,7 @@ analyzers: Dict[str, Analyzer] = {
     "typosquatting": TyposquattingAnalyzer()
 }
 
-async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[str, Any], scan_id: str, db, aggregator: ResultAggregator, settings: Dict[str, Any] = None) -> str:
+async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[str, Any], scan_id: str, db, aggregator: ResultAggregator, settings: Dict[str, Any] = None, fallback_source: str = "unknown-sbom") -> str:
     try:
         result = await analyzer.analyze(sbom, settings=settings)
         
@@ -52,9 +52,9 @@ async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[st
         })
         
         # Extract source name from SBOM metadata
-        source = "unknown-sbom"
+        source = fallback_source
         if sbom.get("metadata") and sbom["metadata"].get("component"):
-             source = sbom["metadata"]["component"].get("name", "unknown-sbom")
+             source = sbom["metadata"]["component"].get("name", fallback_source)
         elif sbom.get("serialNumber"):
              source = sbom.get("serialNumber")
 
@@ -98,7 +98,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     fs = AsyncIOMotorGridFSBucket(db)
 
     # Process SBOMs sequentially to save memory
-    for item in sboms:
+    for index, item in enumerate(sboms):
         current_sbom = None
         
         # Resolve GridFS reference if needed
@@ -119,12 +119,15 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         if not current_sbom:
             continue
 
+        # Determine fallback source name
+        fallback_source = f"SBOM #{index + 1}"
+
         # Run analyzers for THIS SBOM concurrently
         tasks = []
         for analyzer_name in active_analyzers:
             if analyzer_name in analyzers:
                 analyzer = analyzers[analyzer_name]
-                tasks.append(process_analyzer(analyzer_name, analyzer, current_sbom, scan_id, db, aggregator, settings=system_settings))
+                tasks.append(process_analyzer(analyzer_name, analyzer, current_sbom, scan_id, db, aggregator, settings=system_settings, fallback_source=fallback_source))
         
         # Wait for this batch to finish before moving to the next SBOM
         # This ensures we only hold one SBOM in memory at a time

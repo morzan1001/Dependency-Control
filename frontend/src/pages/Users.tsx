@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { getUsers, getPendingInvitations, User } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,6 +25,7 @@ export default function UsersPage() {
   const { data: users, isLoading: isLoadingUsers, error } = useQuery({
     queryKey: ['users', page, debouncedSearch, sortBy, sortOrder],
     queryFn: () => getUsers(page * limit, limit, debouncedSearch, sortBy, sortOrder),
+    placeholderData: keepPreviousData,
   });
 
   const { data: invitations, isLoading: isLoadingInvitations } = useQuery({
@@ -51,41 +52,6 @@ export default function UsersPage() {
     ...(users || []).map(u => ({ ...u, status: 'active' as const }))
   ];
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <Skeleton className="h-9 w-32" />
-          <Skeleton className="h-10 w-32" />
-        </div>
-        <Card>
-          <CardHeader>
-            <Skeleton className="h-6 w-24" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center space-x-4">
-                <Skeleton className="h-12 w-full" />
-              </div>
-              <div className="flex items-center space-x-4">
-                <Skeleton className="h-12 w-full" />
-              </div>
-              <div className="flex items-center space-x-4">
-                <Skeleton className="h-12 w-full" />
-              </div>
-              <div className="flex items-center space-x-4">
-                <Skeleton className="h-12 w-full" />
-              </div>
-              <div className="flex items-center space-x-4">
-                <Skeleton className="h-12 w-full" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   if (error) {
     return <div className="text-red-500">Error loading users</div>;
   }
@@ -110,30 +76,57 @@ export default function UsersPage() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>All Users</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <UserTable 
-            users={allUsers} 
-            page={page} 
-            limit={limit} 
-            onPageChange={setPage} 
-            onSelectUser={setSelectedUser}
-            sortBy={sortBy}
-            sortOrder={sortOrder}
-            onSort={(column) => {
-              if (sortBy === column) {
-                setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-              } else {
-                setSortBy(column);
-                setSortOrder("asc");
-              }
-            }}
-          />
-        </CardContent>
-      </Card>
+      {isLoading ? (
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-24" />
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center space-x-4">
+                <Skeleton className="h-12 w-full" />
+              </div>
+              <div className="flex items-center space-x-4">
+                <Skeleton className="h-12 w-full" />
+              </div>
+              <div className="flex items-center space-x-4">
+                <Skeleton className="h-12 w-full" />
+              </div>
+              <div className="flex items-center space-x-4">
+                <Skeleton className="h-12 w-full" />
+              </div>
+              <div className="flex items-center space-x-4">
+                <Skeleton className="h-12 w-full" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>All Users</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <UserTable 
+              users={allUsers} 
+              page={page} 
+              limit={limit} 
+              onPageChange={setPage} 
+              onSelectUser={setSelectedUser}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSort={(column) => {
+                if (sortBy === column) {
+                  setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+                } else {
+                  setSortBy(column);
+                  setSortOrder("desc");
+                }
+              }}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <UserDetailsDialog 
         user={selectedUser} 

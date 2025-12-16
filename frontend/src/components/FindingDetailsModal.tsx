@@ -97,7 +97,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId }: Fin
                                 {finding.found_in && finding.found_in.length > 0 && (
                                     <div className="col-span-2">
                                         <h4 className="text-sm font-medium text-muted-foreground mb-1">Found In Sources</h4>
-                                        <div className="flex flex-wrap gap-2 max-h-[100px] overflow-y-auto p-1 border rounded-md bg-muted/20">
+                                        <div className="flex flex-wrap gap-2 max-h-[100px] overflow-y-auto">
                                             {finding.found_in.map((source) => (
                                                 <Badge key={source} variant="secondary" className="font-mono text-xs">
                                                     {source}

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, Copy, Check, ArrowUpDown } from 'lucide-react';
+import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, Copy, Check, ArrowUp, ArrowDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from "sonner";
@@ -176,9 +176,8 @@ export default function ProjectsPage() {
             variant="outline"
             size="icon"
             onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-            title={sortOrder === 'asc' ? "Ascending" : "Descending"}
           >
-            <ArrowUpDown className="h-4 w-4" />
+            {sortOrder === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
           </Button>
           {hasPermission('project:create') && (
             <Dialog open={isCreateOpen} onOpenChange={(open) => {

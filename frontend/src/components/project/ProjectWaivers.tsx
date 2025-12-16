@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ArrowUpDown, Trash2 } from 'lucide-react'
+import { ArrowUp, ArrowDown, Trash2 } from 'lucide-react'
 import { toast } from "sonner"
 import { AxiosError } from 'axios'
 
@@ -77,6 +77,13 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
         setSortConfig({ key, direction })
     }
 
+    const renderSortIcon = (key: string) => {
+        if (sortConfig?.key === key) {
+            return sortConfig.direction === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+        }
+        return null
+    }
+
     if (isLoading) {
         return (
             <div className="space-y-4">
@@ -89,34 +96,35 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
 
     return (
         <Card>
-            <CardHeader>
-                <CardTitle>Active Waivers</CardTitle>
-                <CardDescription>Manage exceptions for security findings.</CardDescription>
-            </CardHeader>
-            <CardContent>
-                <div className="mb-4">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+                <div className="space-y-1">
+                    <CardTitle>Active Waivers</CardTitle>
+                    <CardDescription>Manage exceptions for security findings.</CardDescription>
+                </div>
+                <div className="w-[250px]">
                     <Input 
                         placeholder="Search waivers..." 
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="max-w-sm"
                     />
                 </div>
+            </CardHeader>
+            <CardContent>
                 <div className="relative w-full overflow-auto">
                     <table className="w-full caption-bottom text-sm">
                         <thead className="[&_tr]:border-b">
                             <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer" onClick={() => requestSort('finding_id')}>
-                                    <div className="flex items-center gap-1">Finding ID {sortConfig?.key === 'finding_id' && <ArrowUpDown className="h-3 w-3" />}</div>
+                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => requestSort('finding_id')}>
+                                    <div className="flex items-center gap-1">Finding ID {renderSortIcon('finding_id')}</div>
                                 </th>
-                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer" onClick={() => requestSort('package_name')}>
-                                    <div className="flex items-center gap-1">Package {sortConfig?.key === 'package_name' && <ArrowUpDown className="h-3 w-3" />}</div>
+                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => requestSort('package_name')}>
+                                    <div className="flex items-center gap-1">Package {renderSortIcon('package_name')}</div>
                                 </th>
-                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer" onClick={() => requestSort('reason')}>
-                                    <div className="flex items-center gap-1">Reason {sortConfig?.key === 'reason' && <ArrowUpDown className="h-3 w-3" />}</div>
+                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => requestSort('reason')}>
+                                    <div className="flex items-center gap-1">Reason {renderSortIcon('reason')}</div>
                                 </th>
-                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer" onClick={() => requestSort('expires')}>
-                                    <div className="flex items-center gap-1">Expires {sortConfig?.key === 'expires' && <ArrowUpDown className="h-3 w-3" />}</div>
+                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => requestSort('expires')}>
+                                    <div className="flex items-center gap-1">Expires {renderSortIcon('expires')}</div>
                                 </th>
                                 <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Actions</th>
                             </tr>

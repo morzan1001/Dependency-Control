@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Activity, ShieldAlert, ShieldCheck, FolderGit2, ArrowUpDown } from 'lucide-react'
+import { Activity, ShieldAlert, ShieldCheck, FolderGit2, ArrowUp, ArrowDown } from 'lucide-react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { getDashboardStats, getRecentScans, getProjects } from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
@@ -40,6 +40,11 @@ export default function Dashboard() {
       setSortOrder('desc')
     }
   }
+
+  const renderSortIcon = (column: string) => {
+    if (sortBy !== column) return null;
+    return sortOrder === 'asc' ? <ArrowUp className="ml-2 h-4 w-4 inline" /> : <ArrowDown className="ml-2 h-4 w-4 inline" />;
+  };
 
   const scanList = recentScans || []
   const projectList = projectsData?.items || []
@@ -261,17 +266,17 @@ export default function Dashboard() {
                     <thead className="[&_tr]:border-b sticky top-0 bg-background z-10 shadow-sm">
                         <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('name')}>
-                                Name {sortBy === 'name' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
+                                Name {renderSortIcon('name')}
                             </th>
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Team</th>
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('last_scan_at')}>
-                                Last Scan {sortBy === 'last_scan_at' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
+                                Last Scan {renderSortIcon('last_scan_at')}
                             </th>
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('critical')}>
-                                Critical {sortBy === 'critical' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
+                                Critical {renderSortIcon('critical')}
                             </th>
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('high')}>
-                                High {sortBy === 'high' && <ArrowUpDown className="ml-2 h-4 w-4 inline" />}
+                                High {renderSortIcon('high')}
                             </th>
                             <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Status</th>
                         </tr>

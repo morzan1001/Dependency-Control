@@ -1,7 +1,7 @@
 import { User, deleteUser, inviteUser } from '@/lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { Check, X, Trash2, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Check, X, Trash2, ChevronLeft, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -36,6 +36,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
     mutationFn: (userId: string) => deleteUser(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
       setIsDeleteDialogOpen(false);
       setUserToDelete(null);
       toast.success("User deleted successfully");
@@ -60,10 +61,10 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
   });
 
   const renderSortIcon = (column: string) => {
-    if (!onSort) return null;
-    if (sortBy !== column) return <ArrowUpDown className="ml-2 h-4 w-4 opacity-50" />;
-    if (sortOrder === 'asc') return <ArrowUp className="ml-2 h-4 w-4" />;
-    return <ArrowDown className="ml-2 h-4 w-4" />;
+    if (sortBy === column) {
+      return sortOrder === 'asc' ? <ArrowUp className="ml-2 h-4 w-4 inline" /> : <ArrowDown className="ml-2 h-4 w-4 inline" />;
+    }
+    return null;
   };
 
   const handleSort = (column: string) => {

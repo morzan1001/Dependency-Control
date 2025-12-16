@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown } from 'lucide-react'
 
 interface ProjectScansProps {
   projectId: string
@@ -17,6 +17,8 @@ interface ProjectScansProps {
 export function ProjectScans({ projectId }: ProjectScansProps) {
   const [page, setPage] = useState(0)
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
+  const [sortBy, setSortBy] = useState("created_at")
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
   const limit = 20
   const navigate = useNavigate()
 
@@ -26,10 +28,26 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
   })
 
   const { data: scans, isLoading, isPlaceholderData } = useQuery({
-    queryKey: ['project-scans', projectId, page, selectedBranch],
-    queryFn: () => getProjectScans(projectId, page * limit, limit, selectedBranch),
+    queryKey: ['project-scans', projectId, page, selectedBranch, sortBy, sortOrder],
+    queryFn: () => getProjectScans(projectId, page * limit, limit, selectedBranch, sortBy, sortOrder),
     placeholderData: (previousData) => previousData,
   })
+
+  const renderSortIcon = (column: string) => {
+    if (sortBy === column) {
+      return sortOrder === 'asc' ? <ArrowUp className="ml-2 h-4 w-4 inline" /> : <ArrowDown className="ml-2 h-4 w-4 inline" />;
+    }
+    return null;
+  };
+
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortOrder('desc');
+    }
+  };
 
   if (isLoading) {
     return (
@@ -92,12 +110,23 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Pipeline</TableHead>
-                <TableHead>Branch</TableHead>
+                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('created_at')}>
+                  Date {renderSortIcon('created_at')}
+                </TableHead>
+                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('pipeline_iid')}>
+                  Pipeline {renderSortIcon('pipeline_iid')}
+                </TableHead>
+                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('branch')}>
+                  Branch {renderSortIcon('branch')}
+                </TableHead>
                 <TableHead>Commit</TableHead>
-                <TableHead>Findings</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('findings_count')}>
+                  Findings {renderSortIcon('findings_count')}
+                </TableHead>
+                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
+                  Status {renderSortIcon('status')}
+                </TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

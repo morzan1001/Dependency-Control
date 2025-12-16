@@ -32,6 +32,7 @@ export function InviteUserDialog() {
     mutationFn: (email: string) => inviteUser(email),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
       
       if (!systemSettings?.smtp_host && data.link) {
         setInviteLink(data.link);

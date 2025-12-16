@@ -662,6 +662,8 @@ async def read_scans(
     project_id: str,
     skip: int = 0,
     limit: int = 100,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -669,11 +671,14 @@ async def read_scans(
     Get all scans for a project.
     """
     await check_project_access(project_id, current_user, db)
+    
+    sort_direction = -1 if sort_order == "desc" else 1
+    
     # Exclude large SBOM fields for list view
     scans = await db.scans.find(
         {"project_id": project_id},
         {"sboms": 0}
-    ).skip(skip).limit(limit).to_list(limit)
+    ).sort(sort_by, sort_direction).skip(skip).limit(limit).to_list(limit)
     return scans
 
 @router.get("/scans/{scan_id}/results", response_model=List[AnalysisResult], summary="Get analysis results")
@@ -905,6 +910,56 @@ async def read_scan_findings(
         "pages": (total + limit - 1) // limit if limit > 0 else 0
     }
 
+@router.get("/scans/{scan_id}/stats")
+async def get_scan_stats(
+    scan_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Get finding statistics by category for a scan.
+    """
+    # Check access
+    scan = await db.scans.find_one({"_id": scan_id}, {"project_id": 1})
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    await check_project_access(scan["project_id"], current_user, db)
+
+    pipeline = [
+        {"$match": {"scan_id": scan_id}},
+        {"$group": {"_id": "$type", "count": {"$sum": 1}}}
+    ]
+    
+    results = await db.findings.aggregate(pipeline).to_list(None)
+    
+    stats = {
+        "security": 0,
+        "secret": 0,
+        "sast": 0,
+        "compliance": 0,
+        "quality": 0,
+        "other": 0
+    }
+    
+    for r in results:
+        type_ = r["_id"]
+        count = r["count"]
+        
+        if type_ in ["vulnerability", "malware", "typosquatting"]:
+            stats["security"] += count
+        elif type_ == "secret":
+            stats["secret"] += count
+        elif type_ in ["sast", "iac"]:
+            stats["sast"] += count
+        elif type_ in ["license", "eol"]:
+            stats["compliance"] += count
+        elif type_ in ["outdated", "quality"]:
+            stats["quality"] += count
+        else:
+            stats["other"] += count
+            
+    return stats
+
     return Scan(**scan_data)
 
 @router.put("/{project_id}/members/{user_id}", response_model=Project, summary="Update project member role")
@@ -1048,8 +1103,39 @@ async def export_project_sbom(
         
     scan = Scan(**scan_data)
     
+    sbom_content = None
+    
+    # Helper to load from GridFS
+    async def load_from_gridfs(file_id_str):
+        try:
+            fs = AsyncIOMotorGridFSBucket(db)
+            grid_out = await fs.open_download_stream(ObjectId(file_id_str))
+            content = await grid_out.read()
+            return json.loads(content)
+        except Exception:
+            return None
+
+    # 1. Try to get from GridFS via sbom_refs
+    if scan.sbom_refs and len(scan.sbom_refs) > 0:
+        ref = scan.sbom_refs[0]
+        if ref.get("storage") == "gridfs" and ref.get("file_id"):
+            sbom_content = await load_from_gridfs(ref["file_id"])
+
+    # 2. Fallback to legacy sboms array
+    if not sbom_content and scan.sboms and len(scan.sboms) > 0:
+        first_sbom = scan.sboms[0]
+        # Check if it's a ref or raw data
+        if isinstance(first_sbom, dict) and first_sbom.get("storage") == "gridfs" and first_sbom.get("file_id"):
+             sbom_content = await load_from_gridfs(first_sbom["file_id"])
+        else:
+            # Assume it's the raw SBOM
+            sbom_content = first_sbom
+
+    if not sbom_content:
+        raise HTTPException(status_code=404, detail="No SBOM data found for the latest scan")
+    
     return Response(
-        content=json.dumps(scan.sbom, indent=2),
+        content=json.dumps(sbom_content, indent=2),
         media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"}
     )
