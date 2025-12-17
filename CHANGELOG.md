@@ -1,3 +1,11 @@
+# Release 0.6.3
+
+## 🚀 Features
+
+- feat: add background task support for email sending in auth, invitations, and users endpoints (#0)
+
+
+
 # Release 0.6.2
 
 ## 🐛 Fixes
