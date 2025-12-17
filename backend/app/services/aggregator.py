@@ -1,7 +1,8 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, TypedDict, Optional
 import hashlib
 import re
 from app.models.finding import Finding, Severity, FindingType
+from app.schemas.finding import VulnerabilityEntry, SecretDetails, VulnerabilityAggregatedDetails
 
 SEVERITY_ORDER = {
     "CRITICAL": 5,
@@ -125,6 +126,15 @@ class ResultAggregator:
             
             finding_id = f"SECRET-{detector}-{secret_hash[:8]}"
             
+            secret_details: SecretDetails = {
+                "detector": detector,
+                "decoder": finding.get("DecoderName"),
+                "verified": finding.get("Verified"),
+                # Do NOT store Raw secret in details unless encrypted/redacted. 
+                # TruffleHog provides "Redacted" field.
+                "redacted": finding.get("Redacted")
+            }
+
             self._add_finding(Finding(
                 id=finding_id,
                 type=FindingType.SECRET,
@@ -133,14 +143,7 @@ class ResultAggregator:
                 version="", # No version for secrets in files
                 description=f"Secret detected: {detector}",
                 scanners=["trufflehog"],
-                details={
-                    "detector": detector,
-                    "decoder": finding.get("DecoderName"),
-                    "verified": finding.get("Verified"),
-                    # Do NOT store Raw secret in details unless encrypted/redacted. 
-                    # TruffleHog provides "Redacted" field.
-                    "redacted": finding.get("Redacted")
-                }
+                details=secret_details
             ), source=source)
 
     def _parse_version_key(self, v: str):
@@ -275,18 +278,19 @@ class ResultAggregator:
         agg_key = f"AGG:VULN:{comp_key}:{version_key}"
         
         # Prepare the vulnerability entry for the details list
-        vuln_entry = {
+        vuln_entry: VulnerabilityEntry = {
             "id": finding.id,
             "severity": finding.severity,
             "description": finding.description,
-            "fixed_version": finding.details.get("fixed_version"),
-            "cvss_score": finding.details.get("cvss_score"),
-            "cvss_vector": finding.details.get("cvss_vector"),
-            "references": finding.details.get("references", []),
-            "aliases": finding.aliases,
-            "scanners": finding.scanners,
+            "description_source": finding.scanners[0] if finding.scanners else "unknown",
+            "fixed_version": str(finding.details.get("fixed_version")) if finding.details.get("fixed_version") else None,
+            "cvss_score": float(finding.details.get("cvss_score")) if finding.details.get("cvss_score") else None,
+            "cvss_vector": str(finding.details.get("cvss_vector")) if finding.details.get("cvss_vector") else None,
+            "references": finding.details.get("references", []) or [],
+            "aliases": finding.aliases or [],
+            "scanners": finding.scanners or [],
             "source": source,
-            "details": finding.details # nested details
+            "details": finding.details or {} # nested details
         }
 
         if agg_key in self.findings:
@@ -302,7 +306,7 @@ class ResultAggregator:
                 existing.severity = finding.severity
             
             # 3. Merge into vulnerabilities list
-            vuln_list = existing.details.get("vulnerabilities", [])
+            vuln_list: List[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
             merged = False
             
             for idx, v in enumerate(vuln_list):
@@ -329,11 +333,15 @@ class ResultAggregator:
                     if not current_fixed and new_fixed:
                         v["fixed_version"] = new_fixed
                     
-                    # Merge Description (prefer longer)
+                    # Merge Description (prefer longer description regardless of scanner)
                     new_desc = finding.description
                     current_desc = v.get("description", "")
-                    if new_desc and len(new_desc) > len(current_desc):
-                        v["description"] = new_desc
+                    
+                    if new_desc:
+                        # Update if current is empty OR new one is longer
+                        if not current_desc or len(new_desc) > len(current_desc):
+                            v["description"] = new_desc
+                            v["description_source"] = finding.scanners[0] if finding.scanners else "unknown"
 
                     # Merge CVSS (prefer higher score)
                     new_cvss = finding.details.get("cvss_score")
@@ -384,6 +392,11 @@ class ResultAggregator:
                 
         else:
             # Create new Aggregate Finding
+            agg_details: VulnerabilityAggregatedDetails = {
+                "vulnerabilities": [vuln_entry],
+                "fixed_version": str(finding.details.get("fixed_version")) if finding.details.get("fixed_version") else None
+            }
+
             agg_finding = Finding(
                 id=f"{finding.component}:{finding.version}", 
                 type=FindingType.VULNERABILITY,
@@ -392,10 +405,7 @@ class ResultAggregator:
                 version=finding.version,
                 description=f"Found 1 vulnerabilities in {finding.component}",
                 scanners=finding.scanners,
-                details={
-                    "vulnerabilities": [vuln_entry],
-                    "fixed_version": finding.details.get("fixed_version")
-                },
+                details=agg_details,
                 found_in=[source] if source else []
             )
             self.findings[agg_key] = agg_finding
@@ -528,13 +538,25 @@ class ResultAggregator:
                                 cvss_score = data["V2Score"]
                                 cvss_vector = data.get("V2Vector")
 
+                # Construct description: Title + Description for maximum context
+                title = vuln.get("Title", "").strip()
+                desc = vuln.get("Description", "").strip()
+                
+                if title and desc:
+                    if title in desc:
+                        final_desc = desc
+                    else:
+                        final_desc = f"{title}\n\n{desc}"
+                else:
+                    final_desc = desc or title or ""
+
                 self._add_finding(Finding(
                     id=vuln_id,
                     type=FindingType.VULNERABILITY,
                     severity=Severity(vuln.get("Severity", "UNKNOWN").upper()),
                     component=vuln.get("PkgName"),
                     version=vuln.get("InstalledVersion"),
-                    description=vuln.get("Title") or vuln.get("Description", ""),
+                    description=final_desc,
                     scanners=["trivy"],
                     details={
                         "fixed_version": vuln.get("FixedVersion"),
