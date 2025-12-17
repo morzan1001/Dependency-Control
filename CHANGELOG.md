@@ -1,3 +1,11 @@
+# Release 0.6.2
+
+## 🐛 Fixes
+
+- fix: enhance finding aggregation logic to improve merging and linking of related findings (#0)
+
+
+
 # Release 0.6.1
 
 ## 🐛 Fixes
