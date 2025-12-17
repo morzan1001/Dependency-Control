@@ -612,6 +612,16 @@ class ResultAggregator:
                 vuln_id = vuln.get("id")
                 aliases = vuln.get("aliases", [])
                 
+                # Handle prefixed CVEs like DEBIAN-CVE-2025-10148
+                if vuln_id and "CVE-" in vuln_id and not vuln_id.startswith("CVE-"):
+                    # Try to extract CVE
+                    match = re.search(r'(CVE-\d{4}-\d{4,})', vuln_id)
+                    if match:
+                        cve_extracted = match.group(1)
+                        if vuln_id not in aliases:
+                            aliases.append(vuln_id)
+                        vuln_id = cve_extracted
+
                 # If current ID is GHSA/GO/etc and a CVE exists in aliases, use CVE as primary ID
                 cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
                 if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
