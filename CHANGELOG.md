@@ -1,3 +1,11 @@
+# Release 0.6.0
+
+## 🐛 Fixes
+
+- fix: enhance vulnerability merging logic to prioritize longer descriptions, higher CVSS scores, and consolidate references (#0)
+
+
+
 # Release 0.5.9
 
 ## 🐛 Fixes
