@@ -328,6 +328,32 @@ class ResultAggregator:
                     current_fixed = v.get("fixed_version")
                     if not current_fixed and new_fixed:
                         v["fixed_version"] = new_fixed
+                    
+                    # Merge Description (prefer longer)
+                    new_desc = finding.description
+                    current_desc = v.get("description", "")
+                    if new_desc and len(new_desc) > len(current_desc):
+                        v["description"] = new_desc
+
+                    # Merge CVSS (prefer higher score)
+                    new_cvss = finding.details.get("cvss_score")
+                    current_cvss = v.get("cvss_score")
+                    if new_cvss:
+                        if not current_cvss or new_cvss > current_cvss:
+                            v["cvss_score"] = new_cvss
+                            if finding.details.get("cvss_vector"):
+                                v["cvss_vector"] = finding.details.get("cvss_vector")
+
+                    # Merge References
+                    new_refs = finding.details.get("references", [])
+                    current_refs = v.get("references", [])
+                    v["references"] = list(set(current_refs + new_refs))
+
+                    # Merge other details (selectively)
+                    for key in ["cwe_ids", "published_date", "last_modified_date"]:
+                        if key in finding.details and finding.details[key]:
+                            if key not in v or not v[key]:
+                                v[key] = finding.details[key]
                         
                     vuln_list[idx] = v
                     merged = True
