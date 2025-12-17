@@ -1,3 +1,11 @@
+# Release 0.5.9
+
+## 🐛 Fixes
+
+- fix: handle prefixed CVEs in vulnerability IDs and extract CVE format (#0)
+
+
+
 # Release 0.5.8
 
 ## 🐛 Fixes
