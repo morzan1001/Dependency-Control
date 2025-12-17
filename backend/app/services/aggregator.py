@@ -62,41 +62,107 @@ class ResultAggregator:
 
     def get_findings(self) -> List[Finding]:
         """
-        Returns the list of deduplicated findings with post-processing for related findings.
+        Returns the list of deduplicated findings with post-processing for merging and linking related findings.
         """
-        results = list(self.findings.values())
+        # 1. Start with current findings
+        current_findings = list(self.findings.values())
         
-        # Post-processing: Link related findings (e.g. curl vs libcurl with same version and CVEs)
-        # Group by version first to reduce comparisons
-        by_version = {}
-        for f in results:
-            if f.type == FindingType.VULNERABILITY and f.version and f.version != "unknown":
-                if f.version not in by_version:
-                    by_version[f.version] = []
-                by_version[f.version].append(f)
+        # 2. Group by Version + CVE-Set hash to find potential duplicates
+        # Map: (version, cve_set_hash) -> List[Finding]
+        groups = {}
         
-        for ver, group in by_version.items():
-            if len(group) < 2:
+        for f in current_findings:
+            if f.type != FindingType.VULNERABILITY:
                 continue
+                
+            vulns = set(v["id"] for v in f.details.get("vulnerabilities", []))
+            if not vulns: continue
             
-            # Compare every pair in the group
+            # Create a deterministic key for the set of vulnerabilities
+            vuln_key = frozenset(vulns)
+            
+            key = (f.version, vuln_key)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(f)
+            
+        # 3. Process groups
+        final_findings = []
+        merged_ids = set()
+        
+        # Add non-vulnerability findings first
+        for f in current_findings:
+            if f.type != FindingType.VULNERABILITY:
+                final_findings.append(f)
+        
+        # Process vulnerability groups
+        for key, group in groups.items():
+            # If group has only 1 item, no merge needed
+            if len(group) == 1:
+                if group[0].id not in merged_ids:
+                    final_findings.append(group[0])
+                    merged_ids.add(group[0].id)
+                continue
+                
+            # Try to merge items within the group based on name similarity
+            clusters = []
+            processed_in_group = set()
+            
             for i in range(len(group)):
+                if i in processed_in_group: continue
+                
                 f1 = group[i]
-                vulns1 = set(v["id"] for v in f1.details.get("vulnerabilities", []))
-                if not vulns1: continue
-
+                cluster = [f1]
+                processed_in_group.add(i)
+                
                 for j in range(i + 1, len(group)):
+                    if j in processed_in_group: continue
                     f2 = group[j]
-                    vulns2 = set(v["id"] for v in f2.details.get("vulnerabilities", []))
-                    if not vulns2: continue
                     
-                    # Check for exact match of vulnerabilities
-                    # This is a strong indicator that they are the same underlying software split into packages
-                    if vulns1 == vulns2:
-                        if f2.id not in f1.related_findings:
-                            f1.related_findings.append(f2.id)
-                        if f1.id not in f2.related_findings:
-                            f2.related_findings.append(f1.id)
+                    if self._is_same_component_name(f1.component, f2.component):
+                        cluster.append(f2)
+                        processed_in_group.add(j)
+                
+                clusters.append(cluster)
+            
+            # Now process clusters
+            cluster_primaries = []
+            
+            for cluster in clusters:
+                if len(cluster) == 1:
+                    f = cluster[0]
+                    cluster_primaries.append(f)
+                else:
+                    # Merge cluster into one finding
+                    # Prefer the shortest name as primary (usually the "clean" one)
+                    primary = min(cluster, key=lambda x: len(x.component))
+                    
+                    # Merge others into primary
+                    for other in cluster:
+                        if other == primary: continue
+                        self._merge_findings_data(primary, other)
+                    
+                    cluster_primaries.append(primary)
+
+            # Link remaining clusters as "Related Findings"
+            if len(cluster_primaries) > 1:
+                for i in range(len(cluster_primaries)):
+                    p1 = cluster_primaries[i]
+                    for j in range(i + 1, len(cluster_primaries)):
+                        p2 = cluster_primaries[j]
+                        
+                        if p2.id not in p1.related_findings:
+                            p1.related_findings.append(p2.id)
+                        if p1.id not in p2.related_findings:
+                            p2.related_findings.append(p1.id)
+            
+            # Add to final results
+            for p in cluster_primaries:
+                if p.id not in merged_ids:
+                    final_findings.append(p)
+                    merged_ids.add(p.id)
+
+        return final_findings
 
         return results
 
@@ -245,6 +311,89 @@ class ResultAggregator:
         """
         return self._calculate_aggregated_fixed_version(versions)
 
+    def _normalize_component(self, component: str) -> str:
+        if not component:
+            return "unknown"
+        return component.strip().lower()
+
+    def _is_same_component_name(self, name1: str, name2: str) -> bool:
+        """
+        Checks if two component names likely refer to the same software.
+        e.g. 'postgresql' and 'org.postgresql:postgresql' -> True
+        """
+        n1 = name1.lower()
+        n2 = name2.lower()
+        if n1 == n2: return True
+        
+        # Check for group:artifact vs artifact
+        if ":" in n1 and n1.endswith(f":{n2}"): return True
+        if ":" in n2 and n2.endswith(f":{n1}"): return True
+        
+        # Check for group/artifact vs artifact (e.g. @angular/core vs core - careful!)
+        # We only allow this if the "short" name is NOT generic? 
+        # Actually, if they share the same VERSION and VULNERABILITIES, it is much safer to assume identity.
+        # So we can be a bit more lenient here because this check is only called when other factors match.
+        
+        if "/" in n1 and n1.endswith(f"/{n2}"): return True
+        if "/" in n2 and n2.endswith(f"/{n1}"): return True
+        
+        return False
+
+    def _merge_findings_data(self, target: Finding, source: Finding):
+        """Merges data from source finding into target finding."""
+        # 1. Scanners
+        target.scanners = list(set(target.scanners + source.scanners))
+        
+        # 2. Severity (Max)
+        t_sev = SEVERITY_ORDER.get(target.severity, 0)
+        s_sev = SEVERITY_ORDER.get(source.severity, 0)
+        if s_sev > t_sev:
+            target.severity = source.severity
+            
+        # 3. Found In
+        target.found_in = list(set(target.found_in + source.found_in))
+        
+        # 4. Aliases
+        target.aliases = list(set(target.aliases + source.aliases))
+        if source.id != target.id:
+            if source.id not in target.aliases:
+                target.aliases.append(source.id)
+                
+        # 5. Details (Vulnerabilities)
+        # We assume they have the same set of vulnerabilities (checked by caller),
+        # but we should merge the details of each vulnerability entry.
+        t_vulns = {v["id"]: v for v in target.details.get("vulnerabilities", [])}
+        s_vulns = source.details.get("vulnerabilities", [])
+        
+        for sv in s_vulns:
+            vid = sv["id"]
+            if vid in t_vulns:
+                tv = t_vulns[vid]
+                # Merge inner details
+                tv["scanners"] = list(set(tv.get("scanners", []) + sv.get("scanners", [])))
+                tv["aliases"] = list(set(tv.get("aliases", []) + sv.get("aliases", [])))
+                
+                # Description merge
+                if len(sv.get("description", "")) > len(tv.get("description", "")):
+                    tv["description"] = sv["description"]
+                    tv["description_source"] = sv.get("description_source", "unknown")
+                    
+                # Fixed version merge (if target missing)
+                if not tv.get("fixed_version") and sv.get("fixed_version"):
+                    tv["fixed_version"] = sv["fixed_version"]
+                    
+                # CVSS merge
+                if sv.get("cvss_score") and (not tv.get("cvss_score") or sv["cvss_score"] > tv["cvss_score"]):
+                    tv["cvss_score"] = sv["cvss_score"]
+                    tv["cvss_vector"] = sv.get("cvss_vector")
+            else:
+                # Should not happen if sets are identical, but for safety
+                target.details["vulnerabilities"].append(sv)
+        
+        # Recalculate top-level fixed version
+        fvs = [v.get("fixed_version") for v in target.details["vulnerabilities"] if v.get("fixed_version")]
+        target.details["fixed_version"] = self._resolve_fixed_versions(fvs)
+
     def _normalize_version(self, version: str) -> str:
         if not version:
             return "unknown"
@@ -268,7 +417,8 @@ class ResultAggregator:
 
     def _add_vulnerability_finding(self, finding: Finding, source: str = None):
         # Normalize keys
-        comp_key = finding.component.lower() if finding.component else "unknown"
+        raw_comp = finding.component if finding.component else "unknown"
+        comp_key = self._normalize_component(raw_comp)
         
         # Normalize version (handle go1.25.4 vs 1.25.4)
         raw_version = finding.version if finding.version else "unknown"
