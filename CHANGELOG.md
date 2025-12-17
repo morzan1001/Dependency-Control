@@ -1,3 +1,11 @@
+# Release 0.6.1
+
+## 🐛 Fixes
+
+- fix: enhance finding description handling to include source and prefer longer descriptions (#0)
+
+
+
 # Release 0.6.0
 
 ## 🐛 Fixes
