@@ -1,6 +1,7 @@
 from email.mime.image import MIMEImage
 import os
 import smtplib
+import asyncio
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import logging
@@ -11,6 +12,13 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 class EmailProvider(NotificationProvider):
+    def _send_sync(self, smtp_host, smtp_port, smtp_user, smtp_password, msg):
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+            if smtp_user and smtp_password:
+                server.starttls()
+                server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+
     async def send(self, destination: str, subject: str, message: str, html_message: str = None, logo_path: str = None, system_settings: Optional[SystemSettings] = None) -> bool:
         if not system_settings:
             logger.warning("System settings not provided. Skipping email.")
@@ -56,11 +64,16 @@ class EmailProvider(NotificationProvider):
                     msg.attach(MIMEText(html_message, "html"))
 
             # Send email
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                if smtp_user and smtp_password:
-                    server.starttls()
-                    server.login(smtp_user, smtp_password)
-                server.send_message(msg)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self._send_sync,
+                smtp_host,
+                smtp_port,
+                smtp_user,
+                smtp_password,
+                msg
+            )
             
             logger.info(f"Email sent to {destination}")
             return True

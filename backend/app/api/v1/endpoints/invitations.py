@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, BackgroundTasks
 from typing import List
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timedelta
@@ -44,6 +44,7 @@ async def read_system_invitations(
 
 @router.post("/system", status_code=status.HTTP_201_CREATED)
 async def create_system_invitation(
+    background_tasks: BackgroundTasks,
     email: str = Body(..., embed=True),
     current_user: User = Depends(deps.PermissionChecker("user:manage")),
     db: AsyncIOMotorDatabase = Depends(get_database)
@@ -93,7 +94,8 @@ async def create_system_invitation(
         
         system_config = await get_system_settings(db)
 
-        await notification_service.email_provider.send(
+        background_tasks.add_task(
+            notification_service.email_provider.send,
             destination=email,
             subject=f"Invitation to join {settings.PROJECT_NAME}",
             message=f"You have been invited to join {settings.PROJECT_NAME}. Click here to accept: {link}",

@@ -1,6 +1,6 @@
 from datetime import timedelta, datetime
 from typing import Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Body, Form, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Form, Request, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -223,6 +223,7 @@ async def refresh_token(
 
 @router.post("/signup", response_model=UserSchema, summary="Register a new user")
 async def create_user(
+    background_tasks: BackgroundTasks,
     user_in: UserCreate,
     db: AsyncIOMotorDatabase = Depends(get_database)
 ) -> Any:
@@ -265,7 +266,8 @@ async def create_user(
         logo_path = os.path.join(project_root, "assets", "logo.png")
         
         html_content = get_verification_email_template(link, settings.PROJECT_NAME)
-        await email_provider.send(
+        background_tasks.add_task(
+            email_provider.send,
             destination=new_user.email,
             subject=f"Verify your email for {settings.PROJECT_NAME}",
             message=f"Please verify your email by clicking this link: {link}",
@@ -292,6 +294,7 @@ async def logout(
 
 @router.post("/send-verification-email", summary="Send verification email")
 async def send_verification_email(
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ) -> Any:
@@ -319,7 +322,8 @@ async def send_verification_email(
     
     html_content = get_verification_email_template(link, settings.PROJECT_NAME)
     email_provider = EmailProvider()
-    await email_provider.send(
+    background_tasks.add_task(
+        email_provider.send,
         destination=current_user.email,
         subject=f"Verify your email for {settings.PROJECT_NAME}",
         message=f"Please verify your email by clicking this link: {link}",
@@ -363,6 +367,7 @@ async def verify_email(
 
 @router.post("/resend-verification", summary="Resend verification email (Public)")
 async def resend_verification_email_public(
+    background_tasks: BackgroundTasks,
     email: str = Body(..., embed=True),
     db: AsyncIOMotorDatabase = Depends(get_database),
     system_config: SystemSettings = Depends(deps.get_system_settings)
@@ -394,7 +399,8 @@ async def resend_verification_email_public(
     
     html_content = get_verification_email_template(link, settings.PROJECT_NAME)
     email_provider = EmailProvider()
-    await email_provider.send(
+    background_tasks.add_task(
+        email_provider.send,
         destination=user["email"],
         subject=f"Verify your email for {settings.PROJECT_NAME}",
         message=f"Please verify your email by clicking this link: {link}",

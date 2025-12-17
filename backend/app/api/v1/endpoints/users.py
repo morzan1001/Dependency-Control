@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from typing import List, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import pyotp
@@ -181,6 +181,7 @@ async def migrate_user_to_local(
 @router.post("/{user_id}/reset-password")
 async def reset_user_password(
     user_id: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:update"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -218,7 +219,8 @@ async def reset_user_password(
             )
             
             email_provider = EmailProvider()
-            await email_provider.send(
+            background_tasks.add_task(
+                email_provider.send,
                 destination=user["email"],
                 subject=f"Password Reset for {settings.PROJECT_NAME}",
                 message=f"Please reset your password by clicking this link: {link}",
@@ -244,6 +246,7 @@ async def reset_user_password(
 @router.post("/me/password", response_model=UserSchema)
 async def update_password_me(
     password_in: UserPasswordUpdate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -264,7 +267,8 @@ async def update_password_me(
     )
     
     # Send notification
-    await notification_service.email_provider.send(
+    background_tasks.add_task(
+        notification_service.email_provider.send,
         destination=current_user.email,
         subject="Security Alert: Password Changed",
         message=f"Hello {current_user.username},\n\nYour password for Dependency Control was successfully changed.\n\nIf you did not initiate this change, please contact your administrator immediately.",
@@ -349,6 +353,7 @@ async def setup_2fa(
 @router.post("/me/2fa/enable", response_model=UserSchema)
 async def enable_2fa(
     verify_in: User2FAVerify,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -381,7 +386,8 @@ async def enable_2fa(
     )
     
     # Send notification
-    await notification_service.email_provider.send(
+    background_tasks.add_task(
+        notification_service.email_provider.send,
         destination=current_user.email,
         subject="Security Alert: 2FA Enabled",
         message=f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) has been enabled for your account.\n\nIf you did not initiate this change, please contact your administrator immediately.",
@@ -397,6 +403,7 @@ async def enable_2fa(
 @router.post("/me/2fa/disable", response_model=UserSchema)
 async def disable_2fa(
     disable_in: User2FADisable,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -416,7 +423,8 @@ async def disable_2fa(
     )
     
     # Send notification
-    await notification_service.email_provider.send(
+    background_tasks.add_task(
+        notification_service.email_provider.send,
         destination=current_user.email,
         subject="Security Alert: 2FA Disabled",
         message=f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) has been disabled for your account.\n\nIf you did not initiate this change, please contact your administrator immediately.",
@@ -432,6 +440,7 @@ async def disable_2fa(
 @router.post("/{user_id}/2fa/disable", response_model=UserSchema)
 async def admin_disable_2fa(
     user_id: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.PermissionChecker(["user:manage", "user:update"])),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -453,7 +462,8 @@ async def admin_disable_2fa(
     # Send notification
     if settings.SMTP_HOST:
         try:
-            await notification_service.email_provider.send(
+            background_tasks.add_task(
+                notification_service.email_provider.send,
                 destination=user["email"],
                 subject="Security Alert: 2FA Disabled by Admin",
                 message=f"Hello {user['username']},\n\nTwo-Factor Authentication (2FA) has been disabled for your account by an administrator.\n\nIf you did not request this, please contact your administrator immediately.",
