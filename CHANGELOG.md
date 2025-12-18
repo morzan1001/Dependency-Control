@@ -1,3 +1,11 @@
+# Release 0.6.5
+
+## 🚀 Features
+
+- feat: add default SMTP encryption setting to system configuration (#0)
+
+
+
 # Release 0.6.4
 
 ## 🚀 Features
