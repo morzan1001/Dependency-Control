@@ -521,12 +521,6 @@ export default function SystemSettings() {
                                         </div>
                                     ) : (
                                         <>
-                                            {formData.slack_bot_token && (
-                                                <div className="mb-4 flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-                                                    <div className="h-2 w-2 rounded-full bg-green-500" />
-                                                    Connected to Slack Workspace
-                                                </div>
-                                            )}
                                             <Button
                                                 type="button"
                                                 variant={formData.slack_bot_token ? "outline" : "default"}

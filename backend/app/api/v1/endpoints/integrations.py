@@ -72,5 +72,5 @@ async def slack_callback(
         )
         
         # Redirect to frontend settings page
-        redirect_url = f"{settings.FRONTEND_BASE_URL}/system-settings?slack_connected=true"
+        redirect_url = f"{settings.FRONTEND_BASE_URL}/settings?slack_connected=true"
         return RedirectResponse(url=redirect_url)
