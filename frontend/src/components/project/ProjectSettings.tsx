@@ -29,6 +29,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 
 interface ProjectSettingsProps {
   project: Project
@@ -324,37 +332,52 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </div>
             )}
 
-            <div className="grid gap-4">
-                {['analysis_completed', 'vulnerability_found'].map(event => (
-                    <div key={event} className={`flex items-center justify-between border p-4 rounded-lg ${enforceNotificationSettings && !hasPermission('project:update') ? 'opacity-60' : ''}`}>
-                        <div>
-                            <div className="font-medium capitalize">{event.replace('_', ' ')}</div>
-                            <div className="text-sm text-muted-foreground">
-                                Receive notifications when {event.replace('_', ' ')} occurs.
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            {['email', 'slack', 'mattermost'].filter(channel => {
-                                if (channel === 'email') return !!systemSettings?.smtp_host;
-                                if (channel === 'slack') return !!systemSettings?.slack_bot_token;
-                                if (channel === 'mattermost') return !!systemSettings?.mattermost_url;
-                                return false;
-                            }).map(channel => (
-                                <div key={channel} className="flex items-center space-x-2">
-                                    <Checkbox 
-                                        id={`${event}-${channel}`}
-                                        checked={(notificationPrefs[event] || []).includes(channel)}
-                                        onCheckedChange={() => toggleNotification(event, channel)}
-                                        disabled={enforceNotificationSettings && !hasPermission('project:update')}
-                                    />
-                                    <Label htmlFor={`${event}-${channel}`} className="capitalize cursor-pointer">
-                                        {channel}
-                                    </Label>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                ))}
+            <div className="border rounded-md">
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead className="w-[300px]">Event</TableHead>
+                            {['email', 'slack', 'mattermost'].map(channel => {
+                                if (channel === 'email' && !systemSettings?.smtp_host) return null;
+                                if (channel === 'slack' && !systemSettings?.slack_bot_token) return null;
+                                if (channel === 'mattermost' && !systemSettings?.mattermost_url) return null;
+                                return (
+                                    <TableHead key={channel} className="capitalize text-center">{channel}</TableHead>
+                                );
+                            })}
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {['analysis_completed', 'vulnerability_found'].map(event => (
+                            <TableRow key={event} className={enforceNotificationSettings && !hasPermission('project:update') ? 'opacity-60' : ''}>
+                                <TableCell>
+                                    <div className="font-medium capitalize">{event.replace('_', ' ')}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                        Receive notifications when {event.replace('_', ' ')} occurs.
+                                    </div>
+                                </TableCell>
+                                {['email', 'slack', 'mattermost'].map(channel => {
+                                    if (channel === 'email' && !systemSettings?.smtp_host) return null;
+                                    if (channel === 'slack' && !systemSettings?.slack_bot_token) return null;
+                                    if (channel === 'mattermost' && !systemSettings?.mattermost_url) return null;
+                                    
+                                    return (
+                                        <TableCell key={channel} className="text-center">
+                                            <div className="flex justify-center">
+                                                <Checkbox 
+                                                    id={`${event}-${channel}`}
+                                                    checked={(notificationPrefs[event] || []).includes(channel)}
+                                                    onCheckedChange={() => toggleNotification(event, channel)}
+                                                    disabled={enforceNotificationSettings && !hasPermission('project:update')}
+                                                />
+                                            </div>
+                                        </TableCell>
+                                    );
+                                })}
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
             </div>
             {hasPermission('project:update') && (
                 <Button 

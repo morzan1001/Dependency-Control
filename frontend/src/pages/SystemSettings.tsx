@@ -500,15 +500,19 @@ export default function SystemSettings() {
 
                             {formData.slack_client_id && formData.slack_client_secret && (
                                 <div className="mt-4 space-y-4">
-                                    <h4 className="text-sm font-medium mb-2">Setup Instructions</h4>
-                                    <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1 mb-4">
-                                        <li>Go to your Slack App configuration.</li>
-                                        <li>Navigate to <strong>OAuth & Permissions</strong>.</li>
-                                        <li>Add the following <strong>Redirect URL</strong>:</li>
-                                    </ol>
-                                    <code className="block w-full p-2 bg-background border rounded text-xs font-mono mb-4 select-all">
-                                        {window.location.origin}/api/v1/integrations/slack/callback
-                                    </code>
+                                    {!formData.slack_bot_token && (
+                                        <>
+                                            <h4 className="text-sm font-medium mb-2">Setup Instructions</h4>
+                                            <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1 mb-4">
+                                                <li>Go to your Slack App configuration.</li>
+                                                <li>Navigate to <strong>OAuth & Permissions</strong>.</li>
+                                                <li>Add the following <strong>Redirect URL</strong>:</li>
+                                            </ol>
+                                            <code className="block w-full p-2 bg-background border rounded text-xs font-mono mb-4 select-all">
+                                                {window.location.origin}/api/v1/integrations/slack/callback
+                                            </code>
+                                        </>
+                                    )}
                                     
                                     {/* Check if settings are dirty (unsaved changes) */}
                                     {(formData.slack_client_id !== settings?.slack_client_id || formData.slack_client_secret !== settings?.slack_client_secret) ? (
@@ -546,17 +550,6 @@ export default function SystemSettings() {
                                     )}
                                 </div>
                             )}
-
-                            <div className="grid gap-2 mt-2">
-                                <Label htmlFor="slack-token-readonly" className="text-xs text-muted-foreground">Current Bot Token (System Managed)</Label>
-                                <Input 
-                                    id="slack-token-readonly" 
-                                    type="password"
-                                    readOnly
-                                    className="bg-muted text-muted-foreground"
-                                    value={formData.slack_bot_token || ''}
-                                />
-                            </div>
                         </div>
                     </TabsContent>
 
