@@ -31,23 +31,21 @@ jobs:
             --arg pipeline_id "${{ github.run_id }}" \
             --arg pipeline_iid "${{ github.run_number }}" \
             --arg project_url "${{ github.server_url }}/${{ github.repository }}" \
-            --arg project_path "${{ github.repository }}" \
-            --arg default_branch "${{ github.event.repository.default_branch }}" \
+            --arg pipeline_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg job_started_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg commit_message "${{ github.event.head_commit.message }}" \
             --slurpfile sbom sbom.json \
             '{
               project_name: $pn, 
               branch: $br, 
               commit_hash: $ch, 
-              sboms: $sbom,
-              metadata: {
-                CI_PIPELINE_ID: ($pipeline_id | tonumber),
-                CI_PIPELINE_IID: ($pipeline_iid | tonumber),
-                CI_COMMIT_BRANCH: $br,
-                CI_PROJECT_URL: $project_url,
-                CI_PROJECT_PATH: $project_path,
-                CI_DEFAULT_BRANCH: $default_branch,
-                CI_JOB_STARTED_AT: (now | todate)
-              }
+              pipeline_id: ($pipeline_id | tonumber),
+              pipeline_iid: ($pipeline_iid | tonumber),
+              project_url: $project_url,
+              pipeline_url: $pipeline_url,
+              job_started_at: $job_started_at,
+              commit_message: $commit_message,
+              sboms: $sbom
             }' > payload.json
 
           # Send to Backend
@@ -107,23 +105,21 @@ jobs:
             --arg pipeline_id "${{ github.run_id }}" \
             --arg pipeline_iid "${{ github.run_number }}" \
             --arg project_url "${{ github.server_url }}/${{ github.repository }}" \
-            --arg project_path "${{ github.repository }}" \
-            --arg default_branch "${{ github.event.repository.default_branch }}" \
+            --arg pipeline_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg job_started_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg commit_message "${{ github.event.head_commit.message }}" \
             --slurpfile findings trufflehog.json \
             '{
               project_name: $pn, 
               branch: $br, 
               commit_hash: $ch, 
-              findings: $findings,
-              metadata: {
-                CI_PIPELINE_ID: ($pipeline_id | tonumber),
-                CI_PIPELINE_IID: ($pipeline_iid | tonumber),
-                CI_COMMIT_BRANCH: $br,
-                CI_PROJECT_URL: $project_url,
-                CI_PROJECT_PATH: $project_path,
-                CI_DEFAULT_BRANCH: $default_branch,
-                CI_JOB_STARTED_AT: (now | todate)
-              }
+              pipeline_id: ($pipeline_id | tonumber),
+              pipeline_iid: ($pipeline_iid | tonumber),
+              project_url: $project_url,
+              pipeline_url: $pipeline_url,
+              job_started_at: $job_started_at,
+              commit_message: $commit_message,
+              findings: $findings
             }' > payload.json
           
           # Send to Backend
@@ -187,8 +183,25 @@ jobs:
             --arg pn "$PROJECT_NAME" \
             --arg br "${{ github.ref_name }}" \
             --arg ch "${{ github.sha }}" \
+            --arg pipeline_id "${{ github.run_id }}" \
+            --arg pipeline_iid "${{ github.run_number }}" \
+            --arg project_url "${{ github.server_url }}/${{ github.repository }}" \
+            --arg pipeline_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg job_started_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg commit_message "${{ github.event.head_commit.message }}" \
             --slurpfile findings opengrep.json \
-            '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0].results}' > payload.json
+            '{
+              project_name: $pn, 
+              branch: $br, 
+              commit_hash: $ch, 
+              pipeline_id: ($pipeline_id | tonumber),
+              pipeline_iid: ($pipeline_iid | tonumber),
+              project_url: $project_url,
+              pipeline_url: $pipeline_url,
+              job_started_at: $job_started_at,
+              commit_message: $commit_message,
+              findings: $findings[0].results
+            }' > payload.json
             
           curl -X POST \
             -H "Content-Type: application/json" \
@@ -246,8 +259,26 @@ jobs:
             --arg pn "$PROJECT_NAME" \
             --arg br "${{ github.ref_name }}" \
             --arg ch "${{ github.sha }}" \
+            --arg pipeline_id "${{ github.run_id }}" \
+            --arg pipeline_iid "${{ github.run_number }}" \
+            --arg project_url "${{ github.server_url }}/${{ github.repository }}" \
+            --arg pipeline_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg job_started_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg commit_message "${{ github.event.head_commit.message }}" \
             --slurpfile findings kics-results.json \
-            '{project_name: $pn, branch: $br, commit_hash: $ch, queries: $findings[0].queries, files: $findings[0].files}' > payload.json
+            '{
+              project_name: $pn, 
+              branch: $br, 
+              commit_hash: $ch, 
+              pipeline_id: ($pipeline_id | tonumber),
+              pipeline_iid: ($pipeline_iid | tonumber),
+              project_url: $project_url,
+              pipeline_url: $pipeline_url,
+              job_started_at: $job_started_at,
+              commit_message: $commit_message,
+              queries: $findings[0].queries, 
+              files: $findings[0].files
+            }' > payload.json
             
           # Send to Backend
           curl -X POST \
@@ -298,8 +329,25 @@ jobs:
             --arg pn "$PROJECT_NAME" \
             --arg br "${{ github.ref_name }}" \
             --arg ch "${{ github.sha }}" \
+            --arg pipeline_id "${{ github.run_id }}" \
+            --arg pipeline_iid "${{ github.run_number }}" \
+            --arg project_url "${{ github.server_url }}/${{ github.repository }}" \
+            --arg pipeline_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg job_started_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg commit_message "${{ github.event.head_commit.message }}" \
             --slurpfile findings bearer.json \
-            '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0]}' > payload.json
+            '{
+              project_name: $pn, 
+              branch: $br, 
+              commit_hash: $ch, 
+              pipeline_id: ($pipeline_id | tonumber),
+              pipeline_iid: ($pipeline_iid | tonumber),
+              project_url: $project_url,
+              pipeline_url: $pipeline_url,
+              job_started_at: $job_started_at,
+              commit_message: $commit_message,
+              findings: $findings[0]
+            }' > payload.json
             
           curl -X POST \
             -H "Content-Type: application/json" \

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 class ProjectInvitation(BaseModel):
@@ -9,7 +9,7 @@ class ProjectInvitation(BaseModel):
     role: str
     token: str
     invited_by: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime
 
     class Config:
@@ -21,7 +21,7 @@ class SystemInvitation(BaseModel):
     email: EmailStr
     token: str
     invited_by: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime
     is_used: bool = False
 

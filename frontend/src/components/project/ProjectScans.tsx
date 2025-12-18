@@ -1,18 +1,27 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { getProjectScans, getProjectBranches } from '@/lib/api'
+import { getProjectScans, getProjectBranches, Scan } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Loader2 } from 'lucide-react'
 
 interface ProjectScansProps {
   projectId: string
 }
+
+// Helper to get the effective stats and status (from latest re-scan if available)
+const getEffectiveScanData = (scan: Scan) => {
+    const source = scan.latest_run || scan;
+    return {
+        stats: source.stats || { critical: 0, high: 0, medium: 0, low: 0 },
+        status: source.status
+    };
+};
 
 export function ProjectScans({ projectId }: ProjectScansProps) {
   const [page, setPage] = useState(0)
@@ -29,7 +38,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
 
   const { data: scans, isLoading, isPlaceholderData } = useQuery({
     queryKey: ['project-scans', projectId, page, selectedBranch, sortBy, sortOrder],
-    queryFn: () => getProjectScans(projectId, page * limit, limit, selectedBranch, sortBy, sortOrder),
+    queryFn: () => getProjectScans(projectId, page * limit, limit, selectedBranch, sortBy, sortOrder, true),
     placeholderData: (previousData) => previousData,
   })
 
@@ -67,8 +76,8 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>Pipeline History</CardTitle>
-            <CardDescription>View past pipelines and their security results.</CardDescription>
+            <CardTitle>Pipelines</CardTitle>
+            <CardDescription>View past pipelines and their latest security status.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             {selectedBranch && (
@@ -114,7 +123,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                   Date {renderSortIcon('created_at')}
                 </TableHead>
                 <TableHead className="w-[120px] cursor-pointer hover:text-foreground" onClick={() => handleSort('pipeline_iid')}>
-                  Pipeline {renderSortIcon('pipeline_iid')}
+                  Source {renderSortIcon('pipeline_iid')}
                 </TableHead>
                 <TableHead className="w-[200px] cursor-pointer hover:text-foreground" onClick={() => handleSort('branch')}>
                   Branch {renderSortIcon('branch')}
@@ -134,13 +143,19 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                 <TableRow 
                   key={scan._id} 
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => navigate(`/projects/${projectId}/scans/${scan._id}`)}
+                  onClick={() => navigate(`/projects/${projectId}/scans/${scan.latest_rescan_id || scan._id}`)}
                 >
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Calendar className="h-4 w-4 text-muted-foreground" />
                       {new Date(scan.created_at).toLocaleString()}
                     </div>
+                    {scan.latest_rescan_id && (
+                        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                            <RefreshCw className="h-3 w-3" />
+                            Updated via re-scan
+                        </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
@@ -174,27 +189,40 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-2">
-                      {(scan.stats?.critical || 0) > 0 && (
-                        <Badge variant="destructive" className="gap-1">
-                          <ShieldAlert className="h-3 w-3" />
-                          {scan.stats?.critical}
-                        </Badge>
-                      )}
-                      {(scan.stats?.high || 0) > 0 && (
-                        <Badge variant="secondary" className="gap-1 text-orange-500 border-orange-500/20 bg-orange-500/10">
-                          <Activity className="h-3 w-3" />
-                          {scan.stats?.high}
-                        </Badge>
-                      )}
-                      {!(scan.stats?.critical || 0) && !(scan.stats?.high || 0) && (
-                        <span className="text-muted-foreground text-sm">No high risks</span>
-                      )}
+                      {(() => {
+                          const { stats } = getEffectiveScanData(scan);
+                          return (
+                              <>
+                                {(stats.critical || 0) > 0 && (
+                                    <Badge variant="destructive" className="gap-1">
+                                    <ShieldAlert className="h-3 w-3" />
+                                    {stats.critical}
+                                    </Badge>
+                                )}
+                                {(stats.high || 0) > 0 && (
+                                    <Badge variant="secondary" className="gap-1 text-orange-500 border-orange-500/20 bg-orange-500/10">
+                                    <Activity className="h-3 w-3" />
+                                    {stats.high}
+                                    </Badge>
+                                )}
+                                {!(stats.critical || 0) && !(stats.high || 0) && (
+                                    <span className="text-muted-foreground text-sm">No high risks</span>
+                                )}
+                              </>
+                          );
+                      })()}
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={scan.status === 'completed' ? 'default' : 'secondary'}>
-                      {scan.status}
-                    </Badge>
+                    {(() => {
+                        const { status } = getEffectiveScanData(scan);
+                        return (
+                            <Badge variant={status === 'completed' ? 'default' : 'secondary'} className="flex w-fit items-center gap-1">
+                            {['pending', 'processing'].includes(status) && <Loader2 className="h-3 w-3 animate-spin" />}
+                            {status}
+                            </Badge>
+                        );
+                    })()}
                   </TableCell>
                 </TableRow>
               ))}

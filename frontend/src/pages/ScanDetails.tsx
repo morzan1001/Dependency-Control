@@ -1,15 +1,16 @@
-import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { getScan, getProject, getScanResults, getScanStats } from '@/lib/api'
+import { getScan, getProject, getScanResults, getScanStats, getScanHistory, triggerRescan } from '@/lib/api'
 import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, Copy, Check } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, Copy, Check, RefreshCw, Loader2 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
+import { toast } from "sonner"
 
 function CodeBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)
@@ -37,13 +38,41 @@ function CodeBlock({ code }: { code: string }) {
   )
 }
 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+
 export default function ScanDetails() {
   const { projectId, scanId } = useParams<{ projectId: string, scanId: string }>()
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
 
   const { data: scan, isLoading: isScanLoading } = useQuery({
     queryKey: ['scan', scanId],
     queryFn: () => getScan(scanId!),
     enabled: !!scanId
+  })
+
+  const { data: scanHistory } = useQuery({
+    queryKey: ['scan-history', scanId],
+    queryFn: () => getScanHistory(projectId!, scanId!),
+    enabled: !!scanId && !!projectId
+  })
+
+  const rescanMutation = useMutation({
+    mutationFn: () => triggerRescan(projectId!, scanId!),
+    onSuccess: () => {
+      toast.success("Re-scan triggered", {
+        description: "A new scan has been started.",
+      })
+      queryClient.invalidateQueries({ queryKey: ['scan-history', scanId] })
+      queryClient.invalidateQueries({ queryKey: ['project-scans', projectId] })
+      // Optionally navigate to the new scan
+      // navigate(`/projects/${projectId}/scans/${newScan._id}`)
+    },
+    onError: () => {
+      toast.error("Error", {
+        description: "Failed to trigger re-scan.",
+      })
+    }
   })
 
   const { data: project, isLoading: isProjectLoading } = useQuery({
@@ -115,18 +144,47 @@ export default function ScanDetails() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link to={`/projects/${projectId}`}>
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-        </Button>
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">
-            {scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan Details'}
-          </h2>
-          <p className="text-muted-foreground text-sm">ID: {scanId}</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+            <Button variant="ghost" size="icon" asChild>
+            <Link to={`/projects/${projectId}`}>
+                <ArrowLeft className="h-4 w-4" />
+            </Link>
+            </Button>
+            <div>
+            <h2 className="text-3xl font-bold tracking-tight">
+                {scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan Details'}
+            </h2>
+            <div className="flex items-center gap-2 mt-1">
+                <p className="text-muted-foreground text-sm">ID: {scanId}</p>
+                {scanHistory && scanHistory.length > 1 && (
+                    <Select 
+                        value={scanId} 
+                        onValueChange={(value) => navigate(`/projects/${projectId}/scans/${value}`)}
+                    >
+                        <SelectTrigger className="h-7 w-[200px] text-xs">
+                            <SelectValue placeholder="Select version" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {scanHistory.map((h: any) => (
+                                <SelectItem key={h._id} value={h._id} className="text-xs">
+                                    {h.is_rescan ? 'Re-scan' : 'Original'} - {new Date(h.created_at).toLocaleString()}
+                                    {h._id === scanId && " (Current)"}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                )}
+            </div>
+            </div>
         </div>
+        <Button 
+            onClick={() => rescanMutation.mutate()} 
+            disabled={rescanMutation.isPending || !scan.sbom_refs || scan.sbom_refs.length === 0}
+        >
+            <RefreshCw className={`mr-2 h-4 w-4 ${rescanMutation.isPending ? 'animate-spin' : ''}`} />
+            Trigger Re-scan
+        </Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -139,7 +197,8 @@ export default function ScanDetails() {
                         <div className="flex flex-col space-y-1">
                             <span className="text-sm text-muted-foreground">Status</span>
                             <div>
-                                <Badge variant={scan.status === 'completed' ? 'default' : 'secondary'}>
+                                <Badge variant={scan.status === 'completed' ? 'default' : 'secondary'} className="flex w-fit items-center gap-1">
+                                    {['pending', 'processing'].includes(scan.status) && <Loader2 className="h-3 w-3 animate-spin" />}
                                     {scan.status}
                                 </Badge>
                             </div>
@@ -288,6 +347,7 @@ export default function ScanDetails() {
             {showSast && <TabsTrigger value="sast">SAST</TabsTrigger>}
             {showCompliance && <TabsTrigger value="compliance">Compliance</TabsTrigger>}
             {showQuality && <TabsTrigger value="quality">Quality</TabsTrigger>}
+
             <TabsTrigger value="raw">Raw Data</TabsTrigger>
         </TabsList>
 

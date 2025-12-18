@@ -27,6 +27,9 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   // Filter scans based on selection
   const filteredScans = scanList.filter(s => selectedBranches.includes(s.branch))
 
+  // Count unique pipelines (excluding rescans)
+  const uniqueScansCount = filteredScans.filter(s => !s.is_rescan).length
+
   // Calculate Project Stats (Using pre-calculated stats from scans)
   const projectStats = useMemo(() => {
       if (!filteredScans.length) return null;
@@ -127,7 +130,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{filteredScans.length}</div>
+            <div className="text-2xl font-bold">{uniqueScansCount}</div>
             <p className="text-xs text-muted-foreground">
               Across selected branches
             </p>

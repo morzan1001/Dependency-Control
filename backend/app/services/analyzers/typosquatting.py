@@ -1,7 +1,7 @@
 import httpx
 import logging
 from typing import Dict, Any, Set
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from .base import Analyzer
 import difflib
 
@@ -19,7 +19,7 @@ class TyposquattingAnalyzer(Analyzer):
     _cache_ttl = timedelta(hours=24)
 
     async def _ensure_popular_packages(self):
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if self._last_update and (now - self._last_update) < self._cache_ttl:
             if self._popular_packages_cache["pypi"] and self._popular_packages_cache["npm"]:
                 return

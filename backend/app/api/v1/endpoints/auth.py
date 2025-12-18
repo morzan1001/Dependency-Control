@@ -1,4 +1,4 @@
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Body, Form, Request, BackgroundTasks
 from fastapi.responses import RedirectResponse
@@ -288,7 +288,7 @@ async def logout(
     """
     await db.users.update_one(
         {"_id": current_user.id},
-        {"$set": {"last_logout_at": datetime.utcnow()}}
+        {"$set": {"last_logout_at": datetime.now(timezone.utc)}}
     )
     return {"message": "Successfully logged out"}
 
@@ -501,7 +501,7 @@ async def login_oidc_callback(
         user_data = user_in.dict()
         user_data["hashed_password"] = security.get_password_hash(user_data["password"])
         del user_data["password"]
-        user_data["created_at"] = datetime.utcnow()
+        user_data["created_at"] = datetime.now(timezone.utc)
         user_data["permissions"] = [] # Default permissions
         
         result = await db.users.insert_one(user_data)

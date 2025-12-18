@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.api import deps
 from app.models.user import User
@@ -244,7 +244,7 @@ async def update_team(
         await check_team_access(team_id, current_user, db, required_role="admin")
     
     update_data = team_in.dict(exclude_unset=True)
-    update_data["updated_at"] = datetime.utcnow()
+    update_data["updated_at"] = datetime.now(timezone.utc)
     
     await db.teams.update_one({"_id": team_id}, {"$set": update_data})
     
@@ -299,7 +299,7 @@ async def add_team_member(
     
     await db.teams.update_one(
         {"_id": team_id},
-        {"$push": {"members": new_member.dict()}, "$set": {"updated_at": datetime.utcnow()}}
+        {"$push": {"members": new_member.dict()}, "$set": {"updated_at": datetime.now(timezone.utc)}}
     )
     
     updated_team = await db.teams.find_one({"_id": team_id})
@@ -344,7 +344,7 @@ async def update_team_member(
 
     await db.teams.update_one(
         {"_id": team_id, "members.user_id": user_id},
-        {"$set": {f"members.{member_index}.role": member_in.role, "updated_at": datetime.utcnow()}}
+        {"$set": {f"members.{member_index}.role": member_in.role, "updated_at": datetime.now(timezone.utc)}}
     )
     
     updated_team = await db.teams.find_one({"_id": team_id})
@@ -386,7 +386,7 @@ async def remove_team_member(
 
     await db.teams.update_one(
         {"_id": team_id},
-        {"$pull": {"members": {"user_id": user_id}}, "$set": {"updated_at": datetime.utcnow()}}
+        {"$pull": {"members": {"user_id": user_id}}, "$set": {"updated_at": datetime.now(timezone.utc)}}
     )
     
     updated_team = await db.teams.find_one({"_id": team_id})

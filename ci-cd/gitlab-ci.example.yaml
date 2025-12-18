@@ -61,8 +61,29 @@ dependency-scan:
         --arg pn "$CI_PROJECT_PATH" \
         --arg br "$CI_COMMIT_REF_NAME" \
         --arg ch "$CI_COMMIT_SHA" \
+        --arg pipeline_id "$CI_PIPELINE_ID" \
+        --arg pipeline_iid "$CI_PIPELINE_IID" \
+        --arg project_url "$CI_PROJECT_URL" \
+        --arg pipeline_url "$CI_PIPELINE_URL" \
+        --arg job_id "$CI_JOB_ID" \
+        --arg job_started_at "$CI_JOB_STARTED_AT" \
+        --arg commit_message "$CI_COMMIT_MESSAGE" \
+        --arg commit_tag "$CI_COMMIT_TAG" \
         --slurpfile sbom sbom.json \
-        '{project_name: $pn, branch: $br, commit_hash: $ch, sbom: $sbom[0]}' > payload.json
+        '{
+          project_name: $pn, 
+          branch: $br, 
+          commit_hash: $ch, 
+          pipeline_id: ($pipeline_id | tonumber),
+          pipeline_iid: ($pipeline_iid | tonumber),
+          project_url: $project_url,
+          pipeline_url: $pipeline_url,
+          job_id: ($job_id | tonumber),
+          job_started_at: $job_started_at,
+          commit_message: $commit_message,
+          commit_tag: $commit_tag,
+          sboms: $sbom
+        }' > payload.json
 
     - echo "Sending to Dependency Control..."
     - |
@@ -105,11 +126,33 @@ secret-scan:
     
     - echo "Preparing payload..."
     - |
-      echo '{"project_name": "'"$CI_PROJECT_PATH"'", "branch": "'"$CI_COMMIT_REF_NAME"'", "commit_hash": "'"$CI_COMMIT_SHA"'", "findings": [' > payload.json
-      if [ -s trufflehog.json ]; then
-        sed 's/$/,/' trufflehog.json | sed '$ s/,$//' >> payload.json
-      fi
-      echo ']}' >> payload.json
+      jq -n \
+        --arg pn "$CI_PROJECT_PATH" \
+        --arg br "$CI_COMMIT_REF_NAME" \
+        --arg ch "$CI_COMMIT_SHA" \
+        --arg pipeline_id "$CI_PIPELINE_ID" \
+        --arg pipeline_iid "$CI_PIPELINE_IID" \
+        --arg project_url "$CI_PROJECT_URL" \
+        --arg pipeline_url "$CI_PIPELINE_URL" \
+        --arg job_id "$CI_JOB_ID" \
+        --arg job_started_at "$CI_JOB_STARTED_AT" \
+        --arg commit_message "$CI_COMMIT_MESSAGE" \
+        --arg commit_tag "$CI_COMMIT_TAG" \
+        --slurpfile findings trufflehog.json \
+        '{
+          project_name: $pn, 
+          branch: $br, 
+          commit_hash: $ch, 
+          pipeline_id: ($pipeline_id | tonumber),
+          pipeline_iid: ($pipeline_iid | tonumber),
+          project_url: $project_url,
+          pipeline_url: $pipeline_url,
+          job_id: ($job_id | tonumber),
+          job_started_at: $job_started_at,
+          commit_message: $commit_message,
+          commit_tag: $commit_tag,
+          findings: $findings
+        }' > payload.json
       
     - echo "Uploading results..."
     - |
@@ -158,8 +201,29 @@ opengrep-scan:
         --arg pn "$CI_PROJECT_PATH" \
         --arg br "$CI_COMMIT_REF_NAME" \
         --arg ch "$CI_COMMIT_SHA" \
+        --arg pipeline_id "$CI_PIPELINE_ID" \
+        --arg pipeline_iid "$CI_PIPELINE_IID" \
+        --arg project_url "$CI_PROJECT_URL" \
+        --arg pipeline_url "$CI_PIPELINE_URL" \
+        --arg job_id "$CI_JOB_ID" \
+        --arg job_started_at "$CI_JOB_STARTED_AT" \
+        --arg commit_message "$CI_COMMIT_MESSAGE" \
+        --arg commit_tag "$CI_COMMIT_TAG" \
         --slurpfile findings opengrep.json \
-        '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0].results}' > payload.json
+        '{
+          project_name: $pn, 
+          branch: $br, 
+          commit_hash: $ch, 
+          pipeline_id: ($pipeline_id | tonumber),
+          pipeline_iid: ($pipeline_iid | tonumber),
+          project_url: $project_url,
+          pipeline_url: $pipeline_url,
+          job_id: ($job_id | tonumber),
+          job_started_at: $job_started_at,
+          commit_message: $commit_message,
+          commit_tag: $commit_tag,
+          findings: $findings[0].results
+        }' > payload.json
 
     - echo "Uploading results..."
     - |
@@ -200,8 +264,30 @@ kics-scan:
         --arg pn "$CI_PROJECT_PATH" \
         --arg br "$CI_COMMIT_REF_NAME" \
         --arg ch "$CI_COMMIT_SHA" \
+        --arg pipeline_id "$CI_PIPELINE_ID" \
+        --arg pipeline_iid "$CI_PIPELINE_IID" \
+        --arg project_url "$CI_PROJECT_URL" \
+        --arg pipeline_url "$CI_PIPELINE_URL" \
+        --arg job_id "$CI_JOB_ID" \
+        --arg job_started_at "$CI_JOB_STARTED_AT" \
+        --arg commit_message "$CI_COMMIT_MESSAGE" \
+        --arg commit_tag "$CI_COMMIT_TAG" \
         --slurpfile findings kics-results.json \
-        '{project_name: $pn, branch: $br, commit_hash: $ch, queries: $findings[0].queries, files: $findings[0].files}' > payload.json
+        '{
+          project_name: $pn, 
+          branch: $br, 
+          commit_hash: $ch, 
+          pipeline_id: ($pipeline_id | tonumber),
+          pipeline_iid: ($pipeline_iid | tonumber),
+          project_url: $project_url,
+          pipeline_url: $pipeline_url,
+          job_id: ($job_id | tonumber),
+          job_started_at: $job_started_at,
+          commit_message: $commit_message,
+          commit_tag: $commit_tag,
+          queries: $findings[0].queries, 
+          files: $findings[0].files
+        }' > payload.json
 
     - echo "Uploading results..."
     - |
@@ -240,8 +326,29 @@ bearer-scan:
         --arg pn "$CI_PROJECT_PATH" \
         --arg br "$CI_COMMIT_REF_NAME" \
         --arg ch "$CI_COMMIT_SHA" \
+        --arg pipeline_id "$CI_PIPELINE_ID" \
+        --arg pipeline_iid "$CI_PIPELINE_IID" \
+        --arg project_url "$CI_PROJECT_URL" \
+        --arg pipeline_url "$CI_PIPELINE_URL" \
+        --arg job_id "$CI_JOB_ID" \
+        --arg job_started_at "$CI_JOB_STARTED_AT" \
+        --arg commit_message "$CI_COMMIT_MESSAGE" \
+        --arg commit_tag "$CI_COMMIT_TAG" \
         --slurpfile findings bearer.json \
-        '{project_name: $pn, branch: $br, commit_hash: $ch, findings: $findings[0]}' > payload.json
+        '{
+          project_name: $pn, 
+          branch: $br, 
+          commit_hash: $ch, 
+          pipeline_id: ($pipeline_id | tonumber),
+          pipeline_iid: ($pipeline_iid | tonumber),
+          project_url: $project_url,
+          pipeline_url: $pipeline_url,
+          job_id: ($job_id | tonumber),
+          job_started_at: $job_started_at,
+          commit_message: $commit_message,
+          commit_tag: $commit_tag,
+          findings: $findings[0]
+        }' > payload.json
 
     - echo "Uploading results..."
     - |

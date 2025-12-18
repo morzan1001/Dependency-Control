@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from app.models.finding import Finding, Severity, FindingType
 
@@ -19,7 +19,7 @@ class FindingRecord(Finding):
     # The logical ID from the analyzer (e.g. CVE-xxx)
     finding_id: str = Field(..., description="Logical ID of the finding (e.g. CVE-2021-44228)")
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Config:
         populate_by_name = True

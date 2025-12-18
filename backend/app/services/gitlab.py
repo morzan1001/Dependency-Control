@@ -2,7 +2,7 @@ import httpx
 import secrets
 import logging
 from jose import jwt
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from app.models.system import SystemSettings
 from app.models.team import Team, TeamMember
@@ -24,7 +24,7 @@ class GitLabService:
         Fetches and caches the JWKS from GitLab.
         """
         # Simple caching mechanism (e.g. 1 hour)
-        now = datetime.utcnow().timestamp()
+        now = datetime.now(timezone.utc).timestamp()
         if self._jwks_cache and (now - self._jwks_cache_time < 3600):
             return self._jwks_cache
 
@@ -226,7 +226,7 @@ class GitLabService:
             if team:
                 await db.teams.update_one(
                     {"_id": team["_id"]},
-                    {"$set": {"members": [tm.dict() for tm in team_members], "updated_at": datetime.utcnow()}}
+                    {"$set": {"members": [tm.dict() for tm in team_members], "updated_at": datetime.now(timezone.utc)}}
                 )
                 return str(team["_id"])
             elif team_members:

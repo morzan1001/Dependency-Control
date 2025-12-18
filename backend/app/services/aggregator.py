@@ -289,12 +289,7 @@ class ResultAggregator:
 
         # 3. Sort and format results
         if not valid_majors:
-            # Fallback: Just take the max of everything if our strict logic fails
-            all_candidates = []
-            for fv in fixed_versions_list:
-                all_candidates.extend([c.strip() for c in fv.split(",")])
-            if not all_candidates: return None
-            return max(all_candidates, key=lambda x: self._parse_version_key(x) or (0,))
+            return None
 
         # Sort by major version (try to sort numerically if possible)
         try:
@@ -590,10 +585,6 @@ class ResultAggregator:
                     existing_key = self.alias_map[lookup_key_alias]
                     break
         
-        # 3. Fallback to primary key check (legacy/safety)
-        if not existing_key and primary_key in self.findings:
-            existing_key = primary_key
-
         if existing_key and existing_key in self.findings:
             existing = self.findings[existing_key]
             

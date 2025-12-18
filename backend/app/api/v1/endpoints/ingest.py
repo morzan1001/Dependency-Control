@@ -15,7 +15,7 @@ from app.models.dependency import Dependency
 from app.db.mongodb import get_database
 from app.core.worker import worker_manager
 from app.services.aggregator import ResultAggregator
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ async def ingest_trufflehog(
         await db.scans.update_one(
             {"_id": scan_id},
             {"$set": {
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
                 "branch": data.branch or existing_scan.get("branch"),
                 "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
                 "project_url": data.project_url,
@@ -82,8 +82,8 @@ async def ingest_trufflehog(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             status="processing",
-            created_at=datetime.utcnow(),
-            completed_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc)
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
@@ -103,7 +103,7 @@ async def ingest_trufflehog(
             {"project_id": str(project.id)},
             {"project_id": None} # Global waivers
         ],
-        "expiration_date": {"$gt": datetime.utcnow()}
+        "expiration_date": {"$gt": datetime.now(timezone.utc)}
     })
     waivers = await waivers_cursor.to_list(length=1000)
     
@@ -144,7 +144,7 @@ async def ingest_trufflehog(
         "scan_id": scan_id,
         "analyzer_name": "trufflehog",
         "result": trufflehog_result,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(timezone.utc)
     })
     
     # Update Scan with summary
@@ -277,13 +277,10 @@ async def ingest_sbom(
                     "commit_message": data.commit_message,
                     "commit_tag": data.commit_tag,
                     "status": "pending", # Reset status to pending to re-analyze with new data
-                    "updated_at": datetime.utcnow()
+                    "updated_at": datetime.now(timezone.utc)
                 },
                 "$push": {
-                    "sbom_refs": {"$each": sbom_refs},
-                    # Keep 'sboms' for backward compatibility if needed, or just use sbom_refs
-                    # For now, we populate 'sboms' with the refs so analysis.py works without changes
-                    "sboms": {"$each": sbom_refs} 
+                    "sbom_refs": {"$each": sbom_refs}
                 }
             }
         )
@@ -304,7 +301,6 @@ async def ingest_sbom(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             sbom_refs=sbom_refs,
-            sboms=sbom_refs, # Populate sboms with refs for analysis.py compatibility
             status="pending"
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
@@ -347,7 +343,7 @@ async def ingest_opengrep(
         await db.scans.update_one(
             {"_id": scan_id},
             {"$set": {
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
                 "branch": data.branch or existing_scan.get("branch"),
                 "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
                 "project_url": data.project_url,
@@ -374,8 +370,8 @@ async def ingest_opengrep(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             status="processing", # Mark as processing as we are adding results
-            created_at=datetime.utcnow(),
-            completed_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc)
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
@@ -393,7 +389,7 @@ async def ingest_opengrep(
             {"project_id": str(project.id)},
             {"project_id": None}
         ],
-        "expiration_date": {"$gt": datetime.utcnow()}
+        "expiration_date": {"$gt": datetime.now(timezone.utc)}
     })
     waivers = await waivers_cursor.to_list(length=1000)
     
@@ -424,7 +420,7 @@ async def ingest_opengrep(
         "scan_id": scan_id,
         "analyzer_name": "opengrep",
         "result": opengrep_result,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(timezone.utc)
     })
     
     # Update Scan with summary (This needs to be smarter to aggregate with other analyzers)
@@ -450,7 +446,7 @@ async def ingest_opengrep(
     # Update Project Stats
     await db.projects.update_one(
         {"_id": str(project.id)},
-        {"$set": {"last_scan_at": datetime.utcnow()}}
+        {"$set": {"last_scan_at": datetime.now(timezone.utc)}}
     )
     
     return {
@@ -490,7 +486,7 @@ async def ingest_kics(
         await db.scans.update_one(
             {"_id": scan_id},
             {"$set": {
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
                 "branch": data.branch or existing_scan.get("branch"),
                 "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
                 "project_url": data.project_url,
@@ -517,8 +513,8 @@ async def ingest_kics(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             status="processing",
-            created_at=datetime.utcnow(),
-            completed_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc)
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
@@ -535,7 +531,7 @@ async def ingest_kics(
             {"project_id": str(project.id)},
             {"project_id": None}
         ],
-        "expiration_date": {"$gt": datetime.utcnow()}
+        "expiration_date": {"$gt": datetime.now(timezone.utc)}
     })
     waivers = await waivers_cursor.to_list(length=1000)
     
@@ -565,7 +561,7 @@ async def ingest_kics(
         "scan_id": scan_id,
         "analyzer_name": "kics",
         "result": kics_result,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(timezone.utc)
     })
     
     # Update Scan
@@ -583,7 +579,7 @@ async def ingest_kics(
     
     await db.projects.update_one(
         {"_id": str(project.id)},
-        {"$set": {"last_scan_at": datetime.utcnow()}}
+        {"$set": {"last_scan_at": datetime.now(timezone.utc)}}
     )
     
     return {
@@ -623,7 +619,7 @@ async def ingest_bearer(
         await db.scans.update_one(
             {"_id": scan_id},
             {"$set": {
-                "updated_at": datetime.utcnow(),
+                "updated_at": datetime.now(timezone.utc),
                 "branch": data.branch or existing_scan.get("branch"),
                 "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
                 "project_url": data.project_url,
@@ -650,8 +646,8 @@ async def ingest_bearer(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             status="processing",
-            created_at=datetime.utcnow(),
-            completed_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc)
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
@@ -668,7 +664,7 @@ async def ingest_bearer(
             {"project_id": str(project.id)},
             {"project_id": None}
         ],
-        "expiration_date": {"$gt": datetime.utcnow()}
+        "expiration_date": {"$gt": datetime.now(timezone.utc)}
     })
     waivers = await waivers_cursor.to_list(length=1000)
     
@@ -698,7 +694,7 @@ async def ingest_bearer(
         "scan_id": scan_id,
         "analyzer_name": "bearer",
         "result": bearer_result,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now(timezone.utc)
     })
     
     # Update Scan
@@ -716,7 +712,7 @@ async def ingest_bearer(
     
     await db.projects.update_one(
         {"_id": str(project.id)},
-        {"$set": {"last_scan_at": datetime.utcnow()}}
+        {"$set": {"last_scan_at": datetime.now(timezone.utc)}}
     )
     
     return {

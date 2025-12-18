@@ -47,6 +47,11 @@ class SystemSettings(BaseModel):
     gitlab_access_token: Optional[str] = None # Optional: Personal/Group Access Token for API calls that CI_JOB_TOKEN can't handle
     gitlab_auto_create_projects: bool = False
     gitlab_sync_teams: bool = False
+    
+    # Periodic Scanning Defaults
+    rescan_mode: str = "project" # "project" or "global"
+    global_rescan_enabled: bool = False
+    global_rescan_interval: int = 24 # Hours
 
     # Retention
     retention_mode: str = "project" # "project" or "global"

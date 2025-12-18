@@ -6,7 +6,7 @@ import secrets
 import csv
 import io
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.api import deps
 from app.core import security
@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.invitation import ProjectInvitation
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectMemberInvite, ProjectNotificationSettings, ProjectApiKeyResponse, ProjectMemberUpdate, ProjectList
 from app.db.mongodb import get_database
+from app.core.worker import worker_manager
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -513,6 +514,21 @@ async def update_project(
 
     update_data = {k: v for k, v in project_in.dict(exclude_unset=True).items()}
     
+    # Check system settings for global enforcement
+    system_settings = await db.system_settings.find_one({"_id": "current"})
+    if system_settings:
+        # Retention enforcement
+        if system_settings.get("retention_mode") == "global":
+            if "retention_days" in update_data:
+                del update_data["retention_days"]
+        
+        # Rescan enforcement
+        if system_settings.get("rescan_mode") == "global":
+            if "rescan_enabled" in update_data:
+                del update_data["rescan_enabled"]
+            if "rescan_interval" in update_data:
+                del update_data["rescan_interval"]
+
     if update_data:
         await db.projects.update_one(
             {"_id": project_id},
@@ -542,6 +558,9 @@ async def read_project_scans(
     skip: int = 0,
     limit: int = 20,
     branch: str = None,
+    exclude_rescans: bool = False,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -553,12 +572,131 @@ async def read_project_scans(
     query = {"project_id": project_id}
     if branch:
         query["branch"] = branch
+        
+    if exclude_rescans:
+        query["is_rescan"] = {"$ne": True}
+
+    # Determine sort direction
+    direction = -1 if sort_order.lower() == "desc" else 1
+    
+    # Validate sort_by
+    allowed_sort_fields = {
+        "created_at": "created_at",
+        "pipeline_iid": "pipeline_iid",
+        "branch": "branch",
+        "findings_count": "findings_count",
+        "status": "status"
+    }
+    sort_field = allowed_sort_fields.get(sort_by, "created_at")
 
     scans = await db.scans.find(
         query
-    ).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    ).sort(sort_field, direction).skip(skip).limit(limit).to_list(limit)
     
     return scans
+
+@router.post("/{project_id}/scans/{scan_id}/rescan", response_model=Scan, summary="Trigger a manual re-scan")
+async def trigger_rescan(
+    project_id: str,
+    scan_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Manually trigger a re-scan for a specific scan.
+    This creates a new scan entry with the same SBOMs but runs the analysis again.
+    """
+    # Check permissions (Editor or Admin required)
+    await check_project_access(project_id, current_user, db, required_role="editor")
+    
+    # Find the scan
+    scan = await db.scans.find_one({"_id": scan_id, "project_id": project_id})
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+        
+    # Ensure scan has SBOMs
+    if not scan.get("sbom_refs"):
+        raise HTTPException(status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan.")
+        
+    # Determine original scan ID
+    # If the source scan is already a re-scan, use its original_scan_id
+    # If it's an original scan, use its ID
+    original_scan_id = scan.get("original_scan_id") or scan_id
+    
+    # Create new scan document
+    new_scan = Scan(
+        project_id=project_id,
+        branch=scan.get("branch", "unknown"),
+        commit_hash=scan.get("commit_hash"),
+        pipeline_id=None, # Don't collide with ingest
+        pipeline_iid=scan.get("pipeline_iid"),
+        project_url=scan.get("project_url"),
+        pipeline_url=scan.get("pipeline_url"),
+        job_id=scan.get("job_id"),
+        job_started_at=scan.get("job_started_at"),
+        project_name=scan.get("project_name"),
+        commit_message=scan.get("commit_message"),
+        commit_tag=scan.get("commit_tag"),
+        
+        sbom_refs=scan.get("sbom_refs", []),
+        
+        status="pending",
+        created_at=datetime.now(timezone.utc),
+        is_rescan=True,
+        original_scan_id=original_scan_id
+    )
+    
+    await db.scans.insert_one(new_scan.dict(by_alias=True))
+    
+    # Update original scan to point to this new pending rescan
+    await db.scans.update_one(
+        {"_id": original_scan_id},
+        {"$set": {
+            "status": "pending",
+            "latest_rescan_id": new_scan.id
+        }}
+    )
+
+    # Trigger analysis worker
+    if worker_manager:
+        await worker_manager.add_job(new_scan.id)
+    else:
+        # Should not happen in normal operation
+        raise HTTPException(status_code=500, detail="Worker manager not available")
+        
+    return new_scan
+
+@router.get("/{project_id}/scans/{scan_id}/history", response_model=List[Scan], summary="Get scan history")
+async def read_scan_history(
+    project_id: str,
+    scan_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database)
+):
+    """
+    Get the history of a scan (including re-scans).
+    Returns the original scan and all subsequent re-scans, sorted by date.
+    """
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+    
+    # 1. Get the requested scan to find the root
+    scan = await db.scans.find_one({"_id": scan_id, "project_id": project_id})
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+        
+    # Determine the root ID
+    root_id = scan.get("original_scan_id") or scan_id
+    
+    # 2. Find all scans that are either the root OR have this root as original_scan_id
+    history = await db.scans.find({
+        "project_id": project_id,
+        "$or": [
+            {"_id": root_id},
+            {"original_scan_id": root_id}
+        ]
+    }).sort("created_at", -1).to_list(100)
+    
+    return history
 
 @router.put("/{project_id}/notifications", response_model=Project, summary="Update notification settings")
 async def update_notification_settings(
@@ -669,7 +807,7 @@ async def invite_user(
             role=invite_in.role,
             token="auto-added",
             invited_by=str(current_user.id),
-            expires_at=datetime.utcnow()
+            expires_at=datetime.now(timezone.utc)
         )
     else:
         # Create invitation record
@@ -680,7 +818,7 @@ async def invite_user(
             role=invite_in.role,
             token=token,
             invited_by=str(current_user.id),
-            expires_at=datetime.utcnow() + timedelta(days=7)
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7)
         )
         await db.invitations.insert_one(invitation.dict(by_alias=True))
         # In a real app, send email here

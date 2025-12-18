@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body, BackgroundTasks
 from typing import List
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import os
 
@@ -38,7 +38,7 @@ async def read_system_invitations(
     List all pending system invitations.
     """
     invitations = await db.system_invitations.find(
-        {"is_used": False, "expires_at": {"$gt": datetime.utcnow()}}
+        {"is_used": False, "expires_at": {"$gt": datetime.now(timezone.utc)}}
     ).skip(skip).limit(limit).to_list(limit)
     return invitations
 
@@ -61,7 +61,7 @@ async def create_system_invitation(
     existing_invite = await db.system_invitations.find_one({
         "email": email,
         "is_used": False,
-        "expires_at": {"$gt": datetime.utcnow()}
+        "expires_at": {"$gt": datetime.now(timezone.utc)}
     })
     
     if existing_invite:
@@ -74,7 +74,7 @@ async def create_system_invitation(
             email=email,
             token=token,
             invited_by=current_user.username,
-            expires_at=datetime.utcnow() + timedelta(days=7)
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7)
         )
         await db.system_invitations.insert_one(invitation.dict(by_alias=True))
 
@@ -120,7 +120,7 @@ async def validate_system_invitation(
     invitation = await db.system_invitations.find_one({
         "token": token,
         "is_used": False,
-        "expires_at": {"$gt": datetime.utcnow()}
+        "expires_at": {"$gt": datetime.now(timezone.utc)}
     })
     
     if not invitation:
@@ -141,7 +141,7 @@ async def accept_system_invitation(
     invitation = await db.system_invitations.find_one({
         "token": token,
         "is_used": False,
-        "expires_at": {"$gt": datetime.utcnow()}
+        "expires_at": {"$gt": datetime.now(timezone.utc)}
     })
     
     if not invitation:

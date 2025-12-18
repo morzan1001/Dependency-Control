@@ -54,6 +54,8 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [retentionDays, setRetentionDays] = useState(project.retention_days || 90)
   const [analyzers, setAnalyzers] = useState<string[]>(project.active_analyzers || [])
   const [defaultBranch, setDefaultBranch] = useState<string | undefined>(project.default_branch)
+  const [rescanEnabled, setRescanEnabled] = useState<boolean | undefined>(project.rescan_enabled)
+  const [rescanInterval, setRescanInterval] = useState<number | undefined>(project.rescan_interval)
   
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
@@ -175,7 +177,9 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       team_id: teamId === "none" ? null : teamId,
       retention_days: retentionDays,
       active_analyzers: analyzers,
-      default_branch: defaultBranch === "none" ? null : defaultBranch
+      default_branch: defaultBranch === "none" ? null : defaultBranch,
+      rescan_enabled: rescanEnabled,
+      rescan_interval: rescanInterval
     })
   }
 
@@ -270,6 +274,50 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                             value={retentionDays} 
                             onChange={(e) => setRetentionDays(parseInt(e.target.value))} 
                         />
+                    )}
+                </div>
+                <div className="grid gap-2">
+                    <Label>Periodic Re-scanning</Label>
+                    {systemSettings?.rescan_mode === 'global' ? (
+                        <div className="p-3 bg-muted rounded-md text-sm border">
+                            <p className="font-medium">Managed Globally</p>
+                            <p className="text-muted-foreground mt-1">
+                                {systemSettings.global_rescan_enabled 
+                                    ? `Re-scanning is enabled (every ${systemSettings.global_rescan_interval} hours).` 
+                                    : "Re-scanning is disabled globally."}
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="border rounded-md p-4 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                    <Label className="text-base">Enable Re-scanning</Label>
+                                    <p className="text-sm text-muted-foreground">
+                                        Automatically re-scan the latest SBOMs periodically.
+                                    </p>
+                                </div>
+                                <Switch
+                                    checked={rescanEnabled === true}
+                                    onCheckedChange={(checked) => setRescanEnabled(checked)}
+                                />
+                            </div>
+                            
+                            {rescanEnabled === true && (
+                                <div className="grid gap-2">
+                                    <Label htmlFor="rescanInterval">Interval (Hours)</Label>
+                                    <Input 
+                                        id="rescanInterval" 
+                                        type="number" 
+                                        min="1"
+                                        value={rescanInterval || 24} 
+                                        onChange={(e) => setRescanInterval(parseInt(e.target.value))} 
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        How often to re-scan the project.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
                 <div className="grid gap-2">

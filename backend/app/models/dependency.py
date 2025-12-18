@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 class Dependency(BaseModel):
@@ -26,7 +26,7 @@ class Dependency(BaseModel):
     direct: bool = False
     parent_components: List[str] = Field(default_factory=list, description="List of parent component IDs/names")
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Config:
         populate_by_name = True

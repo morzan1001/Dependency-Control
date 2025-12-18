@@ -145,6 +145,8 @@ export interface Project {
   retention_days?: number;
   default_branch?: string;
   enforce_notification_settings?: boolean;
+  rescan_enabled?: boolean;
+  rescan_interval?: number;
   owner_notification_preferences?: {
     [key: string]: string[];
   };
@@ -242,6 +244,17 @@ export interface Scan {
   completed_at?: string;
   sbom?: any;
   sboms?: any[];
+  sbom_refs?: any[];
+  is_rescan?: boolean;
+  original_scan_id?: string;
+  latest_rescan_id?: string;
+  latest_run?: {
+    scan_id: string;
+    status: string;
+    findings_count: number;
+    stats: any;
+    completed_at: string;
+  };
 }
 
 export interface RecentScan extends Scan {
@@ -286,6 +299,8 @@ export interface ProjectUpdate {
   retention_days?: number;
   enforce_notification_settings?: boolean;
   default_branch?: string | null;
+  rescan_enabled?: boolean;
+  rescan_interval?: number;
 }
 
 export interface ProjectApiKeyResponse {
@@ -328,10 +343,20 @@ export const getProject = async (id: string) => {
   return response.data;
 };
 
-export const getProjectScans = async (id: string, skip: number = 0, limit: number = 20, branch?: string, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc') => {
+export const getProjectScans = async (id: string, skip: number = 0, limit: number = 20, branch?: string, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc', excludeRescans: boolean = false) => {
   const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
-    params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder }
+    params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans }
   });
+  return response.data;
+};
+
+export const getScanHistory = async (projectId: string, scanId: string) => {
+  const response = await api.get<Scan[]>(`/projects/${projectId}/scans/${scanId}/history`);
+  return response.data;
+};
+
+export const triggerRescan = async (projectId: string, scanId: string) => {
+  const response = await api.post<Scan>(`/projects/${projectId}/scans/${scanId}/rescan`);
   return response.data;
 };
 
@@ -651,6 +676,11 @@ export interface SystemSettings {
   // Retention
   retention_mode: 'project' | 'global';
   global_retention_days: number;
+  
+  // Periodic Scanning
+  rescan_mode: 'project' | 'global';
+  global_rescan_enabled: boolean;
+  global_rescan_interval: number;
 }
 
 export const getSystemSettings = async () => {

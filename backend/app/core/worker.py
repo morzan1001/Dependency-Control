@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import json
+from datetime import datetime, timezone
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from app.db.mongodb import get_database
@@ -27,7 +28,7 @@ class AnalysisWorkerManager:
             self.workers.append(task)
             
         # Start housekeeping task
-        self.housekeeping_task = asyncio.create_task(housekeeping_loop())
+        self.housekeeping_task = asyncio.create_task(housekeeping_loop(self))
         logger.info("Housekeeping task started.")
             
         # Recover pending jobs from DB
@@ -75,7 +76,11 @@ class AnalysisWorkerManager:
                 # This prevents multiple workers (across different pods) from processing the same scan.
                 scan = await db.scans.find_one_and_update(
                     {"_id": scan_id, "status": "pending"},
-                    {"$set": {"status": "processing", "worker_id": name}},
+                    {"$set": {
+                        "status": "processing", 
+                        "worker_id": name,
+                        "analysis_started_at": datetime.now(timezone.utc)
+                    }},
                     return_document=True
                 )
                 
@@ -99,13 +104,13 @@ class AnalysisWorkerManager:
                     continue
 
                 try:
-                    # Prepare SBOMs list (pass raw list, let run_analysis handle loading)
-                    raw_sboms = scan.get("sboms", [])
+                    # Prepare SBOMs list (pass refs list, let run_analysis handle loading)
+                    sbom_refs = scan.get("sbom_refs", [])
 
                     # Run the actual analysis
                     await run_analysis(
                         scan_id=scan_id,
-                        sboms=raw_sboms,
+                        sboms=sbom_refs,
                         active_analyzers=project.get("active_analyzers", []),
                         db=db
                     )
