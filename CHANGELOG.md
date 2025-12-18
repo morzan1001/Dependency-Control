@@ -1,3 +1,11 @@
+# Release 0.7.5
+
+## 🚀 Features
+
+- feat: update FindingDetailsModal to handle aggregated vulnerabilities and remove descriptions for aggregated findings (#0)
+
+
+
 # Release 0.7.4
 
 ## 🚀 Features
