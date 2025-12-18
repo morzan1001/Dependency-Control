@@ -52,9 +52,9 @@ class ProjectNotificationSettings(BaseModel):
     notification_preferences: Dict[str, List[str]] = Field(
         ..., 
         description="Map of event types to notification channels",
-     
-    enforce_notification_settings: Optional[bool] = Field(None, description="Enforce these settings for all members (Owner only)")   example={"analysis_completed": ["email", "slack"], "vulnerability_found": ["slack"]}
+        example={"analysis_completed": ["email", "slack"], "vulnerability_found": ["slack"]}
     )
+    enforce_notification_settings: Optional[bool] = Field(None, description="Enforce these settings for all members (Owner only)")
 
 class ProjectApiKeyResponse(BaseModel):
     project_id: str = Field(..., description="The unique ID of the project")
