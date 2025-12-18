@@ -1,3 +1,11 @@
+# Release 0.6.9
+
+## 📦 Build & CI
+
+- chore: update version to 0.6.9 and enhance Slack integration setup instructions (#0)
+
+
+
 # Release 0.6.8
 
 ## 🚀 Features
