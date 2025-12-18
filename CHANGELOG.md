@@ -1,3 +1,11 @@
+# Release 0.6.8
+
+## 🚀 Features
+
+- feat: add Mattermost integration and enhance Slack settings management (#0)
+
+
+
 # Release 0.6.7
 
 ## 🚀 Features
