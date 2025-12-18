@@ -12,12 +12,28 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 class EmailProvider(NotificationProvider):
-    def _send_sync(self, smtp_host, smtp_port, smtp_user, smtp_password, msg):
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-            if smtp_user and smtp_password:
-                server.starttls()
-                server.login(smtp_user, smtp_password)
-            server.send_message(msg)
+    def _send_sync(self, smtp_host, smtp_port, smtp_user, smtp_password, encryption, msg):
+        timeout = 60
+        try:
+            if encryption == "ssl":
+                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=timeout) as server:
+                    if smtp_user and smtp_password:
+                        server.login(smtp_user, smtp_password)
+                    server.send_message(msg)
+            elif encryption == "starttls":
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=timeout) as server:
+                    if smtp_user and smtp_password:
+                        server.starttls()
+                        server.login(smtp_user, smtp_password)
+                    server.send_message(msg)
+            else: # none
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=timeout) as server:
+                    if smtp_user and smtp_password:
+                        server.login(smtp_user, smtp_password)
+                    server.send_message(msg)
+        except Exception as e:
+            logger.error(f"SMTP send failed: {e}")
+            raise
 
     async def send(self, destination: str, subject: str, message: str, html_message: str = None, logo_path: str = None, system_settings: Optional[SystemSettings] = None) -> bool:
         if not system_settings:
@@ -29,6 +45,7 @@ class EmailProvider(NotificationProvider):
         smtp_port = system_settings.smtp_port
         smtp_user = system_settings.smtp_user
         smtp_password = system_settings.smtp_password
+        smtp_encryption = system_settings.smtp_encryption
         emails_from = system_settings.emails_from_email
 
         if not smtp_host:
@@ -72,6 +89,7 @@ class EmailProvider(NotificationProvider):
                 smtp_port,
                 smtp_user,
                 smtp_password,
+                smtp_encryption,
                 msg
             )
             

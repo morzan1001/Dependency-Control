@@ -17,6 +17,7 @@ class SystemSettings(BaseModel):
     smtp_port: int = 587
     smtp_user: Optional[str] = None
     smtp_password: Optional[str] = None
+    smtp_encryption: str = "starttls" # starttls, ssl, none
     emails_from_email: str = "info@dependencycontrol.local"
     
     # Integrations

@@ -618,6 +618,7 @@ export interface SystemSettings {
   smtp_port: number;
   smtp_user?: string;
   smtp_password?: string;
+  smtp_encryption?: 'starttls' | 'ssl' | 'none';
   emails_from_email: string;
   open_source_malware_api_key?: string;
   slack_bot_token?: string;

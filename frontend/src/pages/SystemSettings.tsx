@@ -396,6 +396,22 @@ export default function SystemSettings() {
                   />
               </div>
               <div className="grid gap-2">
+                  <Label htmlFor="smtp-encryption">Encryption Method</Label>
+                  <Select 
+                    value={formData.smtp_encryption || 'starttls'} 
+                    onValueChange={(value) => handleInputChange('smtp_encryption', value)}
+                  >
+                    <SelectTrigger id="smtp-encryption">
+                      <SelectValue placeholder="Select encryption method" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="starttls">STARTTLS (Recommended)</SelectItem>
+                      <SelectItem value="ssl">SSL/TLS</SelectItem>
+                      <SelectItem value="none">None (Insecure)</SelectItem>
+                    </SelectContent>
+                  </Select>
+              </div>
+              <div className="grid gap-2">
                   <Label htmlFor="from-email">From Email</Label>
                   <Input 
                     id="from-email" 
