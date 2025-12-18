@@ -519,7 +519,11 @@ class ResultAggregator:
             
             # Update description
             count = len(vuln_list)
-            existing.description = f"Found {count} vulnerabilities in {finding.component}"
+            # existing.description = f"Found {count} vulnerabilities in {finding.component}"
+            # We don't set a description for aggregated findings anymore, as it's just a container.
+            # The frontend will handle the display.
+            existing.description = ""
+
             
             # Update found_in
             if source and source not in existing.found_in:
@@ -548,7 +552,7 @@ class ResultAggregator:
                 severity=finding.severity,
                 component=finding.component,
                 version=finding.version,
-                description=f"Found 1 vulnerabilities in {finding.component}",
+                description="", # No description for aggregated findings
                 scanners=finding.scanners,
                 details=agg_details,
                 found_in=[source] if source else []
@@ -684,7 +688,12 @@ class ResultAggregator:
                 desc = vuln.get("Description", "").strip()
                 
                 if title and desc:
-                    if title in desc:
+                    # Check if title is just a truncated or full version of the description
+                    clean_title = title
+                    if title.endswith("..."):
+                        clean_title = title[:-3].strip()
+                    
+                    if clean_title in desc:
                         final_desc = desc
                     else:
                         final_desc = f"{title}\n\n{desc}"

@@ -145,10 +145,12 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
                                 )}
                             </div>
 
-                            <div>
-                                <h4 className="text-sm font-medium text-muted-foreground mb-2">Description</h4>
-                                <p className="text-sm leading-relaxed">{finding.description || "No description available."}</p>
-                            </div>
+                            {finding.description && finding.type !== 'vulnerability' && (
+                                <div>
+                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Description</h4>
+                                    <p className="text-sm leading-relaxed">{finding.description}</p>
+                                </div>
+                            )}
 
                             {finding.type === 'secret' && (
                                 <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
@@ -200,169 +202,89 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
 
                             {finding.type === 'vulnerability' && (
                                 <div className="space-y-4">
-                                    {finding.details?.vulnerabilities && finding.details.vulnerabilities.length > 1 ? (
-                                        <div className="space-y-4">
-                                            <h4 className="text-sm font-medium text-muted-foreground">Aggregated Vulnerabilities</h4>
-                                            {finding.details.vulnerabilities.map((vuln: any, idx: number) => (
-                                                <div key={idx} className="border rounded-lg p-4 space-y-3">
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex items-center gap-2">
-                                                            <Badge variant="outline">{vuln.id}</Badge>
-                                                            <Badge variant={
-                                                                vuln.severity === 'CRITICAL' ? 'destructive' :
-                                                                vuln.severity === 'HIGH' ? 'destructive' :
-                                                                vuln.severity === 'MEDIUM' ? 'default' : 
-                                                                'secondary'
-                                                            }>{vuln.severity}</Badge>
+                                    {(() => {
+                                        // Normalize to a list of vulnerabilities
+                                        const vulns = finding.details?.vulnerabilities && finding.details.vulnerabilities.length > 0 
+                                            ? finding.details.vulnerabilities 
+                                            : [finding.details || {}]; // Fallback for legacy or single vuln structure
+
+                                        return (
+                                            <div className="space-y-4">
+                                                <h4 className="text-sm font-medium text-muted-foreground">
+                                                    {vulns.length > 1 
+                                                        ? `Found ${vulns.length} vulnerabilities in ${getFindingPackage(finding)}` 
+                                                        : "Vulnerability Details"}
+                                                </h4>
+                                                {vulns.map((vuln: any, idx: number) => (
+                                                    <div key={idx} className="border rounded-lg p-4 space-y-3">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-2">
+                                                                <Badge variant="outline">{vuln.id || getFindingId(finding)}</Badge>
+                                                                <Badge variant={
+                                                                    (vuln.severity || finding.severity) === 'CRITICAL' ? 'destructive' :
+                                                                    (vuln.severity || finding.severity) === 'HIGH' ? 'destructive' :
+                                                                    (vuln.severity || finding.severity) === 'MEDIUM' ? 'default' : 
+                                                                    'secondary'
+                                                                }>{vuln.severity || finding.severity}</Badge>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || finding.details?.fixed_version || "None"}</span>
+                                                                </span>
+                                                                {hasPermission('waiver:manage') && (
+                                                                    <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => handleWaive(vuln.id || getFindingId(finding))}>
+                                                                        <ShieldAlert className="h-3 w-3 mr-1" />
+                                                                        Waive
+                                                                    </Button>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-xs text-muted-foreground">
-                                                                Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || "None"}</span>
-                                                            </span>
-                                                            {hasPermission('waiver:manage') && (
-                                                                <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => handleWaive(vuln.id)}>
-                                                                    <ShieldAlert className="h-3 w-3 mr-1" />
-                                                                    Waive
-                                                                </Button>
+                                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{vuln.description || finding.description || "No description available."}</p>
+                                                        
+                                                        <div className="flex flex-wrap gap-4 text-xs">
+                                                            {(vuln.cvss_score || finding.details?.cvss_score) && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="font-medium">CVSS: {vuln.cvss_score || finding.details?.cvss_score}</span>
+                                                                    {(vuln.cvss_vector || finding.details?.cvss_vector) && <span className="font-mono text-muted-foreground">{vuln.cvss_vector || finding.details?.cvss_vector}</span>}
+                                                                </div>
+                                                            )}
+                                                            {(vuln.details?.published_date || finding.details?.published_date) && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="font-medium text-muted-foreground">Published:</span>
+                                                                    <span>{new Date(vuln.details?.published_date || finding.details?.published_date).toLocaleDateString()}</span>
+                                                                </div>
+                                                            )}
+                                                            {(vuln.details?.cwe_ids || finding.details?.cwe_ids) && (vuln.details?.cwe_ids || finding.details?.cwe_ids).length > 0 && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="font-medium text-muted-foreground">CWE:</span>
+                                                                    <span className="font-mono">{(vuln.details?.cwe_ids || finding.details?.cwe_ids).join(', ')}</span>
+                                                                </div>
+                                                            )}
+                                                            {(vuln.aliases || finding.aliases) && (vuln.aliases || finding.aliases).length > 0 && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="font-medium text-muted-foreground">Aliases:</span>
+                                                                    <span className="font-mono">{(vuln.aliases || finding.aliases).join(', ')}</span>
+                                                                </div>
+                                                            )}
+                                                            {(vuln.scanners || finding.scanners) && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="font-medium text-muted-foreground">Detected by:</span>
+                                                                    <span className="font-mono">{(vuln.scanners || finding.scanners).join(', ')}</span>
+                                                                </div>
                                                             )}
                                                         </div>
-                                                    </div>
-                                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{vuln.description}</p>
-                                                    
-                                                    <div className="flex flex-wrap gap-4 text-xs">
-                                                        {vuln.cvss_score && (
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="font-medium">CVSS: {vuln.cvss_score}</span>
-                                                                {vuln.cvss_vector && <span className="font-mono text-muted-foreground">{vuln.cvss_vector}</span>}
-                                                            </div>
-                                                        )}
-                                                        {vuln.details?.published_date && (
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="font-medium text-muted-foreground">Published:</span>
-                                                                <span>{new Date(vuln.details.published_date).toLocaleDateString()}</span>
-                                                            </div>
-                                                        )}
-                                                        {vuln.details?.cwe_ids && vuln.details.cwe_ids.length > 0 && (
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="font-medium text-muted-foreground">CWE:</span>
-                                                                <span className="font-mono">{vuln.details.cwe_ids.join(', ')}</span>
-                                                            </div>
-                                                        )}
-                                                        {vuln.aliases && vuln.aliases.length > 0 && (
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="font-medium text-muted-foreground">Aliases:</span>
-                                                                <span className="font-mono">{vuln.aliases.join(', ')}</span>
-                                                            </div>
-                                                        )}
-                                                        {vuln.scanners && (
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="font-medium text-muted-foreground">Detected by:</span>
-                                                                <span className="font-mono">{vuln.scanners.join(', ')}</span>
-                                                            </div>
-                                                        )}
-                                                    </div>
 
-                                                    {vuln.references && vuln.references.length > 0 && (
-                                                        <div className="pt-2">
-                                                            <p className="text-xs font-medium mb-1">References</p>
-                                                            <div className="flex flex-col gap-1">
-                                                                {vuln.references.map((ref: string, i: number) => (
-                                                                    <a key={i} href={ref} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline truncate">
-                                                                        {ref}
-                                                                    </a>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <>
-                                            {(() => {
-                                                // Helper to get data from either the single vuln in list OR top-level details (legacy)
-                                                const singleVuln = finding.details?.vulnerabilities?.[0] || finding.details || {};
-                                                const cvssScore = singleVuln.cvss_score || finding.details?.cvss_score;
-                                                const cvssVector = singleVuln.cvss_vector || finding.details?.cvss_vector;
-                                                const publishedDate = singleVuln.details?.published_date || finding.details?.published_date;
-                                                const references = singleVuln.references || finding.details?.references || [];
-                                                const urls = singleVuln.details?.urls || finding.details?.urls || [];
-                                                
-                                                return (
-                                                    <>
-                                                        <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
-                                                            <div>
-                                                                <h4 className="text-sm font-medium text-muted-foreground mb-1">CVSS Score</h4>
-                                                                <div className="flex items-center gap-2">
-                                                                    <span className={`text-lg font-bold ${
-                                                                        (cvssScore || 0) >= 9 ? 'text-red-600' :
-                                                                        (cvssScore || 0) >= 7 ? 'text-orange-600' :
-                                                                        (cvssScore || 0) >= 4 ? 'text-yellow-600' :
-                                                                        'text-blue-600'
-                                                                    }`}>
-                                                                        {cvssScore || "N/A"}
-                                                                    </span>
-                                                                    {cvssVector && (
-                                                                        <span className="text-xs text-muted-foreground font-mono bg-background px-1 rounded border">
-                                                                            {cvssVector}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                            <div>
-                                                                <h4 className="text-sm font-medium text-muted-foreground mb-1">Published</h4>
-                                                                <p className="text-sm">
-                                                                    {publishedDate ? new Date(publishedDate).toLocaleDateString() : "Unknown"}
-                                                                </p>
-                                                            </div>
-                                                        </div>
-
-                                                        {references && references.length > 0 && (
-                                                            <div>
-                                                                <h4 className="text-sm font-medium text-muted-foreground mb-2">References</h4>
-                                                                <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
-                                                                    {references.map((ref: string, i: number) => (
-                                                                        <a 
-                                                                            key={i} 
-                                                                            href={ref} 
-                                                                            target="_blank" 
-                                                                            rel="noopener noreferrer"
-                                                                            className="text-blue-600 hover:underline break-all"
-                                                                        >
-                                                                            {ref}
-                                                                        </a>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                        
-                                                        {urls && urls.length > 0 && (
-                                                            <div>
-                                                                <h4 className="text-sm font-medium text-muted-foreground mb-2">URLs</h4>
-                                                                <div className="flex flex-col gap-1 max-h-[150px] overflow-y-auto text-sm border rounded-md p-2 bg-muted/20">
-                                                                    {urls.map((url: string, i: number) => (
-                                                                        <a 
-                                                                            key={i} 
-                                                                            href={url} 
-                                                                            target="_blank" 
-                                                                            rel="noopener noreferrer"
-                                                                            className="text-blue-600 hover:underline break-all"
-                                                                        >
-                                                                            {url}
-                                                                        </a>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                        )}
-                                                    </>
-                                                );
-                                            })()}
-                                        </>
-                                    )}
+                                                        <CollapsibleReferences references={vuln.references || finding.details?.references} />
+                                                        <CollapsibleReferences references={vuln.details?.urls || finding.details?.urls} title="URLs" />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
                             )}
 
-                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && (
+                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && finding.type !== 'outdated' && (
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-2">Additional Details</h4>
                                     <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">
@@ -484,5 +406,34 @@ function WaiverForm({ finding, vulnId, projectId, onCancel, onSuccess }: { findi
                 </Button>
             </div>
         </form>
+    )
+}
+
+function CollapsibleReferences({ references, title = "References" }: { references: string[], title?: string }) {
+    const [isOpen, setIsOpen] = useState(false)
+
+    if (!references || references.length === 0) return null
+
+    return (
+        <div className="pt-2">
+            <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-auto py-1 px-0 text-xs font-medium hover:bg-transparent hover:underline justify-start text-muted-foreground"
+                onClick={() => setIsOpen(!isOpen)}
+            >
+                {isOpen ? "▼" : "▶"} {title} ({references.length})
+            </Button>
+            
+            {isOpen && (
+                <div className="flex flex-col gap-1 mt-1 pl-2 border-l-2 border-muted ml-1">
+                    {references.map((ref, i) => (
+                        <a key={i} href={ref} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline truncate block">
+                            {ref}
+                        </a>
+                    ))}
+                </div>
+            )}
+        </div>
     )
 }
