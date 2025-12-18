@@ -1,3 +1,11 @@
+# Release 0.6.7
+
+## 🚀 Features
+
+- feat: update version to 0.6.7 and add favicon (#0)
+
+
+
 # Release 0.6.6
 
 ## 🚀 Features
