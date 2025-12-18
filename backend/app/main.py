@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
-from app.api.v1.endpoints import auth, ingest, projects, users, teams, waivers, webhooks, search, system, invitations
+from app.api.v1.endpoints import auth, ingest, projects, users, teams, waivers, webhooks, search, system, invitations, integrations
 from app.api import health
 
 app = FastAPI(
@@ -34,7 +34,7 @@ app = FastAPI(
     * **User Management**: Secure authentication with 2FA and email verification.
 
     """,
-    version="0.6.5",
+    version="0.6.6",
     license_info={
         "name": "MIT License",
         "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",
@@ -94,6 +94,7 @@ app.include_router(webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", ta
 app.include_router(search.router, prefix=f"{settings.API_V1_STR}/search", tags=["search"])
 app.include_router(system.router, prefix=f"{settings.API_V1_STR}/system", tags=["system"])
 app.include_router(invitations.router, prefix=f"{settings.API_V1_STR}/invitations", tags=["invitations"])
+app.include_router(integrations.router, prefix=f"{settings.API_V1_STR}/integrations", tags=["integrations"])
 
 @app.get("/")
 async def root():

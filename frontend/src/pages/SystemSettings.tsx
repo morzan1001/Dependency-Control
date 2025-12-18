@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Slack } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -433,16 +434,81 @@ export default function SystemSettings() {
                 Configure Slack and Mattermost integrations.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-2">
-                  <Label htmlFor="slack-token">Slack Bot Token</Label>
-                  <Input 
-                      id="slack-token" 
-                      type="password"
-                      value={formData.slack_bot_token || ''}
-                      onChange={(e) => handleInputChange('slack_bot_token', e.target.value)}
-                  />
+            <CardContent className="space-y-6">
+              <div className="rounded-lg border p-4 bg-card text-card-foreground shadow-sm">
+                <div className="flex items-center gap-2 mb-4">
+                    <Slack className="h-5 w-5" />
+                    <h3 className="font-semibold text-lg">Slack Integration</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mb-6">
+                    Connect your Slack workspace to receive notifications about new vulnerabilities, policy violations, and system events directly in your channels.
+                    This integration uses OAuth for secure authentication and automatic token rotation.
+                </p>
+                
+                <div className="grid gap-4">
+                    <div className="grid gap-2">
+                        <Label htmlFor="slack-client-id">Client ID</Label>
+                        <Input 
+                            id="slack-client-id" 
+                            placeholder="e.g. 123456789.123456789"
+                            value={formData.slack_client_id || ''}
+                            onChange={(e) => handleInputChange('slack_client_id', e.target.value)}
+                        />
+                    </div>
+                    <div className="grid gap-2">
+                        <Label htmlFor="slack-client-secret">Client Secret</Label>
+                        <Input 
+                            id="slack-client-secret" 
+                            type="password"
+                            placeholder="e.g. 8f7d6e5c4b3a2..."
+                            value={formData.slack_client_secret || ''}
+                            onChange={(e) => handleInputChange('slack_client_secret', e.target.value)}
+                        />
+                    </div>
+
+                    {formData.slack_client_id && formData.slack_client_secret && (
+                        <div className="mt-2 p-4 bg-muted/50 rounded-md border border-dashed">
+                            <h4 className="text-sm font-medium mb-2">Setup Instructions</h4>
+                            <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1 mb-4">
+                                <li>Go to your Slack App configuration.</li>
+                                <li>Navigate to <strong>OAuth & Permissions</strong>.</li>
+                                <li>Add the following <strong>Redirect URL</strong>:</li>
+                            </ol>
+                            <code className="block w-full p-2 bg-background border rounded text-xs font-mono mb-4 select-all">
+                                {window.location.origin}/api/v1/integrations/slack/callback
+                            </code>
+                            
+                            <Button 
+                                type="button"
+                                className="w-full sm:w-auto"
+                                onClick={() => {
+                                    const redirectUri = `${window.location.origin}/api/v1/integrations/slack/callback`;
+                                    const targetUrl = `https://slack.com/oauth/v2/authorize?client_id=${formData.slack_client_id}&scope=chat:write&redirect_uri=${encodeURIComponent(redirectUri)}`;
+                                    window.location.href = targetUrl;
+                                }}
+                            >
+                                <Slack className="mr-2 h-4 w-4" />
+                                Connect to Slack Workspace
+                            </Button>
+                            <p className="text-xs text-muted-foreground mt-2">
+                                Clicking this will redirect you to Slack to authorize the app. <strong>Please save your Client ID and Secret above before connecting!</strong>
+                            </p>
+                        </div>
+                    )}
+
+                    <div className="grid gap-2 mt-2">
+                        <Label htmlFor="slack-token" className="text-xs text-muted-foreground">Current Bot Token (System Managed)</Label>
+                        <Input 
+                            id="slack-token" 
+                            type="password"
+                            readOnly
+                            className="bg-muted text-muted-foreground"
+                            value={formData.slack_bot_token || ''}
+                        />
+                    </div>
+                </div>
               </div>
+              
               <hr className="my-4" />
               <div className="grid gap-2">
                   <Label htmlFor="mattermost-url">Mattermost URL</Label>

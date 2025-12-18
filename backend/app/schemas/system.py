@@ -17,6 +17,10 @@ class SystemSettingsBase(BaseModel):
     
     open_source_malware_api_key: Optional[str] = None
     slack_bot_token: Optional[str] = None
+    slack_client_id: Optional[str] = None
+    slack_client_secret: Optional[str] = None
+    slack_refresh_token: Optional[str] = None
+    slack_token_expires_at: Optional[float] = None
     mattermost_bot_token: Optional[str] = None
     mattermost_url: Optional[str] = None
 

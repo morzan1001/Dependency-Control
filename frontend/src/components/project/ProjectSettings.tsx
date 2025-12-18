@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Switch } from '@/components/ui/switch'
 import { WebhookManager } from '@/components/WebhookManager'
-import { AlertTriangle, RefreshCw, Copy, Trash2 } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Copy, Trash2, Info } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { AVAILABLE_ANALYZERS } from '@/lib/constants'
@@ -50,6 +51,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>({})
+  const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
 
   const { data: teams } = useQuery({
     queryKey: ['teams'],
@@ -76,13 +78,20 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     if (project && user) {
       let prefs: Record<string, string[]> = {}
       const userId = user._id || user.id;
-      if (project.owner_id === userId) {
-        prefs = project.owner_notification_preferences || {}
-      } else if (project.members) {
-        const member = project.members.find(m => m.user_id === userId)
-        if (member) {
-          prefs = member.notification_preferences || {}
-        }
+      
+      setEnforceNotificationSettings(project.enforce_notification_settings || false)
+
+      if (project.enforce_notification_settings) {
+          prefs = project.owner_notification_preferences || {}
+      } else {
+          if (project.owner_id === userId) {
+            prefs = project.owner_notification_preferences || {}
+          } else if (project.members) {
+            const member = project.members.find(m => m.user_id === userId)
+            if (member) {
+              prefs = member.notification_preferences || {}
+            }
+          }
       }
       setNotificationPrefs(prefs)
     }
@@ -293,9 +302,31 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             <CardDescription>Configure how you want to be notified about project events.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+            {hasPermission('project:update') && (
+                <div className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                        <Label className="text-base">Enforce Notification Settings</Label>
+                        <div className="text-sm text-muted-foreground">
+                            If enabled, these settings will be applied to all project members. Members will not be able to change them.
+                        </div>
+                    </div>
+                    <Switch
+                        checked={enforceNotificationSettings}
+                        onCheckedChange={setEnforceNotificationSettings}
+                    />
+                </div>
+            )}
+
+            {enforceNotificationSettings && !hasPermission('project:update') && (
+                <div className="flex items-center gap-2 p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-900">
+                    <Info className="h-4 w-4" />
+                    <p>Notification settings are currently enforced by the project administrator. You cannot modify them.</p>
+                </div>
+            )}
+
             <div className="grid gap-4">
                 {['analysis_completed', 'vulnerability_found'].map(event => (
-                    <div key={event} className="flex items-center justify-between border p-4 rounded-lg">
+                    <div key={event} className={`flex items-center justify-between border p-4 rounded-lg ${enforceNotificationSettings && !hasPermission('project:update') ? 'opacity-60' : ''}`}>
                         <div>
                             <div className="font-medium capitalize">{event.replace('_', ' ')}</div>
                             <div className="text-sm text-muted-foreground">
@@ -314,6 +345,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                         id={`${event}-${channel}`}
                                         checked={(notificationPrefs[event] || []).includes(channel)}
                                         onCheckedChange={() => toggleNotification(event, channel)}
+                                        disabled={enforceNotificationSettings && !hasPermission('project:update')}
                                     />
                                     <Label htmlFor={`${event}-${channel}`} className="capitalize cursor-pointer">
                                         {channel}
@@ -326,7 +358,10 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             </div>
             {hasPermission('project:update') && (
                 <Button 
-                    onClick={() => updateNotificationSettingsMutation.mutate({ notification_preferences: notificationPrefs })}
+                    onClick={() => updateNotificationSettingsMutation.mutate({ 
+                        notification_preferences: notificationPrefs,
+                        enforce_notification_settings: enforceNotificationSettings
+                    })}
                     disabled={updateNotificationSettingsMutation.isPending}
                 >
                     {updateNotificationSettingsMutation.isPending ? "Saving..." : "Save Notification Settings"}

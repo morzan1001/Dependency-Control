@@ -573,18 +573,41 @@ async def update_notification_settings(
     project = await check_project_access(project_id, current_user, db)
     
     is_owner = project.owner_id == str(current_user.id)
+    has_update_perm = "project:update" in current_user.permissions or "*" in current_user.permissions
+    
+    update_data = {}
+    
+    # Handle enforcement setting (Owner/Admin only)
+    if settings.enforce_notification_settings is not None:
+        if is_owner or has_update_perm:
+            update_data["enforce_notification_settings"] = settings.enforce_notification_settings
     
     if is_owner:
+        update_data["owner_notification_preferences"] = settings.notification_preferences
         await db.projects.update_one(
             {"_id": project_id},
-            {"$set": {"owner_notification_preferences": settings.notification_preferences}}
+            {"$set": update_data}
         )
     else:
+        # If settings are enforced, regular members cannot update their preferences
+        if project.enforce_notification_settings and not has_update_perm:
+             raise HTTPException(status_code=403, detail="Notification settings are enforced by the project owner")
+
         # Check if member
         member_found = False
         for i, member in enumerate(project.members):
             if member.user_id == str(current_user.id):
                 # Update specific member in the array
+                # Note: If we are updating enforcement, we might be an admin who is also a member.
+                # But typically enforcement is set by owner.
+                # If we have update_data (enforcement), we should apply it to the project root.
+                if update_data:
+                     await db.projects.update_one(
+                        {"_id": project_id},
+                        {"$set": update_data}
+                    )
+                
+                # Also update member preferences
                 await db.projects.update_one(
                     {"_id": project_id, "members.user_id": str(current_user.id)},
                     {"$set": {f"members.{i}.notification_preferences": settings.notification_preferences}}
@@ -594,10 +617,16 @@ async def update_notification_settings(
         
         if not member_found:
              # Occurs if superuser is not a member
-             if "*" in current_user.permissions:
+             if has_update_perm:
+                 # Just update the project settings (enforcement) if provided
+                 if update_data:
+                    await db.projects.update_one(
+                        {"_id": project_id},
+                        {"$set": update_data}
+                    )
+             else:
                  # Superusers must be members to set preferences.
                  raise HTTPException(status_code=400, detail="You must be a member or owner to set notification preferences")
-             else:
                  raise HTTPException(status_code=403, detail="Not a member of this project")
 
     # Return updated project

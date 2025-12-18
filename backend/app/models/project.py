@@ -27,6 +27,7 @@ class Project(BaseModel):
     latest_scan_id: Optional[str] = None
     retention_days: int = 90  # Default retention period in days
     default_branch: Optional[str] = None
+    enforce_notification_settings: bool = False
     gitlab_project_id: Optional[int] = None
     gitlab_project_path: Optional[str] = None
 

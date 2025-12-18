@@ -144,6 +144,7 @@ export interface Project {
   active_analyzers?: string[];
   retention_days?: number;
   default_branch?: string;
+  enforce_notification_settings?: boolean;
   owner_notification_preferences?: {
     [key: string]: string[];
   };
@@ -283,6 +284,7 @@ export interface ProjectUpdate {
   team_id?: string | null;
   active_analyzers?: string[];
   retention_days?: number;
+  enforce_notification_settings?: boolean;
   default_branch?: string | null;
 }
 
@@ -307,6 +309,7 @@ export const rotateProjectApiKey = async (id: string) => {
 };
 
 export interface ProjectNotificationSettings {
+  enforce_notification_settings?: boolean;
   notification_preferences: Record<string, string[]>;
 }
 
@@ -622,6 +625,8 @@ export interface SystemSettings {
   emails_from_email: string;
   open_source_malware_api_key?: string;
   slack_bot_token?: string;
+  slack_client_id?: string;
+  slack_client_secret?: string;
   mattermost_bot_token?: string;
   mattermost_url?: string;
   

@@ -59,19 +59,26 @@ class NotificationService:
         if settings_data:
             system_settings = SystemSettings(**settings_data)
 
+        # Determine preferences to use
+        enforced_prefs = None
+        if project.enforce_notification_settings:
+            enforced_prefs = project.owner_notification_preferences
+
         # 1. Check Owner
-        if project.owner_notification_preferences and event_type in project.owner_notification_preferences:
+        owner_prefs = enforced_prefs if enforced_prefs else project.owner_notification_preferences
+        if owner_prefs and event_type in owner_prefs:
              owner_data = await db.users.find_one({"_id": project.owner_id})
              if owner_data:
                  owner = User(**owner_data)
-                 await self._send_based_on_prefs(owner, project.owner_notification_preferences, event_type, subject, message, system_settings)
+                 await self._send_based_on_prefs(owner, owner_prefs, event_type, subject, message, system_settings)
 
         # 2. Check Members
         for member in project.members:
-            if member.notification_preferences and event_type in member.notification_preferences:
+            member_prefs = enforced_prefs if enforced_prefs else member.notification_preferences
+            if member_prefs and event_type in member_prefs:
                 user_data = await db.users.find_one({"_id": member.user_id})
                 if user_data:
                     user = User(**user_data)
-                    await self._send_based_on_prefs(user, member.notification_preferences, event_type, subject, message, system_settings)
+                    await self._send_based_on_prefs(user, member_prefs, event_type, subject, message, system_settings)
 
 notification_service = NotificationService()
