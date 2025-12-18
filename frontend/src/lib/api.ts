@@ -248,12 +248,14 @@ export interface Scan {
   is_rescan?: boolean;
   original_scan_id?: string;
   latest_rescan_id?: string;
+  job_started_at?: string;
   latest_run?: {
     scan_id: string;
     status: string;
     findings_count: number;
     stats: any;
-    completed_at: string;
+    completed_at?: string;
+    created_at?: string;
   };
 }
 
