@@ -1,3 +1,11 @@
+# Release 0.6.6
+
+## 🚀 Features
+
+- feat: implement Slack integration with OAuth and notification settings enforcement (#0)
+
+
+
 # Release 0.6.5
 
 ## 🚀 Features
