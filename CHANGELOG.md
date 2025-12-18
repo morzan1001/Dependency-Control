@@ -1,3 +1,11 @@
+# Release 0.7.3
+
+## 🚀 Features
+
+- feat: Bump version to 0.7.3 and update Scan interface with new fields (#0)
+
+
+
 # Release 0.7.2
 
 ## 🚀 Features
