@@ -1,3 +1,11 @@
+# Release 0.6.4
+
+## 🚀 Features
+
+- feat: add SMTP encryption settings to system configuration and email provider (#0)
+
+
+
 # Release 0.6.3
 
 ## 🚀 Features
