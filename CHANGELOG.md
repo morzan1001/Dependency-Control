@@ -1,3 +1,11 @@
+# Release 0.7.2
+
+## 🚀 Features
+
+- feat: Update scan handling and UI for better user experience (#0)
+
+
+
 # Release 0.7.1
 
 
