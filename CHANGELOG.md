@@ -1,3 +1,11 @@
+# Release 0.7.4
+
+## 🚀 Features
+
+- feat: update version to 0.7.4 and add pipeline_user field to BaseIngest schema (#0)
+
+
+
 # Release 0.7.3
 
 ## 🚀 Features
