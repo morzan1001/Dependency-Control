@@ -39,6 +39,19 @@ async def update_settings(
     """
     update_data = settings_in.dict(exclude_unset=True)
     
+    # Check if slack_bot_token is being manually updated
+    if "slack_bot_token" in update_data:
+        current_settings = await db.system_settings.find_one({"_id": "current"})
+        if current_settings:
+            current_token = current_settings.get("slack_bot_token")
+            new_token = update_data.get("slack_bot_token")
+            
+            # If the token has changed (and it's not just a re-save of the existing one),
+            # we assume it's a manual update and clear the OAuth rotation fields.
+            if new_token != current_token:
+                update_data["slack_refresh_token"] = None
+                update_data["slack_token_expires_at"] = None
+
     await db.system_settings.update_one(
         {"_id": "current"},
         {"$set": update_data},
