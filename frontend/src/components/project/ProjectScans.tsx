@@ -19,7 +19,8 @@ const getEffectiveScanData = (scan: Scan) => {
     const source = scan.latest_run || scan;
     return {
         stats: source.stats || { critical: 0, high: 0, medium: 0, low: 0 },
-        status: source.status
+        status: source.status,
+        date: source.completed_at || source.created_at || scan.created_at
     };
 };
 
@@ -135,7 +136,6 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                 <TableHead className="w-[120px] cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
                   Status {renderSortIcon('status')}
                 </TableHead>
-                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -148,7 +148,10 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Calendar className="h-4 w-4 text-muted-foreground" />
-                      {new Date(scan.created_at).toLocaleString()}
+                      {(() => {
+                          const { date } = getEffectiveScanData(scan);
+                          return new Date(date).toLocaleString();
+                      })()}
                     </div>
                     {scan.latest_rescan_id && (
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">

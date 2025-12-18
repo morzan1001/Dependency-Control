@@ -157,34 +157,35 @@ export default function ScanDetails() {
             </h2>
             <div className="flex items-center gap-2 mt-1">
                 <p className="text-muted-foreground text-sm">ID: {scanId}</p>
-                {scanHistory && scanHistory.length > 1 && (
-                    <Select 
-                        value={scanId} 
-                        onValueChange={(value) => navigate(`/projects/${projectId}/scans/${value}`)}
-                    >
-                        <SelectTrigger className="h-7 w-[200px] text-xs">
-                            <SelectValue placeholder="Select version" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {scanHistory.map((h: any) => (
-                                <SelectItem key={h._id} value={h._id} className="text-xs">
-                                    {h.is_rescan ? 'Re-scan' : 'Original'} - {new Date(h.created_at).toLocaleString()}
-                                    {h._id === scanId && " (Current)"}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                )}
             </div>
             </div>
         </div>
-        <Button 
-            onClick={() => rescanMutation.mutate()} 
-            disabled={rescanMutation.isPending || !scan.sbom_refs || scan.sbom_refs.length === 0}
-        >
-            <RefreshCw className={`mr-2 h-4 w-4 ${rescanMutation.isPending ? 'animate-spin' : ''}`} />
-            Trigger Re-scan
-        </Button>
+        <div className="flex items-center gap-2">
+            {scanHistory && scanHistory.length > 1 && (
+                <Select 
+                    value={scanId} 
+                    onValueChange={(value) => navigate(`/projects/${projectId}/scans/${value}`)}
+                >
+                    <SelectTrigger className="w-[250px]">
+                        <SelectValue placeholder="Select version" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {scanHistory.map((h: any) => (
+                            <SelectItem key={h._id} value={h._id}>
+                                {h.is_rescan ? 'Re-scan' : 'Original'} - {new Date(h.created_at).toLocaleString()}
+                            </SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+            )}
+            <Button 
+                onClick={() => rescanMutation.mutate()} 
+                disabled={rescanMutation.isPending || !scan.sbom_refs || scan.sbom_refs.length === 0}
+            >
+                <RefreshCw className={`mr-2 h-4 w-4 ${rescanMutation.isPending ? 'animate-spin' : ''}`} />
+                Trigger Re-scan
+            </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -227,7 +228,7 @@ export default function ScanDetails() {
                             </div>
                         </div>
                         <div className="flex flex-col space-y-1">
-                            <span className="text-sm text-muted-foreground">Started</span>
+                            <span className="text-sm text-muted-foreground">Scan Started</span>
                             <div className="flex items-center gap-2">
                                 <Calendar className="h-4 w-4" />
                                 <span className="text-sm">{new Date(scan.created_at).toLocaleString()}</span>
@@ -235,10 +236,19 @@ export default function ScanDetails() {
                         </div>
                         {scan.completed_at && (
                             <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Completed</span>
+                                <span className="text-sm text-muted-foreground">Scan Completed</span>
                                 <div className="flex items-center gap-2">
                                     <CheckCircle className="h-4 w-4 text-green-500" />
                                     <span className="text-sm">{new Date(scan.completed_at).toLocaleString()}</span>
+                                </div>
+                            </div>
+                        )}
+                        {scan.job_started_at && (
+                            <div className="flex flex-col space-y-1">
+                                <span className="text-sm text-muted-foreground">Pipeline Started</span>
+                                <div className="flex items-center gap-2">
+                                    <PlayCircle className="h-4 w-4 text-blue-500" />
+                                    <span className="text-sm">{new Date(scan.job_started_at).toLocaleString()}</span>
                                 </div>
                             </div>
                         )}

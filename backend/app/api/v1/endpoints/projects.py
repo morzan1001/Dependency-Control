@@ -649,11 +649,17 @@ async def trigger_rescan(
     await db.scans.insert_one(new_scan.dict(by_alias=True))
     
     # Update original scan to point to this new pending rescan
+    # We update 'latest_run' to pending so the UI shows the spinner, 
+    # but we DO NOT change the original scan's own status (it remains 'completed').
     await db.scans.update_one(
         {"_id": original_scan_id},
         {"$set": {
-            "status": "pending",
-            "latest_rescan_id": new_scan.id
+            "latest_rescan_id": new_scan.id,
+            "latest_run": {
+                "scan_id": new_scan.id,
+                "status": "pending",
+                "created_at": datetime.now(timezone.utc)
+            }
         }}
     )
 
