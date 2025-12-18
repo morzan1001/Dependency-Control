@@ -34,7 +34,7 @@ app = FastAPI(
     * **User Management**: Secure authentication with 2FA and email verification.
 
     """,
-    version="0.7.2",
+    version="0.7.4",
     license_info={
         "name": "MIT License",
         "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",

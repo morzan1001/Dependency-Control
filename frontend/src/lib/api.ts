@@ -228,6 +228,12 @@ export interface Scan {
   pipeline_id?: number;
   pipeline_iid?: number;
   metadata?: PipelineMetadata;
+  project_url?: string;
+  pipeline_url?: string;
+  project_name?: string;
+  commit_message?: string;
+  commit_tag?: string;
+  pipeline_user?: string;
   created_at: string;
   status: string;
   findings_summary?: Finding[];

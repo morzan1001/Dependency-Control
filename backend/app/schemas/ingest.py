@@ -16,6 +16,7 @@ class BaseIngest(BaseModel):
     project_name: Optional[str] = Field(None, description="Name of the project")
     commit_message: Optional[str] = Field(None, description="Commit message")
     commit_tag: Optional[str] = Field(None, description="Git tag")
+    pipeline_user: Optional[str] = Field(None, description="User who triggered the pipeline")
 
 class SBOMIngest(BaseIngest):
     sboms: List[Dict[str, Any]] = Field(default_factory=list, description="List of SBOM JSON contents")

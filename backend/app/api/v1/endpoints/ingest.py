@@ -64,7 +64,8 @@ async def ingest_trufflehog(
                 "job_started_at": data.job_started_at,
                 "project_name": data.project_name,
                 "commit_message": data.commit_message,
-                "commit_tag": data.commit_tag
+                "commit_tag": data.commit_tag,
+                "pipeline_user": data.pipeline_user
             }}
         )
     else:
@@ -81,6 +82,7 @@ async def ingest_trufflehog(
             project_name=data.project_name,
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
+            pipeline_user=data.pipeline_user,
             status="processing",
             created_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc)
@@ -276,6 +278,7 @@ async def ingest_sbom(
                     "project_name": data.project_name,
                     "commit_message": data.commit_message,
                     "commit_tag": data.commit_tag,
+                    "pipeline_user": data.pipeline_user,
                     "status": "pending", # Reset status to pending to re-analyze with new data
                     "updated_at": datetime.now(timezone.utc)
                 },
@@ -300,6 +303,7 @@ async def ingest_sbom(
             project_name=data.project_name,
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
+            pipeline_user=data.pipeline_user,
             sbom_refs=sbom_refs,
             status="pending"
         )
@@ -352,7 +356,8 @@ async def ingest_opengrep(
                 "job_started_at": data.job_started_at,
                 "project_name": data.project_name,
                 "commit_message": data.commit_message,
-                "commit_tag": data.commit_tag
+                "commit_tag": data.commit_tag,
+                "pipeline_user": data.pipeline_user
             }}
         )
     else:
@@ -369,6 +374,7 @@ async def ingest_opengrep(
             project_name=data.project_name,
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
+            pipeline_user=data.pipeline_user,
             status="processing", # Mark as processing as we are adding results
             created_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc)
@@ -495,7 +501,8 @@ async def ingest_kics(
                 "job_started_at": data.job_started_at,
                 "project_name": data.project_name,
                 "commit_message": data.commit_message,
-                "commit_tag": data.commit_tag
+                "commit_tag": data.commit_tag,
+                "pipeline_user": data.pipeline_user
             }}
         )
     else:
@@ -512,6 +519,7 @@ async def ingest_kics(
             project_name=data.project_name,
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
+            pipeline_user=data.pipeline_user,
             status="processing",
             created_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc)
@@ -628,7 +636,8 @@ async def ingest_bearer(
                 "job_started_at": data.job_started_at,
                 "project_name": data.project_name,
                 "commit_message": data.commit_message,
-                "commit_tag": data.commit_tag
+                "commit_tag": data.commit_tag,
+                "pipeline_user": data.pipeline_user
             }}
         )
     else:
@@ -645,6 +654,7 @@ async def ingest_bearer(
             project_name=data.project_name,
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
+            pipeline_user=data.pipeline_user,
             status="processing",
             created_at=datetime.now(timezone.utc),
             completed_at=datetime.now(timezone.utc)

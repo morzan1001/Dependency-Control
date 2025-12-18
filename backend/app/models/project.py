@@ -57,6 +57,7 @@ class Scan(BaseModel):
     project_name: Optional[str] = None
     commit_message: Optional[str] = None
     commit_tag: Optional[str] = None
+    pipeline_user: Optional[str] = None
     
     # This allows us to keep the Scan document small while preserving the raw data.
     sbom_refs: List[Dict[str, Any]] = [] 
