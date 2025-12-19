@@ -1,3 +1,11 @@
+# Release 0.7.6
+
+## 🚀 Features
+
+- feat: modify vulnerability grouping logic to merge findings by version only (#0)
+
+
+
 # Release 0.7.5
 
 ## 🚀 Features
