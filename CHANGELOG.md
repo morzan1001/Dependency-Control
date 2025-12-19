@@ -1,3 +1,11 @@
+# Release 0.7.8
+
+## 🚀 Features
+
+- feat: update version to 0.7.8 and implement background tasks for stats recalculation in waivers (#0)
+
+
+
 # Release 0.7.7
 
 ## 🚀 Features
