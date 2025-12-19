@@ -239,7 +239,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
                                                                 )}
                                                             </div>
                                                         </div>
-                                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{vuln.description || finding.description || "No description available."}</p>
+                                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                                                            {vuln.description || (finding.details?.vulnerabilities ? "" : finding.description) || "No description available."}
+                                                        </p>
                                                         
                                                         <div className="flex flex-wrap gap-4 text-xs">
                                                             {(vuln.cvss_score || finding.details?.cvss_score) && (
