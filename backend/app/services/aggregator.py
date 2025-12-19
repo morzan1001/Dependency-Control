@@ -79,9 +79,12 @@ class ResultAggregator:
             if not vulns: continue
             
             # Create a deterministic key for the set of vulnerabilities
-            vuln_key = frozenset(vulns)
+            # vuln_key = frozenset(vulns)
             
-            key = (f.version, vuln_key)
+            # Group by version only. We will rely on component name matching to merge.
+            # This allows merging findings for the same component that have DIFFERENT sets of vulnerabilities
+            # (e.g. different scanners found different things).
+            key = f.version
             if key not in groups:
                 groups[key] = []
             groups[key].append(f)
@@ -334,6 +337,73 @@ class ResultAggregator:
         
         return False
 
+    def _merge_vulnerability_into_list(self, target_list: List[Dict[str, Any]], source_entry: Dict[str, Any]):
+        """
+        Merges a source vulnerability entry into a target list, handling deduplication by ID and Aliases.
+        """
+        match_found = False
+        s_ids = set([source_entry["id"]] + source_entry.get("aliases", []))
+        
+        for tv in target_list:
+            t_ids = set([tv["id"]] + tv.get("aliases", []))
+            
+            if not s_ids.isdisjoint(t_ids):
+                # Match found! Merge details
+                match_found = True
+                
+                # Merge Scanners
+                tv["scanners"] = list(set(tv.get("scanners", []) + source_entry.get("scanners", [])))
+                
+                # Merge Aliases
+                all_aliases = set(tv.get("aliases", []) + source_entry.get("aliases", []))
+                if source_entry["id"] != tv["id"]:
+                    all_aliases.add(source_entry["id"])
+                tv["aliases"] = list(all_aliases)
+                
+                # Merge Severity (Max)
+                tv_sev_val = SEVERITY_ORDER.get(tv.get("severity", "UNKNOWN"), 0)
+                sv_sev_val = SEVERITY_ORDER.get(source_entry.get("severity", "UNKNOWN"), 0)
+                if sv_sev_val > tv_sev_val:
+                    tv["severity"] = source_entry["severity"]
+
+                # Description merge (prefer longer)
+                if len(source_entry.get("description", "")) > len(tv.get("description", "")):
+                    tv["description"] = source_entry["description"]
+                    tv["description_source"] = source_entry.get("description_source", "unknown")
+                    
+                # Fixed version merge (prefer non-empty)
+                if not tv.get("fixed_version") and source_entry.get("fixed_version"):
+                    tv["fixed_version"] = source_entry["fixed_version"]
+                    
+                # CVSS merge (prefer higher)
+                if source_entry.get("cvss_score") and (not tv.get("cvss_score") or source_entry["cvss_score"] > tv["cvss_score"]):
+                    tv["cvss_score"] = source_entry["cvss_score"]
+                    tv["cvss_vector"] = source_entry.get("cvss_vector")
+                    
+                # References merge
+                tv_refs = tv.get("references", [])
+                sv_refs = source_entry.get("references", [])
+                tv["references"] = list(set(tv_refs + sv_refs))
+
+                # Merge other details (selectively)
+                # We check both top-level and nested details for these fields
+                for key in ["cwe_ids", "published_date", "last_modified_date"]:
+                    # Check source details
+                    val = source_entry.get("details", {}).get(key)
+                    if not val: continue
+                    
+                    # Ensure target has details dict
+                    if "details" not in tv: tv["details"] = {}
+                    
+                    # Update if missing in target
+                    if key not in tv["details"] or not tv["details"][key]:
+                        tv["details"][key] = val
+                
+                break 
+        
+        if not match_found:
+            target_list.append(source_entry)
+
     def _merge_findings_data(self, target: Finding, source: Finding):
         """Merges data from source finding into target finding."""
         # 1. Scanners
@@ -355,35 +425,14 @@ class ResultAggregator:
                 target.aliases.append(source.id)
                 
         # 5. Details (Vulnerabilities)
-        # We assume they have the same set of vulnerabilities (checked by caller),
-        # but we should merge the details of each vulnerability entry.
-        t_vulns = {v["id"]: v for v in target.details.get("vulnerabilities", [])}
-        s_vulns = source.details.get("vulnerabilities", [])
+        # Merge vulnerabilities list, handling aliases to avoid duplicates
+        t_vulns_list = target.details.get("vulnerabilities", [])
+        s_vulns_list = source.details.get("vulnerabilities", [])
         
-        for sv in s_vulns:
-            vid = sv["id"]
-            if vid in t_vulns:
-                tv = t_vulns[vid]
-                # Merge inner details
-                tv["scanners"] = list(set(tv.get("scanners", []) + sv.get("scanners", [])))
-                tv["aliases"] = list(set(tv.get("aliases", []) + sv.get("aliases", [])))
-                
-                # Description merge
-                if len(sv.get("description", "")) > len(tv.get("description", "")):
-                    tv["description"] = sv["description"]
-                    tv["description_source"] = sv.get("description_source", "unknown")
-                    
-                # Fixed version merge (if target missing)
-                if not tv.get("fixed_version") and sv.get("fixed_version"):
-                    tv["fixed_version"] = sv["fixed_version"]
-                    
-                # CVSS merge
-                if sv.get("cvss_score") and (not tv.get("cvss_score") or sv["cvss_score"] > tv["cvss_score"]):
-                    tv["cvss_score"] = sv["cvss_score"]
-                    tv["cvss_vector"] = sv.get("cvss_vector")
-            else:
-                # Should not happen if sets are identical, but for safety
-                target.details["vulnerabilities"].append(sv)
+        for sv in s_vulns_list:
+            self._merge_vulnerability_into_list(t_vulns_list, sv)
+        
+        target.details["vulnerabilities"] = t_vulns_list
         
         # Recalculate top-level fixed version
         fvs = [v.get("fixed_version") for v in target.details["vulnerabilities"] if v.get("fixed_version")]
@@ -452,68 +501,8 @@ class ResultAggregator:
             
             # 3. Merge into vulnerabilities list
             vuln_list: List[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
-            merged = False
             
-            for idx, v in enumerate(vuln_list):
-                # Check match by ID or Alias
-                v_ids = set([v["id"]] + v.get("aliases", []))
-                new_ids = set([finding.id] + finding.aliases)
-                
-                if not v_ids.isdisjoint(new_ids):
-                    # Match found! Merge details
-                    v["scanners"] = list(set(v.get("scanners", []) + finding.scanners))
-                    
-                    all_aliases = set(v.get("aliases", []) + finding.aliases)
-                    if finding.id != v["id"]:
-                        all_aliases.add(finding.id)
-                    v["aliases"] = list(all_aliases)
-                    
-                    v_sev_val = SEVERITY_ORDER.get(v["severity"], 0)
-                    if new_severity_val > v_sev_val:
-                        v["severity"] = finding.severity
-                    
-                    # Merge Fixed Version (prefer non-empty)
-                    new_fixed = finding.details.get("fixed_version")
-                    current_fixed = v.get("fixed_version")
-                    if not current_fixed and new_fixed:
-                        v["fixed_version"] = new_fixed
-                    
-                    # Merge Description (prefer longer description regardless of scanner)
-                    new_desc = finding.description
-                    current_desc = v.get("description", "")
-                    
-                    if new_desc:
-                        # Update if current is empty OR new one is longer
-                        if not current_desc or len(new_desc) > len(current_desc):
-                            v["description"] = new_desc
-                            v["description_source"] = finding.scanners[0] if finding.scanners else "unknown"
-
-                    # Merge CVSS (prefer higher score)
-                    new_cvss = finding.details.get("cvss_score")
-                    current_cvss = v.get("cvss_score")
-                    if new_cvss:
-                        if not current_cvss or new_cvss > current_cvss:
-                            v["cvss_score"] = new_cvss
-                            if finding.details.get("cvss_vector"):
-                                v["cvss_vector"] = finding.details.get("cvss_vector")
-
-                    # Merge References
-                    new_refs = finding.details.get("references", [])
-                    current_refs = v.get("references", [])
-                    v["references"] = list(set(current_refs + new_refs))
-
-                    # Merge other details (selectively)
-                    for key in ["cwe_ids", "published_date", "last_modified_date"]:
-                        if key in finding.details and finding.details[key]:
-                            if key not in v or not v[key]:
-                                v[key] = finding.details[key]
-                        
-                    vuln_list[idx] = v
-                    merged = True
-                    break
-            
-            if not merged:
-                vuln_list.append(vuln_entry)
+            self._merge_vulnerability_into_list(vuln_list, vuln_entry)
                 
             existing.details["vulnerabilities"] = vuln_list
             
