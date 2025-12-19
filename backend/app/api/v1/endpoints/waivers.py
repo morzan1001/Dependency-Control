@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -8,12 +8,14 @@ from app.models.waiver import Waiver
 from app.schemas.waiver import WaiverCreate, WaiverResponse
 from app.db.mongodb import get_database
 from app.api.v1.endpoints.projects import check_project_access
+from app.services.stats import recalculate_project_stats, recalculate_all_projects
 
 router = APIRouter()
 
 @router.post("/", response_model=WaiverResponse, status_code=201)
 async def create_waiver(
     waiver_in: WaiverCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -34,6 +36,13 @@ async def create_waiver(
     )
     
     await db.waivers.insert_one(waiver.dict(by_alias=True))
+    
+    # Trigger stats recalculation
+    if waiver.project_id:
+        background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
+    else:
+        background_tasks.add_task(recalculate_all_projects, db)
+
     return waiver
 
 @router.get("/", response_model=List[WaiverResponse])
@@ -94,6 +103,7 @@ async def list_waivers(
 @router.delete("/{waiver_id}", status_code=204)
 async def delete_waiver(
     waiver_id: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
@@ -111,3 +121,9 @@ async def delete_waiver(
             raise HTTPException(status_code=403, detail="Not enough permissions")
             
     await db.waivers.delete_one({"_id": waiver_id})
+
+    # Trigger stats recalculation
+    if waiver.project_id:
+        background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
+    else:
+        background_tasks.add_task(recalculate_all_projects, db)

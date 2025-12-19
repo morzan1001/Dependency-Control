@@ -65,7 +65,8 @@ async def ingest_trufflehog(
                 "project_name": data.project_name,
                 "commit_message": data.commit_message,
                 "commit_tag": data.commit_tag,
-                "pipeline_user": data.pipeline_user
+                "pipeline_user": data.pipeline_user,
+                "status": "pending" # Force pending to trigger re-aggregation
             }}
         )
     else:
@@ -83,9 +84,8 @@ async def ingest_trufflehog(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             pipeline_user=data.pipeline_user,
-            status="processing",
-            created_at=datetime.now(timezone.utc),
-            completed_at=datetime.now(timezone.utc)
+            status="pending",
+            created_at=datetime.now(timezone.utc)
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
@@ -357,7 +357,8 @@ async def ingest_opengrep(
                 "project_name": data.project_name,
                 "commit_message": data.commit_message,
                 "commit_tag": data.commit_tag,
-                "pipeline_user": data.pipeline_user
+                "pipeline_user": data.pipeline_user,
+                "status": "pending" # Force pending to trigger re-aggregation
             }}
         )
     else:
@@ -375,9 +376,8 @@ async def ingest_opengrep(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             pipeline_user=data.pipeline_user,
-            status="processing", # Mark as processing as we are adding results
-            created_at=datetime.now(timezone.utc),
-            completed_at=datetime.now(timezone.utc)
+            status="pending", # Mark as pending to trigger aggregation
+            created_at=datetime.now(timezone.utc)
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
@@ -502,7 +502,8 @@ async def ingest_kics(
                 "project_name": data.project_name,
                 "commit_message": data.commit_message,
                 "commit_tag": data.commit_tag,
-                "pipeline_user": data.pipeline_user
+                "pipeline_user": data.pipeline_user,
+                "status": "pending" # Force pending to trigger re-aggregation
             }}
         )
     else:
@@ -520,9 +521,8 @@ async def ingest_kics(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             pipeline_user=data.pipeline_user,
-            status="processing",
-            created_at=datetime.now(timezone.utc),
-            completed_at=datetime.now(timezone.utc)
+            status="pending",
+            created_at=datetime.now(timezone.utc)
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id
@@ -637,7 +637,8 @@ async def ingest_bearer(
                 "project_name": data.project_name,
                 "commit_message": data.commit_message,
                 "commit_tag": data.commit_tag,
-                "pipeline_user": data.pipeline_user
+                "pipeline_user": data.pipeline_user,
+                "status": "pending" # Force pending to trigger re-aggregation
             }}
         )
     else:
@@ -655,9 +656,8 @@ async def ingest_bearer(
             commit_message=data.commit_message,
             commit_tag=data.commit_tag,
             pipeline_user=data.pipeline_user,
-            status="processing",
-            created_at=datetime.now(timezone.utc),
-            completed_at=datetime.now(timezone.utc)
+            status="pending",
+            created_at=datetime.now(timezone.utc)
         )
         await db.scans.insert_one(scan.dict(by_alias=True))
         scan_id = scan.id

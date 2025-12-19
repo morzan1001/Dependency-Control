@@ -219,7 +219,11 @@ async def recover_stuck_scans(worker_manager=None):
         # Find stuck scans
         cursor = db.scans.find({
             "status": "processing",
-            "analysis_started_at": {"$lt": timeout_threshold}
+            "$or": [
+                {"analysis_started_at": {"$lt": timeout_threshold}},
+                {"analysis_started_at": {"$exists": False}},
+                {"analysis_started_at": None}
+            ]
         })
         
         async for scan in cursor:
