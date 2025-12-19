@@ -1,3 +1,11 @@
+# Release 0.7.7
+
+## 🚀 Features
+
+- feat: update FindingDetailsModal to conditionally display vulnerability descriptions (#0)
+
+
+
 # Release 0.7.6
 
 ## 🚀 Features
