@@ -35,12 +35,12 @@ async def create_user(
             detail="The user with this username already exists in the system.",
         )
     
-    user_dict = user_in.dict()
+    user_dict = user_in.model_dump()
     hashed_password = security.get_password_hash(user_dict.pop("password"))
     user_dict["hashed_password"] = hashed_password
     
     new_user = User(**user_dict)
-    await db.users.insert_one(new_user.dict(by_alias=True))
+    await db.users.insert_one(new_user.model_dump(by_alias=True))
     return new_user
 
 @router.get("/", response_model=List[UserSchema])
@@ -97,7 +97,7 @@ async def update_user_me(
         if existing_user:
             raise HTTPException(status_code=400, detail="Username already taken")
 
-    update_data = user_in.dict(exclude_unset=True)
+    update_data = user_in.model_dump(exclude_unset=True)
     
     if update_data:
         await db.users.update_one({"_id": current_user.id}, {"$set": update_data})
@@ -137,7 +137,7 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    update_data = user_in.dict(exclude_unset=True)
+    update_data = user_in.model_dump(exclude_unset=True)
     if "password" in update_data:
         if has_admin_perm:
              raise HTTPException(status_code=400, detail="Admins cannot set passwords directly. Please use the 'Reset Password' feature to send a reset link.")

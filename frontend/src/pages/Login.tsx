@@ -25,13 +25,19 @@ export default function Login() {
   const message = location.state?.message
 
   useEffect(() => {
+    let cancelled = false
     getPublicConfig().then(config => {
-      setSignupEnabled(config.allow_public_registration)
-      setOidcConfig({
-        enabled: config.oidc_enabled || false,
-        providerName: config.oidc_provider_name || 'GitLab'
-      })
-    }).catch(console.error)
+      if (!cancelled) {
+        setSignupEnabled(config.allow_public_registration)
+        setOidcConfig({
+          enabled: config.oidc_enabled || false,
+          providerName: config.oidc_provider_name || 'GitLab'
+        })
+      }
+    }).catch(err => {
+      if (!cancelled) console.error(err)
+    })
+    return () => { cancelled = true }
   }, [])
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {

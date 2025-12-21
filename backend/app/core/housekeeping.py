@@ -70,7 +70,7 @@ async def check_scheduled_rescans(worker_manager):
                 latest_valid_scan = await db.scans.find_one(
                     {
                         "project_id": project.id,
-                        "status": "success",
+                        "status": "completed",
                         "sbom_refs": {"$exists": True, "$ne": []}
                     },
                     sort=[("created_at", -1)]

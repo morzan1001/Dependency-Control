@@ -56,6 +56,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [defaultBranch, setDefaultBranch] = useState<string | undefined>(project.default_branch)
   const [rescanEnabled, setRescanEnabled] = useState<boolean | undefined>(project.rescan_enabled)
   const [rescanInterval, setRescanInterval] = useState<number | undefined>(project.rescan_interval)
+  const [gitlabMrCommentsEnabled, setGitlabMrCommentsEnabled] = useState<boolean>(project.gitlab_mr_comments_enabled || false)
   
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
@@ -179,7 +180,8 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       active_analyzers: analyzers,
       default_branch: defaultBranch === "none" ? null : defaultBranch,
       rescan_enabled: rescanEnabled,
-      rescan_interval: rescanInterval
+      rescan_interval: rescanInterval,
+      gitlab_mr_comments_enabled: gitlabMrCommentsEnabled
     })
   }
 
@@ -320,6 +322,27 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         </div>
                     )}
                 </div>
+
+                {systemSettings?.gitlab_access_token && (
+                    <div className="grid gap-2">
+                        <Label>GitLab Integration</Label>
+                        <div className="border rounded-md p-4 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                    <Label className="text-base">Merge Request Decoration</Label>
+                                    <p className="text-sm text-muted-foreground">
+                                        Post scan results as comments on GitLab Merge Requests.
+                                    </p>
+                                </div>
+                                <Switch
+                                    checked={gitlabMrCommentsEnabled}
+                                    onCheckedChange={setGitlabMrCommentsEnabled}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="grid gap-2">
                     <Label>Active Analyzers</Label>
                     <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[300px] overflow-y-auto">

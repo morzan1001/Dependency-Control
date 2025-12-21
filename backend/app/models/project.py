@@ -30,6 +30,7 @@ class Project(BaseModel):
     enforce_notification_settings: bool = False
     gitlab_project_id: Optional[int] = None
     gitlab_project_path: Optional[str] = None
+    gitlab_mr_comments_enabled: bool = False
     
     # Periodic Scanning
     rescan_enabled: Optional[bool] = None # If None, use system default

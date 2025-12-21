@@ -6,6 +6,7 @@ class SystemSettings(BaseModel):
     
     # General
     instance_name: str = "Dependency Control"
+    dashboard_url: str = "http://localhost:5173"
     
     # Security
     allow_public_registration: bool = False
@@ -44,9 +45,16 @@ class SystemSettings(BaseModel):
     # GitLab Integration
     gitlab_integration_enabled: bool = False
     gitlab_url: str = "https://gitlab.com"
-    gitlab_access_token: Optional[str] = None # Optional: Personal/Group Access Token for API calls that CI_JOB_TOKEN can't handle
+    gitlab_access_token: Optional[str] = Field(
+        None, 
+        description="Personal or Group Access Token with 'api' scope. Must have at least 'Reporter' role in the projects to post comments."
+    )
     gitlab_auto_create_projects: bool = False
     gitlab_sync_teams: bool = False
+    gitlab_oidc_audience: Optional[str] = Field(
+        None,
+        description="Expected audience claim for GitLab OIDC tokens. If set, tokens must contain this audience."
+    )
     
     # Periodic Scanning Defaults
     rescan_mode: str = "project" # "project" or "global"

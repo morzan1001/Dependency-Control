@@ -299,7 +299,7 @@ async def add_team_member(
     
     await db.teams.update_one(
         {"_id": team_id},
-        {"$push": {"members": new_member.dict()}, "$set": {"updated_at": datetime.now(timezone.utc)}}
+        {"$push": {"members": new_member.model_dump()}, "$set": {"updated_at": datetime.now(timezone.utc)}}
     )
     
     updated_team = await db.teams.find_one({"_id": team_id})

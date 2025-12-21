@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
 import { ArrowUp, ArrowDown } from 'lucide-react';
+import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants';
 
 interface FindingsTableProps {
     scanId: string;
@@ -55,7 +56,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
         queryFn: async ({ pageParam = 0 }) => {
             const res = await getScanFindings(scanId, {
                 skip: pageParam,
-                limit: 50,
+                limit: DEFAULT_PAGE_SIZE,
                 category,
                 search,
                 sort_by: sortBy,
@@ -77,7 +78,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
         count: hasNextPage ? allRows.length + 1 : allRows.length,
         getScrollElement: () => scrollContainer,
         estimateSize: () => 60,
-        overscan: 20,
+        overscan: VIRTUAL_SCROLL_OVERSCAN,
         observeElementOffset: (_instance, cb) => {
             const element = scrollContainer
             if (!element) return undefined
@@ -95,14 +96,16 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
         },
     })
 
+    const virtualItems = rowVirtualizer.getVirtualItems()
+    const lastItemIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]?.index : -1
+
     useEffect(() => {
-        const [lastItem] = [...rowVirtualizer.getVirtualItems()].reverse()
-        if (!lastItem) {
+        if (lastItemIndex === -1) {
             return
         }
 
         if (
-            lastItem.index >= allRows.length - 1 &&
+            lastItemIndex >= allRows.length - 1 &&
             hasNextPage &&
             !isFetchingNextPage
         ) {
@@ -113,7 +116,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
         fetchNextPage,
         allRows.length,
         isFetchingNextPage,
-        rowVirtualizer.getVirtualItems(),
+        lastItemIndex,
     ])
 
     const renderSortIcon = (column: string) => {

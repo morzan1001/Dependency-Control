@@ -147,6 +147,8 @@ export interface Project {
   enforce_notification_settings?: boolean;
   rescan_enabled?: boolean;
   rescan_interval?: number;
+  gitlab_mr_comments_enabled?: boolean;
+  gitlab_project_id?: number;
   owner_notification_preferences?: {
     [key: string]: string[];
   };
@@ -309,6 +311,7 @@ export interface ProjectUpdate {
   default_branch?: string | null;
   rescan_enabled?: boolean;
   rescan_interval?: number;
+  gitlab_mr_comments_enabled?: boolean;
 }
 
 export interface ProjectApiKeyResponse {

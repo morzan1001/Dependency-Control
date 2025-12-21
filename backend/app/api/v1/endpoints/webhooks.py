@@ -26,10 +26,10 @@ async def create_webhook(
     
     webhook = Webhook(
         project_id=project_id,
-        **webhook_in.dict()
+        **webhook_in.model_dump()
     )
     
-    await db.webhooks.insert_one(webhook.dict(by_alias=True))
+    await db.webhooks.insert_one(webhook.model_dump(by_alias=True))
     return webhook
 
 @router.get("/project/{project_id}", response_model=List[WebhookResponse])
@@ -54,10 +54,10 @@ async def create_global_webhook(
     """
     webhook = Webhook(
         project_id=None,
-        **webhook_in.dict()
+        **webhook_in.model_dump()
     )
     
-    await db.webhooks.insert_one(webhook.dict(by_alias=True))
+    await db.webhooks.insert_one(webhook.model_dump(by_alias=True))
     return webhook
 
 @router.get("/global/", response_model=List[WebhookResponse])

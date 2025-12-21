@@ -17,5 +17,6 @@ async def connect_to_mongo():
     logger.info("Connected to MongoDB")
 
 async def close_mongo_connection():
-    db.client.close()
-    logger.info("Closed MongoDB connection")
+    if db.client is not None:
+        db.client.close()
+        logger.info("Closed MongoDB connection")

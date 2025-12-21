@@ -31,11 +31,11 @@ async def create_waiver(
              raise HTTPException(status_code=403, detail="Only admins can create global waivers")
 
     waiver = Waiver(
-        **waiver_in.dict(),
+        **waiver_in.model_dump(),
         created_by=current_user.username
     )
     
-    await db.waivers.insert_one(waiver.dict(by_alias=True))
+    await db.waivers.insert_one(waiver.model_dump(by_alias=True))
     
     # Trigger stats recalculation
     if waiver.project_id:

@@ -105,20 +105,6 @@ export function useAuth() {
   return context;
 }
 
-export function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
-
-  if (!isAuthenticated) {
-    // Check if we are already on the login page to avoid loops, though the router should handle this.
-    // Also check if we have a token in storage but state hasn't updated yet (initial load)
-    if (!localStorage.getItem('token')) {
-        return null; // Or a loading spinner, or Navigate to login
-    }
-  }
-
-  return <>{children}</>;
-}
-
 export function RequirePermission({ children, permission }: { children: React.ReactNode, permission: string | string[] }) {
   const { hasPermission, isLoading } = useAuth();
   

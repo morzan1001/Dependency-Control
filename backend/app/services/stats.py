@@ -108,17 +108,17 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase):
     await db.scans.update_one(
         {"_id": scan_id},
         {"$set": {
-            "stats": stats.dict(),
+            "stats": stats.model_dump(),
             "ignored_count": ignored_count
         }}
     )
 
     await db.projects.update_one(
         {"_id": project_id},
-        {"$set": {"stats": stats.dict()}}
+        {"$set": {"stats": stats.model_dump()}}
     )
     
-    logger.info(f"Stats updated for project {project_id}: {stats.dict()}")
+    logger.info(f"Stats updated for project {project_id}: {stats.model_dump()}")
 
 async def recalculate_all_projects(db: AsyncIOMotorDatabase):
     """

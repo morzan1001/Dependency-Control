@@ -69,3 +69,10 @@ export const AVAILABLE_ANALYZERS = [
   { id: 'bearer', label: 'Bearer (SAST/Data)', description: 'Static Application Security Testing (SAST) and Data Security tool.' },
   { id: 'trufflehog', label: 'TruffleHog (Secrets)', description: 'Scans for hardcoded secrets, passwords, and keys in the codebase.' },
 ];
+
+// Pagination & Query Limits
+export const DEFAULT_PAGE_SIZE = 50;
+export const LARGE_PAGE_SIZE = 100;
+export const MAX_SCANS_FOR_CHARTS = 100;
+export const DEBOUNCE_DELAY_MS = 300;
+export const VIRTUAL_SCROLL_OVERSCAN = 20;

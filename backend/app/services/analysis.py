@@ -20,9 +20,11 @@ from app.services.analyzers import (
 )
 from app.services.notifications import notification_service
 from app.models.project import Project
+from app.models.system import SystemSettings
 from app.models.stats import Stats
 from app.models.finding_record import FindingRecord
 from app.services.aggregator import ResultAggregator
+from app.services.gitlab import GitLabService
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +213,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     for f in aggregated_findings:
         # Convert Finding to FindingRecord dict
         # We use the Pydantic model to validate/transform if needed, or just construct dict
-        record = f.dict()
+        record = f.model_dump()
         record["scan_id"] = scan_id
         record["project_id"] = project_id
         record["finding_id"] = f.id # Map logical ID
@@ -288,7 +290,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         "scan_id": scan_id,
         "status": "completed",
         "findings_count": len(aggregated_findings),
-        "stats": stats.dict(),
+        "stats": stats.model_dump(),
         "completed_at": datetime.now(timezone.utc)
     }
 
@@ -298,7 +300,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             "status": "completed", 
             "findings_count": len(aggregated_findings),
             "ignored_count": ignored_count,
-            "stats": stats.dict(),
+            "stats": stats.model_dump(),
             "completed_at": datetime.now(timezone.utc),
             # If it's an original scan, it is its own latest run
             "latest_run": latest_run_summary
@@ -324,11 +326,60 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         await db.projects.update_one(
             {"_id": scan["project_id"]},
             {"$set": {
-                "stats": stats.dict(), 
+                "stats": stats.model_dump(), 
                 "last_scan_at": datetime.now(timezone.utc),
                 "latest_scan_id": scan_id
             }}
         )
+
+    # GitLab Merge Request Decoration
+    try:
+        scan = await db.scans.find_one({"_id": scan_id})
+        if scan:
+            project_data = await db.projects.find_one({"_id": scan["project_id"]})
+            if project_data:
+                project = Project(**project_data)
+                
+                if project.gitlab_mr_comments_enabled and project.gitlab_project_id and scan.get("commit_hash"):
+                    # Ensure we have a valid SystemSettings object
+                    settings_obj = SystemSettings(**system_settings)
+                    gitlab_service = GitLabService(settings_obj)
+                    
+                    mrs = await gitlab_service.get_merge_requests_for_commit(project.gitlab_project_id, scan["commit_hash"])
+                    
+                    if mrs:
+                        # Construct Markdown Comment
+                        # Use dashboard_url from settings if available, otherwise try to infer or use a placeholder
+                        dashboard_url = getattr(settings_obj, "dashboard_url", "http://localhost:5173")
+                        scan_url = f"{dashboard_url}/projects/{project.id}/scans/{scan_id}"
+                        
+                        status_emoji = "✅"
+                        if stats.risk_score > 0:
+                            status_emoji = "⚠️"
+                        if stats.critical > 0 or stats.high > 0:
+                            status_emoji = "🚨"
+                            
+                        comment_body = f"""
+### {status_emoji} Dependency Control Scan Results
+
+**Status:** Completed
+**Risk Score:** {stats.risk_score}
+
+| Severity | Count |
+| :--- | :--- |
+| 🔴 Critical | {stats.critical} |
+| 🟠 High | {stats.high} |
+| 🟡 Medium | {stats.medium} |
+| 🔵 Low | {stats.low} |
+
+[View Full Report]({scan_url})
+"""
+                        for mr in mrs:
+                            await gitlab_service.post_merge_request_comment(project.gitlab_project_id, mr["iid"], comment_body)
+                            logger.info(f"Posted scan results to MR !{mr['iid']} for project {project.name}")
+
+    except Exception as e:
+        logger.error(f"Failed to decorate GitLab MR: {e}")
 
     # Send Notification
     try:

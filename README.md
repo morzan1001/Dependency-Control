@@ -1,6 +1,23 @@
 # Dependency Control
 
-**Dependency Control** is a centralized security and compliance platform designed to manage software supply chain risks. It aggregates data from various sources—SBOMs, secret scans, SAST, and IaC analysis—to provide a unified view of your project's security posture.
+**Dependency Control** is a centralized security and compliance platform for managing software supply chain risks. It aggregates SBOMs, secret scans, SAST, and IaC analysis to provide a unified view of your project's security posture.
+
+![Dashboard](assets/dashboard.png)
+
+## ✨ Features
+
+| Category | Capabilities |
+|----------|-------------|
+| **Security Analysis** | Vulnerability scanning (Trivy, Grype, OSV), Secret detection, SAST, Malware & Typosquatting detection |
+| **Compliance** | License compliance checking, End-of-Life monitoring, Policy enforcement with waivers |
+| **Management** | Project & Team management, Role-based access control, 2FA authentication |
+| **Integrations** | GitLab CI/CD (OIDC), GitHub Actions, Webhooks, Email/Slack/Mattermost notifications |
+| **Visibility** | Risk scoring, Trend analysis, SBOM inventory, Centralized dashboard |
+
+<p align="center">
+  <img src="assets/pipeline.png" width="48%" alt="Pipeline Integration" />
+  <img src="assets/project.png" width="48%" alt="Project View" />
+</p>
 
 ## 🔍 Supported Scanners
 

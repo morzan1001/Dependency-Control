@@ -87,13 +87,13 @@ async def ingest_trufflehog(
             status="pending",
             created_at=datetime.now(timezone.utc)
         )
-        await db.scans.insert_one(scan.dict(by_alias=True))
+        await db.scans.insert_one(scan.model_dump(by_alias=True))
         scan_id = scan.id
     
     # 2. Normalize Findings
     aggregator = ResultAggregator()
     # Convert Pydantic models to dicts
-    trufflehog_result = {"findings": [f.dict() for f in data.findings]}
+    trufflehog_result = {"findings": [f.model_dump() for f in data.findings]}
     
     aggregator.aggregate("trufflehog", trufflehog_result)
     findings = aggregator.get_findings()
@@ -379,12 +379,12 @@ async def ingest_opengrep(
             status="pending", # Mark as pending to trigger aggregation
             created_at=datetime.now(timezone.utc)
         )
-        await db.scans.insert_one(scan.dict(by_alias=True))
+        await db.scans.insert_one(scan.model_dump(by_alias=True))
         scan_id = scan.id
     
     # 2. Normalize Findings
     aggregator = ResultAggregator()
-    opengrep_result = {"findings": [f.dict() for f in data.findings]}
+    opengrep_result = {"findings": [f.model_dump() for f in data.findings]}
     
     aggregator.aggregate("opengrep", opengrep_result)
     findings = aggregator.get_findings()
@@ -458,7 +458,7 @@ async def ingest_opengrep(
     return {
         "scan_id": scan_id,
         "findings_count": len(final_findings),
-        "stats": stats.dict()
+        "stats": stats.model_dump()
     }
 
 @router.post("/ingest/kics", summary="Ingest KICS Results", status_code=200)
@@ -524,11 +524,11 @@ async def ingest_kics(
             status="pending",
             created_at=datetime.now(timezone.utc)
         )
-        await db.scans.insert_one(scan.dict(by_alias=True))
+        await db.scans.insert_one(scan.model_dump(by_alias=True))
         scan_id = scan.id
     
     aggregator = ResultAggregator()
-    kics_result = data.dict()
+    kics_result = data.model_dump()
     
     aggregator.aggregate("kics", kics_result)
     findings = aggregator.get_findings()

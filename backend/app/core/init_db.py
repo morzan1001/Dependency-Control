@@ -101,15 +101,19 @@ async def init_db():
         # Insert into database
         await user_collection.insert_one(user.model_dump(by_alias=True))
         
-        # Print credentials to logs
-        logger.warning("\n" + "=" * 60)
-        logger.warning("INITIAL ADMIN USER CREATED")
-        logger.warning("-" * 60)
-        logger.warning(f"Username: {user.username}")
-        logger.warning(f"Email:    {user.email}")
-        logger.warning(f"Password: {password}")
-        logger.warning("-" * 60)
-        logger.warning("PLEASE CHANGE THIS PASSWORD IMMEDIATELY AFTER LOGIN!")
-        logger.warning("=" * 60 + "\n")
+        # Print credentials to stdout ONLY (not logs) - password shown once
+        # SECURITY: Never log passwords to persistent log files
+        print("\n" + "=" * 60)
+        print("INITIAL ADMIN USER CREATED")
+        print("-" * 60)
+        print(f"Username: {user.username}")
+        print(f"Email:    {user.email}")
+        print(f"Password: {password}")
+        print("-" * 60)
+        print("PLEASE CHANGE THIS PASSWORD IMMEDIATELY AFTER LOGIN!")
+        print("This password will not be shown again.")
+        print("=" * 60 + "\n")
+        
+        logger.info("Initial admin user created. Credentials displayed on stdout.")
     else:
         logger.info("Users already exist. Skipping initial user creation.")

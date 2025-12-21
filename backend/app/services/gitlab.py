@@ -3,7 +3,7 @@ import secrets
 import logging
 from jose import jwt
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from app.models.system import SystemSettings
 from app.models.team import Team, TeamMember
 from app.models.user import User
@@ -67,13 +67,22 @@ class GitLabService:
                 return None
 
             # 4. Verify
-            # We verify the issuer. Audience verification is disabled for now as we don't have a setting for it yet.
+            # Verify issuer and optionally audience if configured
+            jwt_options = {}
+            if self.settings.gitlab_oidc_audience:
+                jwt_options["verify_aud"] = True
+            else:
+                # Audience verification disabled - tokens from other apps could be accepted
+                # Consider configuring gitlab_oidc_audience in system settings
+                jwt_options["verify_aud"] = False
+            
             payload = jwt.decode(
                 token,
                 key,
                 algorithms=["RS256"],
                 issuer=self.settings.gitlab_url,
-                options={"verify_aud": False} 
+                audience=self.settings.gitlab_oidc_audience if self.settings.gitlab_oidc_audience else None,
+                options=jwt_options
             )
             return payload
         except Exception as e:
@@ -102,6 +111,53 @@ class GitLabService:
                 return None
             except Exception:
                 return None
+
+    async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> List[Dict[str, Any]]:
+        """
+        Fetches merge requests associated with a specific commit.
+        """
+        if not self.settings.gitlab_access_token:
+            return []
+
+        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.api_url}/projects/{project_id}/repository/commits/{commit_sha}/merge_requests",
+                    headers=auth_headers,
+                    timeout=10.0
+                )
+                if response.status_code == 200:
+                    return response.json()
+            except Exception as e:
+                logger.error(f"Error fetching MRs for commit {commit_sha}: {e}")
+        return []
+
+    async def post_merge_request_comment(self, project_id: int, mr_iid: int, body: str) -> bool:
+        """
+        Posts a comment to a merge request.
+        """
+        if not self.settings.gitlab_access_token:
+            return False
+
+        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.api_url}/projects/{project_id}/merge_requests/{mr_iid}/notes",
+                    headers=auth_headers,
+                    json={"body": body},
+                    timeout=10.0
+                )
+                if response.status_code == 201:
+                    return True
+                else:
+                    logger.error(f"Failed to post MR comment: {response.status_code} - {response.text}")
+            except Exception as e:
+                logger.error(f"Error posting MR comment: {e}")
+        return False
 
     async def get_project_members(self, project_id: int) -> Optional[list[Dict[str, Any]]]:
         """

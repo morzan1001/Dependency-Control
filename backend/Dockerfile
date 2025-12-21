@@ -36,8 +36,8 @@ COPY . .
 RUN poetry install --no-interaction --no-ansi
 
 # Create a non-root user
-RUN addgroup --system --gid 1001 appgroup && \
-    adduser --system --uid 1001 --gid 1001 --no-create-home appuser
+RUN addgroup --system --gid 1000 appgroup && \
+    adduser --system --uid 1000 --gid 1000 --no-create-home appuser
 
 # Set environment variables for tools
 ENV TRIVY_CACHE_DIR=/app/.cache/trivy
