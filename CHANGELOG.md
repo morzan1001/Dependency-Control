@@ -1,3 +1,12 @@
+# Release 0.7.9
+
+## 🚀 Features
+
+- feat: add source code link to API description in FastAPI app (#0)
+- feat: update version to 0.7.9, add GitLab MR decoration feature, and improve various endpoints (#0)
+
+
+
 # Release 0.7.8
 
 ## 🚀 Features
