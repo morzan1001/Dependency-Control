@@ -76,8 +76,8 @@ async def startup_event():
                 logger.error("Could not connect to database after multiple attempts.")
                 raise e
         except Exception as e:
-             logger.error(f"Unexpected error during startup: {e}")
-             raise e
+            logger.error(f"Unexpected error during startup: {e}")
+            raise e
 
 @app.on_event("shutdown")
 async def shutdown_event():

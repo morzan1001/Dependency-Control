@@ -167,8 +167,6 @@ class ResultAggregator:
 
         return final_findings
 
-        return results
-
     def _normalize_trufflehog(self, result: Dict[str, Any], source: str = None):
         # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
         # The result dict is expected to contain a list of findings under "findings" key

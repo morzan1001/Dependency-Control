@@ -22,7 +22,7 @@ from app.schemas.user import UserCreate, User as UserSchema, UserSignup, UserPas
 from app.api import deps
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.templates import get_verification_email_template
-from app.models.system import SystemSettings
+ 
 
 router = APIRouter()
 

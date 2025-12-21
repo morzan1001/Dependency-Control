@@ -1133,8 +1133,6 @@ async def get_scan_stats(
             
     return stats
 
-    return Scan(**scan_data)
-
 @router.put("/{project_id}/members/{user_id}", response_model=Project, summary="Update project member role")
 async def update_project_member(
     project_id: str,

@@ -44,7 +44,6 @@ class SlackProvider(NotificationProvider):
                 expires_in = result.get("expires_in")
                 
                 # Update database
-                from app.db.mongodb import get_database
                 db = await get_database()
                 
                 update_data = {
