@@ -33,6 +33,7 @@ app = FastAPI(
     * **Integrations**: Webhooks and Notifications (Email, Slack, Mattermost).
     * **User Management**: Secure authentication with 2FA and email verification.
 
+    Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
     """,
     version="0.7.8",
     license_info={
