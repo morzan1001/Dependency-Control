@@ -52,7 +52,7 @@ interface SelectedDep {
 export function DependencyList() {
   const [selectedType, setSelectedType] = useState<string>('__all__')
   const [sortBy, setSortBy] = useState<SortField>('name')
-  const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedDep, setSelectedDep] = useState<SelectedDep | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -137,7 +137,7 @@ export function DependencyList() {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
     } else {
       setSortBy(field)
-      setSortOrder('asc')
+      setSortOrder('desc')
     }
   }
 
@@ -266,10 +266,10 @@ export function DependencyList() {
                         </div>
                       </TableCell>
                       <TableCell className="truncate">
-                        <Badge variant="outline" className="truncate max-w-full">{dep.version}</Badge>
+                        <Badge variant="outline" className="whitespace-nowrap">{dep.version}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary" className="truncate">{dep.type}</Badge>
+                        <Badge variant="secondary" className="whitespace-nowrap">{dep.type}</Badge>
                       </TableCell>
                       <TableCell>
                         {sourceInfo ? (

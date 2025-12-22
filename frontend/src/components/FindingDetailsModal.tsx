@@ -216,7 +216,13 @@ interface ScorecardContext {
 
 // Component for rendering OpenSSF Scorecard context on vulnerabilities
 function ScorecardContextBanner({ context }: { context: ScorecardContext }) {
-  if (!context || (context.overall_score === undefined && !context.critical_issues?.length)) {
+  // Don't show if no context, no valid score, and no critical issues
+  const hasValidScore = context?.overall_score !== undefined && 
+                        context.overall_score !== null && 
+                        !isNaN(context.overall_score);
+  const hasCriticalIssues = context?.critical_issues && context.critical_issues.length > 0;
+  
+  if (!context || (!hasValidScore && !hasCriticalIssues)) {
     return null
   }
 
@@ -322,40 +328,45 @@ function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
     return "bg-green-100"
   }
 
+  // Only show scorecard section if we have a valid score
+  const hasValidScore = overallScore !== undefined && overallScore !== null && !isNaN(overallScore);
+
   return (
     <div className="space-y-4">
-      {/* Score Overview */}
-      <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
-        <div className={`flex items-center justify-center w-16 h-16 rounded-full ${getScoreBg(overallScore)}`}>
-          <span className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
-            {overallScore?.toFixed(1) ?? "?"}
-          </span>
+      {/* Score Overview - only show if we have a valid score */}
+      {hasValidScore && (
+        <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
+          <div className={`flex items-center justify-center w-16 h-16 rounded-full ${getScoreBg(overallScore)}`}>
+            <span className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
+              {overallScore.toFixed(1)}
+            </span>
+          </div>
+          <div className="flex-1">
+            <h4 className="font-medium">OpenSSF Scorecard</h4>
+            <p className="text-sm text-muted-foreground">
+              {overallScore >= 7 
+                ? "Good security practices"
+                : overallScore >= 5 
+                  ? "Moderate security practices - room for improvement"
+                  : overallScore >= 3 
+                    ? "Concerning security practices - review carefully"
+                    : "Poor security practices - high risk"
+              }
+            </p>
+            {repository && (
+              <a 
+                href={repository.startsWith('http') ? repository : repository.includes('github.com') ? `https://${repository}` : `https://github.com/${repository}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-primary mt-1 hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" />
+                {repository.replace(/^https?:\/\//, '')}
+              </a>
+            )}
+          </div>
         </div>
-        <div className="flex-1">
-          <h4 className="font-medium">OpenSSF Scorecard</h4>
-          <p className="text-sm text-muted-foreground">
-            {overallScore >= 7 
-              ? "Good security practices"
-              : overallScore >= 5 
-                ? "Moderate security practices - room for improvement"
-                : overallScore >= 3 
-                  ? "Concerning security practices - review carefully"
-                  : "Poor security practices - high risk"
-            }
-          </p>
-          {repository && (
-            <a 
-              href={repository.startsWith('http') ? repository : repository.includes('github.com') ? `https://${repository}` : `https://github.com/${repository}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-primary mt-1 hover:underline"
-            >
-              <ExternalLink className="h-3 w-3" />
-              {repository.replace(/^https?:\/\//, '')}
-            </a>
-          )}
-        </div>
-      </div>
+      )}
       
       {/* Critical Issues */}
       {criticalIssues.length > 0 && (
@@ -629,11 +640,17 @@ function AggregatedQualityView({ details }: { details: Record<string, unknown> }
   const issueCount = details.issue_count as number || qualityIssues.length
   const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set())
   
+  // Helper to check for valid scorecard score
+  const hasValidScorecardScore = (d: Record<string, unknown>) => {
+    const score = d.overall_score as number | undefined;
+    return score !== undefined && score !== null && !isNaN(score);
+  }
+  
   // Legacy support: if no quality_issues array, check for old structure
   if (qualityIssues.length === 0) {
-    // Check for legacy scorecard structure
-    if (details.overall_score !== undefined || details.scorecard) {
-      const scorecardDetails = (details.scorecard as Record<string, unknown>) || details
+    // Check for legacy scorecard structure - only if we have a valid score
+    const scorecardDetails = (details.scorecard as Record<string, unknown>) || details
+    if (hasValidScorecardScore(scorecardDetails)) {
       return <QualityDetailsView details={scorecardDetails} />
     }
     // Check for legacy maintainer_risk structure
@@ -1086,8 +1103,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
             <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
-                <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2">
+                <DialogHeader className="pb-2">
+                    <DialogTitle className="flex items-center gap-2 leading-normal">
                         {finding.severity && (
                             <Badge variant={
                                 finding.severity === 'CRITICAL' ? 'destructive' :
@@ -1099,7 +1116,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 {finding.severity}
                             </Badge>
                         )}
-                        <span className="truncate">{getFindingTitle(finding)}</span>
+                        <span className="truncate leading-normal">{getFindingTitle(finding)}</span>
                     </DialogTitle>
                     <DialogDescription>
                         {finding.type} detected in {getFindingPackage(finding)}
