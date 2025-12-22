@@ -1,15 +1,18 @@
 import asyncio
-import logging
 import json
+import logging
 from datetime import datetime, timezone
+
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from app.db.mongodb import get_database
-from app.services.analysis import run_analysis
+
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop
+from app.db.mongodb import get_database
+from app.services.analysis import run_analysis
 
 logger = logging.getLogger(__name__)
+
 
 class AnalysisWorkerManager:
     def __init__(self, num_workers: int = 2):
@@ -21,16 +24,16 @@ class AnalysisWorkerManager:
     async def start(self):
         """Starts the worker tasks and recovers pending jobs from DB."""
         logger.info(f"Starting {self.num_workers} analysis workers...")
-        
+
         # Start workers first
         for i in range(self.num_workers):
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
-            
+
         # Start housekeeping task
         self.housekeeping_task = asyncio.create_task(housekeeping_loop(self))
         logger.info("Housekeeping task started.")
-            
+
         # Recover pending jobs from DB
         try:
             db = await get_database()
@@ -41,7 +44,7 @@ class AnalysisWorkerManager:
             async for scan in cursor:
                 await self.queue.put(str(scan["_id"]))
                 count += 1
-            
+
             if count > 0:
                 logger.info(f"Recovered {count} pending scans from database.")
         except Exception as e:
@@ -52,7 +55,7 @@ class AnalysisWorkerManager:
         logger.info("Stopping analysis workers...")
         for task in self.workers:
             task.cancel()
-            
+
         if self.housekeeping_task:
             self.housekeeping_task.cancel()
             logger.info("Housekeeping task stopped.")
@@ -69,36 +72,40 @@ class AnalysisWorkerManager:
             try:
                 scan_id = await self.queue.get()
                 logger.info(f"Worker {name} picked up scan {scan_id}")
-                
+
                 db = await get_database()
-                
+
                 # Atomic Claim: Try to set status to 'processing' ONLY IF it is currently 'pending'
                 # This prevents multiple workers (across different pods) from processing the same scan.
                 scan = await db.scans.find_one_and_update(
                     {"_id": scan_id, "status": "pending"},
-                    {"$set": {
-                        "status": "processing", 
-                        "worker_id": name,
-                        "analysis_started_at": datetime.now(timezone.utc)
-                    }},
-                    return_document=True
+                    {
+                        "$set": {
+                            "status": "processing",
+                            "worker_id": name,
+                            "analysis_started_at": datetime.now(timezone.utc),
+                        }
+                    },
+                    return_document=True,
                 )
-                
+
                 if not scan:
                     # If scan is None, it means either:
                     # 1. It doesn't exist (deleted)
                     # 2. It's already being processed by another worker (status != pending)
-                    logger.info(f"Scan {scan_id} already claimed or not found. Skipping.")
+                    logger.info(
+                        f"Scan {scan_id} already claimed or not found. Skipping."
+                    )
                     self.queue.task_done()
                     continue
-                
+
                 # Fetch project config (for active analyzers)
                 project = await db.projects.find_one({"_id": scan["project_id"]})
                 if not project:
                     logger.error(f"Project for scan {scan_id} not found, skipping.")
                     await db.scans.update_one(
                         {"_id": scan_id},
-                        {"$set": {"status": "failed", "error": "Project not found"}}
+                        {"$set": {"status": "failed", "error": "Project not found"}},
                     )
                     self.queue.task_done()
                     continue
@@ -112,26 +119,29 @@ class AnalysisWorkerManager:
                         scan_id=scan_id,
                         sboms=sbom_refs,
                         active_analyzers=project.get("active_analyzers", []),
-                        db=db
+                        db=db,
                     )
                     # run_analysis updates the status to 'completed' upon success.
-                    
+
                 except Exception as e:
                     logger.error(f"Error processing scan {scan_id}: {e}")
                     await db.scans.update_one(
                         {"_id": scan_id},
-                        {"$set": {"status": "failed", "error": str(e)}}
+                        {"$set": {"status": "failed", "error": str(e)}},
                     )
 
                 self.queue.task_done()
                 logger.info(f"Worker {name} finished scan {scan_id}")
-                
+
             except asyncio.CancelledError:
                 logger.info(f"Worker {name} stopped")
                 break
             except Exception as e:
                 logger.error(f"Worker {name} crashed: {e}")
-                await asyncio.sleep(1) # Prevent tight loop if something is really broken
+                await asyncio.sleep(
+                    1
+                )  # Prevent tight loop if something is really broken
+
 
 # Global instance
 worker_manager = AnalysisWorkerManager(num_workers=settings.WORKER_COUNT)

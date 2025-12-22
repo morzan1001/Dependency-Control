@@ -7,9 +7,10 @@ import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { createWaiver, Finding } from "@/lib/api"
 import { toast } from "sonner"
-import { ShieldAlert, Container, FileCode, HardDrive, Layers } from "lucide-react"
+import { ShieldAlert, Container, FileCode, HardDrive, Layers, ExternalLink, FileText, Calendar, AlertTriangle, User, Building, ChevronDown, ChevronRight, Copy, Check, Clock, GitBranch, Mail, Package, Activity, Scale, BookOpen, Lightbulb, CheckCircle2, XCircle, Info } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { AxiosError } from "axios"
+import { useNavigate } from "react-router-dom"
 
 // Helper to get source info
 function getSourceInfo(sourceType?: string) {
@@ -27,29 +28,877 @@ function getSourceInfo(sourceType?: string) {
   }
 }
 
+// Component for rendering additional details based on finding type
+function AdditionalDetailsView({ details }: { details: Record<string, unknown> }) {
+  // Skip rendering for these redundant fields that are shown elsewhere
+  const skipFields = ['license', 'severity', 'type', 'message', 'id', 'component', 'version']
+  
+  // Filter out empty values and redundant fields
+  const filteredEntries = Object.entries(details).filter(([key, value]) => {
+    if (skipFields.includes(key)) return false
+    if (value === null || value === undefined || value === '') return false
+    if (Array.isArray(value) && value.length === 0) return false
+    if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0) return false
+    return true
+  })
+  
+  if (filteredEntries.length === 0) {
+    return null
+  }
+  
+  // Helper to render a value based on its type
+  const renderValue = (key: string, value: unknown) => {
+    // Handle license_url specially - render as link
+    if (key === 'license_url' && typeof value === 'string') {
+      return (
+        <a 
+          href={value} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-primary hover:underline flex items-center gap-1"
+        >
+          <ExternalLink className="h-3 w-3" />
+          View License
+        </a>
+      )
+    }
+    
+    // Handle URLs in any field
+    if (typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'))) {
+      return (
+        <a 
+          href={value} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-primary hover:underline break-all"
+        >
+          {value}
+        </a>
+      )
+    }
+    
+    // Handle dates
+    if (key.includes('date') || key === 'eol' || key === 'end_of_life') {
+      const dateStr = String(value)
+      try {
+        const date = new Date(dateStr)
+        if (!isNaN(date.getTime())) {
+          return <span>{date.toLocaleDateString()}</span>
+        }
+      } catch {
+        // Fall through to default
+      }
+    }
+    
+    // Handle booleans
+    if (typeof value === 'boolean') {
+      return <Badge variant={value ? "default" : "secondary"}>{value ? 'Yes' : 'No'}</Badge>
+    }
+    
+    // Handle arrays
+    if (Array.isArray(value)) {
+      return (
+        <div className="flex flex-wrap gap-1">
+          {value.map((item, i) => (
+            <Badge key={i} variant="outline" className="font-mono text-xs">
+              {String(item)}
+            </Badge>
+          ))}
+        </div>
+      )
+    }
+    
+    // Handle nested objects
+    if (typeof value === 'object' && value !== null) {
+      return (
+        <pre className="bg-muted p-2 rounded text-xs overflow-auto max-h-32">
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      )
+    }
+    
+    // Default: render as string
+    return <span className="break-all">{String(value)}</span>
+  }
+  
+  // Get appropriate icon for field
+  const getFieldIcon = (key: string) => {
+    if (key.includes('url') || key.includes('link')) return ExternalLink
+    if (key.includes('date') || key.includes('eol') || key.includes('end_of_life')) return Calendar
+    if (key.includes('license')) return FileText
+    if (key.includes('author') || key.includes('maintainer')) return User
+    if (key.includes('publisher') || key.includes('vendor')) return Building
+    if (key.includes('risk') || key.includes('warning')) return AlertTriangle
+    return null
+  }
+  
+  // Format field name for display
+  const formatFieldName = (key: string) => {
+    return key
+      .replace(/_/g, ' ')
+      .replace(/([A-Z])/g, ' $1')
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ')
+      .trim()
+  }
+  
+  return (
+    <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+      {filteredEntries.map(([key, value]) => {
+        const Icon = getFieldIcon(key)
+        return (
+          <div key={key} className="flex items-start gap-3">
+            {Icon && <Icon className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-muted-foreground">{formatFieldName(key)}</p>
+              <div className="text-sm">{renderValue(key, value)}</div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Types for maintainer risk details
+interface MaintainerRisk {
+  type: string;
+  severity_score: number;
+  message: string;
+  detail: string;
+}
+
+interface MaintainerInfo {
+  author?: string | null;
+  author_email?: string | null;
+  maintainer?: string | null;
+  maintainer_email?: string | null;
+  latest_release_date?: string | null;
+  days_since_release?: number | null;
+  release_count?: number | null;
+  home_page?: string | null;
+  project_urls?: Record<string, string> | null;
+}
+
+interface ScorecardContext {
+  overall_score?: number;
+  project_url?: string;
+  critical_issues?: string[];
+  maintenance_risk?: boolean;
+  has_vulnerabilities_issue?: boolean;
+}
+
+// Component for rendering OpenSSF Scorecard context on vulnerabilities
+function ScorecardContextBanner({ context }: { context: ScorecardContext }) {
+  if (!context || (context.overall_score === undefined && !context.critical_issues?.length)) {
+    return null
+  }
+
+  const score = context.overall_score ?? 0
+  const isLowScore = score < 5.0
+  const isVeryLowScore = score < 3.0
+  
+  // Determine banner color based on risk level
+  const getBannerStyle = () => {
+    if (isVeryLowScore || context.maintenance_risk) {
+      return "bg-red-50 border-red-200 text-red-800"
+    }
+    if (isLowScore) {
+      return "bg-amber-50 border-amber-200 text-amber-800"
+    }
+    return "bg-blue-50 border-blue-200 text-blue-700"
+  }
+  
+  const getScoreColor = () => {
+    if (isVeryLowScore) return "text-red-600"
+    if (isLowScore) return "text-amber-600"
+    return "text-green-600"
+  }
+
+  return (
+    <div className={`rounded-lg border p-3 space-y-2 ${getBannerStyle()}`}>
+      <div className="flex items-start gap-2">
+        <Activity className="h-4 w-4 mt-0.5 flex-shrink-0" />
+        <div className="flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium">OpenSSF Scorecard</span>
+            <span className={`text-sm font-bold ${getScoreColor()}`}>
+              {score.toFixed(1)}/10
+            </span>
+            {context.maintenance_risk && (
+              <Badge variant="destructive" className="text-xs">
+                Potentially Unmaintained
+              </Badge>
+            )}
+            {context.has_vulnerabilities_issue && (
+              <Badge variant="destructive" className="text-xs">
+                Has Open Vulnerabilities
+              </Badge>
+            )}
+          </div>
+          
+          {(isLowScore || context.maintenance_risk) && (
+            <p className="text-xs mt-1 opacity-90">
+              {context.maintenance_risk 
+                ? "This package may not receive security updates. Consider finding an actively maintained alternative."
+                : "This package has a low security score. Exercise caution and monitor closely."
+              }
+            </p>
+          )}
+          
+          {context.critical_issues && context.critical_issues.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {context.critical_issues.map((issue, idx) => (
+                <Badge key={idx} variant="outline" className="text-xs bg-white/50">
+                  {issue}
+                </Badge>
+              ))}
+            </div>
+          )}
+          
+          {context.project_url && (
+            <a 
+              href={context.project_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs mt-2 hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              View on OpenSSF Scorecard
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Component for rendering quality findings (OpenSSF Scorecard details)
+function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
+  const overallScore = details.overall_score as number
+  const failedChecks = (details.failed_checks as Array<{ name: string; score: number }>) || []
+  const criticalIssues = (details.critical_issues as string[]) || []
+  const projectUrl = details.project_url as string
+  const repository = details.repository as string
+  const recommendation = details.recommendation as string
+  const checksSummary = details.checks_summary as Record<string, number>
+  
+  const getScoreColor = (score: number) => {
+    if (score < 3) return "text-red-600"
+    if (score < 5) return "text-amber-600"
+    if (score < 7) return "text-yellow-600"
+    return "text-green-600"
+  }
+  
+  const getScoreBg = (score: number) => {
+    if (score < 3) return "bg-red-100"
+    if (score < 5) return "bg-amber-100"
+    if (score < 7) return "bg-yellow-100"
+    return "bg-green-100"
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Score Overview */}
+      <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
+        <div className={`flex items-center justify-center w-16 h-16 rounded-full ${getScoreBg(overallScore)}`}>
+          <span className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
+            {overallScore?.toFixed(1) ?? "?"}
+          </span>
+        </div>
+        <div className="flex-1">
+          <h4 className="font-medium">OpenSSF Scorecard</h4>
+          <p className="text-sm text-muted-foreground">
+            {overallScore >= 7 
+              ? "Good security practices"
+              : overallScore >= 5 
+                ? "Moderate security practices - room for improvement"
+                : overallScore >= 3 
+                  ? "Concerning security practices - review carefully"
+                  : "Poor security practices - high risk"
+            }
+          </p>
+          {repository && (
+            <a 
+              href={`https://github.com/${repository}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-primary mt-1 hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              {repository}
+            </a>
+          )}
+        </div>
+      </div>
+      
+      {/* Critical Issues */}
+      {criticalIssues.length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-red-500" />
+            Critical Issues
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {criticalIssues.map((issue, idx) => (
+              <Badge key={idx} variant="destructive" className="text-xs">
+                {issue}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Failed Checks */}
+      {failedChecks.length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">
+            Failed Checks ({failedChecks.length})
+          </h4>
+          <div className="grid grid-cols-2 gap-2">
+            {failedChecks.map((check, idx) => (
+              <div key={idx} className="flex items-center justify-between p-2 bg-muted/50 rounded border">
+                <span className="text-sm">{check.name}</span>
+                <Badge variant="outline" className={getScoreColor(check.score)}>
+                  {check.score}/10
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* All Checks Summary */}
+      {checksSummary && Object.keys(checksSummary).length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">
+            All Checks
+          </h4>
+          <div className="grid grid-cols-3 gap-1 text-xs">
+            {Object.entries(checksSummary)
+              .sort((a, b) => a[1] - b[1])
+              .map(([name, score]) => (
+                <div key={name} className="flex items-center justify-between p-1.5 bg-muted/30 rounded">
+                  <span className="truncate">{name}</span>
+                  <span className={`font-mono ${getScoreColor(score)}`}>{score}</span>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      )}
+      
+      {/* Recommendation */}
+      {recommendation && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <h4 className="text-sm font-medium text-blue-800 mb-1 flex items-center gap-2">
+            <Lightbulb className="h-4 w-4" />
+            Recommendations
+          </h4>
+          <p className="text-sm text-blue-700">
+            {recommendation.split(' • ').map((rec, idx) => (
+              <span key={idx} className="block">• {rec}</span>
+            ))}
+          </p>
+        </div>
+      )}
+      
+      {/* Project URL */}
+      {projectUrl && (
+        <a 
+          href={projectUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+        >
+          <ExternalLink className="h-4 w-4" />
+          View Full Scorecard Report
+        </a>
+      )}
+    </div>
+  )
+}
+
+// Component for rendering maintainer risk details
+function MaintainerRiskDetailsView({ details }: { details: Record<string, unknown> }) {
+  const risks = (details.risks as MaintainerRisk[]) || []
+  const maintainerInfo = (details.maintainer_info as MaintainerInfo) || {}
+  
+  const getRiskIcon = (type: string) => {
+    switch (type) {
+      case 'stale_package': return Clock
+      case 'infrequent_updates': return Activity
+      case 'free_email_maintainer': return Mail
+      case 'single_maintainer': return User
+      case 'archived_repo': return GitBranch
+      default: return AlertTriangle
+    }
+  }
+  
+  const getRiskBadgeVariant = (score: number): "destructive" | "default" | "secondary" => {
+    if (score >= 3) return "destructive"
+    if (score >= 2) return "default"
+    return "secondary"
+  }
+
+  const formatRiskType = (type: string) => {
+    return type
+      .split('_')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ')
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Risk Factors */}
+      {risks.length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">Risk Factors ({risks.length})</h4>
+          <div className="space-y-2">
+            {risks.map((risk, idx) => {
+              const Icon = getRiskIcon(risk.type)
+              return (
+                <div key={idx} className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg border">
+                  <Icon className="h-4 w-4 mt-0.5 text-muted-foreground flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">{formatRiskType(risk.type)}</span>
+                      <Badge variant={getRiskBadgeVariant(risk.severity_score)} className="text-xs">
+                        Score: {risk.severity_score}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{risk.message}</p>
+                    {risk.detail && (
+                      <p className="text-xs text-muted-foreground mt-1 italic">{risk.detail}</p>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+      
+      {/* Maintainer Info */}
+      {Object.keys(maintainerInfo).length > 0 && (
+        <div>
+          <h4 className="text-sm font-medium text-muted-foreground mb-2">Maintainer Information</h4>
+          <div className="bg-muted/50 rounded-lg p-4 border space-y-3">
+            <div className="grid grid-cols-2 gap-4">
+              {/* Author */}
+              {(maintainerInfo.author || maintainerInfo.author_email) && (
+                <div className="flex items-start gap-2">
+                  <User className="h-4 w-4 text-muted-foreground mt-0.5" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Author</p>
+                    <p className="text-sm font-medium">{maintainerInfo.author || 'Unknown'}</p>
+                    {maintainerInfo.author_email && (
+                      <p className="text-xs text-muted-foreground">{maintainerInfo.author_email}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Maintainer */}
+              {(maintainerInfo.maintainer || maintainerInfo.maintainer_email) && (
+                <div className="flex items-start gap-2">
+                  <Building className="h-4 w-4 text-muted-foreground mt-0.5" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Maintainer</p>
+                    <p className="text-sm font-medium">{maintainerInfo.maintainer || 'Unknown'}</p>
+                    {maintainerInfo.maintainer_email && (
+                      <p className="text-xs text-muted-foreground">{maintainerInfo.maintainer_email}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Last Release */}
+              {maintainerInfo.latest_release_date && (
+                <div className="flex items-start gap-2">
+                  <Calendar className="h-4 w-4 text-muted-foreground mt-0.5" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Last Release</p>
+                    <p className="text-sm font-medium">
+                      {new Date(maintainerInfo.latest_release_date!).toLocaleDateString()}
+                    </p>
+                    {maintainerInfo.days_since_release && (
+                      <p className="text-xs text-muted-foreground">
+                        {maintainerInfo.days_since_release} days ago
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Release Count */}
+              {maintainerInfo.release_count && (
+                <div className="flex items-start gap-2">
+                  <Package className="h-4 w-4 text-muted-foreground mt-0.5" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Total Releases</p>
+                    <p className="text-sm font-medium">{maintainerInfo.release_count}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            {/* Project URLs */}
+            {(maintainerInfo.home_page || maintainerInfo.project_urls) && (
+              <div className="pt-2 border-t">
+                <p className="text-xs text-muted-foreground mb-2">Project Links</p>
+                <div className="flex flex-wrap gap-2">
+                  {maintainerInfo.home_page && (
+                    <a 
+                      href={maintainerInfo.home_page} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Homepage
+                    </a>
+                  )}
+                  {maintainerInfo.project_urls && (
+                    Object.entries(maintainerInfo.project_urls).map(([name, url]) => (
+                      name !== 'Homepage' ? (
+                        <a 
+                          key={name}
+                          href={url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          {name}
+                        </a>
+                      ) : null
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// License category display configuration
+const LICENSE_CATEGORY_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: React.ElementType; description: string }> = {
+  permissive: {
+    label: 'Permissive',
+    color: 'text-green-600',
+    bgColor: 'bg-green-50 border-green-200',
+    icon: CheckCircle2,
+    description: 'No restrictions on commercial use'
+  },
+  public_domain: {
+    label: 'Public Domain',
+    color: 'text-green-600',
+    bgColor: 'bg-green-50 border-green-200',
+    icon: CheckCircle2,
+    description: 'No restrictions whatsoever'
+  },
+  weak_copyleft: {
+    label: 'Weak Copyleft',
+    color: 'text-blue-600',
+    bgColor: 'bg-blue-50 border-blue-200',
+    icon: Info,
+    description: 'Modifications to library must be shared'
+  },
+  strong_copyleft: {
+    label: 'Strong Copyleft',
+    color: 'text-orange-600',
+    bgColor: 'bg-orange-50 border-orange-200',
+    icon: AlertTriangle,
+    description: 'Entire work must be open-sourced if distributed'
+  },
+  network_copyleft: {
+    label: 'Network Copyleft',
+    color: 'text-red-600',
+    bgColor: 'bg-red-50 border-red-200',
+    icon: XCircle,
+    description: 'Source disclosure triggered by network access'
+  },
+  proprietary: {
+    label: 'Proprietary',
+    color: 'text-red-600',
+    bgColor: 'bg-red-50 border-red-200',
+    icon: XCircle,
+    description: 'May have commercial restrictions'
+  },
+  unknown: {
+    label: 'Unknown',
+    color: 'text-gray-600',
+    bgColor: 'bg-gray-50 border-gray-200',
+    icon: AlertTriangle,
+    description: 'License not recognized - manual review needed'
+  }
+}
+
+// Component for rendering license compliance details
+function LicenseDetailsView({ details }: { details: Record<string, unknown> }) {
+  const license = (details.license as string) || 'Unknown'
+  const licenseUrl = details.license_url as string | undefined
+  const category = (details.category as string) || 'unknown'
+  const explanation = details.explanation as string | undefined
+  const recommendation = details.recommendation as string | undefined
+  const obligations = (details.obligations as string[]) || []
+  const risks = (details.risks as string[]) || []
+  
+  const categoryConfig = LICENSE_CATEGORY_CONFIG[category] || LICENSE_CATEGORY_CONFIG.unknown
+  const CategoryIcon = categoryConfig.icon
+
+  return (
+    <div className="space-y-4">
+      {/* License & Category Header */}
+      <div className="flex items-start gap-4 p-4 rounded-lg border bg-muted/30">
+        <Scale className="h-8 w-8 text-muted-foreground flex-shrink-0" />
+        <div className="flex-1">
+          <div className="flex items-center gap-3 mb-2">
+            <span className="text-lg font-semibold">{license}</span>
+            {licenseUrl && (
+              <a 
+                href={licenseUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary hover:underline flex items-center gap-1 text-sm"
+              >
+                <ExternalLink className="h-3 w-3" />
+                View License
+              </a>
+            )}
+          </div>
+          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-md text-sm font-medium border ${categoryConfig.bgColor}`}>
+            <CategoryIcon className={`h-4 w-4 ${categoryConfig.color}`} />
+            <span className={categoryConfig.color}>{categoryConfig.label}</span>
+          </div>
+          <p className="text-sm text-muted-foreground mt-2">{categoryConfig.description}</p>
+        </div>
+      </div>
+
+      {/* Explanation */}
+      {explanation && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium flex items-center gap-2">
+            <BookOpen className="h-4 w-4 text-muted-foreground" />
+            What This Means
+          </h4>
+          <div className="p-4 rounded-lg border bg-muted/30">
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{explanation}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Recommendation */}
+      {recommendation && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium flex items-center gap-2">
+            <Lightbulb className="h-4 w-4 text-amber-500" />
+            Recommendation
+          </h4>
+          <div className="p-4 rounded-lg border border-amber-200 bg-amber-50/50">
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{recommendation}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Obligations & Risks */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Obligations */}
+        {obligations.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-blue-500" />
+              Obligations ({obligations.length})
+            </h4>
+            <div className="p-3 rounded-lg border bg-blue-50/50 space-y-2">
+              {obligations.map((obligation, idx) => (
+                <div key={idx} className="flex items-start gap-2 text-sm">
+                  <span className="text-blue-500 mt-0.5">•</span>
+                  <span>{obligation}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Risks */}
+        {risks.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-red-500" />
+              Risks ({risks.length})
+            </h4>
+            <div className="p-3 rounded-lg border border-red-200 bg-red-50/50 space-y-2">
+              {risks.map((risk, idx) => (
+                <div key={idx} className="flex items-start gap-2 text-sm">
+                  <span className="text-red-500 mt-0.5">⚠</span>
+                  <span>{risk}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 const getFindingTitle = (f: Finding) => f.id || "Finding Details";
 const getFindingPackage = (f: Finding) => f.component || "Unknown";
 const getFindingVersion = (f: Finding) => f.version || "Unknown";
 const getFindingId = (f: Finding) => f.id;
+
+// Copyable code block component
+function CopyableCode({ value, className = "" }: { value: string, className?: string }) {
+  const [copied, setCopied] = useState(false)
+  
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    await navigator.clipboard.writeText(value)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+  
+  return (
+    <div className={`flex items-start gap-2 ${className}`}>
+      <code className="flex-1 px-2 py-1 bg-background rounded text-xs font-mono break-all">
+        {value}
+      </code>
+      <Button 
+        variant="ghost" 
+        size="icon" 
+        className="h-6 w-6 flex-shrink-0"
+        onClick={handleCopy}
+      >
+        {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+      </Button>
+    </div>
+  )
+}
+
+// Origin badge with expandable details
+function OriginBadge({ finding }: { finding: Finding }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const sourceInfo = getSourceInfo(finding.source_type)
+  
+  if (!sourceInfo && !finding.purl && finding.direct === undefined) {
+    return null
+  }
+  
+  const IconComponent = sourceInfo?.icon || Container
+  const label = sourceInfo?.label || "Package"
+  const color = sourceInfo?.color || "text-muted-foreground"
+  const bgColor = sourceInfo?.bgColor || "bg-muted"
+  
+  return (
+    <div className="space-y-2">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border transition-colors hover:bg-opacity-80 ${bgColor}`}
+      >
+        <IconComponent className={`h-3.5 w-3.5 ${color}`} />
+        <span>Origin: {label}</span>
+        {isExpanded ? (
+          <ChevronDown className="h-3 w-3 ml-1" />
+        ) : (
+          <ChevronRight className="h-3 w-3 ml-1" />
+        )}
+      </button>
+      
+      {isExpanded && (
+        <div className="p-3 border rounded-lg bg-muted/30 space-y-3 text-sm">
+          {finding.direct !== undefined && (
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Dependency Type:</span>
+              <Badge variant={finding.direct ? "default" : "secondary"}>
+                {finding.direct ? "Direct" : "Transitive"}
+              </Badge>
+            </div>
+          )}
+          
+          {finding.source_target && (
+            <div>
+              <span className="text-muted-foreground block mb-1">Source:</span>
+              <CopyableCode value={finding.source_target} />
+            </div>
+          )}
+          
+          {finding.layer_digest && (
+            <div>
+              <span className="text-muted-foreground block mb-1">Container Layer:</span>
+              <CopyableCode value={finding.layer_digest} />
+            </div>
+          )}
+          
+          {finding.purl && (
+            <div>
+              <span className="text-muted-foreground block mb-1">Package URL (PURL):</span>
+              <CopyableCode value={finding.purl} />
+            </div>
+          )}
+          
+          {finding.locations && finding.locations.length > 0 && (
+            <div>
+              <span className="text-muted-foreground block mb-1">File Locations ({finding.locations.length}):</span>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {finding.locations.map((loc, i) => (
+                  <code key={i} className="block px-2 py-0.5 bg-background rounded text-xs font-mono break-all">
+                    {loc}
+                  </code>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {finding.found_by && (
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Found By:</span>
+              <Badge variant="outline" className="text-xs">
+                {finding.found_by}
+              </Badge>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface FindingDetailsModalProps {
     finding: Finding | null
     isOpen: boolean
     onClose: () => void
     projectId: string
+    scanId?: string
     onSelectFinding?: (id: string) => void
 }
 
-export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSelectFinding }: FindingDetailsModalProps) {
+export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, onSelectFinding }: FindingDetailsModalProps) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
     const [selectedVulnId, setSelectedVulnId] = useState<string | null>(null)
     const { hasPermission } = useAuth()
+    const navigate = useNavigate()
     
     if (!finding) return null
 
     const handleWaive = (vulnId?: string) => {
         setSelectedVulnId(vulnId || null)
         setShowWaiverForm(true)
+    }
+    
+    // Navigate to Raw tab with SBOM anchor
+    const handleSbomClick = (source: string) => {
+        if (!scanId) return
+        // Extract SBOM index from source name (e.g., "SBOM #1" -> 0)
+        const match = source.match(/SBOM #(\d+)/i)
+        const sbomIndex = match ? parseInt(match[1], 10) - 1 : 0
+        onClose()
+        navigate(`/projects/${projectId}/scans/${scanId}?tab=raw&sbom=${sbomIndex}`)
     }
 
     return (
@@ -120,14 +969,36 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
                                 )}
                                 {finding.found_in && finding.found_in.length > 0 && (
                                     <div className="col-span-2">
-                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Found In Sources</h4>
-                                        <div className="flex flex-wrap gap-2 max-h-[100px] overflow-y-auto">
-                                            {finding.found_in.map((source) => (
-                                                <Badge key={source} variant="secondary" className="font-mono text-xs">
-                                                    {source}
-                                                </Badge>
-                                            ))}
+                                        <div className="flex items-center gap-3 mb-1">
+                                            <h4 className="text-sm font-medium text-muted-foreground">Found In Sources</h4>
+                                            {/* Origin Badge - clickable to expand details */}
+                                            {finding.source_type && (
+                                                <OriginBadge finding={finding} />
+                                            )}
                                         </div>
+                                        <div className="flex flex-wrap gap-2 max-h-[100px] overflow-y-auto">
+                                            {finding.found_in.map((source) => {
+                                                // Check if this looks like an SBOM reference
+                                                const isSbomRef = source.match(/SBOM #\d+/i) || !source.includes('/')
+                                                return (
+                                                    <Badge 
+                                                        key={source} 
+                                                        variant="secondary" 
+                                                        className={`font-mono text-xs ${scanId && isSbomRef ? 'cursor-pointer hover:bg-primary/20 transition-colors' : ''}`}
+                                                        onClick={scanId && isSbomRef ? () => handleSbomClick(source) : undefined}
+                                                    >
+                                                        {source}
+                                                        {scanId && isSbomRef && <ExternalLink className="h-3 w-3 ml-1" />}
+                                                    </Badge>
+                                                )
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                                {/* Origin Badge for findings without found_in */}
+                                {(!finding.found_in || finding.found_in.length === 0) && finding.source_type && (
+                                    <div className="col-span-2">
+                                        <OriginBadge finding={finding} />
                                     </div>
                                 )}
                                 {finding.related_findings && finding.related_findings.length > 0 && (
@@ -160,94 +1031,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
                                     </div>
                                 )}
                             </div>
-
-                            {/* Source Information Section */}
-                            {(finding.source_type || finding.purl || finding.direct !== undefined) && (
-                                <div className="p-4 border rounded-lg bg-muted/30 space-y-3">
-                                    <h4 className="text-sm font-medium flex items-center gap-2">
-                                        {(() => {
-                                            const sourceInfo = getSourceInfo(finding.source_type)
-                                            if (sourceInfo) {
-                                                const IconComponent = sourceInfo.icon
-                                                return (
-                                                    <>
-                                                        <IconComponent className={`h-4 w-4 ${sourceInfo.color}`} />
-                                                        <span>Origin: {sourceInfo.label}</span>
-                                                    </>
-                                                )
-                                            }
-                                            return <span>Package Origin</span>
-                                        })()}
-                                    </h4>
-                                    
-                                    <div className="grid grid-cols-2 gap-3 text-sm">
-                                        {finding.direct !== undefined && (
-                                            <div>
-                                                <span className="text-muted-foreground">Dependency Type:</span>
-                                                <Badge variant={finding.direct ? "default" : "secondary"} className="ml-2">
-                                                    {finding.direct ? "Direct" : "Transitive"}
-                                                </Badge>
-                                            </div>
-                                        )}
-                                        
-                                        {finding.source_target && (
-                                            <div className="col-span-2">
-                                                <span className="text-muted-foreground">Source:</span>
-                                                <code className="ml-2 px-2 py-0.5 bg-background rounded text-xs font-mono break-all">
-                                                    {finding.source_target}
-                                                </code>
-                                            </div>
-                                        )}
-                                        
-                                        {finding.layer_digest && (
-                                            <div className="col-span-2">
-                                                <span className="text-muted-foreground">Container Layer:</span>
-                                                <code className="ml-2 px-2 py-0.5 bg-background rounded text-xs font-mono">
-                                                    {finding.layer_digest.length > 40 
-                                                        ? `${finding.layer_digest.substring(0, 40)}...` 
-                                                        : finding.layer_digest}
-                                                </code>
-                                            </div>
-                                        )}
-                                        
-                                        {finding.purl && (
-                                            <div className="col-span-2">
-                                                <span className="text-muted-foreground">Package URL:</span>
-                                                <code className="ml-2 px-2 py-0.5 bg-background rounded text-xs font-mono break-all">
-                                                    {finding.purl}
-                                                </code>
-                                            </div>
-                                        )}
-                                        
-                                        {finding.locations && finding.locations.length > 0 && (
-                                            <div className="col-span-2">
-                                                <span className="text-muted-foreground">File Locations:</span>
-                                                <div className="mt-1 space-y-1">
-                                                    {finding.locations.slice(0, 5).map((loc, i) => (
-                                                        <code key={i} className="block px-2 py-0.5 bg-background rounded text-xs font-mono truncate">
-                                                            {loc}
-                                                        </code>
-                                                    ))}
-                                                    {finding.locations.length > 5 && (
-                                                        <span className="text-xs text-muted-foreground">
-                                                            +{finding.locations.length - 5} more locations
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        )}
-                                        
-                                        {finding.found_by && (
-                                            <div>
-                                                <span className="text-muted-foreground">Found By:</span>
-                                                <Badge variant="outline" className="ml-2 text-xs">
-                                                    {finding.found_by}
-                                                </Badge>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
 
                             {finding.description && finding.type !== 'vulnerability' && (
                                 <div>
@@ -357,19 +1140,19 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
                                                             {(vuln.details?.published_date || finding.details?.published_date) && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium text-muted-foreground">Published:</span>
-                                                                    <span>{new Date(vuln.details?.published_date || finding.details?.published_date).toLocaleDateString()}</span>
+                                                                    <span>{new Date(vuln.details?.published_date ?? finding.details?.published_date ?? '').toLocaleDateString()}</span>
                                                                 </div>
                                                             )}
-                                                            {(vuln.details?.cwe_ids || finding.details?.cwe_ids) && (vuln.details?.cwe_ids || finding.details?.cwe_ids).length > 0 && (
+                                                            {((vuln.details?.cwe_ids ?? finding.details?.cwe_ids)?.length ?? 0) > 0 && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium text-muted-foreground">CWE:</span>
-                                                                    <span className="font-mono">{(vuln.details?.cwe_ids || finding.details?.cwe_ids).join(', ')}</span>
+                                                                    <span className="font-mono">{(vuln.details?.cwe_ids ?? finding.details?.cwe_ids ?? []).join(', ')}</span>
                                                                 </div>
                                                             )}
-                                                            {(vuln.aliases || finding.aliases) && (vuln.aliases || finding.aliases).length > 0 && (
+                                                            {((vuln.aliases ?? finding.aliases)?.length ?? 0) > 0 && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium text-muted-foreground">Aliases:</span>
-                                                                    <span className="font-mono">{(vuln.aliases || finding.aliases).join(', ')}</span>
+                                                                    <span className="font-mono">{(vuln.aliases ?? finding.aliases ?? []).join(', ')}</span>
                                                                 </div>
                                                             )}
                                                             {(vuln.scanners || finding.scanners) && (
@@ -387,15 +1170,44 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
                                             </div>
                                         );
                                     })()}
+                                    
+                                    {/* Show Scorecard context if available */}
+                                    {finding.details?.scorecard_context && (
+                                        <ScorecardContextBanner context={finding.details.scorecard_context as ScorecardContext} />
+                                    )}
+                                    
+                                    {/* Show maintenance warning */}
+                                    {finding.details?.maintenance_warning && (
+                                        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800">
+                                            <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                            <p className="text-sm">
+                                                {finding.details.maintenance_warning_text || "This package may have maintenance concerns."}
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
-                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && finding.type !== 'outdated' && (
+                            {/* License Compliance findings */}
+                            {finding.type === 'license' && finding.details && (
+                                <LicenseDetailsView details={finding.details} />
+                            )}
+
+                            {/* Quality findings (OpenSSF Scorecard) */}
+                            {finding.type === 'quality' && finding.details?.overall_score !== undefined && (
+                                <QualityDetailsView details={finding.details} />
+                            )}
+
+                            {/* Maintainer Risk / Legacy quality findings - handle legacy 'other' type with maintainer_risk data */}
+                            {((finding.type === 'quality' && !finding.details?.overall_score && finding.details?.risks) || 
+                              (finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info)) && finding.details && (
+                                <MaintainerRiskDetailsView details={finding.details} />
+                            )}
+
+                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && finding.type !== 'outdated' && finding.type !== 'quality' && finding.type !== 'license' && !(finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info) && (
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-2">Additional Details</h4>
-                                    <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">
-                                        {JSON.stringify(finding.details, null, 2)}
-                                    </pre>
+                                    <AdditionalDetailsView details={finding.details} />
                                 </div>
                             )}
                         </div>

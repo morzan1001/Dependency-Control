@@ -1,32 +1,35 @@
-from typing import Dict, Any, List
-from datetime import datetime, timezone
-import uuid
 import asyncio
-import logging
 import json
+import logging
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from app.services.analyzers import (
-    Analyzer, 
-    EndOfLifeAnalyzer, 
-    OpenSourceMalwareAnalyzer, 
-    TrivyAnalyzer,
-    OSVAnalyzer,
-    DepsDevAnalyzer,
-    LicenseAnalyzer,
-    GrypeAnalyzer,
-    OutdatedAnalyzer,
-    TyposquattingAnalyzer,
-    HashVerificationAnalyzer,
-    MaintainerRiskAnalyzer
-)
-from app.services.notifications import notification_service
-from app.models.project import Project
-from app.models.system import SystemSettings
-from app.models.stats import Stats
+
 from app.models.finding_record import FindingRecord
+from app.models.project import Project
+from app.models.stats import Stats
+from app.models.system import SystemSettings
 from app.services.aggregator import ResultAggregator
+from app.services.analyzers import (
+    Analyzer,
+    DepsDevAnalyzer,
+    EndOfLifeAnalyzer,
+    GrypeAnalyzer,
+    HashVerificationAnalyzer,
+    LicenseAnalyzer,
+    MaintainerRiskAnalyzer,
+    OpenSourceMalwareAnalyzer,
+    OSVAnalyzer,
+    OutdatedAnalyzer,
+    TrivyAnalyzer,
+    TyposquattingAnalyzer,
+)
 from app.services.gitlab import GitLabService
+from app.services.notifications import notification_service
+from app.services.sbom_parser import ParsedDependency, parse_sbom
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +44,9 @@ analyzers: Dict[str, Analyzer] = {
     "outdated_packages": OutdatedAnalyzer(),
     "typosquatting": TyposquattingAnalyzer(),
     "hash_verification": HashVerificationAnalyzer(),
-    "maintainer_risk": MaintainerRiskAnalyzer()
+    "maintainer_risk": MaintainerRiskAnalyzer(),
 }
+
 
 async def _carry_over_external_results(scan_id: str, db):
     """
@@ -50,71 +54,100 @@ async def _carry_over_external_results(scan_id: str, db):
     that are NOT part of the internal SBOM analysis (e.g. Secret Scanning, SAST).
     """
     current_scan = await db.scans.find_one({"_id": scan_id})
-    if not (current_scan and current_scan.get("is_rescan") and current_scan.get("original_scan_id")):
+    if not (
+        current_scan
+        and current_scan.get("is_rescan")
+        and current_scan.get("original_scan_id")
+    ):
         return
 
     original_scan_id = current_scan.get("original_scan_id")
-    logger.info(f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}")
-    
+    logger.info(
+        f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}"
+    )
+
     internal_analyzer_names = list(analyzers.keys())
-    
+
     # Find results from the original scan that are NOT internal analyzers
-    cursor = db.analysis_results.find({
-        "scan_id": original_scan_id,
-        "analyzer_name": {"$nin": internal_analyzer_names}
-    })
-    
+    cursor = db.analysis_results.find(
+        {
+            "scan_id": original_scan_id,
+            "analyzer_name": {"$nin": internal_analyzer_names},
+        }
+    )
+
     async for old_result in cursor:
         # Avoid duplicates if we already copied them (e.g. if worker restarted)
-        exists = await db.analysis_results.find_one({
-            "scan_id": scan_id,
-            "analyzer_name": old_result["analyzer_name"],
-            "result": old_result["result"] # Simple content check
-        })
-        
+        exists = await db.analysis_results.find_one(
+            {
+                "scan_id": scan_id,
+                "analyzer_name": old_result["analyzer_name"],
+                "result": old_result["result"],  # Simple content check
+            }
+        )
+
         if not exists:
             new_result = old_result.copy()
             new_result["_id"] = str(uuid.uuid4())
             new_result["scan_id"] = scan_id
             # Update timestamp to reflect this is part of the new scan record
             new_result["created_at"] = datetime.now(timezone.utc)
-            
+
             await db.analysis_results.insert_one(new_result)
             logger.info(f"Carried over result for {old_result['analyzer_name']}")
 
-async def process_analyzer(analyzer_name: str, analyzer: Analyzer, sbom: Dict[str, Any], scan_id: str, db, aggregator: ResultAggregator, settings: Dict[str, Any] = None, fallback_source: str = "unknown-sbom") -> str:
+
+async def process_analyzer(
+    analyzer_name: str,
+    analyzer: Analyzer,
+    sbom: Dict[str, Any],
+    scan_id: str,
+    db,
+    aggregator: ResultAggregator,
+    settings: Dict[str, Any] = None,
+    fallback_source: str = "unknown-sbom",
+    parsed_components: List[Dict[str, Any]] = None,
+) -> str:
     try:
-        result = await analyzer.analyze(sbom, settings=settings)
-        
+        # Pass parsed components to analyzer if available
+        result = await analyzer.analyze(
+            sbom, settings=settings, parsed_components=parsed_components
+        )
+
         # Store raw result
-        await db.analysis_results.insert_one({
-            "_id": str(uuid.uuid4()),
-            "scan_id": scan_id,
-            "analyzer_name": analyzer_name,
-            "result": result,
-            "created_at": datetime.now(timezone.utc)
-        })
-        
+        await db.analysis_results.insert_one(
+            {
+                "_id": str(uuid.uuid4()),
+                "scan_id": scan_id,
+                "analyzer_name": analyzer_name,
+                "result": result,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+
         # Extract source name from SBOM metadata
         source = fallback_source
         if sbom.get("metadata") and sbom["metadata"].get("component"):
-             source = sbom["metadata"]["component"].get("name", fallback_source)
+            source = sbom["metadata"]["component"].get("name", fallback_source)
         elif sbom.get("serialNumber"):
-             source = sbom.get("serialNumber")
+            source = sbom.get("serialNumber")
 
         # Aggregate result
         aggregator.aggregate(analyzer_name, result, source=source)
-        
+
         logger.info(f"Analysis {analyzer_name} completed for {scan_id}")
         return f"{analyzer_name}: Success"
     except Exception as e:
         logger.error(f"Analysis {analyzer_name} failed: {e}")
         return f"{analyzer_name}: Failed"
 
-async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db):
+
+async def run_analysis(
+    scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db
+):
     """
     Orchestrates the analysis process for a given SBOM scan.
-    
+
     1. Iterates through requested analyzers (e.g., trivy, grype, osv).
     2. Executes each analyzer asynchronously.
     3. Stores raw results in the 'analysis_results' collection.
@@ -125,14 +158,13 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregator = ResultAggregator()
     results_summary = []
-    
+
     # 0. Cleanup previous results for internal analyzers
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
     if internal_analyzers:
-        await db.analysis_results.delete_many({
-            "scan_id": scan_id,
-            "analyzer_name": {"$in": internal_analyzers}
-        })
+        await db.analysis_results.delete_many(
+            {"scan_id": scan_id, "analyzer_name": {"$in": internal_analyzers}}
+        )
 
     # Check if this is a re-scan and carry over external results (e.g. Secret Scanning, SAST)
     await _carry_over_external_results(scan_id, db)
@@ -147,7 +179,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Process SBOMs sequentially to save memory
     for index, item in enumerate(sboms):
         current_sbom = None
-        
+
         # Resolve GridFS reference if needed
         if isinstance(item, dict) and item.get("type") == "gridfs_reference":
             gridfs_id = item.get("gridfs_id")
@@ -156,9 +188,14 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                 content = await stream.read()
                 current_sbom = json.loads(content)
             except Exception as gridfs_err:
-                logger.error(f"Failed to fetch SBOM from GridFS {gridfs_id}: {gridfs_err}")
+                logger.error(
+                    f"Failed to fetch SBOM from GridFS {gridfs_id}: {gridfs_err}"
+                )
                 # Log a system warning finding
-                aggregator.aggregate("system", {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"})
+                aggregator.aggregate(
+                    "system",
+                    {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"},
+                )
                 continue
         else:
             current_sbom = item
@@ -169,18 +206,45 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         # Determine fallback source name
         fallback_source = f"SBOM #{index + 1}"
 
+        # Parse SBOM once using the unified parser - all analyzers use these normalized components
+        parsed_components = []
+        try:
+            parsed_sbom = parse_sbom(current_sbom)
+            parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
+            logger.info(
+                f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}"
+            )
+        except Exception as parse_err:
+            logger.warning(
+                f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing"
+            )
+
         # Run analyzers for THIS SBOM concurrently
         tasks = []
         for analyzer_name in active_analyzers:
             if analyzer_name in analyzers:
                 analyzer = analyzers[analyzer_name]
-                tasks.append(process_analyzer(analyzer_name, analyzer, current_sbom, scan_id, db, aggregator, settings=system_settings, fallback_source=fallback_source))
-        
+                tasks.append(
+                    process_analyzer(
+                        analyzer_name,
+                        analyzer,
+                        current_sbom,
+                        scan_id,
+                        db,
+                        aggregator,
+                        settings=system_settings,
+                        fallback_source=fallback_source,
+                        parsed_components=(
+                            parsed_components if parsed_components else None
+                        ),
+                    )
+                )
+
         # Wait for this batch to finish before moving to the next SBOM
         # This ensures we only hold one SBOM in memory at a time
         batch_results = await asyncio.gather(*tasks)
         results_summary.extend(batch_results)
-        
+
         # Explicitly release memory
         del current_sbom
 
@@ -192,14 +256,37 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         # Only aggregate if it's NOT one of the internal analyzers we just ran
         # (ResultAggregator handles deduplication, but let's be explicit)
         if name not in analyzers:
-             aggregator.aggregate(name, res["result"])
+            aggregator.aggregate(name, res["result"])
 
     # Save aggregated findings to the scan document
     aggregated_findings = aggregator.get_findings()
-    
+
+    # Get aggregated dependency enrichments (merged from all sources)
+    dependency_enrichments = aggregator.get_dependency_enrichments()
+
     # Fetch scan to get project_id
     scan_doc = await db.scans.find_one({"_id": scan_id})
     project_id = scan_doc.get("project_id") if scan_doc else None
+
+    # Enrich dependencies with aggregated data from all scanners
+    # This includes: deps.dev metadata, license analysis, etc.
+    if dependency_enrichments:
+        logger.info(
+            f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata"
+        )
+
+        for key, enrichment_data in dependency_enrichments.items():
+            # key format: "name@version"
+            parts = key.rsplit("@", 1)
+            if len(parts) != 2:
+                continue
+            name, version = parts
+
+            if enrichment_data:
+                await db.dependencies.update_many(
+                    {"scan_id": scan_id, "name": name, "version": version},
+                    {"$set": enrichment_data},
+                )
 
     # Fetch waivers
     waivers = []
@@ -207,12 +294,19 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         waivers = await db.waivers.find({"project_id": project_id}).to_list(length=None)
 
     # Filter active waivers
-    active_waivers = [w for w in waivers if not (w.get("expiration_date") and w["expiration_date"] < datetime.now(timezone.utc))]
+    active_waivers = [
+        w
+        for w in waivers
+        if not (
+            w.get("expiration_date")
+            and w["expiration_date"] < datetime.now(timezone.utc)
+        )
+    ]
 
     # Save Findings to 'findings' collection (Point B)
     # First, clear old findings for this scan (idempotency)
     await db.findings.delete_many({"scan_id": scan_id})
-    
+
     findings_to_insert = []
     for f in aggregated_findings:
         # Convert Finding to FindingRecord dict
@@ -220,10 +314,10 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         record = f.model_dump()
         record["scan_id"] = scan_id
         record["project_id"] = project_id
-        record["finding_id"] = f.id # Map logical ID
-        record["_id"] = str(uuid.uuid4()) # New Mongo ID
+        record["finding_id"] = f.id  # Map logical ID
+        record["_id"] = str(uuid.uuid4())  # New Mongo ID
         findings_to_insert.append(record)
-        
+
     if findings_to_insert:
         await db.findings.insert_many(findings_to_insert)
 
@@ -238,46 +332,59 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             query["version"] = waiver["package_version"]
         if waiver.get("finding_type"):
             query["type"] = waiver["finding_type"]
-            
+
         await db.findings.update_many(
-            query, 
-            {"$set": {"waived": True, "waiver_reason": waiver.get("reason")}}
+            query, {"$set": {"waived": True, "waiver_reason": waiver.get("reason")}}
         )
 
-    ignored_count = await db.findings.count_documents({"scan_id": scan_id, "waived": True})
+    ignored_count = await db.findings.count_documents(
+        {"scan_id": scan_id, "waived": True}
+    )
 
     # Calculate stats via Aggregation (Optimization: Calculation in DB)
     pipeline = [
         {"$match": {"scan_id": scan_id, "waived": False}},
-        {"$project": {
-            "severity": 1,
-            "cvss_score": "$details.cvss_score",
-            "calculated_score": {
-                "$switch": {
-                    "branches": [
-                        {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 10.0},
-                        {"case": {"$eq": ["$severity", "HIGH"]}, "then": 7.5},
-                        {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 4.0},
-                        {"case": {"$eq": ["$severity", "LOW"]}, "then": 1.0}
-                    ],
-                    "default": 0.0
-                }
+        {
+            "$project": {
+                "severity": 1,
+                "cvss_score": "$details.cvss_score",
+                "calculated_score": {
+                    "$switch": {
+                        "branches": [
+                            {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 10.0},
+                            {"case": {"$eq": ["$severity", "HIGH"]}, "then": 7.5},
+                            {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 4.0},
+                            {"case": {"$eq": ["$severity", "LOW"]}, "then": 1.0},
+                        ],
+                        "default": 0.0,
+                    }
+                },
             }
-        }},
-        {"$group": {
-            "_id": None,
-            "critical": {"$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}},
-            "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
-            "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
-            "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
-            "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
-            "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
-            "risk_score": {"$sum": {"$toDouble": {"$ifNull": ["$cvss_score", "$calculated_score"]}}}
-        }}
+        },
+        {
+            "$group": {
+                "_id": None,
+                "critical": {
+                    "$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}
+                },
+                "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
+                "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
+                "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
+                "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
+                "unknown": {
+                    "$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}
+                },
+                "risk_score": {
+                    "$sum": {
+                        "$toDouble": {"$ifNull": ["$cvss_score", "$calculated_score"]}
+                    }
+                },
+            }
+        },
     ]
 
     stats_result = await db.findings.aggregate(pipeline).to_list(1)
-    
+
     stats = Stats()
     if stats_result:
         res = stats_result[0]
@@ -295,24 +402,25 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         "status": "completed",
         "findings_count": len(aggregated_findings),
         "stats": stats.model_dump(),
-        "completed_at": datetime.now(timezone.utc)
+        "completed_at": datetime.now(timezone.utc),
     }
 
     await db.scans.update_one(
         {"_id": scan_id},
-        {"$set": {
-            "status": "completed", 
-            "findings_count": len(aggregated_findings),
-            "ignored_count": ignored_count,
-            "stats": stats.model_dump(),
-            "completed_at": datetime.now(timezone.utc),
-            # If it's an original scan, it is its own latest run
-            "latest_run": latest_run_summary
+        {
+            "$set": {
+                "status": "completed",
+                "findings_count": len(aggregated_findings),
+                "ignored_count": ignored_count,
+                "stats": stats.model_dump(),
+                "completed_at": datetime.now(timezone.utc),
+                # If it's an original scan, it is its own latest run
+                "latest_run": latest_run_summary,
+            },
+            "$unset": {"findings_summary": ""},  # Remove legacy field if it exists
         },
-        "$unset": {"findings_summary": ""} # Remove legacy field if it exists
-        }
     )
-    
+
     # Update Project stats
     scan = await db.scans.find_one({"_id": scan_id})
     if scan:
@@ -321,19 +429,23 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         if scan.get("is_rescan") and scan.get("original_scan_id"):
             await db.scans.update_one(
                 {"_id": scan["original_scan_id"]},
-                {"$set": {
-                    "latest_rescan_id": scan_id,
-                    "latest_run": latest_run_summary
-                }}
+                {
+                    "$set": {
+                        "latest_rescan_id": scan_id,
+                        "latest_run": latest_run_summary,
+                    }
+                },
             )
 
         await db.projects.update_one(
             {"_id": scan["project_id"]},
-            {"$set": {
-                "stats": stats.model_dump(), 
-                "last_scan_at": datetime.now(timezone.utc),
-                "latest_scan_id": scan_id
-            }}
+            {
+                "$set": {
+                    "stats": stats.model_dump(),
+                    "last_scan_at": datetime.now(timezone.utc),
+                    "latest_scan_id": scan_id,
+                }
+            },
         )
 
     # GitLab Merge Request Decoration
@@ -343,26 +455,36 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             project_data = await db.projects.find_one({"_id": scan["project_id"]})
             if project_data:
                 project = Project(**project_data)
-                
-                if project.gitlab_mr_comments_enabled and project.gitlab_project_id and scan.get("commit_hash"):
+
+                if (
+                    project.gitlab_mr_comments_enabled
+                    and project.gitlab_project_id
+                    and scan.get("commit_hash")
+                ):
                     # Ensure we have a valid SystemSettings object
                     settings_obj = SystemSettings(**system_settings)
                     gitlab_service = GitLabService(settings_obj)
-                    
-                    mrs = await gitlab_service.get_merge_requests_for_commit(project.gitlab_project_id, scan["commit_hash"])
-                    
+
+                    mrs = await gitlab_service.get_merge_requests_for_commit(
+                        project.gitlab_project_id, scan["commit_hash"]
+                    )
+
                     if mrs:
                         # Construct Markdown Comment
                         # Use dashboard_url from settings if available, otherwise try to infer or use a placeholder
-                        dashboard_url = getattr(settings_obj, "dashboard_url", "http://localhost:5173")
-                        scan_url = f"{dashboard_url}/projects/{project.id}/scans/{scan_id}"
-                        
+                        dashboard_url = getattr(
+                            settings_obj, "dashboard_url", "http://localhost:5173"
+                        )
+                        scan_url = (
+                            f"{dashboard_url}/projects/{project.id}/scans/{scan_id}"
+                        )
+
                         status_emoji = "✅"
                         if stats.risk_score > 0:
                             status_emoji = "⚠️"
                         if stats.critical > 0 or stats.high > 0:
                             status_emoji = "🚨"
-                            
+
                         comment_body = f"""
 ### {status_emoji} Dependency Control Scan Results
 
@@ -379,8 +501,12 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 [View Full Report]({scan_url})
 """
                         for mr in mrs:
-                            await gitlab_service.post_merge_request_comment(project.gitlab_project_id, mr["iid"], comment_body)
-                            logger.info(f"Posted scan results to MR !{mr['iid']} for project {project.name}")
+                            await gitlab_service.post_merge_request_comment(
+                                project.gitlab_project_id, mr["iid"], comment_body
+                            )
+                            logger.info(
+                                f"Posted scan results to MR !{mr['iid']} for project {project.name}"
+                            )
 
     except Exception as e:
         logger.error(f"Failed to decorate GitLab MR: {e}")
@@ -393,12 +519,12 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             if project_data:
                 project = Project(**project_data)
                 await notification_service.notify_project_members(
-                    project=project, 
-                    event_type="analysis_completed", 
-                    subject=f"Analysis Completed: {project.name}", 
-                    message=f"Scan {scan_id} completed.\nFound {len(aggregated_findings)} issues.\nResults:\n" + "\n".join(results_summary),
-                    db=db
+                    project=project,
+                    event_type="analysis_completed",
+                    subject=f"Analysis Completed: {project.name}",
+                    message=f"Scan {scan_id} completed.\nFound {len(aggregated_findings)} issues.\nResults:\n"
+                    + "\n".join(results_summary),
+                    db=db,
                 )
     except Exception as e:
         logger.error(f"Failed to send notifications: {e}")
-

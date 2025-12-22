@@ -1,6 +1,9 @@
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+
 from app.schemas.ingest import BaseIngest
+
 
 class TruffleHogFinding(BaseModel):
     SourceMetadata: Optional[Dict[str, Any]] = None
@@ -14,6 +17,7 @@ class TruffleHogFinding(BaseModel):
     Redacted: Optional[str] = None
     ExtraData: Optional[Dict[str, Any]] = None
     StructuredData: Optional[Dict[str, Any]] = None
+
 
 class TruffleHogIngest(BaseIngest):
     findings: List[TruffleHogFinding]

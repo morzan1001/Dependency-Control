@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { searchDependenciesAdvanced, getDependencyTypes, getProjects, AdvancedSearchResult } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -21,11 +22,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Search, Package, ExternalLink, Filter, X, Container, FileCode, HardDrive, Eye } from 'lucide-react'
+import { Search, Package, ExternalLink, Filter, X, Container, FileCode, HardDrive, Eye, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
 import { cn } from '@/lib/utils'
 import { DependencyDetailsDialog } from './DependencyDetailsDialog'
+import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants'
 
 // Helper to get source icon and label
 function getSourceInfo(sourceType?: string) {
@@ -56,7 +58,29 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const [selectedDependency, setSelectedDependency] = useState<AdvancedSearchResult | null>(null)
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
 
+  const parentRef = useRef<HTMLDivElement>(null)
+  const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
+  const [tableOffset, setTableOffset] = useState(0)
+
   const debouncedQuery = useDebounce(query, 300)
+
+  useLayoutEffect(() => {
+    const container = document.querySelector('main') as HTMLElement
+    setScrollContainer(container)
+
+    if (container && parentRef.current) {
+      const updateOffset = () => {
+        if (parentRef.current && container) {
+          const rect = parentRef.current.getBoundingClientRect()
+          const containerRect = container.getBoundingClientRect()
+          setTableOffset(rect.top - containerRect.top + container.scrollTop)
+        }
+      }
+      updateOffset()
+      window.addEventListener('resize', updateOffset)
+      return () => window.removeEventListener('resize', updateOffset)
+    }
+  }, [])
 
   const { data: types } = useQuery({
     queryKey: ['dependency-types'],
@@ -68,17 +92,68 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
     queryFn: () => getProjects(undefined, 0, 100),
   })
 
-  const { data: results, isLoading } = useQuery({
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading
+  } = useInfiniteQuery({
     queryKey: ['advanced-search', debouncedQuery, version, selectedType, selectedSourceType, hasVulnerabilities, selectedProject],
-    queryFn: () => searchDependenciesAdvanced(debouncedQuery, {
-      version: version || undefined,
-      type: selectedType !== '__all__' ? selectedType : undefined,
-      source_type: selectedSourceType !== '__all__' ? selectedSourceType : undefined,
-      has_vulnerabilities: hasVulnerabilities === '__all__' ? undefined : hasVulnerabilities === 'true',
-      project_ids: selectedProject !== '__all__' ? [selectedProject] : undefined,
-    }),
+    queryFn: async ({ pageParam = 0 }) => {
+      return searchDependenciesAdvanced(debouncedQuery, {
+        version: version || undefined,
+        type: selectedType !== '__all__' ? selectedType : undefined,
+        source_type: selectedSourceType !== '__all__' ? selectedSourceType : undefined,
+        has_vulnerabilities: hasVulnerabilities === '__all__' ? undefined : hasVulnerabilities === 'true',
+        project_ids: selectedProject !== '__all__' ? [selectedProject] : undefined,
+        skip: pageParam,
+        limit: DEFAULT_PAGE_SIZE,
+      })
+    },
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => {
+      const nextSkip = (lastPage.page + 1) * lastPage.size
+      return nextSkip < lastPage.total ? nextSkip : undefined
+    },
+    placeholderData: keepPreviousData,
     enabled: debouncedQuery.length >= 2,
   })
+
+  const allResults = data ? data.pages.flatMap((d) => d.items) : []
+  const totalCount = data?.pages[0]?.total ?? 0
+
+  const rowVirtualizer = useVirtualizer({
+    count: hasNextPage ? allResults.length + 1 : allResults.length,
+    getScrollElement: () => scrollContainer,
+    estimateSize: () => 52,
+    overscan: VIRTUAL_SCROLL_OVERSCAN,
+    observeElementOffset: (_instance, cb) => {
+      const element = scrollContainer
+      if (!element) return undefined
+
+      const onScroll = () => {
+        const offset = element.scrollTop - tableOffset
+        cb(Math.max(0, offset), false)
+      }
+
+      element.addEventListener('scroll', onScroll, { passive: true })
+      onScroll()
+      return () => {
+        element.removeEventListener('scroll', onScroll)
+      }
+    },
+  })
+
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const lastItemIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]?.index : -1
+
+  useEffect(() => {
+    if (lastItemIndex === -1) return
+    if (lastItemIndex >= allResults.length - 1 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage()
+    }
+  }, [hasNextPage, fetchNextPage, allResults.length, isFetchingNextPage, lastItemIndex])
 
   const projects = projectsData?.items || []
 
@@ -250,127 +325,152 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
               <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>
-        ) : results && results.length > 0 ? (
+        ) : allResults.length > 0 ? (
           <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              Found {results.length} result{results.length !== 1 ? 's' : ''}
-            </p>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Package</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>License</TableHead>
-                  <TableHead>Project</TableHead>
-                  <TableHead>Dependency Type</TableHead>
-                  <TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {results.map((result, index) => {
-                  const sourceInfo = getSourceInfo(result.source_type)
-                  return (
-                  <TableRow 
-                    key={`${result.project_id}-${result.package}-${result.version}-${index}`}
-                    className={onSelectResult ? "cursor-pointer hover:bg-muted" : ""}
-                    onClick={() => onSelectResult?.(result)}
-                  >
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Package className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-medium">{result.package}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{result.version}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{result.type}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      {sourceInfo ? (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md w-fit", sourceInfo.bgColor)}>
-                                <sourceInfo.icon className={cn("h-4 w-4", sourceInfo.color)} />
-                                <span className="text-xs font-medium">{sourceInfo.label}</span>
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-xs">
-                              <div className="space-y-1">
-                                <p className="font-medium">{sourceInfo.label}</p>
-                                {result.source_target && (
-                                  <p className="text-xs text-muted-foreground break-all">{result.source_target}</p>
-                                )}
-                                {result.layer_digest && result.layer_digest.length > 0 && (
-                                  <p className="text-xs text-muted-foreground">
-                                    Layer: {result.layer_digest.length > 20 ? `${result.layer_digest.substring(0, 20)}...` : result.layer_digest}
-                                  </p>
-                                )}
-                                {result.locations && result.locations.length > 0 && (
-                                  <div className="text-xs text-muted-foreground">
-                                    <p>Locations:</p>
-                                    {result.locations.slice(0, 3).map((loc, i) => (
-                                      <p key={i} className="pl-2 truncate">{loc}</p>
-                                    ))}
-                                    {result.locations.length > 3 && (
-                                      <p className="pl-2">+{result.locations.length - 3} more</p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Showing {allResults.length} of {totalCount} result{totalCount !== 1 ? 's' : ''}
+              </p>
+              {isFetchingNextPage && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading more...
+                </div>
+              )}
+            </div>
+            <div ref={parentRef}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[200px]">Package</TableHead>
+                    <TableHead className="w-[100px]">Version</TableHead>
+                    <TableHead className="w-[100px]">Type</TableHead>
+                    <TableHead className="w-[130px]">Source</TableHead>
+                    <TableHead className="w-[100px]">License</TableHead>
+                    <TableHead className="w-[150px]">Project</TableHead>
+                    <TableHead className="w-[120px]">Dependency Type</TableHead>
+                    <TableHead className="w-[80px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {virtualItems.map((virtualRow) => {
+                    const isLoaderRow = virtualRow.index >= allResults.length
+                    if (isLoaderRow) {
+                      return (
+                        <TableRow key="loader">
+                          <TableCell colSpan={8} className="text-center py-4">
+                            <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading more packages...
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    }
+                    const result = allResults[virtualRow.index]
+                    const sourceInfo = getSourceInfo(result.source_type)
+                    return (
+                      <TableRow 
+                        key={`${result.project_id}-${result.package}-${result.version}-${virtualRow.index}`}
+                        className={onSelectResult ? "cursor-pointer hover:bg-muted" : ""}
+                        onClick={() => onSelectResult?.(result)}
+                      >
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span className="font-medium truncate">{result.package}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{result.version}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{result.type}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          {sourceInfo ? (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md w-fit", sourceInfo.bgColor)}>
+                                    <sourceInfo.icon className={cn("h-4 w-4", sourceInfo.color)} />
+                                    <span className="text-xs font-medium">{sourceInfo.label}</span>
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="max-w-xs">
+                                  <div className="space-y-1">
+                                    <p className="font-medium">{sourceInfo.label}</p>
+                                    {result.source_target && (
+                                      <p className="text-xs text-muted-foreground break-all">{result.source_target}</p>
+                                    )}
+                                    {result.layer_digest && result.layer_digest.length > 0 && (
+                                      <p className="text-xs text-muted-foreground">
+                                        Layer: {result.layer_digest.length > 20 ? `${result.layer_digest.substring(0, 20)}...` : result.layer_digest}
+                                      </p>
+                                    )}
+                                    {result.locations && result.locations.length > 0 && (
+                                      <div className="text-xs text-muted-foreground">
+                                        <p>Locations:</p>
+                                        {result.locations.slice(0, 3).map((loc, i) => (
+                                          <p key={i} className="pl-2 truncate">{loc}</p>
+                                        ))}
+                                        {result.locations.length > 3 && (
+                                          <p className="pl-2">+{result.locations.length - 3} more</p>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
-                                )}
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {result.license || <span className="text-muted-foreground">-</span>}
-                    </TableCell>
-                    <TableCell>
-                      <Link 
-                        to={`/projects/${result.project_id}`}
-                        className="hover:underline text-primary"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {result.project_name}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={result.direct ? "default" : "secondary"}>
-                        {result.direct ? "Direct" : "Transitive"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation()
-                            setSelectedDependency(result)
-                            setDetailsDialogOpen(true)
-                          }}
-                          title="View details"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" asChild>
-                          <Link to={`/projects/${result.project_id}`} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
-                            <ExternalLink className="h-4 w-4" />
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {result.license || <span className="text-muted-foreground">-</span>}
+                        </TableCell>
+                        <TableCell>
+                          <Link 
+                            to={`/projects/${result.project_id}`}
+                            className="hover:underline text-primary truncate block"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {result.project_name}
                           </Link>
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )})}
-              </TableBody>
-            </Table>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={result.direct ? "default" : "secondary"}>
+                            {result.direct ? "Direct" : "Transitive"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1">
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              onClick={(e: React.MouseEvent) => {
+                                e.stopPropagation()
+                                setSelectedDependency(result)
+                                setDetailsDialogOpen(true)
+                              }}
+                              title="View details"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" asChild>
+                              <Link to={`/projects/${result.project_id}`} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                                <ExternalLink className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">

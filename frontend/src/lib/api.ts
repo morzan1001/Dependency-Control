@@ -191,6 +191,7 @@ export type FindingType =
   | "sast"
   | "system_warning"
   | "outdated"
+  | "quality"
   | "other";
 
 export interface Finding {
@@ -386,6 +387,19 @@ export const getProjectBranches = async (id: string) => {
 
 export const getScan = async (scanId: string) => {
   const response = await api.get<Scan>(`/projects/scans/${scanId}`);
+  return response.data;
+};
+
+export interface SbomResponse {
+  index: number;
+  filename: string | null;
+  storage: 'gridfs' | 'inline';
+  sbom: any | null;
+  error?: string;
+}
+
+export const getScanSboms = async (scanId: string): Promise<SbomResponse[]> => {
+  const response = await api.get<SbomResponse[]>(`/projects/scans/${scanId}/sboms`);
   return response.data;
 };
 
@@ -984,6 +998,46 @@ export interface AdvancedSearchResult {
   hashes?: Record<string, string>;
   properties?: Record<string, string>;
   found_by?: string;
+  
+  // Aggregated license information (from SBOM + deps.dev + license scanner)
+  license_category?: string;  // permissive, copyleft, etc.
+  licenses_detailed?: Array<{
+    spdx_id: string;
+    source: string;
+    category?: string;
+    explanation?: string;
+  }>;
+  license_risks?: string[];
+  license_obligations?: string[];
+  
+  // Enrichment sources tracking
+  enrichment_sources?: string[];
+  
+  // deps.dev enrichment data
+  deps_dev?: {
+    stars?: number;
+    forks?: number;
+    open_issues?: number;
+    project_url?: string;
+    project_description?: string;
+    project_license?: string;
+    dependents?: {
+      total?: number;
+      direct?: number;
+      indirect?: number;
+    };
+    scorecard?: {
+      overall_score?: number;
+      date?: string;
+      checks_count?: number;
+    };
+    links?: Record<string, string>;
+    published_at?: string;
+    is_deprecated?: boolean;
+    known_advisories?: string[];
+    has_attestations?: boolean;
+    has_slsa_provenance?: boolean;
+  };
 }
 
 export const getAnalyticsSummary = async () => {
@@ -1020,6 +1074,13 @@ export const getVulnerabilityHotspots = async (limit = 20) => {
   return response.data;
 };
 
+export interface AdvancedSearchResponse {
+  items: AdvancedSearchResult[];
+  total: number;
+  page: number;
+  size: number;
+}
+
 export const searchDependenciesAdvanced = async (
   query: string, 
   options?: {
@@ -1028,9 +1089,10 @@ export const searchDependenciesAdvanced = async (
     source_type?: string;
     has_vulnerabilities?: boolean;
     project_ids?: string[];
+    skip?: number;
     limit?: number;
   }
-) => {
+): Promise<AdvancedSearchResponse> => {
   const params = new URLSearchParams();
   params.append('q', query);
   if (options?.version) params.append('version', options.version);
@@ -1042,8 +1104,9 @@ export const searchDependenciesAdvanced = async (
   if (options?.project_ids?.length) {
     params.append('project_ids', options.project_ids.join(','));
   }
+  if (options?.skip !== undefined) params.append('skip', options.skip.toString());
   if (options?.limit) params.append('limit', options.limit.toString());
-  const response = await api.get<AdvancedSearchResult[]>('/analytics/search', { params });
+  const response = await api.get<AdvancedSearchResponse>('/analytics/search', { params });
   return response.data;
 };
 
@@ -1057,6 +1120,148 @@ export const getComponentFindings = async (component: string, version?: string) 
 
 export const getDependencyTypes = async () => {
   const response = await api.get<string[]>('/analytics/dependency-types');
+  return response.data;
+};
+
+// ============ Recommendations API ============
+
+export type RecommendationType = 
+  | 'base_image_update'
+  | 'direct_dependency_update'
+  | 'transitive_fix_via_parent'
+  | 'no_fix_available'
+  | 'consider_waiver'
+  | 'rotate_secrets'
+  | 'remove_secrets'
+  | 'fix_code_security'
+  | 'fix_infrastructure'
+  | 'license_compliance'
+  | 'supply_chain_risk'
+  // Dependency Health & Hygiene
+  | 'outdated_dependency'
+  | 'version_fragmentation'
+  | 'dev_in_production'
+  | 'unmaintained_package'
+  // Trend-based
+  | 'recurring_vulnerability'
+  | 'regression_detected'
+  // Dependency Graph
+  | 'deep_dependency_chain'
+  | 'duplicate_functionality'
+  // Cross-Project
+  | 'cross_project_pattern'
+  | 'shared_vulnerability';
+
+export type RecommendationPriority = 'critical' | 'high' | 'medium' | 'low';
+
+export interface RecommendationImpact {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+}
+
+export interface RecommendationAction {
+  type: string;
+  package?: string;
+  current_version?: string;
+  target_version?: string;
+  current_image?: string;
+  suggestion?: string;
+  commands?: string[];
+  cves?: string[];
+  options?: string[];
+  suggestions?: string[];
+  // New fields for non-vulnerability recommendations
+  file_path?: string;
+  line_number?: number;
+  secret_type?: string;
+  files?: string[];
+  rule_ids?: string[];
+  license_type?: string;
+  components?: string[];
+  resource_type?: string;
+  description?: string;
+  // Dependency Health fields
+  packages?: Array<{
+    name: string;
+    current?: string;
+    recommended_major?: number;
+    reason?: string;
+    versions?: string[];
+    suggestion?: string;
+  }>;
+  // Trend fields
+  new_critical_cves?: string[];
+  delta?: number;
+  // Dependency Graph fields
+  deepest_chains?: Array<{
+    package: string;
+    depth: number;
+    chain_preview?: string;
+  }>;
+  duplicates?: Array<{
+    category: string;
+    found: string[];
+    suggestion: string;
+  }>;
+  // Cross-Project fields
+  affected_projects?: string[];
+  total_affected?: number;
+  priority_projects?: Array<{
+    name: string;
+    id: string;
+    critical: number;
+    high: number;
+  }>;
+}
+
+export interface Recommendation {
+  type: RecommendationType;
+  priority: RecommendationPriority;
+  title: string;
+  description: string;
+  impact: RecommendationImpact;
+  affected_components: string[];
+  action: RecommendationAction;
+  effort: 'low' | 'medium' | 'high';
+}
+
+export interface RecommendationsSummary {
+  // Vulnerability-related
+  base_image_updates: number;
+  direct_updates: number;
+  transitive_updates: number;
+  no_fix: number;
+  total_fixable_vulns: number;
+  total_unfixable_vulns: number;
+  // Other finding types
+  secrets_to_rotate: number;
+  sast_issues: number;
+  iac_issues: number;
+  license_issues: number;
+  quality_issues: number;
+  // New categories
+  outdated_deps?: number;
+  fragmentation_issues?: number;
+  trend_alerts?: number;
+  cross_project_issues?: number;
+}
+
+export interface RecommendationsResponse {
+  project_id: string;
+  project_name: string;
+  scan_id: string;
+  total_findings: number;
+  total_vulnerabilities: number;
+  recommendations: Recommendation[];
+  summary: RecommendationsSummary;
+}
+
+export const getProjectRecommendations = async (projectId: string, scanId?: string) => {
+  const params = scanId ? `?scan_id=${scanId}` : '';
+  const response = await api.get<RecommendationsResponse>(`/analytics/projects/${projectId}/recommendations${params}`);
   return response.data;
 };
 

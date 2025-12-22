@@ -1,7 +1,9 @@
-from pydantic import BaseModel, Field, EmailStr
-from typing import Optional
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, EmailStr, Field
+
 
 class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
@@ -10,10 +12,10 @@ class User(BaseModel):
     hashed_password: str
     is_active: bool = True
     is_verified: bool = False
-    auth_provider: str = "local" # "local", "gitlab", "google", etc.
+    auth_provider: str = "local"  # "local", "gitlab", "google", etc.
     permissions: list[str] = []  # e.g. "project:create", "user:manage"
     last_logout_at: Optional[datetime] = None
-    
+
     # 2FA settings
     totp_secret: Optional[str] = None
     totp_enabled: bool = False
@@ -24,7 +26,7 @@ class User(BaseModel):
     notification_preferences: dict[str, list[str]] = Field(
         default_factory=lambda: {
             "analysis_completed": ["email"],
-            "vulnerability_found": ["email", "slack"]
+            "vulnerability_found": ["email", "slack"],
         }
     )
 

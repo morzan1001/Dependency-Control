@@ -1,15 +1,22 @@
-import httpx
 import logging
 import re
-from typing import Dict, Any, List, Optional, Set
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Set
+
+import httpx
+
 from .base import Analyzer
 
 logger = logging.getLogger(__name__)
 
-# Mapping from CPE product names to endoflife.date product IDs
-CPE_TO_EOL_MAPPING = {
+# Mapping from package/component names to endoflife.date product IDs
+# See https://endoflife.date/api for all available products
+NAME_TO_EOL_MAPPING = {
+    # Programming Languages & Runtimes
     "python": "python",
+    "python3": "python",
+    "cpython": "python",
+    "node": "nodejs",
     "node.js": "nodejs",
     "nodejs": "nodejs",
     "go": "go",
@@ -19,57 +26,163 @@ CPE_TO_EOL_MAPPING = {
     "java": "java",
     "openjdk": "java",
     "dotnet": "dotnet",
+    "dotnet-runtime": "dotnet",
+    "dotnet-sdk": "dotnet",
     ".net": "dotnet",
+    "rust": "rust",
+    "perl": "perl",
+    "swift": "swift",
+    "kotlin": "kotlin",
+    "elixir": "elixir",
+    "erlang": "erlang",
+    # Databases
     "postgresql": "postgresql",
+    "postgres": "postgresql",
+    "pg": "postgresql",
     "mysql": "mysql",
     "mariadb": "mariadb",
     "mongodb": "mongodb",
+    "mongo": "mongodb",
     "redis": "redis",
     "elasticsearch": "elasticsearch",
+    "opensearch": "opensearch",
+    "sqlite": "sqlite",
+    "cassandra": "apache-cassandra",
+    "couchdb": "couchdb",
+    "neo4j": "neo4j",
+    # Web Servers & Proxies
     "nginx": "nginx",
     "apache": "apache",
     "httpd": "apache",
+    "tomcat": "apache-tomcat",
+    "traefik": "traefik",
+    "haproxy": "haproxy",
+    "envoy": "envoy",
+    # Container & Orchestration
     "kubernetes": "kubernetes",
+    "k8s": "kubernetes",
     "docker": "docker",
+    "containerd": "containerd",
+    "podman": "podman",
+    "helm": "helm",
+    # Operating Systems
     "ubuntu": "ubuntu",
     "debian": "debian",
     "centos": "centos",
     "rhel": "rhel",
+    "rocky-linux": "rocky-linux",
+    "almalinux": "almalinux",
     "alpine": "alpine",
+    "fedora": "fedora",
+    "amazon-linux": "amazon-linux",
+    "opensuse": "opensuse",
+    "sles": "sles",
+    "windows-server": "windows-server",
+    # Frontend Frameworks
     "angular": "angular",
+    "@angular/core": "angular",
     "react": "react",
+    "react-dom": "react",
     "vue": "vuejs",
+    "vue.js": "vuejs",
+    "vuejs": "vuejs",
+    "svelte": "svelte",
+    "next": "nextjs",
+    "nextjs": "nextjs",
+    "next.js": "nextjs",
+    "nuxt": "nuxt",
+    "nuxt.js": "nuxt",
+    "gatsby": "gatsby",
+    "ember": "emberjs",
+    "jquery": "jquery",
+    # Backend Frameworks
     "django": "django",
     "flask": "flask",
+    "fastapi": "fastapi",
     "rails": "rails",
-    "spring_framework": "spring-framework",
-    "spring_boot": "spring-boot",
+    "ruby-on-rails": "rails",
+    "spring-framework": "spring-framework",
+    "spring-boot": "spring-boot",
+    "spring": "spring-framework",
     "laravel": "laravel",
     "symfony": "symfony",
-    "express": "nodejs",  # Express follows Node.js lifecycle
+    "express": "nodejs",
+    "nestjs": "nestjs",
+    "fastify": "fastify",
+    "gin": "gin",
+    "echo": "echo",
+    "actix": "actix-web",
+    # Build Tools & Package Managers
+    "npm": "npm",
+    "yarn": "yarn",
+    "pnpm": "pnpm",
+    "pip": "pip",
+    "maven": "maven",
+    "gradle": "gradle",
+    "composer": "composer",
+    "bundler": "bundler",
+    "cargo": "cargo",
+    # Cloud & Infrastructure
+    "terraform": "terraform",
+    "ansible": "ansible",
+    "pulumi": "pulumi",
+    "vagrant": "vagrant",
+    "packer": "packer",
+    "vault": "hashicorp-vault",
+    "consul": "consul",
+    # Message Queues
+    "rabbitmq": "rabbitmq",
+    "kafka": "apache-kafka",
+    "activemq": "apache-activemq",
+    "nats": "nats-server",
+    # ML/AI Frameworks
     "tensorflow": "tensorflow",
     "pytorch": "pytorch",
+    "keras": "keras",
+    "scikit-learn": "scikit-learn",
+    "pandas": "pandas",
+    "numpy": "numpy",
+    # Other Tools
+    "grafana": "grafana",
+    "prometheus": "prometheus",
+    "kibana": "kibana",
+    "logstash": "logstash",
+    "jenkins": "jenkins",
+    "gitlab": "gitlab",
+    "github-enterprise": "github-enterprise-server",
+    "kong": "kong-gateway",
+    "istio": "istio",
+    "linkerd": "linkerd",
 }
+
+# Alias for backward compatibility
+CPE_TO_EOL_MAPPING = NAME_TO_EOL_MAPPING
 
 
 class EndOfLifeAnalyzer(Analyzer):
     name = "end_of_life"
     api_url = "https://endoflife.date/api"
 
-    async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
-        components = self._get_components(sbom)
+    async def analyze(
+        self,
+        sbom: Dict[str, Any],
+        settings: Dict[str, Any] = None,
+        parsed_components: List[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        components = self._get_components(sbom, parsed_components)
         results = []
         checked_products: Set[str] = set()  # Avoid duplicate API calls
-        
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             for component in components:
                 name = component.get("name", "").lower()
                 version = component.get("version", "")
-                cpes = component.get("_cpes", [])
-                
+                # Support both "cpes" (from sbom_parser) and "_cpes" (legacy)
+                cpes = component.get("cpes") or component.get("_cpes") or []
+
                 # Strategy 1: Try to match via CPE (more accurate)
                 eol_products = self._extract_products_from_cpes(cpes)
-                
+
                 # Strategy 2: Fallback to component name matching
                 if not eol_products:
                     mapped = CPE_TO_EOL_MAPPING.get(name)
@@ -78,45 +191,47 @@ class EndOfLifeAnalyzer(Analyzer):
                     else:
                         # Try direct name match
                         eol_products.add(name)
-                
+
                 for product in eol_products:
                     if product in checked_products:
                         continue
                     checked_products.add(product)
-                    
+
                     try:
                         response = await client.get(f"{self.api_url}/{product}.json")
                         if response.status_code == 200:
                             cycles = response.json()
                             eol_info = self._check_version(version, cycles)
                             if eol_info:
-                                results.append({
-                                    "component": component.get("name"),
-                                    "version": version,
-                                    "product": product,
-                                    "eol_info": eol_info
-                                })
+                                results.append(
+                                    {
+                                        "component": component.get("name"),
+                                        "version": version,
+                                        "product": product,
+                                        "eol_info": eol_info,
+                                    }
+                                )
                     except Exception as e:
                         logger.debug(f"EOL check failed for {product}: {e}")
                         continue
-                    
+
         return {"eol_issues": results}
 
     def _extract_products_from_cpes(self, cpes: List[str]) -> Set[str]:
         """Extract product names from CPE strings and map to endoflife.date IDs."""
         products = set()
-        
+
         for cpe in cpes:
             # CPE format: cpe:2.3:a:vendor:product:version:...
             # or cpe:/a:vendor:product:version:...
-            match = re.match(r'cpe:[:/]2\.3:a:([^:]+):([^:]+)', cpe)
+            match = re.match(r"cpe:[:/]2\.3:a:([^:]+):([^:]+)", cpe)
             if not match:
-                match = re.match(r'cpe:/a:([^:]+):([^:]+)', cpe)
-            
+                match = re.match(r"cpe:/a:([^:]+):([^:]+)", cpe)
+
             if match:
                 vendor = match.group(1).lower()
                 product = match.group(2).lower()
-                
+
                 # Try product directly
                 if product in CPE_TO_EOL_MAPPING:
                     products.add(CPE_TO_EOL_MAPPING[product])
@@ -126,24 +241,26 @@ class EndOfLifeAnalyzer(Analyzer):
                 # Try just product name
                 else:
                     products.add(product)
-        
+
         return products
 
-    def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def _check_version(
+        self, version: str, cycles: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
         """Check if a version matches an EOL cycle."""
         if not version:
             return None
-            
+
         # Clean version string
         clean_version = version.lstrip("v").lower()
-        
+
         for cycle in cycles:
             cycle_version = str(cycle.get("cycle", ""))
-            
+
             # Check various matching strategies
             if self._version_matches_cycle(clean_version, cycle_version):
                 eol = cycle.get("eol")
-                
+
                 # eol can be: date string, True (already EOL), False (not EOL)
                 if eol is True:
                     return cycle
@@ -160,15 +277,15 @@ class EndOfLifeAnalyzer(Analyzer):
         """Check if a version belongs to a cycle."""
         if not version or not cycle:
             return False
-            
+
         # Direct match
         if version == cycle:
             return True
-            
+
         # Version starts with cycle (e.g., "3.8.5" matches cycle "3.8")
         if version.startswith(f"{cycle}."):
             return True
-            
+
         # Major version match (e.g., "3" matches "3.x")
         if "." in version:
             major = version.split(".")[0]
@@ -179,5 +296,5 @@ class EndOfLifeAnalyzer(Analyzer):
                 major_minor = ".".join(version.split(".")[:2])
                 if cycle == major_minor:
                     return True
-        
+
         return False

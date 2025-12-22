@@ -1,11 +1,13 @@
-import logging
 import asyncio
-from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
+import logging
+
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+
 from app.core.config import settings
-from app.db.mongodb import connect_to_mongo, close_mongo_connection
+from app.db.mongodb import close_mongo_connection, connect_to_mongo
 
 # Configure logging
 logging.basicConfig(
@@ -15,10 +17,22 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+from app.api import health
+from app.api.v1.endpoints import (
+    analytics,
+    auth,
+    ingest,
+    integrations,
+    invitations,
+    projects,
+    system,
+    teams,
+    users,
+    waivers,
+    webhooks,
+)
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
-from app.api.v1.endpoints import auth, ingest, projects, users, teams, waivers, webhooks, system, invitations, integrations, analytics
-from app.api import health
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -40,25 +54,29 @@ app = FastAPI(
         "name": "MIT License",
         "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",
     },
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
 
 # Add GZip Middleware for response compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global exception handler caught: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal Server Error. Please check the logs for more details."},
+        content={
+            "detail": "Internal Server Error. Please check the logs for more details."
+        },
     )
+
 
 @app.on_event("startup")
 async def startup_event():
     max_retries = 30
     retry_interval = 5
-    
+
     for i in range(max_retries):
         try:
             await connect_to_mongo()
@@ -67,7 +85,9 @@ async def startup_event():
             logger.info("Application startup complete.")
             break
         except (ServerSelectionTimeoutError, ConnectionFailure) as e:
-            logger.warning(f"Database connection failed (Attempt {i+1}/{max_retries}): {e}")
+            logger.warning(
+                f"Database connection failed (Attempt {i+1}/{max_retries}): {e}"
+            )
             await close_mongo_connection()
             if i < max_retries - 1:
                 logger.info(f"Retrying in {retry_interval} seconds...")
@@ -79,23 +99,44 @@ async def startup_event():
             logger.error(f"Unexpected error during startup: {e}")
             raise e
 
+
 @app.on_event("shutdown")
 async def shutdown_event():
     await worker_manager.stop()
     await close_mongo_connection()
 
+
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}", tags=["auth"])
 app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest"])
-app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"])
+app.include_router(
+    projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"]
+)
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(teams.router, prefix=f"{settings.API_V1_STR}/teams", tags=["teams"])
-app.include_router(waivers.router, prefix=f"{settings.API_V1_STR}/waivers", tags=["waivers"])
-app.include_router(webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["webhooks"])
-app.include_router(system.router, prefix=f"{settings.API_V1_STR}/system", tags=["system"])
-app.include_router(invitations.router, prefix=f"{settings.API_V1_STR}/invitations", tags=["invitations"])
-app.include_router(integrations.router, prefix=f"{settings.API_V1_STR}/integrations", tags=["integrations"])
-app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
+app.include_router(
+    waivers.router, prefix=f"{settings.API_V1_STR}/waivers", tags=["waivers"]
+)
+app.include_router(
+    webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["webhooks"]
+)
+app.include_router(
+    system.router, prefix=f"{settings.API_V1_STR}/system", tags=["system"]
+)
+app.include_router(
+    invitations.router,
+    prefix=f"{settings.API_V1_STR}/invitations",
+    tags=["invitations"],
+)
+app.include_router(
+    integrations.router,
+    prefix=f"{settings.API_V1_STR}/integrations",
+    tags=["integrations"],
+)
+app.include_router(
+    analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"]
+)
+
 
 @app.get("/")
 async def root():

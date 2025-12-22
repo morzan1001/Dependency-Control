@@ -1,7 +1,7 @@
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
-import { getScan, getProject, getScanResults, getScanStats, getScanHistory, triggerRescan } from '@/lib/api'
+import { useState, useEffect, useRef } from 'react'
+import { getScan, getProject, getScanResults, getScanStats, getScanHistory, triggerRescan, getScanSboms, SbomResponse } from '@/lib/api'
 import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -44,6 +44,13 @@ export default function ScanDetails() {
   const { projectId, scanId } = useParams<{ projectId: string, scanId: string }>()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const sbomRefs = useRef<(HTMLDivElement | null)[]>([])
+  
+  // Get tab and sbom from URL params
+  const tabParam = searchParams.get('tab')
+  const sbomParam = searchParams.get('sbom')
+  const [activeTab, setActiveTab] = useState(tabParam || 'overview')
 
   const { data: scan, isLoading: isScanLoading } = useQuery({
     queryKey: ['scan', scanId],
@@ -87,11 +94,36 @@ export default function ScanDetails() {
     enabled: !!scanId
   })
 
+  const { data: scanSboms, isLoading: isSbomsLoading } = useQuery({
+    queryKey: ['scan-sboms', scanId],
+    queryFn: () => getScanSboms(scanId!),
+    enabled: !!scanId && activeTab === 'raw' // Only load when on raw tab
+  })
+
   const { data: categoryStats } = useQuery({
     queryKey: ['scan-stats', scanId],
     queryFn: () => getScanStats(scanId!),
     enabled: !!scanId
   })
+
+  // Scroll to SBOM when navigating from finding details
+  useEffect(() => {
+    if (activeTab === 'raw' && sbomParam !== null && !isSbomsLoading) {
+      const sbomIndex = parseInt(sbomParam, 10)
+      // Small delay to ensure DOM is rendered
+      setTimeout(() => {
+        const sbomElement = sbomRefs.current[sbomIndex]
+        if (sbomElement) {
+          sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          // Highlight briefly
+          sbomElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
+          setTimeout(() => {
+            sbomElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2')
+          }, 2000)
+        }
+      }, 100)
+    }
+  }, [activeTab, sbomParam, isResultsLoading])
 
   if (isScanLoading || isProjectLoading) {
     return (
@@ -116,11 +148,11 @@ export default function ScanDetails() {
   }
 
   const activeAnalyzers = project.active_analyzers || [];
-  const showSecurity = activeAnalyzers.some(a => ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev'].includes(a));
+  const showSecurity = activeAnalyzers.some(a => ['trivy', 'grype', 'osv', 'os_malware', 'typosquatting', 'deps_dev', 'hash_verification'].includes(a));
   const showSecrets = activeAnalyzers.includes('trufflehog');
   const showSast = activeAnalyzers.some(a => ['opengrep', 'kics', 'bearer'].includes(a));
   const showCompliance = activeAnalyzers.some(a => ['trivy', 'license_compliance', 'end_of_life'].includes(a));
-  const showQuality = activeAnalyzers.includes('outdated_packages');
+  const showQuality = activeAnalyzers.some(a => ['outdated_packages', 'maintainer_risk'].includes(a));
 
   const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
   
@@ -349,7 +381,7 @@ export default function ScanDetails() {
             </Card>
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
             <TabsTrigger value="overview">All Findings</TabsTrigger>
             {showSecurity && <TabsTrigger value="security">Security</TabsTrigger>}
@@ -431,12 +463,41 @@ export default function ScanDetails() {
                         <h3 className="text-lg font-medium flex items-center gap-2">
                             <FileJson className="h-5 w-5" />
                             Raw SBOMs
+                            {isSbomsLoading && <Loader2 className="h-4 w-4 animate-spin" />}
                         </h3>
-                        {scan.sboms && scan.sboms.length > 0 ? (
+                        {isSbomsLoading ? (
                             <div className="grid gap-6">
-                                {scan.sboms.map((sbom: any, index: number) => {
+                                <Skeleton className="h-[400px]" />
+                            </div>
+                        ) : scanSboms && scanSboms.length > 0 ? (
+                            <div className="grid gap-6">
+                                {scanSboms.map((sbomResponse: SbomResponse) => {
+                                    const sbom = sbomResponse.sbom;
+                                    const index = sbomResponse.index;
                                     let toolName = "Unknown Scanner";
-                                    let sbomName = `SBOM #${index + 1}`;
+                                    let sbomName = sbomResponse.filename || `SBOM #${index + 1}`;
+                                    
+                                    if (sbomResponse.error) {
+                                        return (
+                                            <Card 
+                                                key={index} 
+                                                ref={(el) => { sbomRefs.current[index] = el }}
+                                                className="transition-all duration-300 border-destructive"
+                                            >
+                                                <CardHeader className="bg-destructive/10 pb-4">
+                                                    <CardTitle className="text-lg flex items-center justify-between">
+                                                        <span>{sbomName}</span>
+                                                        <Badge variant="destructive">Load Error</Badge>
+                                                    </CardTitle>
+                                                </CardHeader>
+                                                <CardContent className="p-4">
+                                                    <p className="text-destructive">{sbomResponse.error}</p>
+                                                </CardContent>
+                                            </Card>
+                                        );
+                                    }
+                                    
+                                    if (!sbom) return null;
                                     
                                     try {
                                         // Determine SBOM Name (matching backend logic)
@@ -460,11 +521,21 @@ export default function ScanDetails() {
                                     }
 
                                     return (
-                                        <Card key={index}>
+                                        <Card 
+                                            key={index} 
+                                            ref={(el) => { sbomRefs.current[index] = el }}
+                                            className="transition-all duration-300"
+                                        >
                                             <CardHeader className="bg-muted/50 pb-4">
                                                 <CardTitle className="text-lg flex items-center justify-between">
                                                     <span>{sbomName}</span>
-                                                    <Badge variant="outline">{toolName || 'Unknown'}</Badge>
+                                                    <div className="flex items-center gap-2">
+                                                        <Badge variant="secondary" className="font-mono">SBOM #{index + 1}</Badge>
+                                                        <Badge variant="outline">{toolName || 'Unknown'}</Badge>
+                                                        {sbomResponse.storage === 'gridfs' && (
+                                                            <Badge variant="outline" className="text-xs">GridFS</Badge>
+                                                        )}
+                                                    </div>
                                                 </CardTitle>
                                             </CardHeader>
                                             <CardContent className="p-0">
@@ -474,13 +545,25 @@ export default function ScanDetails() {
                                     )
                                 })}
                             </div>
+                        ) : scan.sbom_refs && scan.sbom_refs.length > 0 ? (
+                            <Card>
+                                <CardHeader className="bg-muted/50">
+                                    <CardTitle className="text-lg">SBOM References</CardTitle>
+                                </CardHeader>
+                                <CardContent className="p-4">
+                                    <p className="text-muted-foreground mb-4">
+                                        {scan.sbom_refs.length} SBOM(s) stored in GridFS. Loading...
+                                    </p>
+                                    <CodeBlock code={JSON.stringify(scan.sbom_refs, null, 2)} />
+                                </CardContent>
+                            </Card>
                         ) : (
                             <Card>
                                 <CardHeader>
-                                    <CardTitle>Raw Scan Data</CardTitle>
+                                    <CardTitle>No SBOMs Available</CardTitle>
                                 </CardHeader>
-                                <CardContent className="p-0">
-                                    <CodeBlock code={JSON.stringify(scan, null, 2)} />
+                                <CardContent className="p-4">
+                                    <p className="text-muted-foreground">No SBOM data found for this scan.</p>
                                 </CardContent>
                             </Card>
                         )}

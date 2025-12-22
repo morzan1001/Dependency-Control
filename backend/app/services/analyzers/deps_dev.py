@@ -1,83 +1,331 @@
-import httpx
 import asyncio
-from typing import Dict, Any
+import logging
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
+
+import httpx
+
 from .base import Analyzer
+from .purl_utils import get_registry_system
+
+logger = logging.getLogger(__name__)
+
 
 class DepsDevAnalyzer(Analyzer):
-    name = "deps_dev"
-    base_url = "https://api.deps.dev/v1/systems"
+    """
+    Analyzer that fetches package metadata and OpenSSF Scorecard data from deps.dev API.
 
-    async def analyze(self, sbom: Dict[str, Any], settings: Dict[str, Any] = None) -> Dict[str, Any]:
-        components = self._get_components(sbom)
-        results = []
-        
-        async with httpx.AsyncClient() as client:
+    This provides:
+    1. Package metadata (links, description, publish date, deprecation status)
+    2. Project info (stars, forks, open issues)
+    3. Dependent count (how many packages depend on this)
+    4. Supply chain security insights via OpenSSF Scorecard
+    """
+
+    name = "deps_dev"
+    base_url = "https://api.deps.dev/v3alpha"
+
+    # Scorecard threshold - packages with score below this are flagged
+    SCORECARD_THRESHOLD = 5.0
+
+    # Maximum concurrent requests to avoid rate limiting
+    MAX_CONCURRENT = 10
+
+    # Timeout for API requests
+    REQUEST_TIMEOUT = 10.0
+
+    async def analyze(
+        self,
+        sbom: Dict[str, Any],
+        settings: Dict[str, Any] = None,
+        parsed_components: List[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        components = self._get_components(sbom, parsed_components)
+        scorecard_issues = []
+        package_metadata = {}  # component@version -> metadata
+
+        # Apply custom threshold from settings if provided
+        threshold = self.SCORECARD_THRESHOLD
+        if settings and "scorecard_threshold" in settings:
+            threshold = float(settings["scorecard_threshold"])
+
+        # Use semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
+
+        async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
             tasks = []
             for component in components:
-                tasks.append(self._check_component(client, component))
-            
-            component_results = await asyncio.gather(*tasks)
-            results = [r for r in component_results if r]
+                tasks.append(
+                    self._check_component_with_limit(
+                        semaphore, client, component, threshold
+                    )
+                )
 
-        return {"scorecard_issues": results}
+            component_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _check_component(self, client: httpx.AsyncClient, component: Dict[str, Any]) -> Dict[str, Any]:
+            for result in component_results:
+                if isinstance(result, Exception):
+                    logger.warning(f"deps_dev check failed: {result}")
+                    continue
+                if result:
+                    # Separate scorecard issues from package metadata
+                    if result.get("scorecard_issue"):
+                        scorecard_issues.append(result["scorecard_issue"])
+                    if result.get("metadata"):
+                        key = f"{result['metadata']['name']}@{result['metadata']['version']}"
+                        package_metadata[key] = result["metadata"]
+
+        return {
+            "scorecard_issues": scorecard_issues,
+            "package_metadata": package_metadata,
+        }
+
+    async def _check_component_with_limit(
+        self,
+        semaphore: asyncio.Semaphore,
+        client: httpx.AsyncClient,
+        component: Dict[str, Any],
+        threshold: float,
+    ) -> Optional[Dict[str, Any]]:
+        async with semaphore:
+            return await self._check_component(client, component, threshold)
+
+    async def _check_component(
+        self, client: httpx.AsyncClient, component: Dict[str, Any], threshold: float
+    ) -> Optional[Dict[str, Any]]:
+        """Check a component for Scorecard data and package metadata via deps.dev API."""
         purl = component.get("purl", "")
         name = component.get("name", "")
         version = component.get("version", "")
-        
-        system = None
-        if purl.startswith("pkg:pypi/"):
-            system = "pypi"
-        elif purl.startswith("pkg:npm/"):
-            system = "npm"
-        elif purl.startswith("pkg:maven/"):
-            system = "maven"
-        elif purl.startswith("pkg:go/"):
-            system = "go"
-        
+
+        # Determine the package system from PURL
+        system = self._get_system_from_purl(purl)
+
         if not system or not name or not version:
             return None
 
-        # Encode name for URL (especially for scoped npm packages or maven groups)
-        # Maven: group:artifact -> group:artifact (deps.dev expects colon)
-        # NPM: @scope/pkg -> @scope%2Fpkg
-        encoded_name = name
-        if system == "npm" and "/" in name:
-            encoded_name = name.replace("/", "%2F")
-        
-        url = f"{self.base_url}/{system}/packages/{encoded_name}/versions/{version}"
-        
+        # URL-encode the package name (handles scoped packages like @scope/pkg)
+        encoded_name = quote(name, safe="")
+        encoded_version = quote(version, safe="")
+
+        version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
+
+        result = {"metadata": None, "scorecard_issue": None}
+
         try:
-            response = await client.get(url)
-            if response.status_code == 200:
-                data = response.json()
-                # Extract Scorecard data if available
-                projects = data.get("relatedProjects", [])
-                if projects:
-                    # Usually the first one is the source repo
-                    project_key = projects[0] 
-                    # Fetch project details for scorecard
-                    
-                    proj_type = project_key.get("projectKey", {}).get("id", {}).get("type")
-                    proj_id = project_key.get("projectKey", {}).get("id", {}).get("name")
-                    
-                    if proj_type and proj_id:
-                        encoded_proj_id = proj_id.replace("/", "%2F")
-                        proj_url = f"https://api.deps.dev/v1/projects/{proj_type}/{encoded_proj_id}"
-                        proj_res = await client.get(proj_url)
-                        if proj_res.status_code == 200:
-                            proj_data = proj_res.json()
-                            scorecard = proj_data.get("scorecard")
-                            if scorecard:
-                                overall = scorecard.get("overallScore", 0)
-                                if overall < 5.0: # Threshold for warning
-                                    return {
-                                        "component": name,
-                                        "version": version,
-                                        "scorecard": scorecard,
-                                        "warning": f"Low OpenSSF Scorecard score: {overall}/10"
-                                    }
+            # Step 1: Get version info
+            response = await client.get(version_url)
+
+            if response.status_code == 404:
+                # Package not found in deps.dev - this is normal for many packages
+                return None
+
+            if response.status_code != 200:
+                logger.debug(
+                    f"deps.dev API returned {response.status_code} for {name}@{version}"
+                )
+                return None
+
+            data = response.json()
+
+            # Extract package metadata
+            metadata = self._extract_metadata(data, name, version, system, purl)
+
+            # Step 2: Find related project (source repository)
+            related_projects = data.get("relatedProjects", [])
+            project_id = None
+
+            for project in related_projects:
+                project_key = project.get("projectKey", {})
+                pid = project_key.get("id", "")
+                relation_type = project.get("relationType", "")
+
+                # Prefer SOURCE_REPO, fall back to any GitHub project
+                if relation_type == "SOURCE_REPO" or pid.startswith("github.com/"):
+                    project_id = pid
+                    if relation_type == "SOURCE_REPO":
+                        break  # Found the preferred one
+
+            # Step 3: Fetch project details including Scorecard
+            if project_id:
+                encoded_project_id = quote(project_id, safe="")
+                project_url = f"{self.base_url}/projects/{encoded_project_id}"
+
+                proj_response = await client.get(project_url)
+                if proj_response.status_code == 200:
+                    proj_data = proj_response.json()
+
+                    # Add project info to metadata
+                    metadata["project"] = {
+                        "id": project_id,
+                        "url": f"https://{project_id}",
+                        "stars": proj_data.get("starsCount"),
+                        "forks": proj_data.get("forksCount"),
+                        "open_issues": proj_data.get("openIssuesCount"),
+                        "description": proj_data.get("description"),
+                        "homepage": proj_data.get("homepage"),
+                        "license": proj_data.get("license"),
+                    }
+
+                    # Check scorecard
+                    scorecard = proj_data.get("scorecard")
+                    if scorecard:
+                        overall_score = scorecard.get("overallScore", 0)
+
+                        # Add scorecard summary to metadata (always)
+                        metadata["scorecard"] = {
+                            "overall_score": overall_score,
+                            "date": scorecard.get("date"),
+                            "checks_count": len(scorecard.get("checks", [])),
+                        }
+
+                        # Only create a scorecard issue if score is below threshold
+                        if overall_score < threshold:
+                            result["scorecard_issue"] = self._create_scorecard_issue(
+                                name, version, purl, project_id, scorecard
+                            )
+
+            # Step 4: Fetch dependent count (popularity indicator)
+            try:
+                dependents_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}:dependents"
+                dep_response = await client.get(dependents_url)
+                if dep_response.status_code == 200:
+                    dep_data = dep_response.json()
+                    metadata["dependents"] = {
+                        "total": dep_data.get("dependentCount", 0),
+                        "direct": dep_data.get("directDependentCount", 0),
+                        "indirect": dep_data.get("indirectDependentCount", 0),
+                    }
+            except Exception as e:
+                logger.debug(f"Could not fetch dependents for {name}@{version}: {e}")
+
+            result["metadata"] = metadata
+            return result
+
+        except httpx.TimeoutException:
+            logger.debug(f"Timeout checking {name}@{version} on deps.dev")
             return None
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error checking {name}@{version} on deps.dev: {e}")
             return None
+
+    def _extract_metadata(
+        self, data: Dict[str, Any], name: str, version: str, system: str, purl: str
+    ) -> Dict[str, Any]:
+        """Extract useful metadata from version response."""
+        # Extract links
+        links = {}
+        for link in data.get("links", []):
+            label = link.get("label", "").lower()
+            url = link.get("url", "")
+            if url:
+                # Normalize common label names
+                if "home" in label or label == "homepage":
+                    links["homepage"] = url
+                elif (
+                    "repo" in label
+                    or "source" in label
+                    or "github" in label
+                    or "gitlab" in label
+                ):
+                    links["repository"] = url
+                elif "doc" in label:
+                    links["documentation"] = url
+                elif "bug" in label or "issue" in label:
+                    links["issues"] = url
+                elif "changelog" in label or "change" in label:
+                    links["changelog"] = url
+                else:
+                    links[label] = url
+
+        # Build metadata object
+        metadata = {
+            "name": name,
+            "version": version,
+            "system": system,
+            "purl": purl,
+            "published_at": data.get("publishedAt"),
+            "is_default": data.get("isDefault", False),
+            "is_deprecated": data.get("isDeprecated", False),
+            "licenses": data.get("licenses", []),
+            "links": links,
+            "registries": data.get("registries", []),
+            "has_attestations": len(data.get("attestations", [])) > 0,
+            "has_slsa_provenance": len(data.get("slsaProvenances", [])) > 0,
+        }
+
+        # Add advisory keys if any
+        advisory_keys = data.get("advisoryKeys", [])
+        if advisory_keys:
+            metadata["known_advisories"] = [a.get("id") for a in advisory_keys]
+
+        return metadata
+
+    def _create_scorecard_issue(
+        self,
+        name: str,
+        version: str,
+        purl: str,
+        project_id: str,
+        scorecard: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Create a scorecard issue from scorecard data."""
+        overall_score = scorecard.get("overallScore", 0)
+        checks = scorecard.get("checks", [])
+
+        failed_checks = []
+        critical_issues = []
+
+        for check in checks:
+            check_name = check.get("name", "")
+            check_score = check.get("score", 10)
+            check_reason = check.get("reason", "")
+
+            # Skip checks that returned -1 (not applicable)
+            if check_score == -1:
+                continue
+
+            if check_score < 5:
+                failed_checks.append(
+                    {"name": check_name, "score": check_score, "reason": check_reason}
+                )
+
+                # Identify critical security issues
+                if check_name in [
+                    "Maintained",
+                    "Vulnerabilities",
+                    "Dangerous-Workflow",
+                ]:
+                    critical_issues.append(check_name)
+
+        # Build warning message
+        warning_parts = [f"Low OpenSSF Scorecard score: {overall_score:.1f}/10"]
+
+        if critical_issues:
+            warning_parts.append(f"Critical issues: {', '.join(critical_issues)}")
+
+        if failed_checks:
+            failed_names = [f"{c['name']}({c['score']})" for c in failed_checks[:3]]
+            warning_parts.append(f"Failed checks: {', '.join(failed_names)}")
+            if len(failed_checks) > 3:
+                warning_parts[-1] += f" (+{len(failed_checks) - 3} more)"
+
+        return {
+            "component": name,
+            "version": version,
+            "purl": purl,
+            "project_url": f"https://{project_id}",
+            "scorecard": {
+                "overallScore": overall_score,
+                "date": scorecard.get("date"),
+                "checks": checks,
+                "repository": scorecard.get("repository", {}).get("name"),
+            },
+            "failed_checks": failed_checks,
+            "critical_issues": critical_issues,
+            "warning": ". ".join(warning_parts),
+        }
+
+    def _get_system_from_purl(self, purl: str) -> Optional[str]:
+        """Extract the package system from a PURL. Uses centralized purl_utils."""
+        return get_registry_system(purl)

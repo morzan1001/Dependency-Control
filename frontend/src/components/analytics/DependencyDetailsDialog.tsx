@@ -29,6 +29,15 @@ import {
   MapPin,
   Tag,
   Info,
+  Star,
+  GitFork,
+  CircleDot,
+  Users,
+  Calendar,
+  AlertTriangle,
+  AlertOctagon,
+  TrendingUp,
+  Link2,
 } from "lucide-react"
 import { useState } from "react"
 import { Link } from "react-router-dom"
@@ -203,6 +212,171 @@ export function DependencyDetailsDialog({
               </>
             )}
 
+            {/* deps.dev Package Insights */}
+            {dependency.deps_dev && (
+              <>
+                <hr className="border-border" />
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                    <h4 className="font-medium">Package Insights</h4>
+                    <span className="text-xs text-muted-foreground">(via deps.dev)</span>
+                  </div>
+
+                  {/* Deprecated Warning */}
+                  {dependency.deps_dev.is_deprecated && (
+                    <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-md">
+                      <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0" />
+                      <div>
+                        <p className="font-medium text-amber-600 dark:text-amber-400">This package is deprecated</p>
+                        <p className="text-sm text-muted-foreground">Consider finding an alternative.</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Known Advisories Warning */}
+                  {dependency.deps_dev.known_advisories && dependency.deps_dev.known_advisories.length > 0 && (
+                    <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
+                      <AlertOctagon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-medium text-red-600 dark:text-red-400">
+                          {dependency.deps_dev.known_advisories.length} Known Security {dependency.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
+                        </p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {dependency.deps_dev.known_advisories.map((advisory, i) => (
+                            <Badge key={i} variant="destructive" className="text-xs">
+                              {advisory}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {dependency.deps_dev.stars !== undefined && (
+                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                        <Star className="h-4 w-4 text-yellow-500" />
+                        <div>
+                          <p className="text-sm font-medium">{dependency.deps_dev.stars.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">Stars</p>
+                        </div>
+                      </div>
+                    )}
+                    {dependency.deps_dev.forks !== undefined && (
+                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                        <GitFork className="h-4 w-4 text-blue-500" />
+                        <div>
+                          <p className="text-sm font-medium">{dependency.deps_dev.forks.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">Forks</p>
+                        </div>
+                      </div>
+                    )}
+                    {dependency.deps_dev.open_issues !== undefined && (
+                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                        <CircleDot className="h-4 w-4 text-green-500" />
+                        <div>
+                          <p className="text-sm font-medium">{dependency.deps_dev.open_issues.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">Issues</p>
+                        </div>
+                      </div>
+                    )}
+                    {dependency.deps_dev.dependents?.total !== undefined && (
+                      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+                        <Users className="h-4 w-4 text-purple-500" />
+                        <div>
+                          <p className="text-sm font-medium">{dependency.deps_dev.dependents.total.toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">Dependents</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Scorecard Score */}
+                  {dependency.deps_dev.scorecard && (
+                    <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-md">
+                      <Shield className={cn(
+                        "h-6 w-6",
+                        (dependency.deps_dev.scorecard.overall_score ?? 0) >= 7 ? "text-green-500" :
+                        (dependency.deps_dev.scorecard.overall_score ?? 0) >= 4 ? "text-amber-500" :
+                        "text-red-500"
+                      )} />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">OpenSSF Scorecard</span>
+                          <Badge variant={
+                            (dependency.deps_dev.scorecard.overall_score ?? 0) >= 7 ? "default" :
+                            (dependency.deps_dev.scorecard.overall_score ?? 0) >= 4 ? "secondary" :
+                            "destructive"
+                          }>
+                            {dependency.deps_dev.scorecard.overall_score?.toFixed(1) ?? "N/A"} / 10
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {dependency.deps_dev.scorecard.checks_count} checks evaluated
+                          {dependency.deps_dev.scorecard.date && ` • ${new Date(dependency.deps_dev.scorecard.date).toLocaleDateString()}`}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Published Date */}
+                  {dependency.deps_dev.published_at && (
+                    <InfoRow
+                      icon={Calendar}
+                      label="Published"
+                      value={new Date(dependency.deps_dev.published_at).toLocaleDateString(undefined, {
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric"
+                      })}
+                    />
+                  )}
+
+                  {/* Project Description */}
+                  {dependency.deps_dev.project_description && !dependency.description && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Project Description</p>
+                      <p className="text-sm">{dependency.deps_dev.project_description}</p>
+                    </div>
+                  )}
+
+                  {/* deps.dev Links */}
+                  {dependency.deps_dev.links && Object.keys(dependency.deps_dev.links).length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">Additional Links</p>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(dependency.deps_dev.links).map(([label, url]) => (
+                          <a
+                            key={label}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded-md transition-colors"
+                          >
+                            <Link2 className="h-3 w-3" />
+                            {label}
+                            <ExternalLink className="h-2.5 w-2.5" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Project URL */}
+                  {dependency.deps_dev.project_url && (
+                    <InfoRow
+                      icon={GitBranch}
+                      label="Project Repository"
+                      value={dependency.deps_dev.project_url.replace(/^https?:\/\//, '')}
+                      href={dependency.deps_dev.project_url}
+                    />
+                  )}
+                </div>
+              </>
+            )}
+
             {/* Source Information */}
             {sourceInfo && (
               <>
@@ -261,21 +435,80 @@ export function DependencyDetailsDialog({
               )}
             </div>
 
-            {/* License Information */}
-            {dependency.license && (
+            {/* License Information (Aggregated) */}
+            {(dependency.license || dependency.licenses_detailed?.length) && (
               <>
                 <hr className="border-border" />
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
                     <FileText className="h-4 w-4 text-muted-foreground" />
                     <h4 className="font-medium">License</h4>
+                    {dependency.license_category && (
+                      <Badge variant={
+                        dependency.license_category === "permissive" ? "default" :
+                        dependency.license_category === "public_domain" ? "default" :
+                        dependency.license_category === "weak_copyleft" ? "secondary" :
+                        dependency.license_category === "strong_copyleft" ? "destructive" :
+                        dependency.license_category === "network_copyleft" ? "destructive" :
+                        "outline"
+                      } className="text-xs">
+                        {dependency.license_category.replace(/_/g, ' ')}
+                      </Badge>
+                    )}
                   </div>
+                  
+                  {/* Primary License */}
                   <InfoRow
                     icon={FileText}
                     label="License"
                     value={dependency.license}
                     href={dependency.license_url || undefined}
                   />
+                  
+                  {/* License Sources (if multiple) */}
+                  {dependency.licenses_detailed && dependency.licenses_detailed.length > 1 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">License Sources</p>
+                      <div className="flex flex-wrap gap-1">
+                        {dependency.licenses_detailed.map((lic, i) => (
+                          <Badge key={i} variant="outline" className="text-xs">
+                            {lic.spdx_id}
+                            <span className="text-muted-foreground ml-1">({lic.source})</span>
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* License Risks */}
+                  {dependency.license_risks && dependency.license_risks.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Risks</p>
+                      <div className="space-y-1">
+                        {dependency.license_risks.map((risk, i) => (
+                          <div key={i} className="flex items-start gap-2 text-sm text-amber-600 dark:text-amber-400">
+                            <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                            <span>{risk}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* License Obligations */}
+                  {dependency.license_obligations && dependency.license_obligations.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Obligations</p>
+                      <ul className="text-sm text-muted-foreground list-disc list-inside space-y-0.5">
+                        {dependency.license_obligations.slice(0, 5).map((obl, i) => (
+                          <li key={i}>{obl}</li>
+                        ))}
+                        {dependency.license_obligations.length > 5 && (
+                          <li className="text-xs">+{dependency.license_obligations.length - 5} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -427,6 +660,19 @@ export function DependencyDetailsDialog({
                   </div>
                 </div>
               </>
+            )}
+            
+            {/* Enrichment Sources Footer */}
+            {dependency.enrichment_sources && dependency.enrichment_sources.length > 0 && (
+              <div className="pt-4 border-t border-border">
+                <p className="text-xs text-muted-foreground">
+                  Data enriched from: {dependency.enrichment_sources.map(s => 
+                    s === "deps_dev" ? "deps.dev" : 
+                    s === "license_compliance" ? "License Scanner" : 
+                    s
+                  ).join(", ")}
+                </p>
+              </div>
             )}
           </div>
         </div>

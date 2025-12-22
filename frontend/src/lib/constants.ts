@@ -76,6 +76,8 @@ export const AVAILABLE_ANALYZERS = [
   { id: 'grype', label: 'Grype (Anchore)', description: 'A vulnerability scanner for container images and filesystems, similar to Trivy.' },
   { id: 'outdated_packages', label: 'Outdated Packages', description: 'Identifies packages that are not on the latest version.' },
   { id: 'typosquatting', label: 'Typosquatting', description: 'Detects potential typosquatting attacks (packages with names similar to popular ones).' },
+  { id: 'hash_verification', label: 'Hash Verification', description: 'Verifies package integrity by comparing checksums against official registry hashes (PyPI, npm).' },
+  { id: 'maintainer_risk', label: 'Maintainer Risk', description: 'Assesses supply chain risks: stale packages, single maintainers, archived repos, and more.' },
   { id: 'opengrep', label: 'OpenGrep (SAST)', description: 'Static Application Security Testing (SAST) tool to find security flaws in code.' },
   { id: 'kics', label: 'KICS (IaC)', description: 'Finds security vulnerabilities, compliance issues, and infrastructure misconfigurations in IaC.' },
   { id: 'bearer', label: 'Bearer (SAST/Data)', description: 'Static Application Security Testing (SAST) and Data Security tool.' },

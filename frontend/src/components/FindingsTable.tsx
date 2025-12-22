@@ -206,8 +206,8 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                         <TableHead className="w-auto h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('component')}>
                             Component {renderSortIcon('component')}
                         </TableHead>
-                        <TableHead className="w-[80px] h-12 px-4 text-left align-middle font-medium text-muted-foreground bg-background">
-                            Source
+                        <TableHead className="w-[80px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('source_type')}>
+                            Source {renderSortIcon('source_type')}
                         </TableHead>
                         <TableHead className="w-[120px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('type')}>
                             Type {renderSortIcon('type')}
@@ -306,6 +306,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                 <FindingDetailsModal 
                     finding={selectedFinding} 
                     projectId={projectId}
+                    scanId={scanId}
                     isOpen={!!selectedFinding} 
                     onClose={() => setSelectedFinding(null)} 
                     onSelectFinding={(id) => {

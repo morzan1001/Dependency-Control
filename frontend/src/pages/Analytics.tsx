@@ -6,8 +6,9 @@ import { DependencyTree } from '@/components/analytics/DependencyTree'
 import { ImpactAnalysis } from '@/components/analytics/ImpactAnalysis'
 import { VulnerabilityHotspots } from '@/components/analytics/VulnerabilityHotspots'
 import { CrossProjectSearch } from '@/components/analytics/CrossProjectSearch'
+import { Recommendations } from '@/components/analytics/Recommendations'
 import { ComponentFindingsModal } from '@/components/analytics/ComponentFindingsModal'
-import { BarChart3, Package, GitBranch, Zap, Flame, Search } from 'lucide-react'
+import { BarChart3, Package, GitBranch, Zap, Flame, Search, Lightbulb } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 
 export default function AnalyticsPage() {
@@ -22,6 +23,7 @@ export default function AnalyticsPage() {
   const canViewImpact = hasPermission('analytics:read') || hasPermission('analytics:impact')
   const canViewHotspots = hasPermission('analytics:read') || hasPermission('analytics:hotspots')
   const canViewSearch = hasPermission('analytics:read') || hasPermission('analytics:search')
+  const canViewRecommendations = hasPermission('analytics:read') || hasPermission('analytics:recommendations')
 
   // Determine available tabs
   const availableTabs = useMemo(() => {
@@ -31,9 +33,10 @@ export default function AnalyticsPage() {
     if (canViewTree) tabs.push({ id: 'tree', label: 'Tree', icon: GitBranch })
     if (canViewImpact) tabs.push({ id: 'impact', label: 'Impact', icon: Zap })
     if (canViewHotspots) tabs.push({ id: 'hotspots', label: 'Hotspots', icon: Flame })
+    if (canViewRecommendations) tabs.push({ id: 'recommendations', label: 'Recommendations', icon: Lightbulb })
     if (canViewSearch) tabs.push({ id: 'search', label: 'Search', icon: Search })
     return tabs
-  }, [canViewSummary, canViewDependencies, canViewTree, canViewImpact, canViewHotspots, canViewSearch])
+  }, [canViewSummary, canViewDependencies, canViewTree, canViewImpact, canViewHotspots, canViewRecommendations, canViewSearch])
 
   const defaultTab = availableTabs.length > 0 ? availableTabs[0].id : 'overview'
 
@@ -56,7 +59,7 @@ export default function AnalyticsPage() {
 
       {/* Main Content Tabs */}
       <Tabs defaultValue={defaultTab} className="space-y-6">
-        <TabsList className={`grid w-full lg:w-auto lg:inline-grid`} style={{ gridTemplateColumns: `repeat(${availableTabs.length}, minmax(0, 1fr))` }}>
+        <TabsList>
           {availableTabs.map((tab) => {
             const Icon = tab.icon
             return (
@@ -116,6 +119,13 @@ export default function AnalyticsPage() {
             <VulnerabilityHotspots 
               onSelectHotspot={(hotspot) => handleComponentSelect(hotspot.component, hotspot.version)}
             />
+          </TabsContent>
+        )}
+
+        {/* Recommendations Tab */}
+        {canViewRecommendations && (
+          <TabsContent value="recommendations">
+            <Recommendations />
           </TabsContent>
         )}
 

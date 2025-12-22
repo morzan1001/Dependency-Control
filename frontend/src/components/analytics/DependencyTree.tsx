@@ -1,17 +1,11 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getDependencyTree, getProjects, DependencyTreeNode } from '@/lib/api'
+import { getDependencyTree, DependencyTreeNode } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { ProjectCombobox } from '@/components/ui/project-combobox'
 import {
   Tooltip,
   TooltipContent,
@@ -165,18 +159,11 @@ export function DependencyTree({ onSelectNode }: DependencyTreeProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showDirectOnly, setShowDirectOnly] = useState(false)
 
-  const { data: projectsData } = useQuery({
-    queryKey: ['projects-list'],
-    queryFn: () => getProjects(undefined, 0, 100),
-  })
-
   const { data: tree, isLoading: isLoadingTree } = useQuery({
     queryKey: ['dependency-tree', selectedProjectId],
     queryFn: () => getDependencyTree(selectedProjectId),
     enabled: !!selectedProjectId,
   })
-
-  const projects = projectsData?.items || []
 
   const filteredTree = showDirectOnly 
     ? tree?.filter(n => n.direct) 
@@ -195,16 +182,11 @@ export function DependencyTree({ onSelectNode }: DependencyTreeProps) {
             <CardDescription>View dependencies and their relationship to vulnerabilities</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-              <SelectTrigger className="w-[250px]">
-                <SelectValue placeholder="Select a project" />
-              </SelectTrigger>
-              <SelectContent>
-                {projects.map((p) => (
-                  <SelectItem key={p._id} value={p._id}>{p.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ProjectCombobox 
+              value={selectedProjectId} 
+              onValueChange={setSelectedProjectId}
+              className="w-[300px]"
+            />
             <Button
               variant={showDirectOnly ? "default" : "outline"}
               size="sm"

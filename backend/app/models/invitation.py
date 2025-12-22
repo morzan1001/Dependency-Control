@@ -1,6 +1,8 @@
-from pydantic import BaseModel, Field, EmailStr
-from datetime import datetime, timezone
 import uuid
+from datetime import datetime, timezone
+
+from pydantic import BaseModel, EmailStr, Field
+
 
 class ProjectInvitation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
@@ -15,6 +17,7 @@ class ProjectInvitation(BaseModel):
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True
+
 
 class SystemInvitation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")

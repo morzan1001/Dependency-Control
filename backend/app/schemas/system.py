@@ -1,20 +1,22 @@
-from pydantic import BaseModel
 from typing import Optional
+
+from pydantic import BaseModel
+
 
 class SystemSettingsBase(BaseModel):
     instance_name: Optional[str] = "Dependency Control"
-    
+
     allow_public_registration: bool = False
     enforce_2fa: bool = False
     enforce_email_verification: bool = False
-    
+
     smtp_host: Optional[str] = None
     smtp_port: int = 587
     smtp_user: Optional[str] = None
     smtp_password: Optional[str] = None
     smtp_encryption: str = "starttls"
     emails_from_email: Optional[str] = "info@dependencycontrol.local"
-    
+
     open_source_malware_api_key: Optional[str] = None
     slack_bot_token: Optional[str] = None
     slack_client_id: Optional[str] = None
@@ -46,8 +48,10 @@ class SystemSettingsBase(BaseModel):
     retention_mode: str = "project"
     global_retention_days: int = 90
 
+
 class SystemSettingsUpdate(SystemSettingsBase):
     pass
+
 
 class SystemSettingsResponse(SystemSettingsBase):
     pass

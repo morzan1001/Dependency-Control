@@ -1,6 +1,9 @@
-from pydantic import BaseModel
 from typing import List, Optional
+
+from pydantic import BaseModel
+
 from app.schemas.ingest import BaseIngest
+
 
 class KicsFile(BaseModel):
     file_name: str
@@ -15,6 +18,7 @@ class KicsFile(BaseModel):
     expected_value: Optional[str] = None
     actual_value: Optional[str] = None
 
+
 class KicsQuery(BaseModel):
     query_name: str
     query_id: str
@@ -25,6 +29,7 @@ class KicsQuery(BaseModel):
     description: Optional[str] = None
     description_id: Optional[str] = None
     files: List[KicsFile]
+
 
 class KicsIngest(BaseIngest):
     kics_version: Optional[str] = None

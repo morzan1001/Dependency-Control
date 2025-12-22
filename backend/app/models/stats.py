@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 
+
 class Stats(BaseModel):
     critical: int = Field(0, description="Count of critical findings")
     high: int = Field(0, description="Count of high severity findings")
