@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { getDependenciesList, getDependencyTypes, DependencyListItem, searchDependenciesAdvanced, AdvancedSearchResult } from '@/lib/api'
+import { getDependenciesList, getDependencyTypes, DependencyListItem } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -22,7 +22,7 @@ import {
 import { Package, AlertTriangle, ArrowUp, ArrowDown, Loader2, Container, FileCode, HardDrive } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { DependencyDetailsDialog } from './DependencyDetailsDialog'
+import { AnalyticsDependencyModal } from './AnalyticsDependencyModal'
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants'
 
 // Helper to get source icon and label
@@ -42,13 +42,19 @@ function getSourceInfo(sourceType?: string) {
 type SortField = 'name' | 'version' | 'type' | 'project_name' | 'direct'
 type SortOrder = 'asc' | 'desc'
 
+// Selected dependency for the modal
+interface SelectedDep {
+  name: string;
+  version: string;
+  type: string;
+}
+
 export function DependencyList() {
   const [selectedType, setSelectedType] = useState<string>('__all__')
   const [sortBy, setSortBy] = useState<SortField>('name')
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
-  const [selectedDependency, setSelectedDependency] = useState<AdvancedSearchResult | null>(null)
-  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
-  const [loadingDetails, setLoadingDetails] = useState<string | null>(null)
+  const [selectedDep, setSelectedDep] = useState<SelectedDep | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
 
   const parentRef = useRef<HTMLDivElement>(null)
   const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
@@ -142,24 +148,13 @@ export function DependencyList() {
       : <ArrowDown className="h-4 w-4 inline-block ml-1" />
   }
 
-  const handleRowClick = async (dep: DependencyListItem) => {
-    setLoadingDetails(`${dep.name}-${dep.project_id}`)
-    try {
-      const result = await searchDependenciesAdvanced(dep.name, {
-        version: dep.version,
-        type: dep.type || undefined,
-        project_ids: [dep.project_id],
-        limit: 1,
-      })
-      if (result.items.length > 0) {
-        setSelectedDependency(result.items[0])
-        setDetailsDialogOpen(true)
-      }
-    } catch (error) {
-      console.error('Failed to load dependency details:', error)
-    } finally {
-      setLoadingDetails(null)
-    }
+  const handleRowClick = (dep: DependencyListItem) => {
+    setSelectedDep({
+      name: dep.name,
+      version: dep.version,
+      type: dep.type || 'unknown',
+    })
+    setModalOpen(true)
   }
 
   return (
@@ -258,7 +253,6 @@ export function DependencyList() {
                   }
                   const dep = allResults[virtualRow.index]
                   const sourceInfo = getSourceInfo(dep.source_type)
-                  const isLoadingThis = loadingDetails === `${dep.name}-${dep.project_id}`
                   return (
                     <TableRow 
                       key={`${dep.project_id}-${dep.name}-${dep.version}-${virtualRow.index}`}
@@ -267,11 +261,7 @@ export function DependencyList() {
                     >
                       <TableCell className="truncate">
                         <div className="flex items-center gap-2 min-w-0">
-                          {isLoadingThis ? (
-                            <Loader2 className="h-4 w-4 text-muted-foreground animate-spin flex-shrink-0" />
-                          ) : (
-                            <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                          )}
+                          <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                           <span className="font-medium truncate">{dep.name}</span>
                         </div>
                       </TableCell>
@@ -347,12 +337,16 @@ export function DependencyList() {
           </div>
         )}
 
-        {/* Dependency Details Dialog */}
-        <DependencyDetailsDialog
-          dependency={selectedDependency}
-          open={detailsDialogOpen}
-          onOpenChange={setDetailsDialogOpen}
-        />
+        {/* Analytics Dependency Modal */}
+        {selectedDep && (
+          <AnalyticsDependencyModal
+            component={selectedDep.name}
+            version={selectedDep.version}
+            type={selectedDep.type}
+            open={modalOpen}
+            onOpenChange={setModalOpen}
+          />
+        )}
       </CardContent>
     </Card>
   )

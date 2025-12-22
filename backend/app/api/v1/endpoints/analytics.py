@@ -3,12 +3,23 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel
 
 from app.api import deps
 from app.api.deps import PermissionChecker
 from app.db.mongodb import get_database
 from app.models.user import User
+from app.schemas.analytics import (
+    SeverityBreakdown,
+    DependencyUsage,
+    DependencyListItem,
+    DependencyListResponse,
+    DependencyTreeNode,
+    ImpactAnalysisResult,
+    VulnerabilityHotspot,
+    DependencyTypeStats,
+    AnalyticsSummary,
+    DependencyMetadata,
+)
 
 router = APIRouter()
 
@@ -32,100 +43,6 @@ def require_analytics_permission(user: User, permission: str):
             detail=f"Analytics permission required: {permission}. Grant 'analytics:read' for full analytics access or '{permission}' for this specific feature.",
         )
 
-
-class SeverityBreakdown(BaseModel):
-    critical: int = 0
-    high: int = 0
-    medium: int = 0
-    low: int = 0
-
-
-class DependencyUsage(BaseModel):
-    name: str
-    type: str
-    versions: List[str]
-    project_count: int
-    total_occurrences: int
-    has_vulnerabilities: bool
-    vulnerability_count: int
-
-
-class DependencyListItem(BaseModel):
-    """Single dependency item with full details for list view."""
-    name: str
-    version: str
-    type: str
-    purl: Optional[str] = None
-    license: Optional[str] = None
-    direct: bool = False
-    project_count: int = 1
-    project_id: str
-    project_name: str
-    has_vulnerabilities: bool = False
-    vulnerability_count: int = 0
-    source_type: Optional[str] = None
-
-
-class DependencyListResponse(BaseModel):
-    """Paginated response for dependency list."""
-    items: List[DependencyListItem]
-    total: int
-    page: int
-    size: int
-    has_more: bool
-
-
-class DependencyTreeNode(BaseModel):
-    id: str
-    name: str
-    version: str
-    purl: str
-    type: str
-    direct: bool
-    has_findings: bool
-    findings_count: int
-    findings_severity: Optional[SeverityBreakdown] = None
-    children: List["DependencyTreeNode"] = []
-    # Source/Origin info
-    source_type: Optional[str] = None
-    source_target: Optional[str] = None
-    layer_digest: Optional[str] = None
-    locations: List[str] = []
-
-
-class ImpactAnalysisResult(BaseModel):
-    component: str
-    version: str
-    affected_projects: int
-    total_findings: int
-    findings_by_severity: SeverityBreakdown
-    recommended_version: Optional[str] = None
-    fix_impact_score: float
-    affected_project_names: List[str]
-
-
-class VulnerabilityHotspot(BaseModel):
-    component: str
-    version: str
-    type: str
-    finding_count: int
-    severity_breakdown: SeverityBreakdown
-    affected_projects: List[str]
-    first_seen: str
-
-
-class DependencyTypeStats(BaseModel):
-    type: str
-    count: int
-    percentage: float
-
-
-class AnalyticsSummary(BaseModel):
-    total_dependencies: int
-    total_vulnerabilities: int
-    unique_packages: int
-    dependency_types: List[DependencyTypeStats]
-    severity_distribution: SeverityBreakdown
 
 
 # Helper to get user-accessible project IDs
@@ -650,7 +567,10 @@ async def get_impact_analysis(
 
 @router.get("/hotspots", response_model=List[VulnerabilityHotspot])
 async def get_vulnerability_hotspots(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("finding_count", description="Sort field: finding_count, component, first_seen"),
+    sort_order: str = Query("desc", description="Sort order: asc, desc"),
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
@@ -672,6 +592,17 @@ async def get_vulnerability_hotspots(
     if not scan_ids:
         return []
 
+    # Determine sort direction
+    sort_direction = -1 if sort_order == "desc" else 1
+    
+    # Map sort fields
+    sort_field_map = {
+        "finding_count": "finding_count",
+        "component": "_id.component",
+        "first_seen": "first_seen",
+    }
+    mongo_sort_field = sort_field_map.get(sort_by, "finding_count")
+
     pipeline = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
         {
@@ -683,7 +614,8 @@ async def get_vulnerability_hotspots(
                 "first_seen": {"$min": "$created_at"},
             }
         },
-        {"$sort": {"finding_count": -1}},
+        {"$sort": {mongo_sort_field: sort_direction}},
+        {"$skip": skip},
         {"$limit": limit},
     ]
 
@@ -882,6 +814,137 @@ async def get_component_findings(
         results.append(finding)
 
     return results
+
+
+@router.get("/dependency-metadata")
+async def get_dependency_metadata_endpoint(
+    component: str = Query(..., description="Component/package name"),
+    version: Optional[str] = Query(None, description="Specific version"),
+    type: Optional[str] = Query(None, description="Package type"),
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    Get aggregated metadata for a dependency across all accessible projects.
+    Returns dependency-specific information (not project-specific like Docker layers).
+    """
+    require_analytics_permission(current_user, "analytics:search")
+
+    project_ids = await get_user_project_ids(current_user, db)
+
+    if not project_ids:
+        return None
+
+    scan_ids = await get_latest_scan_ids(project_ids, db)
+
+    if not scan_ids:
+        return None
+
+    # Build query for dependencies
+    dep_query = {"scan_id": {"$in": scan_ids}, "name": component}
+    if version:
+        dep_query["version"] = version
+    if type:
+        dep_query["type"] = type
+
+    dependencies = await db.dependencies.find(dep_query).to_list(100)
+
+    if not dependencies:
+        return None
+
+    # Get project names for enrichment
+    projects = await db.projects.find(
+        {"_id": {"$in": project_ids}}, {"_id": 1, "name": 1}
+    ).to_list(None)
+    project_name_map = {p["_id"]: p["name"] for p in projects}
+
+    # Aggregate dependency-specific metadata (take first non-null value)
+    first_dep = dependencies[0]
+    
+    # Collect affected projects (with deduplication)
+    affected_projects = {}
+    for dep in dependencies:
+        proj_id = dep.get("project_id")
+        if proj_id and proj_id not in affected_projects:
+            affected_projects[proj_id] = {
+                "id": proj_id,
+                "name": project_name_map.get(proj_id, "Unknown"),
+                "direct": dep.get("direct", False),
+            }
+    
+    # Get deps.dev enrichment if available
+    deps_dev_data = None
+    enrichment_sources = []
+    
+    dep_purl = first_dep.get("purl")
+    if dep_purl:
+        enrichment = await db.dependency_enrichments.find_one({"purl": dep_purl})
+        if enrichment:
+            deps_dev_data = enrichment.get("deps_dev")
+            if deps_dev_data:
+                enrichment_sources.append("deps_dev")
+            
+            # Get license enrichment
+            license_info = enrichment.get("license_compliance")
+            if license_info:
+                enrichment_sources.append("license_compliance")
+    
+    # Helper function to get first non-null value from dependencies
+    def first_value(key: str):
+        for dep in dependencies:
+            val = dep.get(key)
+            if val:
+                return val
+        return None
+    
+    # Count findings for this component
+    finding_query = {"scan_id": {"$in": scan_ids}, "component": component}
+    if version:
+        finding_query["version"] = version
+    
+    finding_count = await db.findings.count_documents(finding_query)
+    
+    # Count vulnerabilities specifically
+    vuln_query = {**finding_query, "type": "VULNERABILITY"}
+    vuln_count = await db.findings.count_documents(vuln_query)
+    
+    # Collect license info (may come from enrichment or SBOM)
+    license_category = None
+    license_risks = []
+    license_obligations = []
+    
+    if dep_purl:
+        enrichment = await db.dependency_enrichments.find_one({"purl": dep_purl})
+        if enrichment and enrichment.get("license_compliance"):
+            lic_info = enrichment["license_compliance"]
+            license_category = lic_info.get("category")
+            license_risks = lic_info.get("risks", [])
+            license_obligations = lic_info.get("obligations", [])
+    
+    return DependencyMetadata(
+        name=first_dep.get("name", component),
+        version=first_dep.get("version", version or "unknown"),
+        type=first_dep.get("type", "unknown"),
+        purl=dep_purl,
+        description=first_value("description"),
+        author=first_value("author"),
+        publisher=first_value("publisher"),
+        homepage=first_value("homepage"),
+        repository_url=first_value("repository_url"),
+        download_url=first_value("download_url"),
+        group=first_value("group"),
+        license=first_value("license"),
+        license_url=first_value("license_url"),
+        license_category=license_category,
+        license_risks=license_risks,
+        license_obligations=license_obligations,
+        deps_dev=deps_dev_data,
+        project_count=len(affected_projects),
+        affected_projects=list(affected_projects.values()),
+        total_vulnerability_count=vuln_count,
+        total_finding_count=finding_count,
+        enrichment_sources=enrichment_sources,
+    )
 
 
 @router.get("/dependency-types")

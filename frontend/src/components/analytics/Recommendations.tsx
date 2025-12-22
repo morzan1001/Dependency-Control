@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ProjectCombobox } from '@/components/ui/project-combobox'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
+import { Link } from 'react-router-dom'
 import {
   Tooltip,
   TooltipContent,
@@ -571,26 +572,34 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                   <GitBranch className="h-4 w-4" />
                   Version Fragmentation
                 </h5>
-                <div className="bg-muted rounded-lg p-3 text-sm space-y-3">
+                <div className="bg-muted rounded-lg p-3 text-sm space-y-3 max-h-[300px] overflow-y-auto">
                   {recommendation.action.packages.map((pkg, i) => (
                     <div key={i} className="border-b last:border-0 pb-2 last:pb-0">
-                      <div className="font-medium">{pkg.name}</div>
-                      <div className="text-muted-foreground text-xs">
-                        Versions found: {pkg.versions?.join(', ')}
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{pkg.name}</span>
+                        <Badge variant="secondary" className="text-xs">
+                          {pkg.version_count || pkg.versions?.length || 0} versions
+                        </Badge>
                       </div>
-                      <div className="text-green-500 text-xs">
-                        Suggestion: {pkg.suggestion}
+                      <div className="text-muted-foreground text-xs mt-1">
+                        <span className="font-mono">{pkg.versions?.slice(0, 4).join(', ')}</span>
+                        {(pkg.versions?.length || 0) > 4 && <span className="text-muted-foreground">...</span>}
                       </div>
+                      {pkg.suggestion && (
+                        <div className="text-green-500 text-xs mt-1">
+                          → {pkg.suggestion}
+                        </div>
+                      )}
                     </div>
                   ))}
-                  {recommendation.action.commands && (
-                    <div className="mt-2 font-mono text-xs text-muted-foreground">
-                      {recommendation.action.commands.map((cmd, i) => (
-                        <div key={i}>{cmd}</div>
-                      ))}
-                    </div>
-                  )}
                 </div>
+                {recommendation.action.commands && (
+                  <div className="mt-3 p-2 bg-muted/50 rounded font-mono text-xs text-muted-foreground">
+                    {recommendation.action.commands.map((cmd, i) => (
+                      <div key={i}>{cmd}</div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             
@@ -758,18 +767,27 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
                   <GitBranch className="h-4 w-4" />
-                  Version Standardization
+                  Version Standardization Across Projects
                 </h5>
-                <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
+                <div className="bg-muted rounded-lg p-3 text-sm space-y-3">
                   {recommendation.action.packages.map((pkg, i) => (
                     <div key={i} className="border-b last:border-0 pb-2 last:pb-0">
-                      <div className="font-medium">{pkg.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        Found: {pkg.versions?.slice(0, 3).join(', ')}{(pkg.versions?.length || 0) > 3 && '...'}
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{pkg.name}</span>
+                        {pkg.project_count && (
+                          <Badge variant="secondary" className="text-xs">
+                            {pkg.project_count} projects
+                          </Badge>
+                        )}
                       </div>
-                      <div className="text-xs text-green-500">
-                        Recommended: {pkg.suggestion || 'Use latest stable'}
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Versions in use: <span className="font-mono">{pkg.versions?.join(', ') || 'unknown'}</span>
                       </div>
+                      {pkg.suggestion && pkg.suggestion !== 'Use latest stable' && (
+                        <div className="text-xs text-green-500 mt-1">
+                          Recommended: <span className="font-mono">{pkg.suggestion}</span>
+                        </div>
+                      )}
                     </div>
                   ))}
                   {recommendation.action.suggestions && (
@@ -807,6 +825,34 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
               </div>
             )}
             
+            {/* Affected Projects */}
+            {recommendation.affected_projects && recommendation.affected_projects.length > 0 && (
+              <div className="space-y-2">
+                <h5 className="text-sm font-medium flex items-center gap-2">
+                  <FolderTree className="h-4 w-4" />
+                  Affected Projects
+                </h5>
+                <div className="flex flex-wrap gap-2">
+                  {recommendation.affected_projects.slice(0, 5).map((proj) => (
+                    <Link
+                      key={proj.id}
+                      to={`/projects/${proj.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-muted hover:bg-muted/80 text-sm transition-colors"
+                    >
+                      <Package className="h-3 w-3" />
+                      {proj.name}
+                    </Link>
+                  ))}
+                  {recommendation.affected_projects.length > 5 && (
+                    <Badge variant="secondary">
+                      +{recommendation.affected_projects.length - 5} more
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            )}
+            
             {/* Affected Components */}
             {recommendation.affected_components.length > 0 && recommendation.affected_components.length <= 10 && (
               <div className="space-y-2">
@@ -837,49 +883,66 @@ function SummaryCard({ data }: { data: RecommendationsResponse }) {
     (data.summary.sast_issues || 0) > 0 || 
     (data.summary.iac_issues || 0) > 0 || 
     (data.summary.license_issues || 0) > 0;
+  
+  const totalSecurityFindings = (data.total_findings || data.total_vulnerabilities || 0) +
+    (data.summary.secrets_to_rotate || 0) +
+    (data.summary.sast_issues || 0) +
+    (data.summary.iac_issues || 0);
+  
+  const totalInsights = (data.summary.outdated_deps || 0) + 
+    (data.summary.fragmentation_issues || 0) +
+    (data.summary.trend_alerts || 0) +
+    (data.summary.cross_project_issues || 0);
     
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-lg">Summary</CardTitle>
+        <CardTitle className="text-lg">Recommendations Summary</CardTitle>
         <CardDescription>
-          {data.total_findings || data.total_vulnerabilities} total findings across all scanners
+          {totalSecurityFindings > 0 
+            ? `${totalSecurityFindings} security findings • ${totalInsights} dependency insights`
+            : totalInsights > 0
+              ? `${totalInsights} dependency insights found`
+              : 'No significant issues found'
+          }
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Vulnerability Summary */}
-        <div>
-          <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4" />
-            Vulnerabilities
-          </h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="text-center p-3 bg-muted rounded-lg">
-              <div className="text-2xl font-bold text-green-500">
-                {data.summary.total_fixable_vulns || 0}
+        {/* Vulnerability Summary - only show if there are vulnerabilities */}
+        {(data.total_vulnerabilities || 0) > 0 && (
+          <div>
+            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4" />
+              Vulnerabilities
+            </h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="text-center p-3 bg-muted rounded-lg">
+                <div className="text-2xl font-bold text-green-500">
+                  {data.summary.total_fixable_vulns || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">Fixable</div>
               </div>
-              <div className="text-xs text-muted-foreground">Fixable</div>
-            </div>
-            <div className="text-center p-3 bg-muted rounded-lg">
-              <div className="text-2xl font-bold text-gray-500">
-                {data.summary.total_unfixable_vulns || 0}
+              <div className="text-center p-3 bg-muted rounded-lg">
+                <div className="text-2xl font-bold text-gray-500">
+                  {data.summary.total_unfixable_vulns || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">No Fix</div>
               </div>
-              <div className="text-xs text-muted-foreground">No Fix</div>
-            </div>
-            <div className="text-center p-3 bg-muted rounded-lg">
-              <div className="text-2xl font-bold text-blue-500">
-                {data.summary.base_image_updates || 0}
+              <div className="text-center p-3 bg-muted rounded-lg">
+                <div className="text-2xl font-bold text-blue-500">
+                  {data.summary.base_image_updates || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">Image Updates</div>
               </div>
-              <div className="text-xs text-muted-foreground">Image Updates</div>
-            </div>
-            <div className="text-center p-3 bg-muted rounded-lg">
-              <div className="text-2xl font-bold text-purple-500">
-                {(data.summary.direct_updates || 0) + (data.summary.transitive_updates || 0)}
+              <div className="text-center p-3 bg-muted rounded-lg">
+                <div className="text-2xl font-bold text-purple-500">
+                  {(data.summary.direct_updates || 0) + (data.summary.transitive_updates || 0)}
+                </div>
+                <div className="text-xs text-muted-foreground">Pkg Updates</div>
               </div>
-              <div className="text-xs text-muted-foreground">Pkg Updates</div>
             </div>
           </div>
-        </div>
+        )}
         
         {/* Other Finding Types */}
         {hasOtherFindings && (

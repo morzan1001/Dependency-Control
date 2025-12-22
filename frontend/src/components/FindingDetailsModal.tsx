@@ -7,7 +7,7 @@ import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { createWaiver, Finding } from "@/lib/api"
 import { toast } from "sonner"
-import { ShieldAlert, Container, FileCode, HardDrive, Layers, ExternalLink, FileText, Calendar, AlertTriangle, User, Building, ChevronDown, ChevronRight, Copy, Check, Clock, GitBranch, Mail, Package, Activity, Scale, BookOpen, Lightbulb, CheckCircle2, XCircle, Info } from "lucide-react"
+import { ShieldAlert, Shield, Container, FileCode, HardDrive, Layers, ExternalLink, FileText, Calendar, AlertTriangle, User, Building, ChevronDown, ChevronRight, Copy, Check, Clock, GitBranch, Mail, Package, Activity, Scale, BookOpen, Lightbulb, CheckCircle2, XCircle, Info } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { AxiosError } from "axios"
 import { useNavigate } from "react-router-dom"
@@ -431,7 +431,7 @@ function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
       {/* Scorecard Report Link */}
       {repository && (
         <a 
-          href={`https://scorecard.dev/viewer/?uri=${encodeURIComponent(repository.startsWith('http') ? repository : repository.includes('github.com') ? `https://${repository}` : `https://github.com/${repository}`)}`}
+          href={`https://scorecard.dev/viewer/?uri=${encodeURIComponent(repository.replace(/^https?:\/\//, ''))}`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
@@ -606,6 +606,156 @@ function MaintainerRiskDetailsView({ details }: { details: Record<string, unknow
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Interface for quality issue entry (from aggregated quality findings)
+interface QualityIssueEntry {
+  id: string;
+  type: string;
+  severity: string;
+  description: string;
+  scanners: string[];
+  source?: string;
+  details: Record<string, unknown>;
+}
+
+// Component for rendering aggregated quality findings (similar to vulnerabilities)
+function AggregatedQualityView({ details }: { details: Record<string, unknown> }) {
+  const qualityIssues = (details.quality_issues as QualityIssueEntry[]) || []
+  const overallScore = details.overall_score as number | undefined
+  const hasMaintenanceIssues = details.has_maintenance_issues as boolean
+  const issueCount = details.issue_count as number || qualityIssues.length
+  const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set())
+  
+  // Legacy support: if no quality_issues array, check for old structure
+  if (qualityIssues.length === 0) {
+    // Check for legacy scorecard structure
+    if (details.overall_score !== undefined || details.scorecard) {
+      const scorecardDetails = (details.scorecard as Record<string, unknown>) || details
+      return <QualityDetailsView details={scorecardDetails} />
+    }
+    // Check for legacy maintainer_risk structure
+    if (details.risks || details.maintainer_risk) {
+      const maintDetails = (details.maintainer_risk as Record<string, unknown>) || details
+      return <MaintainerRiskDetailsView details={maintDetails} />
+    }
+    return null
+  }
+  
+  const toggleIssue = (id: string) => {
+    setExpandedIssues(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+  
+  const getIssueIcon = (type: string) => {
+    switch (type) {
+      case 'scorecard': return Shield
+      case 'maintainer_risk': return Clock
+      default: return AlertTriangle
+    }
+  }
+  
+  const getIssueLabel = (type: string) => {
+    switch (type) {
+      case 'scorecard': return 'OpenSSF Scorecard'
+      case 'maintainer_risk': return 'Maintainer Risk'
+      default: return 'Quality Issue'
+    }
+  }
+  
+  const getSeverityColor = (severity: string) => {
+    switch (severity?.toUpperCase()) {
+      case 'CRITICAL': return 'destructive'
+      case 'HIGH': return 'bg-orange-500 hover:bg-orange-600'
+      case 'MEDIUM': return 'bg-yellow-500 hover:bg-yellow-600 text-black'
+      case 'LOW': return 'bg-blue-500 hover:bg-blue-600'
+      default: return 'secondary'
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Summary Header */}
+      <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <h4 className="font-medium">
+              {issueCount === 1 ? 'Quality Issue' : `${issueCount} Quality Issues`}
+            </h4>
+            {hasMaintenanceIssues && (
+              <Badge variant="destructive" className="text-xs">
+                Maintenance Concerns
+              </Badge>
+            )}
+          </div>
+          {overallScore !== undefined && (
+            <p className="text-sm text-muted-foreground">
+              OpenSSF Scorecard: <span className={overallScore >= 7 ? 'text-green-600' : overallScore >= 5 ? 'text-yellow-600' : 'text-red-600'}>{overallScore.toFixed(1)}/10</span>
+            </p>
+          )}
+        </div>
+      </div>
+      
+      {/* Individual Quality Issues */}
+      <div className="space-y-2">
+        {qualityIssues.map((issue, idx) => {
+          const isExpanded = expandedIssues.has(issue.id)
+          const Icon = getIssueIcon(issue.type)
+          
+          return (
+            <div key={issue.id || idx} className="border rounded-lg overflow-hidden">
+              {/* Issue Header - Clickable */}
+              <button
+                onClick={() => toggleIssue(issue.id)}
+                className="w-full flex items-center gap-3 p-3 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+              >
+                <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm">{getIssueLabel(issue.type)}</span>
+                    <Badge className={getSeverityColor(issue.severity)}>
+                      {issue.severity}
+                    </Badge>
+                    {issue.scanners && issue.scanners.length > 0 && (
+                      <Badge variant="outline" className="text-xs">
+                        {issue.scanners.join(', ')}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground truncate">{issue.description}</p>
+                </div>
+                {isExpanded ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                )}
+              </button>
+              
+              {/* Expanded Details */}
+              {isExpanded && (
+                <div className="p-4 border-t bg-background">
+                  {issue.type === 'scorecard' ? (
+                    <QualityDetailsView details={issue.details} />
+                  ) : issue.type === 'maintainer_risk' ? (
+                    <MaintainerRiskDetailsView details={issue.details} />
+                  ) : (
+                    <AdditionalDetailsView details={issue.details} />
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -905,9 +1055,10 @@ interface FindingDetailsModalProps {
     projectId: string
     scanId?: string
     onSelectFinding?: (id: string) => void
+    onNavigate?: () => void  // Called before navigation to allow parent cleanup
 }
 
-export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, onSelectFinding }: FindingDetailsModalProps) {
+export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, onSelectFinding, onNavigate }: FindingDetailsModalProps) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
     const [selectedVulnId, setSelectedVulnId] = useState<string | null>(null)
     const { hasPermission } = useAuth()
@@ -926,7 +1077,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
         // Extract SBOM index from source name (e.g., "SBOM #1" -> 0)
         const match = source.match(/SBOM #(\d+)/i)
         const sbomIndex = match ? parseInt(match[1], 10) - 1 : 0
+        // Close this modal and notify parent to close as well
         onClose()
+        onNavigate?.()  // Allow parent modals to close
         navigate(`/projects/${projectId}/scans/${scanId}?tab=raw&sbom=${sbomIndex}`)
     }
 
@@ -1224,28 +1377,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 <LicenseDetailsView details={finding.details} />
                             )}
 
-                            {/* Quality findings (aggregated: scorecard + maintainer_risk) */}
+                            {/* Quality findings (aggregated: quality_issues list) */}
                             {finding.type === 'quality' && finding.details && (
-                                <>
-                                    {/* Scorecard section - show if we have scorecard data */}
-                                    {(finding.details?.scorecard?.overall_score !== undefined || finding.details?.overall_score !== undefined) && (
-                                        <QualityDetailsView details={
-                                            finding.details?.scorecard 
-                                                ? { ...finding.details.scorecard, repository: finding.details.scorecard.repository }
-                                                : finding.details
-                                        } />
-                                    )}
-
-                                    {/* Maintainer Risk section - show if we have maintainer_risk data */}
-                                    {finding.details?.maintainer_risk?.risks && (
-                                        <MaintainerRiskDetailsView details={finding.details.maintainer_risk} />
-                                    )}
-
-                                    {/* Legacy: direct risks without aggregation structure */}
-                                    {!finding.details?.scorecard && !finding.details?.maintainer_risk && finding.details?.risks && (
-                                        <MaintainerRiskDetailsView details={finding.details} />
-                                    )}
-                                </>
+                                <AggregatedQualityView details={finding.details} />
                             )}
 
                             {/* Legacy 'other' type with maintainer_risk data */}

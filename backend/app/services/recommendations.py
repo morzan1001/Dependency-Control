@@ -8,119 +8,18 @@ to generate actionable remediation recommendations.
 import logging
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
+
+from app.schemas.recommendation import (
+    RecommendationType,
+    Priority,
+    FindingInfo,
+    VulnerabilityInfo,
+    Recommendation,
+)
 
 logger = logging.getLogger(__name__)
 
-
-class RecommendationType(str, Enum):
-    """Types of remediation recommendations."""
-
-    # Vulnerability-related
-    BASE_IMAGE_UPDATE = "base_image_update"
-    DIRECT_DEPENDENCY_UPDATE = "direct_dependency_update"
-    TRANSITIVE_FIX_VIA_PARENT = "transitive_fix_via_parent"
-    NO_FIX_AVAILABLE = "no_fix_available"
-    CONSIDER_WAIVER = "consider_waiver"
-    # Secret-related
-    ROTATE_SECRETS = "rotate_secrets"
-    REMOVE_SECRETS = "remove_secrets"
-    # SAST-related
-    FIX_CODE_SECURITY = "fix_code_security"
-    # IAC-related
-    FIX_INFRASTRUCTURE = "fix_infrastructure"
-    # License-related
-    LICENSE_COMPLIANCE = "license_compliance"
-    # Quality-related
-    SUPPLY_CHAIN_RISK = "supply_chain_risk"
-    CRITICAL_RISK = "critical_risk"  # Combined vuln + scorecard risk
-    # Dependency Health & Hygiene
-    OUTDATED_DEPENDENCY = "outdated_dependency"
-    VERSION_FRAGMENTATION = "version_fragmentation"
-    DEV_IN_PRODUCTION = "dev_in_production"
-    UNMAINTAINED_PACKAGE = "unmaintained_package"
-    # Trend-based
-    RECURRING_VULNERABILITY = "recurring_vulnerability"
-    REGRESSION_DETECTED = "regression_detected"
-    # Dependency Graph
-    DEEP_DEPENDENCY_CHAIN = "deep_dependency_chain"
-    DUPLICATE_FUNCTIONALITY = "duplicate_functionality"
-    # Cross-Project
-    CROSS_PROJECT_PATTERN = "cross_project_pattern"
-    SHARED_VULNERABILITY = "shared_vulnerability"
-
-
-class Priority(str, Enum):
-    """Recommendation priority levels."""
-
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
-@dataclass
-class FindingInfo:
-    """Generic information about any finding."""
-
-    finding_id: str
-    finding_type: str  # vulnerability, secret, sast, iac, license, quality
-    severity: str
-    component: str  # package name or file path
-    version: Optional[str] = None
-    description: Optional[str] = None
-    fixed_version: Optional[str] = None
-    cve_id: Optional[str] = None
-    file_path: Optional[str] = None
-    line_number: Optional[int] = None
-    rule_id: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class VulnerabilityInfo:
-    """Specific information about a vulnerability finding."""
-
-    finding_id: str
-    cve_id: str
-    severity: str
-    package_name: str
-    current_version: str
-    fixed_version: Optional[str]
-    description: Optional[str] = None
-    source_type: str = "unknown"  # image or application
-
-    @property
-    def is_fixable(self) -> bool:
-        return self.fixed_version is not None
-
-
-@dataclass
-class Recommendation:
-    """A remediation recommendation."""
-
-    type: RecommendationType
-    priority: Priority
-    title: str
-    description: str
-    impact: Dict[str, int]  # {critical: X, high: Y, ...}
-    affected_components: List[str]
-    action: Dict[str, Any]  # Specific action details
-    effort: str = "medium"  # low, medium, high
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "type": self.type.value,
-            "priority": self.priority.value,
-            "title": self.title,
-            "description": self.description,
-            "impact": self.impact,
-            "affected_components": self.affected_components,
-            "action": self.action,
-            "effort": self.effort,
-        }
 
 
 # OS package types that typically come from base images
@@ -1396,29 +1295,29 @@ class RecommendationEngine:
         recommendations = []
 
         # Known outdated patterns for common packages
-        # Format: package_pattern -> (min_recommended_major, message)
+        # Format: package_name (exact or starts with) -> (min_recommended_major, message, match_type)
+        # match_type: "exact" = exact match, "startswith" = name starts with pattern, "contains" = pattern in name
         known_outdated = {
-            "react": (
-                18,
-                "React 18+ offers concurrent features and better performance",
-            ),
-            "vue": (3, "Vue 3 offers Composition API and improved TypeScript support"),
-            "angular": (15, "Consider upgrading to Angular 15+ for better performance"),
-            "django": (4, "Django 4+ offers async support and improved security"),
-            "flask": (2, "Flask 2+ has async support and improved CLI"),
-            "express": (4, "Express 4+ is the stable maintained version"),
-            "lodash": (4, "Lodash 4+ is the current stable release"),
-            "jquery": (3, "Consider migrating away from jQuery to modern frameworks"),
-            "moment": (
-                2,
-                "Consider migrating to date-fns or dayjs - moment is in maintenance mode",
-            ),
-            "request": (
-                2,
-                "The 'request' package is deprecated - use axios or node-fetch",
-            ),
-            "python": (3, "Python 2.x is end-of-life"),
-            "node": (18, "Node.js 16 and below are end-of-life"),
+            # JavaScript/Frontend frameworks - use "exact" or "startswith" to avoid false matches
+            "react": (18, "React 18+ offers concurrent features and better performance", "exact"),
+            "@angular/core": (15, "Consider upgrading to Angular 15+ for better performance", "exact"),
+            "vue": (3, "Vue 3 offers Composition API and improved TypeScript support", "exact"),
+            # Python frameworks - exact matches only
+            "django": (4, "Django 4+ offers async support and improved security", "exact"),
+            "flask": (2, "Flask 2+ has async support and improved CLI", "exact"),
+            # Node.js packages
+            "express": (4, "Express 4+ is the stable maintained version", "exact"),
+            "lodash": (4, "Lodash 4+ is the current stable release", "exact"),
+            # Deprecated packages
+            "jquery": (3, "Consider migrating away from jQuery to modern frameworks", "exact"),
+            "moment": (2, "Consider migrating to date-fns or dayjs - moment is in maintenance mode", "exact"),
+            "request": (2, "The 'request' package is deprecated - use axios or node-fetch", "exact"),
+        }
+        
+        # Separate patterns for runtime versions (need special handling)
+        runtime_patterns = {
+            # Only match actual Python interpreter, not python packages
+            # Actual Python runtime packages: python2, python3, python (without suffix)
         }
 
         outdated_deps = []
@@ -1426,10 +1325,23 @@ class RecommendationEngine:
         for dep in dependencies:
             name = dep.get("name", "").lower()
             version = dep.get("version", "")
+            
+            # Skip python library packages (python3-*, python-*, *-python)
+            # These are NOT Python interpreter versions
+            if name.startswith("python3-") or name.startswith("python-") or name.endswith("-python"):
+                continue
 
-            # Check against known patterns
-            for pattern, (min_major, message) in known_outdated.items():
-                if pattern in name:
+            # Check against known patterns with proper matching
+            for pattern, (min_major, message, match_type) in known_outdated.items():
+                matched = False
+                if match_type == "exact":
+                    matched = (name == pattern)
+                elif match_type == "startswith":
+                    matched = name.startswith(pattern)
+                elif match_type == "contains":
+                    matched = (pattern in name)
+                
+                if matched:
                     try:
                         # Extract major version
                         major = int(re.search(r"^v?(\d+)", version).group(1))
@@ -1550,40 +1462,47 @@ class RecommendationEngine:
         # Sort by impact (more versions = worse)
         fragmented.sort(key=lambda x: x["count"], reverse=True)
 
-        if fragmented:
-            # High priority if many packages are fragmented
-            priority = Priority.MEDIUM if len(fragmented) > 5 else Priority.LOW
+        # Only report if there are significant fragmentation issues (3+ versions)
+        significant_fragmented = [f for f in fragmented if f["count"] >= 3]
+        
+        if significant_fragmented:
+            # High priority if many packages have 3+ versions
+            priority = Priority.MEDIUM if len(significant_fragmented) > 3 else Priority.LOW
+
+            # Limit to top 15 most fragmented
+            top_fragmented = significant_fragmented[:15]
 
             recommendations.append(
                 Recommendation(
                     type=RecommendationType.VERSION_FRAGMENTATION,
                     priority=priority,
-                    title=f"Version fragmentation detected in {len(fragmented)} packages",
-                    description="Multiple versions of the same package exist in your dependency tree. This increases bundle size and can cause subtle bugs due to version mismatches.",
+                    title=f"Version fragmentation in {len(significant_fragmented)} packages ({sum(f['count'] for f in significant_fragmented)} total versions)",
+                    description=f"These packages have 3 or more versions in your dependency tree. This can increase bundle size and cause subtle bugs. Consider deduplication or pinning to a single version.",
                     impact={
                         "critical": 0,
-                        "high": 0,
-                        "medium": len([f for f in fragmented if f["count"] > 2]),
-                        "low": len([f for f in fragmented if f["count"] <= 2]),
-                        "total": len(fragmented),
+                        "high": len([f for f in significant_fragmented if f["count"] >= 5]),
+                        "medium": len([f for f in significant_fragmented if 3 <= f["count"] < 5]),
+                        "low": 0,
+                        "total": len(significant_fragmented),
                     },
                     affected_components=[
-                        f"{f['name']} ({', '.join(f['versions'][:3])}{'...' if len(f['versions']) > 3 else ''})"
-                        for f in fragmented[:10]
+                        f"{f['name']} ({f['count']} versions)"
+                        for f in top_fragmented
                     ],
                     action={
                         "type": "deduplicate_versions",
                         "packages": [
                             {
                                 "name": f["name"],
-                                "versions": f["versions"],
-                                "suggestion": f"Pin to version {max(f['versions'], key=lambda v: self._parse_version_tuple(v))}",
+                                "versions": f["versions"][:5],  # Limit displayed versions
+                                "version_count": f["count"],
+                                "suggestion": f"Pin to {max(f['versions'], key=lambda v: self._parse_version_tuple(v))}",
                             }
-                            for f in fragmented[:10]
+                            for f in top_fragmented
                         ],
                         "commands": [
                             "# For npm: npm dedupe",
-                            "# For yarn: yarn dedupe",
+                            "# For yarn: yarn dedupe", 
                             "# For pnpm: pnpm dedupe",
                         ],
                     },
@@ -2377,11 +2296,12 @@ class RecommendationEngine:
                         "packages": [
                             {
                                 "name": p["name"],
-                                "versions_found": p["versions"][:5],
-                                "recommended": max(
+                                "versions": p["versions"][:5],
+                                "suggestion": max(
                                     p["versions"],
                                     key=lambda v: self._parse_version_tuple(v),
                                 ),
+                                "project_count": p["project_count"],
                             }
                             for p in inconsistent_packages[:10]
                         ],

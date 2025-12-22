@@ -1107,10 +1107,20 @@ export const getImpactAnalysis = async (limit = 20) => {
   return response.data;
 };
 
-export const getVulnerabilityHotspots = async (limit = 20) => {
-  const params = new URLSearchParams();
-  params.append('limit', limit.toString());
-  const response = await api.get<VulnerabilityHotspot[]>('/analytics/hotspots', { params });
+export interface HotspotsQueryParams {
+  skip?: number;
+  limit?: number;
+  sort_by?: 'finding_count' | 'component' | 'first_seen';
+  sort_order?: 'asc' | 'desc';
+}
+
+export const getVulnerabilityHotspots = async (params: HotspotsQueryParams = {}) => {
+  const urlParams = new URLSearchParams();
+  if (params.skip !== undefined) urlParams.append('skip', params.skip.toString());
+  urlParams.append('limit', (params.limit ?? 20).toString());
+  if (params.sort_by) urlParams.append('sort_by', params.sort_by);
+  if (params.sort_order) urlParams.append('sort_order', params.sort_order);
+  const response = await api.get<VulnerabilityHotspot[]>('/analytics/hotspots', { params: urlParams });
   return response.data;
 };
 
@@ -1150,11 +1160,77 @@ export const searchDependenciesAdvanced = async (
   return response.data;
 };
 
+export type ComponentFinding = Finding & { project_id: string; project_name: string; scan_id?: string };
+
 export const getComponentFindings = async (component: string, version?: string) => {
   const params = new URLSearchParams();
   params.append('component', component);
   if (version) params.append('version', version);
-  const response = await api.get<(Finding & { project_id: string; project_name: string })[]>('/analytics/component-findings', { params });
+  const response = await api.get<ComponentFinding[]>('/analytics/component-findings', { params });
+  return response.data;
+};
+
+// Aggregated dependency metadata (cross-project)
+export interface DependencyMetadata {
+  name: string;
+  version: string;
+  type: string;
+  purl?: string;
+  
+  // Package metadata
+  description?: string;
+  author?: string;
+  publisher?: string;
+  homepage?: string;
+  repository_url?: string;
+  download_url?: string;
+  group?: string;
+  
+  // License
+  license?: string;
+  license_url?: string;
+  license_category?: string;
+  license_risks?: string[];
+  license_obligations?: string[];
+  
+  // deps.dev data
+  deps_dev?: {
+    stars?: number;
+    forks?: number;
+    open_issues?: number;
+    is_deprecated?: boolean;
+    known_advisories?: string[];
+    published_at?: string;
+    project_description?: string;
+    project_url?: string;
+    dependents?: { total?: number };
+    scorecard?: {
+      overall_score?: number;
+      checks_count?: number;
+      date?: string;
+    };
+    links?: Record<string, string>;
+  };
+  
+  // Aggregated info
+  project_count: number;
+  affected_projects: Array<{ id: string; name: string; direct: boolean }>;
+  total_vulnerability_count: number;
+  total_finding_count: number;
+  
+  enrichment_sources?: string[];
+}
+
+export const getDependencyMetadata = async (
+  component: string, 
+  version?: string, 
+  type?: string
+): Promise<DependencyMetadata | null> => {
+  const params = new URLSearchParams();
+  params.append('component', component);
+  if (version) params.append('version', version);
+  if (type) params.append('type', type);
+  const response = await api.get<DependencyMetadata | null>('/analytics/dependency-metadata', { params });
   return response.data;
 };
 
@@ -1231,6 +1307,8 @@ export interface RecommendationAction {
     reason?: string;
     versions?: string[];
     suggestion?: string;
+    version_count?: number;
+    project_count?: number;
   }>;
   // Trend fields
   new_critical_cves?: string[];
@@ -1264,6 +1342,7 @@ export interface Recommendation {
   description: string;
   impact: RecommendationImpact;
   affected_components: string[];
+  affected_projects?: Array<{ id: string; name: string }>;
   action: RecommendationAction;
   effort: 'low' | 'medium' | 'high';
 }

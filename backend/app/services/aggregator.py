@@ -1,7 +1,6 @@
 import hashlib
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, TypedDict
+from typing import Any, Dict, List, Optional, Set
 
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding import (
@@ -9,9 +8,9 @@ from app.schemas.finding import (
     VulnerabilityAggregatedDetails,
     VulnerabilityEntry,
     QualityAggregatedDetails,
-    ScorecardEntry,
-    MaintainerRiskEntry,
+    QualityEntry,
 )
+from app.schemas.enrichment import DependencyEnrichment
 
 SEVERITY_ORDER = {
     "CRITICAL": 5,
@@ -21,155 +20,6 @@ SEVERITY_ORDER = {
     "INFO": 1,
     "UNKNOWN": 0,
 }
-
-
-@dataclass
-class DependencyEnrichment:
-    """
-    Aggregated enrichment data for a dependency from multiple sources.
-    This creates a single source of truth by merging data from:
-    - SBOM (base data)
-    - deps.dev (external metadata, scorecard, links)
-    - license_compliance scanner (detailed license analysis)
-    """
-
-    name: str
-    version: str
-
-    # License info (aggregated from multiple sources)
-    licenses: List[Dict[str, Any]] = field(
-        default_factory=list
-    )  # [{spdx_id, source, category, ...}]
-    primary_license: Optional[str] = None  # Best determined license
-    license_category: Optional[str] = None  # permissive, copyleft, etc.
-    license_risks: List[str] = field(default_factory=list)
-    license_obligations: List[str] = field(default_factory=list)
-
-    # Links (aggregated from SBOM + deps.dev)
-    homepage: Optional[str] = None
-    repository_url: Optional[str] = None
-    documentation_url: Optional[str] = None
-    issues_url: Optional[str] = None
-    changelog_url: Optional[str] = None
-    download_url: Optional[str] = None
-    additional_links: Dict[str, str] = field(default_factory=dict)
-
-    # Project metrics (from deps.dev)
-    stars: Optional[int] = None
-    forks: Optional[int] = None
-    open_issues: Optional[int] = None
-    dependents_total: Optional[int] = None
-    dependents_direct: Optional[int] = None
-
-    # Scorecard (from deps.dev)
-    scorecard_score: Optional[float] = None
-    scorecard_date: Optional[str] = None
-    scorecard_checks_count: Optional[int] = None
-    scorecard_checks: List[Dict[str, Any]] = field(default_factory=list)
-    scorecard_critical_issues: List[str] = field(default_factory=list)
-
-    # Version/Publication info
-    published_at: Optional[str] = None
-    is_deprecated: bool = False
-    is_default_version: bool = False
-
-    # Security indicators
-    known_advisories: List[str] = field(default_factory=list)
-    has_attestations: bool = False
-    has_slsa_provenance: bool = False
-
-    # Description (prefer deps.dev over SBOM if more detailed)
-    description: Optional[str] = None
-
-    # Source tracking
-    sources: Set[str] = field(default_factory=set)  # Which scanners contributed
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for MongoDB storage."""
-        result = {}
-
-        # License aggregation
-        if self.primary_license:
-            result["license"] = self.primary_license
-        if self.license_category:
-            result["license_category"] = self.license_category
-        if self.licenses:
-            result["licenses_detailed"] = self.licenses
-        if self.license_risks:
-            result["license_risks"] = self.license_risks
-        if self.license_obligations:
-            result["license_obligations"] = self.license_obligations
-
-        # Links - update only if we have better data
-        if self.homepage:
-            result["homepage"] = self.homepage
-        if self.repository_url:
-            result["repository_url"] = self.repository_url
-        if self.download_url:
-            result["download_url"] = self.download_url
-
-        # deps.dev specific enrichment
-        deps_dev = {}
-        if self.stars is not None:
-            deps_dev["stars"] = self.stars
-        if self.forks is not None:
-            deps_dev["forks"] = self.forks
-        if self.open_issues is not None:
-            deps_dev["open_issues"] = self.open_issues
-        if self.dependents_total is not None:
-            deps_dev["dependents"] = {
-                "total": self.dependents_total,
-                "direct": self.dependents_direct,
-            }
-
-        # Scorecard
-        if self.scorecard_score is not None:
-            deps_dev["scorecard"] = {
-                "overall_score": self.scorecard_score,
-                "date": self.scorecard_date,
-                "checks_count": self.scorecard_checks_count,
-            }
-
-        # Additional links from deps.dev
-        if (
-            self.documentation_url
-            or self.issues_url
-            or self.changelog_url
-            or self.additional_links
-        ):
-            deps_dev["links"] = {}
-            if self.documentation_url:
-                deps_dev["links"]["documentation"] = self.documentation_url
-            if self.issues_url:
-                deps_dev["links"]["issues"] = self.issues_url
-            if self.changelog_url:
-                deps_dev["links"]["changelog"] = self.changelog_url
-            deps_dev["links"].update(self.additional_links)
-
-        # Publication info
-        if self.published_at:
-            deps_dev["published_at"] = self.published_at
-        if self.is_deprecated:
-            deps_dev["is_deprecated"] = True
-        if self.known_advisories:
-            deps_dev["known_advisories"] = self.known_advisories
-        if self.has_attestations:
-            deps_dev["has_attestations"] = True
-        if self.has_slsa_provenance:
-            deps_dev["has_slsa_provenance"] = True
-
-        if deps_dev:
-            result["deps_dev"] = deps_dev
-
-        # Description override
-        if self.description:
-            result["description"] = self.description
-
-        # Metadata
-        if self.sources:
-            result["enrichment_sources"] = list(self.sources)
-
-        return result
 
 
 class ResultAggregator:
@@ -1006,8 +856,9 @@ class ResultAggregator:
 
     def _add_quality_finding(self, finding: Finding, source: str = None):
         """
-        Adds a quality finding to the map, aggregating scorecard and maintainer_risk
-        findings for the same component+version.
+        Adds a quality finding to the map, aggregating multiple quality issues
+        (scorecard, maintainer_risk, etc.) for the same component+version.
+        Structure mirrors vulnerability aggregation with a quality_issues list.
         """
         # Normalize keys
         raw_comp = finding.component if finding.component else "unknown"
@@ -1020,9 +871,38 @@ class ResultAggregator:
         # Primary key for the AGGREGATED quality finding
         agg_key = f"AGG:QUALITY:{comp_key}:{version_key}"
 
-        # Determine if this is a scorecard or maintainer_risk finding
-        is_scorecard = finding.id.startswith("SCORECARD-")
-        is_maintainer = finding.id.startswith("MAINT-")
+        # Determine quality issue type based on finding ID
+        if finding.id.startswith("SCORECARD-"):
+            issue_type = "scorecard"
+        elif finding.id.startswith("MAINT-"):
+            issue_type = "maintainer_risk"
+        else:
+            issue_type = "other"
+
+        # Create the quality entry (similar to VulnerabilityEntry)
+        quality_entry: QualityEntry = {
+            "id": finding.id,
+            "type": issue_type,
+            "severity": finding.severity,
+            "description": finding.description,
+            "scanners": finding.scanners or [],
+            "source": source,
+            "details": finding.details or {},
+        }
+
+        # Check for maintenance issues
+        has_maintenance = False
+        if issue_type == "scorecard":
+            critical = finding.details.get("critical_issues", [])
+            if "Maintained" in critical:
+                has_maintenance = True
+        elif issue_type == "maintainer_risk":
+            risks = finding.details.get("risks", [])
+            for risk in risks:
+                risk_type = risk.get("type", "")
+                if risk_type in ("stale_package", "infrequent_updates", "archived_repo"):
+                    has_maintenance = True
+                    break
 
         if agg_key in self.findings:
             existing = self.findings[agg_key]
@@ -1036,95 +916,39 @@ class ResultAggregator:
             if new_severity_val > existing_severity_val:
                 existing.severity = finding.severity
 
-            # 3. Merge data based on source type
-            if is_scorecard:
-                scorecard_entry: ScorecardEntry = {
-                    "overall_score": finding.details.get("overall_score"),
-                    "scorecard_date": finding.details.get("scorecard_date"),
-                    "repository": finding.details.get("repository"),
-                    "project_url": finding.details.get("project_url"),
-                    "failed_checks": finding.details.get("failed_checks", []),
-                    "critical_issues": finding.details.get("critical_issues", []),
-                    "checks_summary": finding.details.get("checks_summary", {}),
-                    "recommendation": finding.details.get("recommendation"),
-                }
-                existing.details["scorecard"] = scorecard_entry
+            # 3. Add to quality_issues list (check for duplicates by ID)
+            quality_list: List[QualityEntry] = existing.details.get("quality_issues", [])
+            existing_ids = {q.get("id") for q in quality_list}
+            
+            if finding.id not in existing_ids:
+                quality_list.append(quality_entry)
+                existing.details["quality_issues"] = quality_list
+                existing.details["issue_count"] = len(quality_list)
+
+            # 4. Update overall_score if this is a scorecard finding
+            if issue_type == "scorecard" and finding.details.get("overall_score") is not None:
                 existing.details["overall_score"] = finding.details.get("overall_score")
 
-                # Update maintenance issues
-                critical = finding.details.get("critical_issues", [])
-                if "Maintained" in critical:
-                    existing.details["has_maintenance_issues"] = True
-                    if "Maintained" not in existing.details.get("maintenance_issues", []):
-                        existing.details.setdefault("maintenance_issues", []).append("Maintained")
-
-            elif is_maintainer:
-                maintainer_entry: MaintainerRiskEntry = {
-                    "risks": finding.details.get("risks", []),
-                    "maintainer_info": finding.details.get("maintainer_info", {}),
-                    "risk_count": finding.details.get("risk_count", 0),
-                }
-                existing.details["maintainer_risk"] = maintainer_entry
-
-                # Update maintenance issues based on risks
-                risks = finding.details.get("risks", [])
-                for risk in risks:
-                    risk_type = risk.get("type", "")
-                    if risk_type in ("stale_package", "infrequent_updates", "archived_repo"):
-                        existing.details["has_maintenance_issues"] = True
-                        issue_name = risk.get("message", risk_type)
-                        if issue_name not in existing.details.get("maintenance_issues", []):
-                            existing.details.setdefault("maintenance_issues", []).append(issue_name)
+            # 5. Update maintenance flag
+            if has_maintenance:
+                existing.details["has_maintenance_issues"] = True
 
             # Update found_in
             if source and source not in existing.found_in:
                 existing.found_in.append(source)
 
-            # Update description to reflect all sources
+            # Update description to reflect issue count
             self._update_quality_description(existing)
 
         else:
             # Create new Aggregate Quality Finding
             agg_details: QualityAggregatedDetails = {
-                "scorecard": None,
-                "maintainer_risk": None,
-                "overall_score": None,
-                "has_maintenance_issues": False,
-                "maintenance_issues": [],
-                "scanners": finding.scanners,
+                "quality_issues": [quality_entry],
+                "overall_score": finding.details.get("overall_score") if issue_type == "scorecard" else None,
+                "has_maintenance_issues": has_maintenance,
+                "issue_count": 1,
+                "scanners": finding.scanners or [],
             }
-
-            if is_scorecard:
-                agg_details["scorecard"] = {
-                    "overall_score": finding.details.get("overall_score"),
-                    "scorecard_date": finding.details.get("scorecard_date"),
-                    "repository": finding.details.get("repository"),
-                    "project_url": finding.details.get("project_url"),
-                    "failed_checks": finding.details.get("failed_checks", []),
-                    "critical_issues": finding.details.get("critical_issues", []),
-                    "checks_summary": finding.details.get("checks_summary", {}),
-                    "recommendation": finding.details.get("recommendation"),
-                }
-                agg_details["overall_score"] = finding.details.get("overall_score")
-
-                critical = finding.details.get("critical_issues", [])
-                if "Maintained" in critical:
-                    agg_details["has_maintenance_issues"] = True
-                    agg_details["maintenance_issues"].append("Maintained")
-
-            elif is_maintainer:
-                agg_details["maintainer_risk"] = {
-                    "risks": finding.details.get("risks", []),
-                    "maintainer_info": finding.details.get("maintainer_info", {}),
-                    "risk_count": finding.details.get("risk_count", 0),
-                }
-
-                risks = finding.details.get("risks", [])
-                for risk in risks:
-                    risk_type = risk.get("type", "")
-                    if risk_type in ("stale_package", "infrequent_updates", "archived_repo"):
-                        agg_details["has_maintenance_issues"] = True
-                        agg_details["maintenance_issues"].append(risk.get("message", risk_type))
 
             agg_finding = Finding(
                 id=f"QUALITY:{finding.component}:{finding.version}",
@@ -1141,28 +965,41 @@ class ResultAggregator:
 
     def _update_quality_description(self, finding: Finding):
         """Updates the description of an aggregated quality finding."""
+        quality_issues = finding.details.get("quality_issues", [])
+        count = len(quality_issues)
+        
+        if count == 0:
+            finding.description = "Quality issues detected"
+            return
+        
+        if count == 1:
+            # Use the original description from the single issue
+            finding.description = quality_issues[0].get("description", "Quality issue detected")
+            return
+        
+        # Multiple issues - create summary
         parts = []
-
-        # Scorecard summary
-        scorecard = finding.details.get("scorecard")
-        if scorecard:
-            score = scorecard.get("overall_score", 0)
-            parts.append(f"OpenSSF Scorecard: {score:.1f}/10")
-            critical = scorecard.get("critical_issues", [])
-            if critical:
-                parts.append(f"Critical: {', '.join(critical)}")
-
-        # Maintainer risk summary
-        maint = finding.details.get("maintainer_risk")
-        if maint:
-            risks = maint.get("risks", [])
+        
+        # Check for scorecard
+        scorecard_issues = [q for q in quality_issues if q.get("type") == "scorecard"]
+        if scorecard_issues:
+            score = scorecard_issues[0].get("details", {}).get("overall_score")
+            if score is not None:
+                parts.append(f"Scorecard: {score:.1f}/10")
+        
+        # Check for maintainer risk
+        maint_issues = [q for q in quality_issues if q.get("type") == "maintainer_risk"]
+        if maint_issues:
+            risks = maint_issues[0].get("details", {}).get("risks", [])
             if risks:
-                risk_summaries = [r.get("message", r.get("type", "")) for r in risks[:2]]
-                parts.append("; ".join(risk_summaries))
-                if len(risks) > 2:
-                    parts[-1] += f" (+{len(risks) - 2} more)"
-
-        finding.description = " | ".join(parts) if parts else "Quality issues detected"
+                parts.append(f"{len(risks)} maintainer risks")
+        
+        # Other issues
+        other_count = count - len(scorecard_issues) - len(maint_issues)
+        if other_count > 0:
+            parts.append(f"{other_count} other issues")
+        
+        finding.description = " | ".join(parts) if parts else f"{count} quality issues"
 
     def _add_generic_finding(self, finding: Finding, source: str = None):
         """

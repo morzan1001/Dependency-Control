@@ -11,10 +11,10 @@ Normalizes all formats to a common internal representation.
 
 import logging
 import re
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+
+from app.schemas.sbom import SBOMFormat, SourceType, ParsedDependency, ParsedSBOM
 
 logger = logging.getLogger(__name__)
 
@@ -81,122 +81,6 @@ def extract_license_from_url(url: str) -> Optional[str]:
             return spdx_id
 
     return None
-
-
-class SBOMFormat(Enum):
-    CYCLONEDX = "cyclonedx"
-    SPDX = "spdx"
-    SYFT = "syft"
-    UNKNOWN = "unknown"
-
-
-class SourceType(Enum):
-    IMAGE = "image"
-    DIRECTORY = "directory"
-    FILE = "file"
-    APPLICATION = "application"
-    FILESYSTEM = "file-system"
-    UNKNOWN = "unknown"
-
-
-@dataclass
-class ParsedDependency:
-    """Normalized dependency representation with all available SBOM fields."""
-
-    # Core Identity
-    name: str
-    version: str
-    purl: Optional[str] = None
-    type: str = "unknown"
-
-    # Licensing
-    license: str = ""
-    license_url: Optional[str] = None
-
-    # Scope and relationships
-    scope: Optional[str] = None
-    direct: bool = False
-    parent_components: List[str] = field(default_factory=list)
-
-    # Source/Origin information
-    source_type: Optional[str] = None
-    source_target: Optional[str] = None
-    layer_digest: Optional[str] = None
-    found_by: Optional[str] = None
-    locations: List[str] = field(default_factory=list)
-
-    # Security identifiers
-    cpes: List[str] = field(default_factory=list)
-
-    # Package metadata
-    description: Optional[str] = None
-    author: Optional[str] = None
-    publisher: Optional[str] = None
-    group: Optional[str] = None
-
-    # External references
-    homepage: Optional[str] = None
-    repository_url: Optional[str] = None
-    download_url: Optional[str] = None
-
-    # Checksums
-    hashes: Dict[str, str] = field(default_factory=dict)
-
-    # Additional properties from SBOM
-    properties: Dict[str, str] = field(default_factory=dict)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "name": self.name,
-            "version": self.version,
-            "purl": self.purl,
-            "type": self.type,
-            "license": self.license,
-            "license_url": self.license_url,
-            "scope": self.scope,
-            "direct": self.direct,
-            "parent_components": self.parent_components,
-            "source_type": self.source_type,
-            "source_target": self.source_target,
-            "layer_digest": self.layer_digest,
-            "found_by": self.found_by,
-            "locations": self.locations,
-            "cpes": self.cpes,
-            "description": self.description,
-            "author": self.author,
-            "publisher": self.publisher,
-            "group": self.group,
-            "homepage": self.homepage,
-            "repository_url": self.repository_url,
-            "download_url": self.download_url,
-            "hashes": self.hashes,
-            "properties": self.properties,
-        }
-
-
-@dataclass
-class ParsedSBOM:
-    """Normalized SBOM representation."""
-
-    format: SBOMFormat
-    format_version: Optional[str] = None
-
-    # Source information
-    source_type: Optional[str] = None
-    source_target: Optional[str] = None
-
-    # Components/Dependencies
-    dependencies: List[ParsedDependency] = field(default_factory=list)
-
-    # Metadata
-    tool_name: Optional[str] = None
-    tool_version: Optional[str] = None
-    created_at: Optional[str] = None
-
-    # Statistics
-    total_components: int = 0
-    parsed_components: int = 0
-    skipped_components: int = 0
 
 
 class SBOMParser:
@@ -325,6 +209,9 @@ class SBOMParser:
 
         # Build a map of ref -> dependsOn for easier lookup
         deps_graph = {}
+        # Build reverse map: child -> list of parents (for parent_components)
+        reverse_deps_graph = {}
+        
         for dep_entry in dependencies_map:
             ref = dep_entry.get("ref", "")
             depends_on = dep_entry.get("dependsOn", [])
@@ -332,6 +219,10 @@ class SBOMParser:
             # All items in dependsOn are transitive (dependencies of something)
             for transitive_ref in depends_on:
                 all_transitive_refs.add(transitive_ref)
+                # Build reverse mapping: child -> parents
+                if transitive_ref not in reverse_deps_graph:
+                    reverse_deps_graph[transitive_ref] = []
+                reverse_deps_graph[transitive_ref].append(ref)
 
         # Direct dependencies are those that:
         # 1. Appear in the main component's dependsOn list, OR
@@ -345,8 +236,13 @@ class SBOMParser:
                 if ref not in all_transitive_refs and ref != main_bom_ref:
                     direct_refs.add(ref)
 
+        # Log dependency graph info for debugging
+        has_dependency_info = bool(dependencies_map)
         logger.debug(
-            f"CycloneDX dependency analysis: {len(direct_refs)} direct, {len(all_transitive_refs)} transitive refs found"
+            f"CycloneDX dependency analysis: has_graph={has_dependency_info}, "
+            f"main_bom_ref={main_bom_ref}, "
+            f"direct_refs={len(direct_refs)}, transitive_refs={len(all_transitive_refs)}, "
+            f"reverse_deps_entries={len(reverse_deps_graph)}"
         )
 
         # Parse components
@@ -358,6 +254,7 @@ class SBOMParser:
                 source_target,
                 direct_refs,
                 all_transitive_refs,
+                reverse_deps_graph,
             )
             if parsed:
                 result.dependencies.append(parsed)
@@ -522,6 +419,7 @@ class SBOMParser:
         source_target: Optional[str],
         direct_refs: set = None,
         all_transitive_refs: set = None,
+        reverse_deps_graph: dict = None,
     ) -> Optional[ParsedDependency]:
         """Parse a single CycloneDX component with all available fields."""
 
@@ -542,15 +440,25 @@ class SBOMParser:
 
         # Determine if this is a direct dependency
         direct = False
-        if direct_refs is not None and all_transitive_refs is not None:
+        parent_components = []
+        check_ref = bom_ref or purl
+        
+        # Only determine direct status if we have dependency relationship info
+        has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
+        
+        if has_dependency_graph and direct_refs is not None and all_transitive_refs is not None:
             # Use bom-ref or purl to check
-            check_ref = bom_ref or purl
             if check_ref in direct_refs:
                 direct = True
-            elif check_ref not in all_transitive_refs:
-                # Not in anyone's dependsOn - could be a root-level dependency
-                # This happens when no dependency graph is provided
+            elif check_ref not in all_transitive_refs and direct_refs:
+                # Not in anyone's dependsOn and we have explicit direct refs
+                # This component might be isolated or a root-level dependency
                 direct = True
+        # If no dependency graph at all, leave direct as False (unknown)
+        
+        # Get parent components from reverse dependency graph
+        if reverse_deps_graph and check_ref in reverse_deps_graph:
+            parent_components = reverse_deps_graph[check_ref]
 
         # Extract license
         licenses = comp.get("licenses", [])
@@ -639,6 +547,7 @@ class SBOMParser:
             license_url=license_url,
             scope=comp.get("scope"),
             direct=direct,
+            parent_components=parent_components,
             source_type=determined_source_type,
             source_target=source_target,
             layer_digest=layer_digest,
@@ -783,14 +692,22 @@ class SBOMParser:
         direct_artifact_ids = set()
         all_child_ids = set()  # All artifacts that are children of something
         
+        # Build reverse dependency graph: child -> list of parents
+        reverse_deps_graph = {}
+        
         for rel in relationships:
             parent = rel.get("parent", "")
             child = rel.get("child", "")
             rel_type = rel.get("type", "")
             
-            # Track all child relationships
+            # Track all child relationships and build reverse graph
             if child:
                 all_child_ids.add(child)
+                # Build reverse mapping: child -> parents
+                if child not in reverse_deps_graph:
+                    reverse_deps_graph[child] = []
+                if parent and parent != source_id:  # Don't include source as parent
+                    reverse_deps_graph[child].append(parent)
             
             # Direct dependencies: artifacts directly connected to the source
             if parent == source_id:
@@ -821,9 +738,10 @@ class SBOMParser:
         for artifact in artifacts:
             artifact_id = artifact.get("id", "")
             is_direct = artifact_id in direct_artifact_ids
+            parent_components = reverse_deps_graph.get(artifact_id, [])
             
             parsed = self._parse_syft_artifact(
-                artifact, result.source_type, result.source_target, is_direct
+                artifact, result.source_type, result.source_target, is_direct, parent_components
             )
             if parsed:
                 result.dependencies.append(parsed)
@@ -836,12 +754,16 @@ class SBOMParser:
         source_type: Optional[str],
         source_target: Optional[str],
         is_direct: bool = False,
+        parent_components: List[str] = None,
     ) -> Optional[ParsedDependency]:
         """Parse a single Syft artifact with all available fields."""
 
         purl = artifact.get("purl")
         name = artifact.get("name")
         version = artifact.get("version", "unknown")
+        
+        if parent_components is None:
+            parent_components = []
 
         # Skip artifacts without identifiable info
         if not purl and not name:
@@ -951,6 +873,7 @@ class SBOMParser:
             license_url=license_url,
             scope=None,
             direct=direct,
+            parent_components=parent_components,
             source_type=determined_source_type,
             source_target=source_target,
             layer_digest=layer_digest,
@@ -1053,6 +976,9 @@ class SBOMParser:
         all_dependency_targets = (
             set()
         )  # All packages that are dependencies of something
+        
+        # Build reverse dependency graph: child -> list of parents
+        reverse_deps_graph = {}
 
         for rel in relationships:
             rel_type = rel.get("relationshipType", "")
@@ -1064,9 +990,13 @@ class SBOMParser:
                 if rel_type in ["DESCRIBES", "CONTAINS", "DEPENDS_ON"]:
                     direct_package_ids.add(related_id)
 
-            # Track all dependency targets (transitive)
+            # Track all dependency targets (transitive) and build reverse graph
             if rel_type == "DEPENDS_ON":
                 all_dependency_targets.add(related_id)
+                # Build reverse mapping: child -> parents
+                if related_id not in reverse_deps_graph:
+                    reverse_deps_graph[related_id] = []
+                reverse_deps_graph[related_id].append(element_id)
 
         # Also check for packages that depend on others (makes them root-level if not depended upon)
         packages_with_deps = set()
@@ -1090,15 +1020,18 @@ class SBOMParser:
             ):
                 # Has dependencies but no one depends on it - likely a root package
                 is_direct = True
+            
+            # Get parent components
+            parent_components = reverse_deps_graph.get(pkg_spdx_id, [])
 
-            parsed = self._parse_spdx_package(pkg, is_direct)
+            parsed = self._parse_spdx_package(pkg, is_direct, parent_components)
             if parsed:
                 result.dependencies.append(parsed)
             else:
                 result.skipped_components += 1
 
     def _parse_spdx_package(
-        self, pkg: Dict[str, Any], is_direct: bool = False
+        self, pkg: Dict[str, Any], is_direct: bool = False, parent_components: List[str] = None
     ) -> Optional[ParsedDependency]:
         """Parse a single SPDX package with all available fields."""
 
@@ -1107,6 +1040,9 @@ class SBOMParser:
 
         if not name:
             return None
+        
+        if parent_components is None:
+            parent_components = []
 
         # SPDX external refs can contain PURL and CPE
         purl = None
@@ -1240,6 +1176,7 @@ class SBOMParser:
             license_url=license_url,
             scope=None,
             direct=is_direct,
+            parent_components=parent_components,
             source_type=determined_source_type,
             source_target=None,
             layer_digest=None,

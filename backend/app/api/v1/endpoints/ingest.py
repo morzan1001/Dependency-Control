@@ -271,6 +271,7 @@ async def ingest_sbom(
                     # Scope and relationships
                     scope=parsed_dep.scope,
                     direct=parsed_dep.direct,
+                    parent_components=parsed_dep.parent_components,
                     # Source/Origin info
                     source_type=parsed_dep.source_type,
                     source_target=parsed_dep.source_target,
