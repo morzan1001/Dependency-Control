@@ -635,14 +635,26 @@ async def search_dependencies_advanced(
             "version": dep["version"],
             "type": dep.get("type", "unknown"),
             "license": dep.get("license"),
+            "license_url": dep.get("license_url"),
             "direct": dep.get("direct", False),
-            "purl": dep.get("purl", ""),
+            "purl": dep.get("purl"),
             # Source/Origin info
             "source_type": dep.get("source_type"),
             "source_target": dep.get("source_target"),
             "layer_digest": dep.get("layer_digest"),
             "found_by": dep.get("found_by"),
-            "locations": dep.get("locations", [])
+            "locations": dep.get("locations", []),
+            # Extended SBOM fields
+            "cpes": dep.get("cpes", []),
+            "description": dep.get("description"),
+            "author": dep.get("author"),
+            "publisher": dep.get("publisher"),
+            "group": dep.get("group"),
+            "homepage": dep.get("homepage"),
+            "repository_url": dep.get("repository_url"),
+            "download_url": dep.get("download_url"),
+            "hashes": dep.get("hashes", {}),
+            "properties": dep.get("properties", {}),
         })
     
     return results

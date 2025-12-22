@@ -54,7 +54,9 @@ class ResultAggregator:
             "trufflehog": self._normalize_trufflehog,
             "opengrep": self._normalize_opengrep,
             "kics": self._normalize_kics,
-            "bearer": self._normalize_bearer
+            "bearer": self._normalize_bearer,
+            "hash_verification": self._normalize_hash_verification,
+            "maintainer_risk": self._normalize_maintainer_risk
         }
 
         if analyzer_name in normalizers:
@@ -858,7 +860,10 @@ class ResultAggregator:
                 version=item.get("version"),
                 description=item.get("message"),
                 scanners=["license_compliance"],
-                details={"license": item.get("license")}
+                details={
+                    "license": item.get("license"),
+                    "license_url": item.get("license_url")
+                }
             ), source=source)
 
     def _normalize_scorecard(self, result: Dict[str, Any], source: str = None):
@@ -1072,3 +1077,46 @@ class ResultAggregator:
                 }
             ), source=source)
 
+    def _normalize_hash_verification(self, result: Dict[str, Any], source: str = None):
+        """Normalize hash verification results into findings."""
+        for item in result.get("hash_issues", []):
+            self._add_finding(Finding(
+                id=f"HASH-{item['component']}-{item['algorithm']}",
+                type=FindingType.MALWARE,  # Hash mismatch is a serious supply chain issue
+                severity=Severity.CRITICAL,
+                component=item.get("component"),
+                version=item.get("version"),
+                description=f"Package integrity check failed! {item.get('message', 'Hash mismatch detected')}",
+                scanners=["hash_verification"],
+                details={
+                    "registry": item.get("registry"),
+                    "algorithm": item.get("algorithm"),
+                    "sbom_hash": item.get("sbom_hash"),
+                    "expected_hashes": item.get("expected_hashes", []),
+                    "verification_failed": True
+                }
+            ), source=source)
+
+    def _normalize_maintainer_risk(self, result: Dict[str, Any], source: str = None):
+        """Normalize maintainer risk results into findings."""
+        for item in result.get("maintainer_issues", []):
+            risks = item.get("risks", [])
+            
+            # Create a combined description from all risks
+            risk_messages = [r.get("message", "") for r in risks]
+            description = "; ".join(risk_messages) if risk_messages else "Maintainer risk detected"
+            
+            self._add_finding(Finding(
+                id=f"MAINT-{item['component']}",
+                type=FindingType.OTHER,  # Supply chain quality issue
+                severity=Severity(item.get("severity", "MEDIUM")),
+                component=item.get("component"),
+                version=item.get("version"),
+                description=description,
+                scanners=["maintainer_risk"],
+                details={
+                    "risks": risks,
+                    "maintainer_info": item.get("maintainer_info", {}),
+                    "risk_count": len(risks)
+                }
+            ), source=source)

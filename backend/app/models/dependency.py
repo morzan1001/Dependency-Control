@@ -7,40 +7,60 @@ class Dependency(BaseModel):
     """
     Represents a flattened dependency for efficient searching and analytics.
     This is a 'derived' record from the raw SBOM.
+    
+    Supports data from:
+    - CycloneDX (1.4, 1.5, 1.6)
+    - SPDX (2.2, 2.3)
+    - Syft JSON (native format)
     """
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan where this was found")
     
     # Core Identity
-    name: str
-    version: str
-    purl: str = Field(..., description="Package URL (unique identifier)")
-    type: str = Field(..., description="e.g. maven, npm, pypi")
+    name: str = Field(..., description="Package name")
+    version: str = Field(..., description="Package version")
+    purl: Optional[str] = Field(None, description="Package URL (unique identifier)")
+    type: str = Field("unknown", description="Package type (e.g. maven, npm, pypi, rpm, deb, go-module)")
     
-    # Metadata
-    license: Optional[str] = None
-    scope: Optional[str] = None # runtime, dev, etc.
+    # Licensing
+    license: Optional[str] = Field(None, description="License expression or name")
+    license_url: Optional[str] = Field(None, description="URL to license text")
     
-    # Graph info
-    direct: bool = False
-    parent_components: List[str] = Field(default_factory=list, description="List of parent component IDs/names")
+    # Scope and relationships
+    scope: Optional[str] = Field(None, description="Dependency scope (e.g. runtime, dev, optional)")
+    direct: bool = Field(False, description="True if direct dependency, False if transitive")
+    parent_components: List[str] = Field(default_factory=list, description="List of parent component PURLs/names")
     
     # Source/Origin info (from SBOM properties)
-    source_type: Optional[str] = None  # e.g. "image", "file-system", "directory"
-    source_target: Optional[str] = None  # e.g. Docker image name, file path
-    layer_digest: Optional[str] = None  # Docker layer digest if from container image
-    found_by: Optional[str] = None  # Scanner that found this (e.g. "python-pkg-cataloger")
-    locations: List[str] = Field(default_factory=list, description="File paths where this was found")
+    source_type: Optional[str] = Field(None, description="Source type: image, file-system, directory, application")
+    source_target: Optional[str] = Field(None, description="Source target: Docker image name, file path, etc.")
+    layer_digest: Optional[str] = Field(None, description="Docker layer digest if from container image")
+    found_by: Optional[str] = Field(None, description="Cataloger/scanner that found this (e.g. python-pkg-cataloger)")
+    locations: List[str] = Field(default_factory=list, description="File paths where this package was found")
     
+    # Security identifiers
+    cpes: List[str] = Field(default_factory=list, description="Common Platform Enumeration identifiers")
+    
+    # Package metadata
+    description: Optional[str] = Field(None, description="Package description")
+    author: Optional[str] = Field(None, description="Package author/maintainer")
+    publisher: Optional[str] = Field(None, description="Package publisher")
+    group: Optional[str] = Field(None, description="Package group/namespace (e.g. Maven groupId)")
+    
+    # External references
+    homepage: Optional[str] = Field(None, description="Package homepage URL")
+    repository_url: Optional[str] = Field(None, description="Source repository URL")
+    download_url: Optional[str] = Field(None, description="Download URL")
+    
+    # Checksums/hashes
+    hashes: Dict[str, str] = Field(default_factory=dict, description="Package hashes (e.g. {sha256: ...})")
+    
+    # Additional metadata from SBOM properties
+    properties: Dict[str, str] = Field(default_factory=dict, description="Additional SBOM properties as key-value pairs")
+    
+    # Timestamps
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Config:
         populate_by_name = True
-        indexes = [
-            # These would be created in init_db.py
-            # ("project_id", 1),
-            # ("scan_id", 1),
-            # ("name", 1),
-            # ("purl", 1)
-        ]

@@ -965,12 +965,25 @@ export interface AdvancedSearchResult {
   version: string;
   type: string;
   license?: string;
+  license_url?: string;
   direct: boolean;
-  purl: string;
+  purl?: string;
   source_type?: string;
   source_target?: string;
   layer_digest?: string;
   locations?: string[];
+  // Extended fields from SBOM
+  cpes?: string[];
+  description?: string;
+  author?: string;
+  publisher?: string;
+  group?: string;
+  homepage?: string;
+  repository_url?: string;
+  download_url?: string;
+  hashes?: Record<string, string>;
+  properties?: Record<string, string>;
+  found_by?: string;
 }
 
 export const getAnalyticsSummary = async () => {

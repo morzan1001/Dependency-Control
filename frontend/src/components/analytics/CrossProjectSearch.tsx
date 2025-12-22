@@ -21,10 +21,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Search, Package, ExternalLink, Filter, X, Container, FileCode, HardDrive } from 'lucide-react'
+import { Search, Package, ExternalLink, Filter, X, Container, FileCode, HardDrive, Eye } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
 import { cn } from '@/lib/utils'
+import { DependencyDetailsDialog } from './DependencyDetailsDialog'
 
 // Helper to get source icon and label
 function getSourceInfo(sourceType?: string) {
@@ -52,6 +53,8 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const [hasVulnerabilities, setHasVulnerabilities] = useState<string>('__all__')
   const [selectedProject, setSelectedProject] = useState<string>('__all__')
   const [showFilters, setShowFilters] = useState(false)
+  const [selectedDependency, setSelectedDependency] = useState<AdvancedSearchResult | null>(null)
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
 
   const debouncedQuery = useDebounce(query, 300)
 
@@ -344,11 +347,25 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="icon" asChild>
-                        <Link to={`/projects/${result.project_id}`} onClick={(e) => e.stopPropagation()}>
-                          <ExternalLink className="h-4 w-4" />
-                        </Link>
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={(e: React.MouseEvent) => {
+                            e.stopPropagation()
+                            setSelectedDependency(result)
+                            setDetailsDialogOpen(true)
+                          }}
+                          title="View details"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" asChild>
+                          <Link to={`/projects/${result.project_id}`} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                            <ExternalLink className="h-4 w-4" />
+                          </Link>
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 )})}
@@ -366,6 +383,13 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
             )}
           </div>
         )}
+
+        {/* Dependency Details Dialog */}
+        <DependencyDetailsDialog
+          dependency={selectedDependency}
+          open={detailsDialogOpen}
+          onOpenChange={setDetailsDialogOpen}
+        />
       </CardContent>
     </Card>
   )

@@ -243,18 +243,38 @@ async def ingest_sbom(
                 dep = Dependency(
                     project_id=str(project.id),
                     scan_id=scan_id,
+                    # Core Identity
                     name=parsed_dep.name,
                     version=parsed_dep.version,
                     purl=parsed_dep.purl,
                     type=parsed_dep.type,
+                    # Licensing
                     license=parsed_dep.license,
+                    license_url=parsed_dep.license_url,
+                    # Scope and relationships
                     scope=parsed_dep.scope,
                     direct=parsed_dep.direct,
+                    # Source/Origin info
                     source_type=parsed_dep.source_type,
                     source_target=parsed_dep.source_target,
                     layer_digest=parsed_dep.layer_digest,
                     found_by=parsed_dep.found_by,
-                    locations=parsed_dep.locations
+                    locations=parsed_dep.locations,
+                    # Security identifiers
+                    cpes=parsed_dep.cpes,
+                    # Package metadata
+                    description=parsed_dep.description,
+                    author=parsed_dep.author,
+                    publisher=parsed_dep.publisher,
+                    group=parsed_dep.group,
+                    # External references
+                    homepage=parsed_dep.homepage,
+                    repository_url=parsed_dep.repository_url,
+                    download_url=parsed_dep.download_url,
+                    # Checksums
+                    hashes=parsed_dep.hashes,
+                    # Additional properties
+                    properties=parsed_dep.properties,
                 )
                 dependencies_to_insert.append(dep.dict(by_alias=True))
                 

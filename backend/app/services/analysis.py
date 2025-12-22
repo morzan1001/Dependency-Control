@@ -16,7 +16,9 @@ from app.services.analyzers import (
     LicenseAnalyzer,
     GrypeAnalyzer,
     OutdatedAnalyzer,
-    TyposquattingAnalyzer
+    TyposquattingAnalyzer,
+    HashVerificationAnalyzer,
+    MaintainerRiskAnalyzer
 )
 from app.services.notifications import notification_service
 from app.models.project import Project
@@ -37,7 +39,9 @@ analyzers: Dict[str, Analyzer] = {
     "license_compliance": LicenseAnalyzer(),
     "grype": GrypeAnalyzer(),
     "outdated_packages": OutdatedAnalyzer(),
-    "typosquatting": TyposquattingAnalyzer()
+    "typosquatting": TyposquattingAnalyzer(),
+    "hash_verification": HashVerificationAnalyzer(),
+    "maintainer_risk": MaintainerRiskAnalyzer()
 }
 
 async def _carry_over_external_results(scan_id: str, db):
