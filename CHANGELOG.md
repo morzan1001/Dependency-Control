@@ -1,3 +1,12 @@
+# Release 0.8.1
+
+## 🚀 Features
+
+- feat(analytics): implement permission checks for analytics features and update related components (#0)
+- feat: update version to 0.8.1 and add authentication to notification channels endpoint (#0)
+
+
+
 # Release 0.8.0
 
 
