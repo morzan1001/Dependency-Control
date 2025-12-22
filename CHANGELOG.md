@@ -1,3 +1,11 @@
+# Release 0.8.3
+
+## 🚀 Features
+
+- feat: update version to 0.8.3, enhance SBOM parsing, and add unified parser for multiple formats (#0)
+
+
+
 # Release 0.8.2
 
 ## 🚀 Features
