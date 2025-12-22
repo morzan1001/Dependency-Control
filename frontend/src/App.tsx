@@ -160,7 +160,11 @@ function AppRoutes() {
             <UsersPage />
           </RequirePermission>
         } />
-        <Route path="/search/dependencies" element={<SearchPage />} />
+        <Route path="/search/dependencies" element={
+          <RequirePermission permission={['analytics:search', 'analytics:read']}>
+            <SearchPage />
+          </RequirePermission>
+        } />
         <Route path="/analytics" element={
           <RequirePermission permission={['analytics:read', 'analytics:summary', 'analytics:dependencies', 'analytics:tree', 'analytics:impact', 'analytics:hotspots', 'analytics:search']}>
             <AnalyticsPage />

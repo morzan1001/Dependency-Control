@@ -78,10 +78,12 @@ async def get_public_config(
 
 @router.get("/notifications/channels", response_model=List[str], summary="Get available notification channels")
 async def get_notification_channels(
+    current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """
     Returns a list of available notification channels based on the server configuration.
+    Requires authentication.
     """
     settings = await get_current_settings(db)
     channels = []
