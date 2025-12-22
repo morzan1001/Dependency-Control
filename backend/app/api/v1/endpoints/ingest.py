@@ -15,6 +15,7 @@ from app.models.dependency import Dependency
 from app.db.mongodb import get_database
 from app.core.worker import worker_manager
 from app.services.aggregator import ResultAggregator
+from app.services.sbom_parser import parse_sbom, SBOMFormat
 from datetime import datetime, timezone
 import uuid
 
@@ -229,90 +230,36 @@ async def ingest_sbom(
             logger.error(f"Failed to upload SBOM to GridFS: {e}")
             continue
 
-        # 2. Extract Dependencies for Indexing
+        # 2. Extract Dependencies for Indexing using unified parser
         try:
-            components = sbom.get("components", [])
+            parsed_sbom = parse_sbom(sbom)
             
-            # Get SBOM metadata for source info
-            sbom_metadata = sbom.get("metadata", {})
-            sbom_component = sbom_metadata.get("component", {})
-            source_type = None
-            source_target = None
+            logger.info(f"Parsed SBOM: format={parsed_sbom.format.value}, "
+                       f"total={parsed_sbom.total_components}, "
+                       f"parsed={parsed_sbom.parsed_components}, "
+                       f"skipped={parsed_sbom.skipped_components}")
             
-            # Try to determine source from metadata
-            if sbom_component:
-                comp_type = sbom_component.get("type", "")
-                if comp_type == "container":
-                    source_type = "image"
-                    source_target = sbom_component.get("name", "")
-                    if sbom_component.get("version"):
-                        source_target += f":{sbom_component.get('version')}"
-                elif comp_type == "application":
-                    source_type = "application"
-                    source_target = sbom_component.get("name", "")
-            
-            # Also check metadata properties for syft/trivy source info
-            for prop in sbom_metadata.get("properties", []):
-                prop_name = prop.get("name", "")
-                prop_value = prop.get("value", "")
-                if prop_name == "syft:image:layers" or "image" in prop_name.lower():
-                    source_type = "image"
-                elif prop_name == "syft:source:type":
-                    source_type = prop_value
-                elif prop_name == "syft:source:target":
-                    source_target = prop_value
-            
-            for comp in components:
-                purl = comp.get("purl")
-                if not purl:
-                    continue # Skip components without PURL (can't uniquely identify)
-                
-                # Extract component-level properties
-                comp_layer_digest = None
-                comp_found_by = None
-                comp_locations = []
-                
-                for prop in comp.get("properties", []):
-                    prop_name = prop.get("name", "")
-                    prop_value = prop.get("value", "")
-                    
-                    # Trivy layer info
-                    if prop_name in ["trivy:LayerDigest", "aquasecurity:trivy:LayerDigest"]:
-                        comp_layer_digest = prop_value
-                    # Syft cataloger info
-                    elif prop_name == "syft:package:foundBy":
-                        comp_found_by = prop_value
-                    # Location info
-                    elif "location" in prop_name.lower() or "path" in prop_name.lower():
-                        if prop_value:
-                            comp_locations.append(prop_value)
-                
-                # Also check evidence for locations
-                evidence = comp.get("evidence", {})
-                for occ in evidence.get("occurrences", []):
-                    loc = occ.get("location")
-                    if loc and loc not in comp_locations:
-                        comp_locations.append(loc)
-                
+            for parsed_dep in parsed_sbom.dependencies:
                 dep = Dependency(
                     project_id=str(project.id),
                     scan_id=scan_id,
-                    name=comp.get("name", "unknown"),
-                    version=comp.get("version", "unknown"),
-                    purl=purl,
-                    type=comp.get("type", "unknown"),
-                    license=str(comp.get("licenses", [])), # Simplified license handling
-                    scope=comp.get("scope"),
-                    direct=False, # TODO: Determine if direct from metadata
-                    source_type=source_type,
-                    source_target=source_target,
-                    layer_digest=comp_layer_digest,
-                    found_by=comp_found_by,
-                    locations=comp_locations[:5]  # Limit to 5 locations
+                    name=parsed_dep.name,
+                    version=parsed_dep.version,
+                    purl=parsed_dep.purl,
+                    type=parsed_dep.type,
+                    license=parsed_dep.license,
+                    scope=parsed_dep.scope,
+                    direct=parsed_dep.direct,
+                    source_type=parsed_dep.source_type,
+                    source_target=parsed_dep.source_target,
+                    layer_digest=parsed_dep.layer_digest,
+                    found_by=parsed_dep.found_by,
+                    locations=parsed_dep.locations
                 )
                 dependencies_to_insert.append(dep.dict(by_alias=True))
+                
         except Exception as e:
-            logger.error(f"Failed to extract dependencies from SBOM: {e}")
+            logger.error(f"Failed to extract dependencies from SBOM: {e}", exc_info=True)
 
     # Bulk insert dependencies
     if dependencies_to_insert:
