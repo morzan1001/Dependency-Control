@@ -14,6 +14,18 @@ export default function DashboardLayout() {
 
   if (hasPermission('project:read') || hasPermission('project:read_all')) {
     navItems.push({ href: '/projects', label: 'Projects', icon: FolderGit2 })
+  }
+
+  // Analytics requires analytics permissions
+  const hasAnalyticsAccess = hasPermission('analytics:read') || 
+    hasPermission('analytics:summary') || 
+    hasPermission('analytics:dependencies') ||
+    hasPermission('analytics:tree') ||
+    hasPermission('analytics:impact') ||
+    hasPermission('analytics:hotspots') ||
+    hasPermission('analytics:search')
+  
+  if (hasAnalyticsAccess) {
     navItems.push({ href: '/analytics', label: 'Analytics', icon: BarChart3 })
   }
 

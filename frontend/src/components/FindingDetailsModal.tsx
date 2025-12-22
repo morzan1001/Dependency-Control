@@ -248,7 +248,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
                                     </div>
                                 </div>
                             )}
-                            </div>
 
                             {finding.description && finding.type !== 'vulnerability' && (
                                 <div>

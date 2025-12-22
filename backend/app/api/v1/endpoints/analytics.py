@@ -5,10 +5,31 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from app.api import deps
+from app.api.deps import PermissionChecker
 from app.models.user import User
 from app.db.mongodb import get_database
 
 router = APIRouter()
+
+
+def check_analytics_permission(user: User, required_permission: str) -> bool:
+    """Check if user has the required analytics permission."""
+    if "*" in user.permissions:
+        return True
+    if "analytics:read" in user.permissions:
+        return True
+    if required_permission in user.permissions:
+        return True
+    return False
+
+
+def require_analytics_permission(user: User, permission: str):
+    """Raise 403 if user doesn't have the required analytics permission."""
+    if not check_analytics_permission(user, permission):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Analytics permission required: {permission}. Grant 'analytics:read' for full analytics access or '{permission}' for this specific feature."
+        )
 
 
 class SeverityBreakdown(BaseModel):
@@ -123,6 +144,8 @@ async def get_analytics_summary(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """Get analytics summary across all accessible projects."""
+    require_analytics_permission(current_user, "analytics:summary")
+    
     project_ids = await get_user_project_ids(current_user, db)
     
     if not project_ids:
@@ -219,6 +242,8 @@ async def get_top_dependencies(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """Get most frequently used dependencies across all accessible projects."""
+    require_analytics_permission(current_user, "analytics:dependencies")
+    
     project_ids = await get_user_project_ids(current_user, db)
     
     if not project_ids:
@@ -285,6 +310,8 @@ async def get_dependency_tree(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """Get dependency tree for a project showing direct and transitive dependencies."""
+    require_analytics_permission(current_user, "analytics:tree")
+    
     # Verify access
     project_ids = await get_user_project_ids(current_user, db)
     if project_id not in project_ids:
@@ -368,6 +395,8 @@ async def get_impact_analysis(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """Analyze which dependency fixes would have the highest impact across projects."""
+    require_analytics_permission(current_user, "analytics:impact")
+    
     project_ids = await get_user_project_ids(current_user, db)
     
     if not project_ids:
@@ -458,6 +487,8 @@ async def get_vulnerability_hotspots(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """Get dependencies with the most vulnerabilities (hotspots)."""
+    require_analytics_permission(current_user, "analytics:hotspots")
+    
     project_ids = await get_user_project_ids(current_user, db)
     
     if not project_ids:
@@ -544,6 +575,8 @@ async def search_dependencies_advanced(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """Advanced dependency search with multiple filters."""
+    require_analytics_permission(current_user, "analytics:search")
+    
     accessible_project_ids = await get_user_project_ids(current_user, db)
     
     # Filter by requested project IDs if provided
@@ -623,6 +656,8 @@ async def get_component_findings(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """Get all findings for a specific component across accessible projects."""
+    require_analytics_permission(current_user, "analytics:search")
+    
     project_ids = await get_user_project_ids(current_user, db)
     
     if not project_ids:
@@ -665,6 +700,8 @@ async def get_dependency_types(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     """Get list of all dependency types used across accessible projects."""
+    require_analytics_permission(current_user, "analytics:search")
+    
     project_ids = await get_user_project_ids(current_user, db)
     
     if not project_ids:

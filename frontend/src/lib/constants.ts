@@ -37,6 +37,18 @@ export const PERMISSION_GROUPS = [
     ]
   },
   {
+    title: "Analytics & Insights",
+    permissions: [
+      { id: "analytics:read", label: "View Analytics", description: "Access the Analytics dashboard and view statistics" },
+      { id: "analytics:summary", label: "View Summary", description: "View analytics summary and overview data" },
+      { id: "analytics:dependencies", label: "View Dependencies", description: "View cross-project dependency analysis" },
+      { id: "analytics:tree", label: "View Dependency Tree", description: "View dependency tree visualization" },
+      { id: "analytics:impact", label: "View Impact Analysis", description: "View impact analysis and fix recommendations" },
+      { id: "analytics:hotspots", label: "View Hotspots", description: "View vulnerability hotspots across projects" },
+      { id: "analytics:search", label: "Cross-Project Search", description: "Search dependencies across all accessible projects" },
+    ]
+  },
+  {
     title: "Security & Compliance",
     permissions: [
       { id: "waiver:read_all", label: "Read All Waivers", description: "View all waivers in the system" },
