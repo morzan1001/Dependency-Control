@@ -1,3 +1,11 @@
+# Release 0.8.8
+
+## 🚀 Features
+
+- feat: update sorting behavior in DependencyList and improve badge display (#0)
+
+
+
 # Release 0.8.7
 
 
