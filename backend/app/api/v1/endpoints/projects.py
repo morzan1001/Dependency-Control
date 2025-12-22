@@ -1038,6 +1038,33 @@ async def read_scan_findings(
     # Severity Ranking for sorting
     pipeline = [
         {"$match": query},
+        # Lookup dependency info to get source details
+        {"$lookup": {
+            "from": "dependencies",
+            "let": {"scan_id": "$scan_id", "component": "$component", "version": "$version"},
+            "pipeline": [
+                {"$match": {
+                    "$expr": {
+                        "$and": [
+                            {"$eq": ["$scan_id", "$$scan_id"]},
+                            {"$eq": ["$name", "$$component"]},
+                            {"$eq": ["$version", "$$version"]}
+                        ]
+                    }
+                }},
+                {"$limit": 1},
+                {"$project": {
+                    "source_type": 1,
+                    "source_target": 1,
+                    "layer_digest": 1,
+                    "found_by": 1,
+                    "locations": 1,
+                    "purl": 1,
+                    "direct": 1
+                }}
+            ],
+            "as": "dependency_info"
+        }},
         {"$addFields": {
             "severity_rank": {
                 "$switch": {
@@ -1052,8 +1079,18 @@ async def read_scan_findings(
                 }
             },
             # Map finding_id to id for frontend compatibility
-            "id": "$finding_id"
-        }}
+            "id": "$finding_id",
+            # Flatten dependency info
+            "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
+            "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
+            "layer_digest": {"$arrayElemAt": ["$dependency_info.layer_digest", 0]},
+            "found_by": {"$arrayElemAt": ["$dependency_info.found_by", 0]},
+            "locations": {"$arrayElemAt": ["$dependency_info.locations", 0]},
+            "purl": {"$arrayElemAt": ["$dependency_info.purl", 0]},
+            "direct": {"$arrayElemAt": ["$dependency_info.direct", 0]}
+        }},
+        # Remove the temporary lookup array
+        {"$project": {"dependency_info": 0}}
     ]
 
     # Sorting

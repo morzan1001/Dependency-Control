@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings } from 'lucide-react'
+import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context/AuthContext'
@@ -14,6 +14,7 @@ export default function DashboardLayout() {
 
   if (hasPermission('project:read') || hasPermission('project:read_all')) {
     navItems.push({ href: '/projects', label: 'Projects', icon: FolderGit2 })
+    navItems.push({ href: '/analytics', label: 'Analytics', icon: BarChart3 })
   }
 
   if (hasPermission('team:read') || hasPermission('team:read_all')) {

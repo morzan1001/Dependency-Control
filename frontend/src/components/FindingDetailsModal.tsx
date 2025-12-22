@@ -7,9 +7,25 @@ import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { createWaiver, Finding } from "@/lib/api"
 import { toast } from "sonner"
-import { ShieldAlert } from "lucide-react"
+import { ShieldAlert, Container, FileCode, HardDrive, Layers } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { AxiosError } from "axios"
+
+// Helper to get source info
+function getSourceInfo(sourceType?: string) {
+  switch (sourceType) {
+    case 'image':
+      return { icon: Container, label: 'Docker Image', color: 'text-blue-500', bgColor: 'bg-blue-50 border-blue-200' }
+    case 'file':
+      return { icon: FileCode, label: 'Source File', color: 'text-green-500', bgColor: 'bg-green-50 border-green-200' }
+    case 'directory':
+      return { icon: HardDrive, label: 'Directory', color: 'text-amber-500', bgColor: 'bg-amber-50 border-amber-200' }
+    case 'application':
+      return { icon: Layers, label: 'Application', color: 'text-purple-500', bgColor: 'bg-purple-50 border-purple-200' }
+    default:
+      return null
+  }
+}
 
 const getFindingTitle = (f: Finding) => f.id || "Finding Details";
 const getFindingPackage = (f: Finding) => f.component || "Unknown";
@@ -143,6 +159,95 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, onSel
                                         </p>
                                     </div>
                                 )}
+                            </div>
+
+                            {/* Source Information Section */}
+                            {(finding.source_type || finding.purl || finding.direct !== undefined) && (
+                                <div className="p-4 border rounded-lg bg-muted/30 space-y-3">
+                                    <h4 className="text-sm font-medium flex items-center gap-2">
+                                        {(() => {
+                                            const sourceInfo = getSourceInfo(finding.source_type)
+                                            if (sourceInfo) {
+                                                const IconComponent = sourceInfo.icon
+                                                return (
+                                                    <>
+                                                        <IconComponent className={`h-4 w-4 ${sourceInfo.color}`} />
+                                                        <span>Origin: {sourceInfo.label}</span>
+                                                    </>
+                                                )
+                                            }
+                                            return <span>Package Origin</span>
+                                        })()}
+                                    </h4>
+                                    
+                                    <div className="grid grid-cols-2 gap-3 text-sm">
+                                        {finding.direct !== undefined && (
+                                            <div>
+                                                <span className="text-muted-foreground">Dependency Type:</span>
+                                                <Badge variant={finding.direct ? "default" : "secondary"} className="ml-2">
+                                                    {finding.direct ? "Direct" : "Transitive"}
+                                                </Badge>
+                                            </div>
+                                        )}
+                                        
+                                        {finding.source_target && (
+                                            <div className="col-span-2">
+                                                <span className="text-muted-foreground">Source:</span>
+                                                <code className="ml-2 px-2 py-0.5 bg-background rounded text-xs font-mono break-all">
+                                                    {finding.source_target}
+                                                </code>
+                                            </div>
+                                        )}
+                                        
+                                        {finding.layer_digest && (
+                                            <div className="col-span-2">
+                                                <span className="text-muted-foreground">Container Layer:</span>
+                                                <code className="ml-2 px-2 py-0.5 bg-background rounded text-xs font-mono">
+                                                    {finding.layer_digest.length > 40 
+                                                        ? `${finding.layer_digest.substring(0, 40)}...` 
+                                                        : finding.layer_digest}
+                                                </code>
+                                            </div>
+                                        )}
+                                        
+                                        {finding.purl && (
+                                            <div className="col-span-2">
+                                                <span className="text-muted-foreground">Package URL:</span>
+                                                <code className="ml-2 px-2 py-0.5 bg-background rounded text-xs font-mono break-all">
+                                                    {finding.purl}
+                                                </code>
+                                            </div>
+                                        )}
+                                        
+                                        {finding.locations && finding.locations.length > 0 && (
+                                            <div className="col-span-2">
+                                                <span className="text-muted-foreground">File Locations:</span>
+                                                <div className="mt-1 space-y-1">
+                                                    {finding.locations.slice(0, 5).map((loc, i) => (
+                                                        <code key={i} className="block px-2 py-0.5 bg-background rounded text-xs font-mono truncate">
+                                                            {loc}
+                                                        </code>
+                                                    ))}
+                                                    {finding.locations.length > 5 && (
+                                                        <span className="text-xs text-muted-foreground">
+                                                            +{finding.locations.length - 5} more locations
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {finding.found_by && (
+                                            <div>
+                                                <span className="text-muted-foreground">Found By:</span>
+                                                <Badge variant="outline" className="ml-2 text-xs">
+                                                    {finding.found_by}
+                                                </Badge>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                             </div>
 
                             {finding.description && finding.type !== 'vulnerability' && (

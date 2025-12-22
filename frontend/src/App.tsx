@@ -17,6 +17,7 @@ import ScanDetails from './pages/ScanDetails'
 import ProfilePage from './pages/Profile'
 import SystemSettings from './pages/SystemSettings'
 import SearchPage from './pages/Search'
+import AnalyticsPage from './pages/Analytics'
 import DashboardLayout from './layouts/DashboardLayout'
 import { AuthProvider, useAuth, RequirePermission } from './context/AuthContext'
 import { Toaster } from "@/components/ui/sonner"
@@ -160,6 +161,11 @@ function AppRoutes() {
           </RequirePermission>
         } />
         <Route path="/search/dependencies" element={<SearchPage />} />
+        <Route path="/analytics" element={
+          <RequirePermission permission={['project:read', 'project:read_all']}>
+            <AnalyticsPage />
+          </RequirePermission>
+        } />
         <Route path="/settings" element={
           <RequirePermission permission="system:manage">
             <SystemSettings />

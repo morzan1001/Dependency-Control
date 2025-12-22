@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
-from app.api.v1.endpoints import auth, ingest, projects, users, teams, waivers, webhooks, search, system, invitations, integrations
+from app.api.v1.endpoints import auth, ingest, projects, users, teams, waivers, webhooks, system, invitations, integrations, analytics
 from app.api import health
 
 app = FastAPI(
@@ -92,10 +92,10 @@ app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["u
 app.include_router(teams.router, prefix=f"{settings.API_V1_STR}/teams", tags=["teams"])
 app.include_router(waivers.router, prefix=f"{settings.API_V1_STR}/waivers", tags=["waivers"])
 app.include_router(webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["webhooks"])
-app.include_router(search.router, prefix=f"{settings.API_V1_STR}/search", tags=["search"])
 app.include_router(system.router, prefix=f"{settings.API_V1_STR}/system", tags=["system"])
 app.include_router(invitations.router, prefix=f"{settings.API_V1_STR}/invitations", tags=["invitations"])
 app.include_router(integrations.router, prefix=f"{settings.API_V1_STR}/integrations", tags=["integrations"])
+app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
 
 @app.get("/")
 async def root():

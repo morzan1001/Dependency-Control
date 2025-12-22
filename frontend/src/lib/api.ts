@@ -207,6 +207,14 @@ export interface Finding {
   related_findings?: string[];
   waived: boolean;
   waiver_reason?: string;
+  // Source information (from dependency lookup)
+  source_type?: string;
+  source_target?: string;
+  layer_digest?: string;
+  found_by?: string;
+  locations?: string[];
+  purl?: string;
+  direct?: boolean;
 }
 
 export interface AnalysisResult {
@@ -808,7 +816,7 @@ export const acceptInvitation = async (token: string, username: string, password
   return response.data;
 };
 
-// Search Endpoints
+// Search Endpoints (uses analytics API)
 export interface SearchResult {
   project_id: string;
   project_name: string;
@@ -816,6 +824,12 @@ export interface SearchResult {
   version: string;
   type: string;
   license?: string;
+  direct?: boolean;
+  purl?: string;
+  source_type?: string;
+  source_target?: string;
+  layer_digest?: string;
+  locations?: string[];
 }
 
 export const searchDependencies = async (query: string, version?: string) => {
@@ -823,7 +837,7 @@ export const searchDependencies = async (query: string, version?: string) => {
   params.append('q', query);
   if (version) params.append('version', version);
   
-  const response = await api.get<SearchResult[]>('/search/dependencies', { params });
+  const response = await api.get<SearchResult[]>('/analytics/search', { params });
   return response.data;
 };
 
@@ -870,6 +884,166 @@ export const getScanFindings = async (scanId: string, params: ScanFindingsParams
 
 export const getScanStats = async (scanId: string) => {
   const response = await api.get<Record<string, number>>(`/projects/scans/${scanId}/stats`);
+  return response.data;
+};
+
+// ============ Analytics API ============
+
+export interface SeverityBreakdown {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface DependencyUsage {
+  name: string;
+  type: string;
+  versions: string[];
+  project_count: number;
+  total_occurrences: number;
+  has_vulnerabilities: boolean;
+  vulnerability_count: number;
+}
+
+export interface DependencyTreeNode {
+  id: string;
+  name: string;
+  version: string;
+  purl: string;
+  type: string;
+  direct: boolean;
+  has_findings: boolean;
+  findings_count: number;
+  findings_severity?: SeverityBreakdown;
+  source_type?: string;
+  source_target?: string;
+  layer_digest?: string;
+  locations?: string[];
+  children: DependencyTreeNode[];
+}
+
+export interface ImpactAnalysisResult {
+  component: string;
+  version: string;
+  affected_projects: number;
+  total_findings: number;
+  findings_by_severity: SeverityBreakdown;
+  recommended_version?: string;
+  fix_impact_score: number;
+  affected_project_names: string[];
+}
+
+export interface VulnerabilityHotspot {
+  component: string;
+  version: string;
+  type: string;
+  finding_count: number;
+  severity_breakdown: SeverityBreakdown;
+  affected_projects: string[];
+  first_seen: string;
+}
+
+export interface DependencyTypeStats {
+  type: string;
+  count: number;
+  percentage: number;
+}
+
+export interface AnalyticsSummary {
+  total_dependencies: number;
+  total_vulnerabilities: number;
+  unique_packages: number;
+  dependency_types: DependencyTypeStats[];
+  severity_distribution: SeverityBreakdown;
+}
+
+export interface AdvancedSearchResult {
+  project_id: string;
+  project_name: string;
+  package: string;
+  version: string;
+  type: string;
+  license?: string;
+  direct: boolean;
+  purl: string;
+  source_type?: string;
+  source_target?: string;
+  layer_digest?: string;
+  locations?: string[];
+}
+
+export const getAnalyticsSummary = async () => {
+  const response = await api.get<AnalyticsSummary>('/analytics/summary');
+  return response.data;
+};
+
+export const getTopDependencies = async (limit = 20, type?: string) => {
+  const params = new URLSearchParams();
+  params.append('limit', limit.toString());
+  if (type) params.append('type', type);
+  const response = await api.get<DependencyUsage[]>('/analytics/dependencies/top', { params });
+  return response.data;
+};
+
+export const getDependencyTree = async (projectId: string, scanId?: string) => {
+  const params = new URLSearchParams();
+  if (scanId) params.append('scan_id', scanId);
+  const response = await api.get<DependencyTreeNode[]>(`/analytics/projects/${projectId}/dependency-tree`, { params });
+  return response.data;
+};
+
+export const getImpactAnalysis = async (limit = 20) => {
+  const params = new URLSearchParams();
+  params.append('limit', limit.toString());
+  const response = await api.get<ImpactAnalysisResult[]>('/analytics/impact', { params });
+  return response.data;
+};
+
+export const getVulnerabilityHotspots = async (limit = 20) => {
+  const params = new URLSearchParams();
+  params.append('limit', limit.toString());
+  const response = await api.get<VulnerabilityHotspot[]>('/analytics/hotspots', { params });
+  return response.data;
+};
+
+export const searchDependenciesAdvanced = async (
+  query: string, 
+  options?: {
+    version?: string;
+    type?: string;
+    source_type?: string;
+    has_vulnerabilities?: boolean;
+    project_ids?: string[];
+    limit?: number;
+  }
+) => {
+  const params = new URLSearchParams();
+  params.append('q', query);
+  if (options?.version) params.append('version', options.version);
+  if (options?.type) params.append('type', options.type);
+  if (options?.source_type) params.append('source_type', options.source_type);
+  if (options?.has_vulnerabilities !== undefined) {
+    params.append('has_vulnerabilities', options.has_vulnerabilities.toString());
+  }
+  if (options?.project_ids?.length) {
+    params.append('project_ids', options.project_ids.join(','));
+  }
+  if (options?.limit) params.append('limit', options.limit.toString());
+  const response = await api.get<AdvancedSearchResult[]>('/analytics/search', { params });
+  return response.data;
+};
+
+export const getComponentFindings = async (component: string, version?: string) => {
+  const params = new URLSearchParams();
+  params.append('component', component);
+  if (version) params.append('version', version);
+  const response = await api.get<(Finding & { project_id: string; project_name: string })[]>('/analytics/component-findings', { params });
+  return response.data;
+};
+
+export const getDependencyTypes = async () => {
+  const response = await api.get<string[]>('/analytics/dependency-types');
   return response.data;
 };
 

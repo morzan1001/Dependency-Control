@@ -232,10 +232,67 @@ async def ingest_sbom(
         # 2. Extract Dependencies for Indexing
         try:
             components = sbom.get("components", [])
+            
+            # Get SBOM metadata for source info
+            sbom_metadata = sbom.get("metadata", {})
+            sbom_component = sbom_metadata.get("component", {})
+            source_type = None
+            source_target = None
+            
+            # Try to determine source from metadata
+            if sbom_component:
+                comp_type = sbom_component.get("type", "")
+                if comp_type == "container":
+                    source_type = "image"
+                    source_target = sbom_component.get("name", "")
+                    if sbom_component.get("version"):
+                        source_target += f":{sbom_component.get('version')}"
+                elif comp_type == "application":
+                    source_type = "application"
+                    source_target = sbom_component.get("name", "")
+            
+            # Also check metadata properties for syft/trivy source info
+            for prop in sbom_metadata.get("properties", []):
+                prop_name = prop.get("name", "")
+                prop_value = prop.get("value", "")
+                if prop_name == "syft:image:layers" or "image" in prop_name.lower():
+                    source_type = "image"
+                elif prop_name == "syft:source:type":
+                    source_type = prop_value
+                elif prop_name == "syft:source:target":
+                    source_target = prop_value
+            
             for comp in components:
                 purl = comp.get("purl")
                 if not purl:
                     continue # Skip components without PURL (can't uniquely identify)
+                
+                # Extract component-level properties
+                comp_layer_digest = None
+                comp_found_by = None
+                comp_locations = []
+                
+                for prop in comp.get("properties", []):
+                    prop_name = prop.get("name", "")
+                    prop_value = prop.get("value", "")
+                    
+                    # Trivy layer info
+                    if prop_name in ["trivy:LayerDigest", "aquasecurity:trivy:LayerDigest"]:
+                        comp_layer_digest = prop_value
+                    # Syft cataloger info
+                    elif prop_name == "syft:package:foundBy":
+                        comp_found_by = prop_value
+                    # Location info
+                    elif "location" in prop_name.lower() or "path" in prop_name.lower():
+                        if prop_value:
+                            comp_locations.append(prop_value)
+                
+                # Also check evidence for locations
+                evidence = comp.get("evidence", {})
+                for occ in evidence.get("occurrences", []):
+                    loc = occ.get("location")
+                    if loc and loc not in comp_locations:
+                        comp_locations.append(loc)
                 
                 dep = Dependency(
                     project_id=str(project.id),
@@ -246,7 +303,12 @@ async def ingest_sbom(
                     type=comp.get("type", "unknown"),
                     license=str(comp.get("licenses", [])), # Simplified license handling
                     scope=comp.get("scope"),
-                    direct=False # TODO: Determine if direct from metadata
+                    direct=False, # TODO: Determine if direct from metadata
+                    source_type=source_type,
+                    source_target=source_target,
+                    layer_digest=comp_layer_digest,
+                    found_by=comp_found_by,
+                    locations=comp_locations[:5]  # Limit to 5 locations
                 )
                 dependencies_to_insert.append(dep.dict(by_alias=True))
         except Exception as e:

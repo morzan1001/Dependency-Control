@@ -6,8 +6,30 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
-import { ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowUp, ArrowDown, Container, FileCode, HardDrive, Layers } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+
+// Helper to get source info
+function getSourceInfo(sourceType?: string) {
+  switch (sourceType) {
+    case 'image':
+      return { icon: Container, label: 'Docker Image', color: 'text-blue-500' }
+    case 'file':
+      return { icon: FileCode, label: 'Source File', color: 'text-green-500' }
+    case 'directory':
+      return { icon: HardDrive, label: 'Directory', color: 'text-amber-500' }
+    case 'application':
+      return { icon: Layers, label: 'Application', color: 'text-purple-500' }
+    default:
+      return null
+  }
+}
 
 interface FindingsTableProps {
     scanId: string;
@@ -144,6 +166,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                             <TableHead className="w-[100px] bg-background">Severity</TableHead>
                             <TableHead className="w-[180px] bg-background">ID</TableHead>
                             <TableHead className="w-auto bg-background">Component</TableHead>
+                            <TableHead className="w-[80px] bg-background">Source</TableHead>
                             <TableHead className="w-[120px] bg-background">Type</TableHead>
                             <TableHead className="w-[150px] bg-background">Scanner</TableHead>
                         </TableRow>
@@ -154,6 +177,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                 <TableCell className="p-4"><Skeleton className="h-6 w-16" /></TableCell>
                                 <TableCell className="p-4"><Skeleton className="h-6 w-24" /></TableCell>
                                 <TableCell className="p-4"><Skeleton className="h-6 w-32" /></TableCell>
+                                <TableCell className="p-4"><Skeleton className="h-6 w-8" /></TableCell>
                                 <TableCell className="p-4"><Skeleton className="h-6 w-20" /></TableCell>
                                 <TableCell className="p-4"><Skeleton className="h-6 w-20" /></TableCell>
                             </TableRow>
@@ -182,6 +206,9 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                         <TableHead className="w-auto h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('component')}>
                             Component {renderSortIcon('component')}
                         </TableHead>
+                        <TableHead className="w-[80px] h-12 px-4 text-left align-middle font-medium text-muted-foreground bg-background">
+                            Source
+                        </TableHead>
                         <TableHead className="w-[120px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('type')}>
                             Type {renderSortIcon('type')}
                         </TableHead>
@@ -193,12 +220,13 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                 <TableBody>
                     {rowVirtualizer.getVirtualItems().length > 0 && (
                         <tr style={{ height: `${rowVirtualizer.getVirtualItems()[0].start}px` }}>
-                            <td colSpan={5} />
+                            <td colSpan={6} />
                         </tr>
                     )}
                     {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                         const isLoaderRow = virtualRow.index > allRows.length - 1
                         const finding = allRows[virtualRow.index]
+                        const sourceInfo = !isLoaderRow ? getSourceInfo(finding?.source_type) : null
 
                         return (
                             <TableRow
@@ -209,7 +237,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                 className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
                             >
                                 {isLoaderRow ? (
-                                    <TableCell colSpan={5} className="p-4 text-center">Loading more...</TableCell>
+                                    <TableCell colSpan={6} className="p-4 text-center">Loading more...</TableCell>
                                 ) : (
                                     <>
                                         <TableCell className="p-4 align-middle">
@@ -229,6 +257,34 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                             </div>
                                         </TableCell>
                                         <TableCell className="p-4 align-middle">
+                                            {sourceInfo ? (
+                                                <TooltipProvider>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <div className="flex items-center justify-center">
+                                                                <sourceInfo.icon className={`h-5 w-5 ${sourceInfo.color}`} />
+                                                            </div>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent side="top" className="max-w-xs">
+                                                            <div className="space-y-1">
+                                                                <p className="font-medium">{sourceInfo.label}</p>
+                                                                {finding.source_target && (
+                                                                    <p className="text-xs text-muted-foreground break-all">{finding.source_target}</p>
+                                                                )}
+                                                                {finding.direct !== undefined && (
+                                                                    <p className="text-xs">
+                                                                        {finding.direct ? "Direct dependency" : "Transitive dependency"}
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                </TooltipProvider>
+                                            ) : (
+                                                <span className="text-muted-foreground text-center block">-</span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="p-4 align-middle">
                                             <Badge variant="outline">{finding.type}</Badge>
                                         </TableCell>
                                         <TableCell className="p-4 align-middle text-sm text-muted-foreground">
@@ -241,7 +297,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                     })}
                     {rowVirtualizer.getVirtualItems().length > 0 && (
                         <tr style={{ height: `${rowVirtualizer.getTotalSize() - rowVirtualizer.getVirtualItems()[rowVirtualizer.getVirtualItems().length - 1].end}px` }}>
-                            <td colSpan={5} />
+                            <td colSpan={6} />
                         </tr>
                     )}
                 </TableBody>

@@ -53,8 +53,13 @@ async def create_indexes(db):
     await db["dependencies"].create_index("name")
     await db["dependencies"].create_index("purl")
     await db["dependencies"].create_index("version")
+    await db["dependencies"].create_index("type")
+    await db["dependencies"].create_index("direct")
     # Compound index for fast search within a project
     await db["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
+    # Compound index for analytics queries
+    await db["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
+    await db["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
 
     # Findings (New Normalized Collection)
     await db["findings"].create_index("project_id")
@@ -64,6 +69,11 @@ async def create_indexes(db):
     await db["findings"].create_index("finding_id") # Logical ID (CVE)
     # Compound for fast retrieval of scan results
     await db["findings"].create_index([("scan_id", pymongo.ASCENDING), ("severity", pymongo.DESCENDING)])
+    
+    # Finding Records - Analytics indexes
+    await db["finding_records"].create_index([("project_id", pymongo.ASCENDING), ("finding.component", pymongo.ASCENDING)])
+    await db["finding_records"].create_index([("project_id", pymongo.ASCENDING), ("finding.component", pymongo.ASCENDING), ("finding.type", pymongo.ASCENDING)])
+    await db["finding_records"].create_index([("scan_id", pymongo.ASCENDING), ("finding.type", pymongo.ASCENDING)])
 
     # Projects
     await db["projects"].create_index("gitlab_project_id")

@@ -26,6 +26,13 @@ class Dependency(BaseModel):
     direct: bool = False
     parent_components: List[str] = Field(default_factory=list, description="List of parent component IDs/names")
     
+    # Source/Origin info (from SBOM properties)
+    source_type: Optional[str] = None  # e.g. "image", "file-system", "directory"
+    source_target: Optional[str] = None  # e.g. Docker image name, file path
+    layer_digest: Optional[str] = None  # Docker layer digest if from container image
+    found_by: Optional[str] = None  # Scanner that found this (e.g. "python-pkg-cataloger")
+    locations: List[str] = Field(default_factory=list, description="File paths where this was found")
+    
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Config:
