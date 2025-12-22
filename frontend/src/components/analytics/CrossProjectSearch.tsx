@@ -47,10 +47,10 @@ interface CrossProjectSearchProps {
 export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) {
   const [query, setQuery] = useState('')
   const [version, setVersion] = useState('')
-  const [selectedType, setSelectedType] = useState<string>('')
-  const [selectedSourceType, setSelectedSourceType] = useState<string>('')
-  const [hasVulnerabilities, setHasVulnerabilities] = useState<boolean | undefined>(undefined)
-  const [selectedProjects, setSelectedProjects] = useState<string[]>([])
+  const [selectedType, setSelectedType] = useState<string>('__all__')
+  const [selectedSourceType, setSelectedSourceType] = useState<string>('__all__')
+  const [hasVulnerabilities, setHasVulnerabilities] = useState<string>('__all__')
+  const [selectedProject, setSelectedProject] = useState<string>('__all__')
   const [showFilters, setShowFilters] = useState(false)
 
   const debouncedQuery = useDebounce(query, 300)
@@ -66,13 +66,13 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   })
 
   const { data: results, isLoading } = useQuery({
-    queryKey: ['advanced-search', debouncedQuery, version, selectedType, selectedSourceType, hasVulnerabilities, selectedProjects],
+    queryKey: ['advanced-search', debouncedQuery, version, selectedType, selectedSourceType, hasVulnerabilities, selectedProject],
     queryFn: () => searchDependenciesAdvanced(debouncedQuery, {
       version: version || undefined,
-      type: selectedType || undefined,
-      source_type: selectedSourceType || undefined,
-      has_vulnerabilities: hasVulnerabilities,
-      project_ids: selectedProjects.length > 0 ? selectedProjects : undefined,
+      type: selectedType !== '__all__' ? selectedType : undefined,
+      source_type: selectedSourceType !== '__all__' ? selectedSourceType : undefined,
+      has_vulnerabilities: hasVulnerabilities === '__all__' ? undefined : hasVulnerabilities === 'true',
+      project_ids: selectedProject !== '__all__' ? [selectedProject] : undefined,
     }),
     enabled: debouncedQuery.length >= 2,
   })
@@ -81,13 +81,13 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
 
   const clearFilters = () => {
     setVersion('')
-    setSelectedType('')
-    setSelectedSourceType('')
-    setHasVulnerabilities(undefined)
-    setSelectedProjects([])
+    setSelectedType('__all__')
+    setSelectedSourceType('__all__')
+    setHasVulnerabilities('__all__')
+    setSelectedProject('__all__')
   }
 
-  const hasActiveFilters = version || selectedType || selectedSourceType || hasVulnerabilities !== undefined || selectedProjects.length > 0
+  const hasActiveFilters = version || selectedType !== '__all__' || selectedSourceType !== '__all__' || hasVulnerabilities !== '__all__' || selectedProject !== '__all__'
 
   return (
     <Card>
@@ -156,7 +156,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                     <SelectValue placeholder="All types" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All types</SelectItem>
+                    <SelectItem value="__all__">All types</SelectItem>
                     {types?.map((t) => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
@@ -172,7 +172,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                     <SelectValue placeholder="All sources" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All sources</SelectItem>
+                    <SelectItem value="__all__">All sources</SelectItem>
                     <SelectItem value="image">
                       <div className="flex items-center gap-2">
                         <Container className="h-4 w-4 text-blue-500" />
@@ -199,14 +199,14 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
               <div className="space-y-2">
                 <Label>Vulnerability Status</Label>
                 <Select 
-                  value={hasVulnerabilities === undefined ? "" : hasVulnerabilities.toString()} 
-                  onValueChange={(v) => setHasVulnerabilities(v === "" ? undefined : v === "true")}
+                  value={hasVulnerabilities} 
+                  onValueChange={setHasVulnerabilities}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="All" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All packages</SelectItem>
+                    <SelectItem value="__all__">All packages</SelectItem>
                     <SelectItem value="true">With vulnerabilities</SelectItem>
                     <SelectItem value="false">Without vulnerabilities</SelectItem>
                   </SelectContent>
@@ -217,14 +217,14 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
               <div className="space-y-2">
                 <Label>Projects</Label>
                 <Select 
-                  value={selectedProjects.length === 1 ? selectedProjects[0] : ""}
-                  onValueChange={(v) => setSelectedProjects(v ? [v] : [])}
+                  value={selectedProject}
+                  onValueChange={setSelectedProject}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="All projects" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All projects</SelectItem>
+                    <SelectItem value="__all__">All projects</SelectItem>
                     {projects.map((p) => (
                       <SelectItem key={p._id} value={p._id}>{p.name}</SelectItem>
                     ))}
