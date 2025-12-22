@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AnalyticsSummaryCards, SeverityDistribution, DependencyTypesChart } from '@/components/analytics/AnalyticsSummary'
 import { DependencyStats } from '@/components/analytics/DependencyStats'
+import { DependencyList } from '@/components/analytics/DependencyList'
 import { DependencyTree } from '@/components/analytics/DependencyTree'
 import { ImpactAnalysis } from '@/components/analytics/ImpactAnalysis'
 import { VulnerabilityHotspots } from '@/components/analytics/VulnerabilityHotspots'
@@ -89,9 +90,7 @@ export default function AnalyticsPage() {
         {/* Dependencies Tab */}
         {canViewDependencies && (
           <TabsContent value="dependencies">
-            <DependencyStats 
-              onSelectDependency={(dep) => handleComponentSelect(dep.name)}
-            />
+            <DependencyList />
           </TabsContent>
         )}
 

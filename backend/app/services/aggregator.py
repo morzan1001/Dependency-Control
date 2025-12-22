@@ -8,6 +8,9 @@ from app.schemas.finding import (
     SecretDetails,
     VulnerabilityAggregatedDetails,
     VulnerabilityEntry,
+    QualityAggregatedDetails,
+    ScorecardEntry,
+    MaintainerRiskEntry,
 )
 
 SEVERITY_ORDER = {
@@ -888,6 +891,8 @@ class ResultAggregator:
         """
         if finding.type == FindingType.VULNERABILITY:
             self._add_vulnerability_finding(finding, source)
+        elif finding.type == FindingType.QUALITY:
+            self._add_quality_finding(finding, source)
         else:
             self._add_generic_finding(finding, source)
 
@@ -998,6 +1003,166 @@ class ResultAggregator:
                 found_in=[source] if source else [],
             )
             self.findings[agg_key] = agg_finding
+
+    def _add_quality_finding(self, finding: Finding, source: str = None):
+        """
+        Adds a quality finding to the map, aggregating scorecard and maintainer_risk
+        findings for the same component+version.
+        """
+        # Normalize keys
+        raw_comp = finding.component if finding.component else "unknown"
+        comp_key = self._normalize_component(raw_comp)
+
+        # Normalize version
+        raw_version = finding.version if finding.version else "unknown"
+        version_key = self._normalize_version(raw_version)
+
+        # Primary key for the AGGREGATED quality finding
+        agg_key = f"AGG:QUALITY:{comp_key}:{version_key}"
+
+        # Determine if this is a scorecard or maintainer_risk finding
+        is_scorecard = finding.id.startswith("SCORECARD-")
+        is_maintainer = finding.id.startswith("MAINT-")
+
+        if agg_key in self.findings:
+            existing = self.findings[agg_key]
+
+            # 1. Update Scanners of the aggregate
+            existing.scanners = list(set(existing.scanners + finding.scanners))
+
+            # 2. Update Severity of the aggregate (Max of all sources)
+            existing_severity_val = SEVERITY_ORDER.get(existing.severity, 0)
+            new_severity_val = SEVERITY_ORDER.get(finding.severity, 0)
+            if new_severity_val > existing_severity_val:
+                existing.severity = finding.severity
+
+            # 3. Merge data based on source type
+            if is_scorecard:
+                scorecard_entry: ScorecardEntry = {
+                    "overall_score": finding.details.get("overall_score"),
+                    "scorecard_date": finding.details.get("scorecard_date"),
+                    "repository": finding.details.get("repository"),
+                    "project_url": finding.details.get("project_url"),
+                    "failed_checks": finding.details.get("failed_checks", []),
+                    "critical_issues": finding.details.get("critical_issues", []),
+                    "checks_summary": finding.details.get("checks_summary", {}),
+                    "recommendation": finding.details.get("recommendation"),
+                }
+                existing.details["scorecard"] = scorecard_entry
+                existing.details["overall_score"] = finding.details.get("overall_score")
+
+                # Update maintenance issues
+                critical = finding.details.get("critical_issues", [])
+                if "Maintained" in critical:
+                    existing.details["has_maintenance_issues"] = True
+                    if "Maintained" not in existing.details.get("maintenance_issues", []):
+                        existing.details.setdefault("maintenance_issues", []).append("Maintained")
+
+            elif is_maintainer:
+                maintainer_entry: MaintainerRiskEntry = {
+                    "risks": finding.details.get("risks", []),
+                    "maintainer_info": finding.details.get("maintainer_info", {}),
+                    "risk_count": finding.details.get("risk_count", 0),
+                }
+                existing.details["maintainer_risk"] = maintainer_entry
+
+                # Update maintenance issues based on risks
+                risks = finding.details.get("risks", [])
+                for risk in risks:
+                    risk_type = risk.get("type", "")
+                    if risk_type in ("stale_package", "infrequent_updates", "archived_repo"):
+                        existing.details["has_maintenance_issues"] = True
+                        issue_name = risk.get("message", risk_type)
+                        if issue_name not in existing.details.get("maintenance_issues", []):
+                            existing.details.setdefault("maintenance_issues", []).append(issue_name)
+
+            # Update found_in
+            if source and source not in existing.found_in:
+                existing.found_in.append(source)
+
+            # Update description to reflect all sources
+            self._update_quality_description(existing)
+
+        else:
+            # Create new Aggregate Quality Finding
+            agg_details: QualityAggregatedDetails = {
+                "scorecard": None,
+                "maintainer_risk": None,
+                "overall_score": None,
+                "has_maintenance_issues": False,
+                "maintenance_issues": [],
+                "scanners": finding.scanners,
+            }
+
+            if is_scorecard:
+                agg_details["scorecard"] = {
+                    "overall_score": finding.details.get("overall_score"),
+                    "scorecard_date": finding.details.get("scorecard_date"),
+                    "repository": finding.details.get("repository"),
+                    "project_url": finding.details.get("project_url"),
+                    "failed_checks": finding.details.get("failed_checks", []),
+                    "critical_issues": finding.details.get("critical_issues", []),
+                    "checks_summary": finding.details.get("checks_summary", {}),
+                    "recommendation": finding.details.get("recommendation"),
+                }
+                agg_details["overall_score"] = finding.details.get("overall_score")
+
+                critical = finding.details.get("critical_issues", [])
+                if "Maintained" in critical:
+                    agg_details["has_maintenance_issues"] = True
+                    agg_details["maintenance_issues"].append("Maintained")
+
+            elif is_maintainer:
+                agg_details["maintainer_risk"] = {
+                    "risks": finding.details.get("risks", []),
+                    "maintainer_info": finding.details.get("maintainer_info", {}),
+                    "risk_count": finding.details.get("risk_count", 0),
+                }
+
+                risks = finding.details.get("risks", [])
+                for risk in risks:
+                    risk_type = risk.get("type", "")
+                    if risk_type in ("stale_package", "infrequent_updates", "archived_repo"):
+                        agg_details["has_maintenance_issues"] = True
+                        agg_details["maintenance_issues"].append(risk.get("message", risk_type))
+
+            agg_finding = Finding(
+                id=f"QUALITY:{finding.component}:{finding.version}",
+                type=FindingType.QUALITY,
+                severity=finding.severity,
+                component=finding.component,
+                version=finding.version,
+                description=finding.description,
+                scanners=finding.scanners,
+                details=agg_details,
+                found_in=[source] if source else [],
+            )
+            self.findings[agg_key] = agg_finding
+
+    def _update_quality_description(self, finding: Finding):
+        """Updates the description of an aggregated quality finding."""
+        parts = []
+
+        # Scorecard summary
+        scorecard = finding.details.get("scorecard")
+        if scorecard:
+            score = scorecard.get("overall_score", 0)
+            parts.append(f"OpenSSF Scorecard: {score:.1f}/10")
+            critical = scorecard.get("critical_issues", [])
+            if critical:
+                parts.append(f"Critical: {', '.join(critical)}")
+
+        # Maintainer risk summary
+        maint = finding.details.get("maintainer_risk")
+        if maint:
+            risks = maint.get("risks", [])
+            if risks:
+                risk_summaries = [r.get("message", r.get("type", "")) for r in risks[:2]]
+                parts.append("; ".join(risk_summaries))
+                if len(risks) > 2:
+                    parts[-1] += f" (+{len(risks) - 2} more)"
+
+        finding.description = " | ".join(parts) if parts else "Quality issues detected"
 
     def _add_generic_finding(self, finding: Finding, source: str = None):
         """

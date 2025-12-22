@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getComponentFindings } from '@/lib/api'
 import {
@@ -10,9 +11,21 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { AlertTriangle, ExternalLink, Shield } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Shield, ArrowUp, ArrowDown } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+
+type SortField = 'id' | 'type' | 'severity' | 'project_name' | 'description'
+type SortOrder = 'asc' | 'desc'
+
+// Severity order for sorting
+const severityOrder: Record<string, number> = {
+  'CRITICAL': 4,
+  'HIGH': 3,
+  'MEDIUM': 2,
+  'LOW': 1,
+  'UNKNOWN': 0,
+}
 
 interface ComponentFindingsModalProps {
   component: string;
@@ -27,11 +40,61 @@ export function ComponentFindingsModal({
   open, 
   onOpenChange 
 }: ComponentFindingsModalProps) {
+  const [sortBy, setSortBy] = useState<SortField>('severity')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+
   const { data: findings, isLoading } = useQuery({
     queryKey: ['component-findings', component, version],
     queryFn: () => getComponentFindings(component, version),
     enabled: open && !!component,
   })
+
+  const sortedFindings = useMemo(() => {
+    if (!findings) return []
+    
+    return [...findings].sort((a, b) => {
+      let comparison = 0
+      
+      switch (sortBy) {
+        case 'id':
+          comparison = (a.id || '').localeCompare(b.id || '')
+          break
+        case 'type':
+          comparison = (a.type || '').localeCompare(b.type || '')
+          break
+        case 'severity':
+          const sevA = severityOrder[a.severity?.toUpperCase() || 'UNKNOWN'] || 0
+          const sevB = severityOrder[b.severity?.toUpperCase() || 'UNKNOWN'] || 0
+          comparison = sevA - sevB
+          break
+        case 'project_name':
+          comparison = ((a as any).project_name || '').localeCompare((b as any).project_name || '')
+          break
+        case 'description':
+          comparison = (a.description || '').localeCompare(b.description || '')
+          break
+      }
+      
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
+  }, [findings, sortBy, sortOrder])
+
+  const handleSort = (field: SortField) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(field)
+      // Default to desc for severity, asc for others
+      setSortOrder(field === 'severity' ? 'desc' : 'asc')
+    }
+  }
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortBy !== field) return null
+    return sortOrder === 'asc' 
+      ? <ArrowUp className="h-4 w-4 inline-block ml-1" />
+      : <ArrowDown className="h-4 w-4 inline-block ml-1" />
+  }
 
   const getSeverityColor = (severity: string) => {
     switch (severity?.toUpperCase()) {
@@ -63,44 +126,74 @@ export function ComponentFindingsModal({
               <Skeleton key={i} className="h-16 w-full" />
             ))}
           </div>
-        ) : findings && findings.length > 0 ? (
-          <Table>
+        ) : sortedFindings && sortedFindings.length > 0 ? (
+          <Table className="table-fixed">
             <TableHeader>
               <TableRow>
-                <TableHead>Finding</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Severity</TableHead>
-                <TableHead>Project</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead></TableHead>
+                <TableHead 
+                  className="w-[150px] cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleSort('id')}
+                >
+                  Finding
+                  <SortIcon field="id" />
+                </TableHead>
+                <TableHead 
+                  className="w-[100px] cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleSort('type')}
+                >
+                  Type
+                  <SortIcon field="type" />
+                </TableHead>
+                <TableHead 
+                  className="w-[100px] cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleSort('severity')}
+                >
+                  Severity
+                  <SortIcon field="severity" />
+                </TableHead>
+                <TableHead 
+                  className="w-[150px] cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleSort('project_name')}
+                >
+                  Project
+                  <SortIcon field="project_name" />
+                </TableHead>
+                <TableHead 
+                  className="w-[250px] cursor-pointer hover:bg-muted/50"
+                  onClick={() => handleSort('description')}
+                >
+                  Description
+                  <SortIcon field="description" />
+                </TableHead>
+                <TableHead className="w-[50px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {findings.map((finding, index) => (
+              {sortedFindings.map((finding, index) => (
                 <TableRow key={`${finding.id}-${index}`}>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-destructive" />
-                      <span className="font-mono text-sm">{finding.id}</span>
+                  <TableCell className="truncate">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <AlertTriangle className="h-4 w-4 text-destructive flex-shrink-0" />
+                      <span className="font-mono text-sm truncate">{finding.id}</span>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{finding.type}</Badge>
+                    <Badge variant="secondary" className="truncate">{finding.type}</Badge>
                   </TableCell>
                   <TableCell>
                     <Badge className={getSeverityColor(finding.severity)}>
                       {finding.severity}
                     </Badge>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="truncate">
                     <Link 
                       to={`/projects/${(finding as any).project_id}`}
-                      className="hover:underline text-primary"
+                      className="hover:underline text-primary truncate block"
                     >
                       {(finding as any).project_name || 'Unknown'}
                     </Link>
                   </TableCell>
-                  <TableCell className="max-w-[300px]">
+                  <TableCell className="truncate">
                     <p className="truncate text-sm text-muted-foreground" title={finding.description}>
                       {finding.description}
                     </p>

@@ -750,6 +750,7 @@ class SBOMParser:
         # Extract source info
         source = sbom.get("source", {})
         source_type_raw = source.get("type", "")
+        source_id = source.get("id", "")
 
         if source_type_raw == "image":
             result.source_type = "image"
@@ -769,11 +770,60 @@ class SBOMParser:
             result.source_type = "file-system"
             result.source_target = source.get("target", "")
 
-        # Parse artifacts
+        # Build artifact ID -> artifact mapping for quick lookup
         artifacts = sbom.get("artifacts", [])
+        artifact_by_id = {a.get("id"): a for a in artifacts if a.get("id")}
+
+        # Analyze artifactRelationships to determine direct vs transitive
+        # Direct dependencies are those directly referenced by the source (root)
+        # or by application-level packages (not OS packages)
+        relationships = sbom.get("artifactRelationships", [])
+        
+        # Find direct artifact IDs - artifacts that the source directly contains/depends on
+        direct_artifact_ids = set()
+        all_child_ids = set()  # All artifacts that are children of something
+        
+        for rel in relationships:
+            parent = rel.get("parent", "")
+            child = rel.get("child", "")
+            rel_type = rel.get("type", "")
+            
+            # Track all child relationships
+            if child:
+                all_child_ids.add(child)
+            
+            # Direct dependencies: artifacts directly connected to the source
+            if parent == source_id:
+                if rel_type in ("contains", "dependency-of", "depends-on"):
+                    direct_artifact_ids.add(child)
+        
+        # For container images, we need a different heuristic:
+        # - Application packages (npm, pip, go, etc.) that are in the top layer are typically direct
+        # - OS packages are usually considered as "base image" dependencies (transitive from app perspective)
+        # If no explicit relationships from source, use heuristics based on package type
+        
+        if not direct_artifact_ids and result.source_type == "image":
+            # Fallback heuristic for images without clear relationship graph:
+            # Consider application-level packages as potentially direct
+            for artifact in artifacts:
+                artifact_type = artifact.get("type", "")
+                # These types are typically application dependencies, not OS packages
+                if artifact_type in ("npm", "python", "go-module", "gem", "cargo", 
+                                     "composer", "maven", "gradle", "nuget", "pub"):
+                    direct_artifact_ids.add(artifact.get("id"))
+        
+        logger.debug(
+            f"Syft relationship analysis: {len(direct_artifact_ids)} direct, "
+            f"{len(all_child_ids)} total children from {len(relationships)} relationships"
+        )
+
+        # Parse artifacts with direct/transitive info
         for artifact in artifacts:
+            artifact_id = artifact.get("id", "")
+            is_direct = artifact_id in direct_artifact_ids
+            
             parsed = self._parse_syft_artifact(
-                artifact, result.source_type, result.source_target
+                artifact, result.source_type, result.source_target, is_direct
             )
             if parsed:
                 result.dependencies.append(parsed)
@@ -785,6 +835,7 @@ class SBOMParser:
         artifact: Dict[str, Any],
         source_type: Optional[str],
         source_target: Optional[str],
+        is_direct: bool = False,
     ) -> Optional[ParsedDependency]:
         """Parse a single Syft artifact with all available fields."""
 
@@ -837,10 +888,11 @@ class SBOMParser:
         # Extract metadata for additional fields
         metadata = artifact.get("metadata", {})
 
-        # Try to determine if direct dependency
-        direct = False
-        if metadata:
-            # Some package types have direct indicators
+        # Use the is_direct parameter passed from relationship analysis
+        # Also check metadata for explicit direct indicators as fallback
+        direct = is_direct
+        if not direct and metadata:
+            # Some package types have direct indicators in metadata
             if metadata.get("directDependency") or metadata.get("direct"):
                 direct = True
 

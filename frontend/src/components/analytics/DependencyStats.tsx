@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getTopDependencies, getDependencyTypes, DependencyUsage } from '@/lib/api'
+import { getTopDependencies, getDependencyTypes, DependencyUsage, searchDependenciesAdvanced, AdvancedSearchResult } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -12,7 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { AlertTriangle, Package } from 'lucide-react'
+import { AlertTriangle, Package, Loader2, ExternalLink } from 'lucide-react'
+import { DependencyDetailsDialog } from './DependencyDetailsDialog'
 
 interface DependencyStatsProps {
   onSelectDependency?: (dep: DependencyUsage) => void;
@@ -21,6 +22,9 @@ interface DependencyStatsProps {
 export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
+  const [selectedDependency, setSelectedDependency] = useState<AdvancedSearchResult | null>(null)
+  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
+  const [loadingDetails, setLoadingDetails] = useState<string | null>(null)
 
   const { data: types } = useQuery({
     queryKey: ['dependency-types'],
@@ -31,6 +35,28 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
     queryKey: ['top-dependencies', limit, selectedType],
     queryFn: () => getTopDependencies(limit, selectedType),
   })
+
+  const handleRowClick = async (dep: DependencyUsage) => {
+    // Also call the original handler if provided
+    onSelectDependency?.(dep)
+    
+    // Load full details via search API
+    setLoadingDetails(dep.name)
+    try {
+      const result = await searchDependenciesAdvanced(dep.name, {
+        type: dep.type || undefined,
+        limit: 1,
+      })
+      if (result.items.length > 0) {
+        setSelectedDependency(result.items[0])
+        setDetailsDialogOpen(true)
+      }
+    } catch (error) {
+      console.error('Failed to load dependency details:', error)
+    } finally {
+      setLoadingDetails(null)
+    }
+  }
 
   return (
     <Card>
@@ -89,13 +115,18 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
               {dependencies.map((dep) => (
                 <TableRow 
                   key={dep.name} 
-                  className={onSelectDependency ? "cursor-pointer hover:bg-muted" : ""}
-                  onClick={() => onSelectDependency?.(dep)}
+                  className="cursor-pointer hover:bg-muted"
+                  onClick={() => handleRowClick(dep)}
                 >
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <Package className="h-4 w-4 text-muted-foreground" />
+                      {loadingDetails === dep.name ? (
+                        <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
+                      ) : (
+                        <Package className="h-4 w-4 text-muted-foreground" />
+                      )}
                       <span className="font-medium">{dep.name}</span>
+                      <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>
                   </TableCell>
                   <TableCell>
@@ -133,6 +164,13 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
             <p>No dependencies found</p>
           </div>
         )}
+
+        {/* Dependency Details Dialog */}
+        <DependencyDetailsDialog
+          dependency={selectedDependency}
+          open={detailsDialogOpen}
+          onOpenChange={setDetailsDialogOpen}
+        />
       </CardContent>
     </Card>
   )

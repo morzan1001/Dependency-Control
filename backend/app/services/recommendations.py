@@ -1633,8 +1633,8 @@ class RecommendationEngine:
         potential_dev_deps = []
 
         for dep in dependencies:
-            name = dep.get("name", "").lower()
-            scope = dep.get("scope", "").lower()
+            name = (dep.get("name") or "").lower()
+            scope = (dep.get("scope") or "").lower()
 
             # Skip if already marked as dev
             if scope in ("dev", "development", "test"):

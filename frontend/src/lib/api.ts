@@ -1053,6 +1053,46 @@ export const getTopDependencies = async (limit = 20, type?: string) => {
   return response.data;
 };
 
+export interface DependencyListItem {
+  name: string;
+  version: string;
+  type: string;
+  purl?: string;
+  license?: string;
+  direct: boolean;
+  project_count: number;
+  project_id: string;
+  project_name: string;
+  has_vulnerabilities: boolean;
+  vulnerability_count: number;
+  source_type?: string;
+}
+
+export interface DependencyListResponse {
+  items: DependencyListItem[];
+  total: number;
+  page: number;
+  size: number;
+  has_more: boolean;
+}
+
+export const getDependenciesList = async (options?: {
+  page?: number;
+  size?: number;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+  type_filter?: string;
+}): Promise<DependencyListResponse> => {
+  const params = new URLSearchParams();
+  if (options?.page) params.append('page', options.page.toString());
+  if (options?.size) params.append('size', options.size.toString());
+  if (options?.sort_by) params.append('sort_by', options.sort_by);
+  if (options?.sort_order) params.append('sort_order', options.sort_order);
+  if (options?.type_filter) params.append('type_filter', options.type_filter);
+  const response = await api.get<DependencyListResponse>('/analytics/dependencies/list', { params });
+  return response.data;
+};
+
 export const getDependencyTree = async (projectId: string, scanId?: string) => {
   const params = new URLSearchParams();
   if (scanId) params.append('scan_id', scanId);

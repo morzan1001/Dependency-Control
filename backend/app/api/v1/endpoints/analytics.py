@@ -50,6 +50,31 @@ class DependencyUsage(BaseModel):
     vulnerability_count: int
 
 
+class DependencyListItem(BaseModel):
+    """Single dependency item with full details for list view."""
+    name: str
+    version: str
+    type: str
+    purl: Optional[str] = None
+    license: Optional[str] = None
+    direct: bool = False
+    project_count: int = 1
+    project_id: str
+    project_name: str
+    has_vulnerabilities: bool = False
+    vulnerability_count: int = 0
+    source_type: Optional[str] = None
+
+
+class DependencyListResponse(BaseModel):
+    """Paginated response for dependency list."""
+    items: List[DependencyListItem]
+    total: int
+    page: int
+    size: int
+    has_more: bool
+
+
 class DependencyTreeNode(BaseModel):
     id: str
     name: str
@@ -310,6 +335,127 @@ async def get_top_dependencies(
         )
 
     return enriched
+
+
+@router.get("/dependencies/list", response_model=DependencyListResponse)
+async def get_dependencies_list(
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(50, ge=1, le=200, description="Items per page"),
+    sort_by: str = Query("name", description="Sort field: name, version, type, project_count, vulnerability_count"),
+    sort_order: str = Query("asc", description="Sort order: asc or desc"),
+    type_filter: Optional[str] = Query(None, description="Filter by dependency type"),
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """Get paginated list of all dependencies with sorting."""
+    require_analytics_permission(current_user, "analytics:dependencies")
+
+    project_ids = await get_user_project_ids(current_user, db)
+    if not project_ids:
+        return DependencyListResponse(items=[], total=0, page=page, size=size, has_more=False)
+
+    # Build match stage
+    match_stage: dict = {"project_id": {"$in": project_ids}}
+    if type_filter:
+        match_stage["type"] = type_filter
+
+    # Define sort mapping
+    sort_map = {
+        "name": "name",
+        "version": "version",
+        "type": "type",
+        "project_name": "project_name",
+        "direct": "direct",
+    }
+    sort_field = sort_map.get(sort_by, "name")
+    sort_direction = 1 if sort_order == "asc" else -1
+
+    # Get total count
+    total = await db.dependencies.count_documents(match_stage)
+
+    # Calculate skip
+    skip = (page - 1) * size
+
+    # Main pipeline - first get dependencies grouped by project
+    pipeline = [
+        {"$match": match_stage},
+        {
+            "$lookup": {
+                "from": "projects",
+                "localField": "project_id",
+                "foreignField": "_id",
+                "as": "project_info",
+            }
+        },
+        {"$unwind": {"path": "$project_info", "preserveNullAndEmptyArrays": True}},
+        {
+            "$project": {
+                "name": 1,
+                "version": 1,
+                "type": 1,
+                "purl": 1,
+                "license": "$licenses",
+                "direct": 1,
+                "project_id": 1,
+                "project_name": {"$ifNull": ["$project_info.name", "Unknown"]},
+                "source_type": 1,
+            }
+        },
+        {"$sort": {sort_field: sort_direction, "_id": 1}},
+        {"$skip": skip},
+        {"$limit": size},
+    ]
+
+    results = await db.dependencies.aggregate(pipeline).to_list(None)
+
+    # Get vulnerability counts for each dependency
+    items = []
+    for dep in results:
+        # Count vulnerabilities for this dependency in this project
+        vuln_count = await db.findings.count_documents({
+            "project_id": dep["project_id"],
+            "component": dep["name"],
+            "type": "vulnerability",
+        })
+        
+        # Count how many projects use this dependency
+        project_count = await db.dependencies.count_documents({
+            "project_id": {"$in": project_ids},
+            "name": dep["name"],
+        })
+        
+        # Get license as string
+        license_str = None
+        if dep.get("license"):
+            if isinstance(dep["license"], list) and len(dep["license"]) > 0:
+                license_str = dep["license"][0]
+            elif isinstance(dep["license"], str):
+                license_str = dep["license"]
+
+        items.append(DependencyListItem(
+            name=dep["name"],
+            version=dep.get("version", "unknown"),
+            type=dep.get("type", "unknown"),
+            purl=dep.get("purl"),
+            license=license_str,
+            direct=dep.get("direct", False),
+            project_count=project_count,
+            project_id=dep["project_id"],
+            project_name=dep.get("project_name", "Unknown"),
+            has_vulnerabilities=vuln_count > 0,
+            vulnerability_count=vuln_count,
+            source_type=dep.get("source_type"),
+        ))
+
+    has_more = skip + len(items) < total
+
+    return DependencyListResponse(
+        items=items,
+        total=total,
+        page=page,
+        size=size,
+        has_more=has_more,
+    )
 
 
 @router.get(

@@ -22,7 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Search, Package, ExternalLink, Filter, X, Container, FileCode, HardDrive, Eye, Loader2 } from 'lucide-react'
+import { Search, Package, Filter, X, Container, FileCode, HardDrive, Eye, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
 import { cn } from '@/lib/utils'
@@ -339,17 +339,17 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
               )}
             </div>
             <div ref={parentRef}>
-              <Table>
+              <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[200px]">Package</TableHead>
                     <TableHead className="w-[100px]">Version</TableHead>
-                    <TableHead className="w-[100px]">Type</TableHead>
+                    <TableHead className="w-[80px]">Type</TableHead>
                     <TableHead className="w-[130px]">Source</TableHead>
-                    <TableHead className="w-[100px]">License</TableHead>
+                    <TableHead className="w-[120px]">License</TableHead>
                     <TableHead className="w-[150px]">Project</TableHead>
-                    <TableHead className="w-[120px]">Dependency Type</TableHead>
-                    <TableHead className="w-[80px]"></TableHead>
+                    <TableHead className="w-[100px]">Dep Type</TableHead>
+                    <TableHead className="w-[60px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -375,26 +375,26 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                         className={onSelectResult ? "cursor-pointer hover:bg-muted" : ""}
                         onClick={() => onSelectResult?.(result)}
                       >
-                        <TableCell>
-                          <div className="flex items-center gap-2">
+                        <TableCell className="truncate">
+                          <div className="flex items-center gap-2 min-w-0">
                             <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                             <span className="font-medium truncate">{result.package}</span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{result.version}</Badge>
+                        <TableCell className="truncate">
+                          <Badge variant="outline" className="truncate max-w-full">{result.version}</Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{result.type}</Badge>
+                          <Badge variant="secondary" className="truncate">{result.type}</Badge>
                         </TableCell>
                         <TableCell>
                           {sourceInfo ? (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <div className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md w-fit", sourceInfo.bgColor)}>
-                                    <sourceInfo.icon className={cn("h-4 w-4", sourceInfo.color)} />
-                                    <span className="text-xs font-medium">{sourceInfo.label}</span>
+                                  <div className={cn("flex items-center gap-1 px-1.5 py-0.5 rounded-md w-fit text-xs", sourceInfo.bgColor)}>
+                                    <sourceInfo.icon className={cn("h-3.5 w-3.5 flex-shrink-0", sourceInfo.color)} />
+                                    <span className="font-medium truncate">{sourceInfo.label}</span>
                                   </div>
                                 </TooltipTrigger>
                                 <TooltipContent side="top" className="max-w-xs">
@@ -427,10 +427,10 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                             <span className="text-muted-foreground text-sm">-</span>
                           )}
                         </TableCell>
-                        <TableCell>
-                          {result.license || <span className="text-muted-foreground">-</span>}
+                        <TableCell className="truncate">
+                          <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="truncate">
                           <Link 
                             to={`/projects/${result.project_id}`}
                             className="hover:underline text-primary truncate block"
@@ -440,15 +440,16 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                           </Link>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={result.direct ? "default" : "secondary"}>
-                            {result.direct ? "Direct" : "Transitive"}
+                          <Badge variant={result.direct ? "default" : "secondary"} className="whitespace-nowrap">
+                            {result.direct ? "Direct" : "Trans."}
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center">
                             <Button 
                               variant="ghost" 
                               size="icon"
+                              className="h-8 w-8"
                               onClick={(e: React.MouseEvent) => {
                                 e.stopPropagation()
                                 setSelectedDependency(result)
@@ -457,11 +458,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                               title="View details"
                             >
                               <Eye className="h-4 w-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" asChild>
-                              <Link to={`/projects/${result.project_id}`} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
-                                <ExternalLink className="h-4 w-4" />
-                              </Link>
                             </Button>
                           </div>
                         </TableCell>

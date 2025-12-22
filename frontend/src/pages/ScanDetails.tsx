@@ -474,7 +474,7 @@ export default function ScanDetails() {
                                 {scanSboms.map((sbomResponse: SbomResponse) => {
                                     const sbom = sbomResponse.sbom;
                                     const index = sbomResponse.index;
-                                    let toolName = "Unknown Scanner";
+                                    let toolName = "";
                                     let sbomName = sbomResponse.filename || `SBOM #${index + 1}`;
                                     
                                     if (sbomResponse.error) {
@@ -531,7 +531,9 @@ export default function ScanDetails() {
                                                     <span>{sbomName}</span>
                                                     <div className="flex items-center gap-2">
                                                         <Badge variant="secondary" className="font-mono">SBOM #{index + 1}</Badge>
-                                                        <Badge variant="outline">{toolName || 'Unknown'}</Badge>
+                                                        {toolName && (
+                                                            <Badge variant="outline">{toolName}</Badge>
+                                                        )}
                                                         {sbomResponse.storage === 'gridfs' && (
                                                             <Badge variant="outline" className="text-xs">GridFS</Badge>
                                                         )}

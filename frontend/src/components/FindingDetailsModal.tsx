@@ -31,7 +31,10 @@ function getSourceInfo(sourceType?: string) {
 // Component for rendering additional details based on finding type
 function AdditionalDetailsView({ details }: { details: Record<string, unknown> }) {
   // Skip rendering for these redundant fields that are shown elsewhere
-  const skipFields = ['license', 'severity', 'type', 'message', 'id', 'component', 'version']
+  const skipFields = ['license', 'severity', 'type', 'message', 'id', 'component', 'version', 'fixed_version']
+  
+  // Fields that should be grouped together in a row (e.g., cycle and lts for EOL)
+  const rowGroupFields = ['cycle', 'lts']
   
   // Filter out empty values and redundant fields
   const filteredEntries = Object.entries(details).filter(([key, value]) => {
@@ -41,6 +44,10 @@ function AdditionalDetailsView({ details }: { details: Record<string, unknown> }
     if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0) return false
     return true
   })
+  
+  // Separate grouped fields from regular fields
+  const groupedEntries = filteredEntries.filter(([key]) => rowGroupFields.includes(key))
+  const regularEntries = filteredEntries.filter(([key]) => !rowGroupFields.includes(key))
   
   if (filteredEntries.length === 0) {
     return null
@@ -145,7 +152,25 @@ function AdditionalDetailsView({ details }: { details: Record<string, unknown> }
   
   return (
     <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-      {filteredEntries.map(([key, value]) => {
+      {/* Grouped fields (cycle + lts) displayed side by side */}
+      {groupedEntries.length > 0 && (
+        <div className="grid grid-cols-2 gap-4">
+          {groupedEntries.map(([key, value]) => {
+            const Icon = getFieldIcon(key)
+            return (
+              <div key={key} className="flex items-start gap-3">
+                {Icon && <Icon className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-muted-foreground">{formatFieldName(key)}</p>
+                  <div className="text-sm">{renderValue(key, value)}</div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {/* Regular fields */}
+      {regularEntries.map(([key, value]) => {
         const Icon = getFieldIcon(key)
         return (
           <div key={key} className="flex items-start gap-3">
@@ -279,7 +304,6 @@ function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
   const overallScore = details.overall_score as number
   const failedChecks = (details.failed_checks as Array<{ name: string; score: number }>) || []
   const criticalIssues = (details.critical_issues as string[]) || []
-  const projectUrl = details.project_url as string
   const repository = details.repository as string
   const recommendation = details.recommendation as string
   const checksSummary = details.checks_summary as Record<string, number>
@@ -321,13 +345,13 @@ function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
           </p>
           {repository && (
             <a 
-              href={`https://github.com/${repository}`}
+              href={repository.startsWith('http') ? repository : repository.includes('github.com') ? `https://${repository}` : `https://github.com/${repository}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs text-primary mt-1 hover:underline"
             >
               <ExternalLink className="h-3 w-3" />
-              {repository}
+              {repository.replace(/^https?:\/\//, '')}
             </a>
           )}
         </div>
@@ -404,10 +428,10 @@ function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
         </div>
       )}
       
-      {/* Project URL */}
-      {projectUrl && (
+      {/* Scorecard Report Link */}
+      {repository && (
         <a 
-          href={projectUrl}
+          href={`https://scorecard.dev/viewer/?uri=${encodeURIComponent(repository.startsWith('http') ? repository : repository.includes('github.com') ? `https://${repository}` : `https://github.com/${repository}`)}`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
@@ -796,22 +820,27 @@ function OriginBadge({ finding }: { finding: Finding }) {
   const bgColor = sourceInfo?.bgColor || "bg-muted"
   
   return (
-    <div className="space-y-2">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border transition-colors hover:bg-opacity-80 ${bgColor}`}
+    <>
+      <Badge
+        variant="outline"
+        className={`cursor-pointer hover:bg-opacity-80 transition-colors ${bgColor}`}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setIsExpanded(!isExpanded)
+        }}
       >
-        <IconComponent className={`h-3.5 w-3.5 ${color}`} />
-        <span>Origin: {label}</span>
+        <IconComponent className={`h-3 w-3 mr-1 ${color}`} />
+        <span>{label}</span>
         {isExpanded ? (
           <ChevronDown className="h-3 w-3 ml-1" />
         ) : (
           <ChevronRight className="h-3 w-3 ml-1" />
         )}
-      </button>
+      </Badge>
       
       {isExpanded && (
-        <div className="p-3 border rounded-lg bg-muted/30 space-y-3 text-sm">
+        <div className="w-full mt-2 p-3 border rounded-lg bg-muted/30 space-y-3 text-sm">
           {finding.direct !== undefined && (
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">Dependency Type:</span>
@@ -865,7 +894,7 @@ function OriginBadge({ finding }: { finding: Finding }) {
           )}
         </div>
       )}
-    </div>
+    </>
   )
 }
 
@@ -969,14 +998,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 )}
                                 {finding.found_in && finding.found_in.length > 0 && (
                                     <div className="col-span-2">
-                                        <div className="flex items-center gap-3 mb-1">
-                                            <h4 className="text-sm font-medium text-muted-foreground">Found In Sources</h4>
-                                            {/* Origin Badge - clickable to expand details */}
-                                            {finding.source_type && (
-                                                <OriginBadge finding={finding} />
-                                            )}
-                                        </div>
-                                        <div className="flex flex-wrap gap-2 max-h-[100px] overflow-y-auto">
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-2">Found In Sources</h4>
+                                        <div className="flex flex-wrap gap-2 items-start">
                                             {finding.found_in.map((source) => {
                                                 // Check if this looks like an SBOM reference
                                                 const isSbomRef = source.match(/SBOM #\d+/i) || !source.includes('/')
@@ -985,13 +1008,21 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                         key={source} 
                                                         variant="secondary" 
                                                         className={`font-mono text-xs ${scanId && isSbomRef ? 'cursor-pointer hover:bg-primary/20 transition-colors' : ''}`}
-                                                        onClick={scanId && isSbomRef ? () => handleSbomClick(source) : undefined}
+                                                        onClick={scanId && isSbomRef ? (e) => {
+                                                            e.preventDefault()
+                                                            e.stopPropagation()
+                                                            handleSbomClick(source)
+                                                        } : undefined}
                                                     >
                                                         {source}
                                                         {scanId && isSbomRef && <ExternalLink className="h-3 w-3 ml-1" />}
                                                     </Badge>
                                                 )
                                             })}
+                                            {/* Origin Badge inline with SBOM badges */}
+                                            {finding.source_type && (
+                                                <OriginBadge finding={finding} />
+                                            )}
                                         </div>
                                     </div>
                                 )}
@@ -1193,14 +1224,32 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 <LicenseDetailsView details={finding.details} />
                             )}
 
-                            {/* Quality findings (OpenSSF Scorecard) */}
-                            {finding.type === 'quality' && finding.details?.overall_score !== undefined && (
-                                <QualityDetailsView details={finding.details} />
+                            {/* Quality findings (aggregated: scorecard + maintainer_risk) */}
+                            {finding.type === 'quality' && finding.details && (
+                                <>
+                                    {/* Scorecard section - show if we have scorecard data */}
+                                    {(finding.details?.scorecard?.overall_score !== undefined || finding.details?.overall_score !== undefined) && (
+                                        <QualityDetailsView details={
+                                            finding.details?.scorecard 
+                                                ? { ...finding.details.scorecard, repository: finding.details.scorecard.repository }
+                                                : finding.details
+                                        } />
+                                    )}
+
+                                    {/* Maintainer Risk section - show if we have maintainer_risk data */}
+                                    {finding.details?.maintainer_risk?.risks && (
+                                        <MaintainerRiskDetailsView details={finding.details.maintainer_risk} />
+                                    )}
+
+                                    {/* Legacy: direct risks without aggregation structure */}
+                                    {!finding.details?.scorecard && !finding.details?.maintainer_risk && finding.details?.risks && (
+                                        <MaintainerRiskDetailsView details={finding.details} />
+                                    )}
+                                </>
                             )}
 
-                            {/* Maintainer Risk / Legacy quality findings - handle legacy 'other' type with maintainer_risk data */}
-                            {((finding.type === 'quality' && !finding.details?.overall_score && finding.details?.risks) || 
-                              (finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info)) && finding.details && (
+                            {/* Legacy 'other' type with maintainer_risk data */}
+                            {finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info && (
                                 <MaintainerRiskDetailsView details={finding.details} />
                             )}
 
