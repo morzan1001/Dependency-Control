@@ -946,6 +946,20 @@ export interface ImpactAnalysisResult {
   recommended_version?: string;
   fix_impact_score: number;
   affected_project_names: string[];
+  // EPSS/KEV enrichment fields
+  max_epss_score?: number;
+  epss_percentile?: number;
+  has_kev?: boolean;
+  kev_count?: number;
+  kev_ransomware_use?: boolean;
+  kev_due_date?: string;
+  days_until_due?: number;  // Days until CISA deadline (negative = overdue)
+  exploit_maturity?: string;
+  max_risk_score?: number;
+  days_known?: number;
+  has_fix?: boolean;
+  fix_versions?: string[];
+  priority_reasons?: string[];  // Human-readable priority explanations
 }
 
 export interface VulnerabilityHotspot {
@@ -956,6 +970,21 @@ export interface VulnerabilityHotspot {
   severity_breakdown: SeverityBreakdown;
   affected_projects: string[];
   first_seen: string;
+  // EPSS/KEV enrichment fields
+  max_epss_score?: number;
+  epss_percentile?: number;
+  has_kev?: boolean;
+  kev_count?: number;
+  kev_ransomware_use?: boolean;
+  kev_due_date?: string;
+  days_until_due?: number;  // Days until CISA deadline (negative = overdue)
+  exploit_maturity?: string;
+  max_risk_score?: number;
+  days_known?: number;
+  has_fix?: boolean;
+  fix_versions?: string[];
+  top_cves?: string[];
+  priority_reasons?: string[];  // Human-readable priority explanations
 }
 
 export interface DependencyTypeStats {
@@ -1110,7 +1139,7 @@ export const getImpactAnalysis = async (limit = 20) => {
 export interface HotspotsQueryParams {
   skip?: number;
   limit?: number;
-  sort_by?: 'finding_count' | 'component' | 'first_seen';
+  sort_by?: 'finding_count' | 'component' | 'first_seen' | 'epss' | 'risk';
   sort_order?: 'asc' | 'desc';
 }
 

@@ -83,6 +83,23 @@ class ImpactAnalysisResult(BaseModel):
     recommended_version: Optional[str] = None
     fix_impact_score: float
     affected_project_names: List[str]
+    # EPSS/KEV enrichment
+    max_epss_score: Optional[float] = None  # Highest EPSS score
+    epss_percentile: Optional[float] = None  # Percentile of max EPSS
+    has_kev: bool = False  # Any vuln in CISA KEV
+    kev_count: int = 0  # Number of KEV vulns
+    kev_ransomware_use: bool = False  # Used in ransomware campaigns
+    kev_due_date: Optional[str] = None  # Earliest CISA remediation deadline
+    days_until_due: Optional[int] = None  # Days until deadline (negative = overdue)
+    exploit_maturity: str = "unknown"  # Highest exploit maturity level
+    max_risk_score: Optional[float] = None  # Highest combined risk score
+    # Days since first seen
+    days_known: Optional[int] = None
+    # Fix availability
+    has_fix: bool = False
+    fix_versions: List[str] = []
+    # Priority reasoning
+    priority_reasons: List[str] = []  # Human-readable reasons for priority
 
 
 class VulnerabilityHotspot(BaseModel):
@@ -94,6 +111,25 @@ class VulnerabilityHotspot(BaseModel):
     severity_breakdown: SeverityBreakdown
     affected_projects: List[str]
     first_seen: str
+    # EPSS/KEV enrichment
+    max_epss_score: Optional[float] = None
+    epss_percentile: Optional[float] = None
+    has_kev: bool = False
+    kev_count: int = 0
+    kev_ransomware_use: bool = False  # Used in ransomware campaigns
+    kev_due_date: Optional[str] = None  # Earliest CISA remediation deadline
+    days_until_due: Optional[int] = None  # Days until deadline (negative = overdue)
+    exploit_maturity: str = "unknown"
+    max_risk_score: Optional[float] = None
+    # Days known
+    days_known: Optional[int] = None
+    # Fix availability
+    has_fix: bool = False
+    fix_versions: List[str] = []
+    # Top CVEs for display
+    top_cves: List[str] = []
+    # Priority reasoning
+    priority_reasons: List[str] = []
 
 
 class DependencyTypeStats(BaseModel):

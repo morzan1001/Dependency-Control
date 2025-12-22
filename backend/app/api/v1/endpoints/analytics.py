@@ -499,7 +499,7 @@ async def get_impact_analysis(
     if not scan_ids:
         return []
 
-    # Aggregate vulnerabilities by component
+    # Aggregate vulnerabilities by component with more details
     pipeline = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
         {
@@ -508,6 +508,9 @@ async def get_impact_analysis(
                 "project_ids": {"$addToSet": "$project_id"},
                 "total_findings": {"$sum": 1},
                 "severities": {"$push": "$severity"},
+                "finding_ids": {"$push": "$finding_id"},
+                "first_seen": {"$min": "$created_at"},
+                "details_list": {"$push": "$details"},
             }
         },
         {
@@ -517,6 +520,9 @@ async def get_impact_analysis(
                 "project_ids": 1,
                 "total_findings": 1,
                 "severities": 1,
+                "finding_ids": 1,
+                "first_seen": 1,
+                "details_list": 1,
                 "affected_projects": {"$size": "$project_ids"},
             }
         },
@@ -525,6 +531,37 @@ async def get_impact_analysis(
     ]
 
     results = await db.findings.aggregate(pipeline).to_list(None)
+
+    # Collect all CVE IDs for enrichment
+    all_cves = []
+    cve_to_result = {}
+    cvss_scores = {}
+    
+    for r in results:
+        for fid in r.get("finding_ids", []):
+            if fid and fid.startswith("CVE-"):
+                all_cves.append(fid)
+                if fid not in cve_to_result:
+                    cve_to_result[fid] = []
+                cve_to_result[fid].append(r)
+        
+        # Extract CVSS scores from details
+        for details in r.get("details_list", []):
+            if isinstance(details, dict):
+                for vuln in details.get("vulnerabilities", []):
+                    vid = vuln.get("id", "")
+                    if vid.startswith("CVE-") and vuln.get("cvss_score"):
+                        cvss_scores[vid] = vuln["cvss_score"]
+
+    # Enrich with EPSS/KEV data
+    enrichments = {}
+    if all_cves:
+        try:
+            from app.services.vulnerability_enrichment import get_cve_enrichment
+            enrichments = await get_cve_enrichment(all_cves)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to enrich CVEs: {e}")
 
     impact_results = []
     for r in results:
@@ -535,14 +572,160 @@ async def get_impact_analysis(
                 if sev_lower in severity_counts:
                     severity_counts[sev_lower] += 1
 
-        # Calculate impact score (weighted by severity and reach)
-        # Higher score = fixing this would have more impact
-        impact_score = (
+        # Extract fix versions from details
+        fix_versions = set()
+        for details in r.get("details_list", []):
+            if isinstance(details, dict):
+                if details.get("fixed_version"):
+                    fix_versions.add(details["fixed_version"])
+                for vuln in details.get("vulnerabilities", []):
+                    if vuln.get("fixed_version"):
+                        fix_versions.add(vuln["fixed_version"])
+
+        # Get enrichment data for this component's CVEs
+        max_epss = None
+        max_percentile = None
+        max_risk = None
+        has_kev = False
+        kev_count = 0
+        kev_ransomware_use = False
+        kev_due_date = None
+        exploit_maturity = "unknown"
+        maturity_levels = {"unknown": 0, "low": 1, "medium": 2, "high": 3, "active": 4, "weaponized": 5}
+        
+        for fid in r.get("finding_ids", []):
+            if fid in enrichments:
+                enr = enrichments[fid]
+                if enr.epss_score is not None:
+                    if max_epss is None or enr.epss_score > max_epss:
+                        max_epss = enr.epss_score
+                        max_percentile = enr.epss_percentile
+                if enr.risk_score is not None:
+                    if max_risk is None or enr.risk_score > max_risk:
+                        max_risk = enr.risk_score
+                if enr.is_kev:
+                    has_kev = True
+                    kev_count += 1
+                    # Track ransomware use
+                    if enr.kev_ransomware_use:
+                        kev_ransomware_use = True
+                    # Track earliest due date
+                    if enr.kev_due_date:
+                        if kev_due_date is None or enr.kev_due_date < kev_due_date:
+                            kev_due_date = enr.kev_due_date
+                if maturity_levels.get(enr.exploit_maturity, 0) > maturity_levels.get(exploit_maturity, 0):
+                    exploit_maturity = enr.exploit_maturity
+
+        # Calculate days known
+        days_known = None
+        if r.get("first_seen"):
+            try:
+                first_seen_dt = r["first_seen"]
+                if isinstance(first_seen_dt, datetime):
+                    days_known = (datetime.now(first_seen_dt.tzinfo or None) - first_seen_dt).days
+            except Exception:
+                pass
+
+        # Calculate days until KEV due date (negative = overdue)
+        days_until_due = None
+        if kev_due_date:
+            try:
+                from datetime import date
+                due = datetime.strptime(kev_due_date, "%Y-%m-%d").date()
+                days_until_due = (due - date.today()).days
+            except Exception:
+                pass
+
+        # ============================================================
+        # PRIORITY SCORE CALCULATION
+        # Factors considered (in order of importance):
+        # 1. KEV with ransomware usage (highest priority)
+        # 2. KEV with overdue remediation deadline
+        # 3. Any KEV entry (actively exploited)
+        # 4. High EPSS score (>10% exploitation probability)
+        # 5. CVSS severity distribution
+        # 6. Number of affected projects (blast radius)
+        # 7. Fix availability (prefer fixable issues)
+        # 8. Days known (older = more urgent)
+        # ============================================================
+        
+        # Base score from severity (weighted)
+        severity_score = (
             severity_counts["critical"] * 10
             + severity_counts["high"] * 5
             + severity_counts["medium"] * 2
             + severity_counts["low"] * 1
-        ) * r["affected_projects"]
+        )
+        
+        # Reach multiplier (how many projects affected)
+        reach_multiplier = min(r["affected_projects"], 10)  # Cap at 10x
+        
+        base_impact = severity_score * reach_multiplier
+        
+        # KEV Boost (strongest signal - actively exploited)
+        if has_kev:
+            # Ransomware usage = highest priority
+            if kev_ransomware_use:
+                base_impact *= 3.0
+            # Overdue remediation deadline
+            elif days_until_due is not None and days_until_due < 0:
+                base_impact *= 2.5
+            # Due within 30 days
+            elif days_until_due is not None and days_until_due <= 30:
+                base_impact *= 2.0
+            # KEV but no urgent deadline
+            else:
+                base_impact *= 1.8
+        
+        # EPSS Boost (probability of exploitation)
+        if max_epss:
+            if max_epss >= 0.5:  # 50%+ chance of exploitation
+                base_impact *= 1.5
+            elif max_epss >= 0.1:  # 10%+ chance
+                base_impact *= 1.3
+            elif max_epss >= 0.01:  # 1%+ chance
+                base_impact *= 1.1
+        
+        # Exploit maturity boost
+        maturity_boost = {
+            "weaponized": 1.4,
+            "active": 1.3,
+            "high": 1.2,
+            "medium": 1.1,
+            "low": 1.0,
+            "unknown": 1.0,
+        }
+        base_impact *= maturity_boost.get(exploit_maturity, 1.0)
+        
+        # Fix availability boost (prioritize fixable issues)
+        has_fix = len(fix_versions) > 0
+        if has_fix:
+            base_impact *= 1.2  # Boost fixable issues
+        
+        # Age factor (older vulnerabilities slightly higher priority)
+        if days_known and days_known > 90:
+            base_impact *= 1.1  # Known for over 3 months
+
+        # Build priority reasons (human-readable explanations)
+        priority_reasons = []
+        if kev_ransomware_use:
+            priority_reasons.append("🔒 Used in ransomware campaigns - fix immediately")
+        if days_until_due is not None and days_until_due < 0:
+            priority_reasons.append(f"⚠️ CISA deadline overdue by {abs(days_until_due)} days")
+        elif days_until_due is not None and days_until_due <= 30:
+            priority_reasons.append(f"📅 CISA deadline in {days_until_due} days")
+        if has_kev and not kev_ransomware_use:
+            priority_reasons.append("🎯 Actively exploited in the wild (CISA KEV)")
+        if max_epss and max_epss >= 0.1:
+            priority_reasons.append(f"📈 High exploitation probability ({max_epss*100:.1f}% EPSS)")
+        if severity_counts["critical"] > 0:
+            priority_reasons.append(f"🔴 {severity_counts['critical']} critical vulnerabilities")
+        if r["affected_projects"] >= 3:
+            priority_reasons.append(f"🌐 Affects {r['affected_projects']} projects (high blast radius)")
+        if has_fix:
+            priority_reasons.append("✅ Fix available - easy to remediate")
+        if days_known and days_known > 90:
+            priority_reasons.append(f"⏰ Known for {days_known} days - overdue for remediation")
 
         impact_results.append(
             ImpactAnalysisResult(
@@ -551,11 +734,24 @@ async def get_impact_analysis(
                 affected_projects=r["affected_projects"],
                 total_findings=r["total_findings"],
                 findings_by_severity=SeverityBreakdown(**severity_counts),
-                fix_impact_score=float(impact_score),
+                fix_impact_score=float(base_impact),
                 affected_project_names=[
                     project_name_map.get(pid, "Unknown")
-                    for pid in r["project_ids"][:5]  # Limit to 5 names
+                    for pid in r["project_ids"][:5]
                 ],
+                max_epss_score=max_epss,
+                epss_percentile=max_percentile,
+                has_kev=has_kev,
+                kev_count=kev_count,
+                kev_ransomware_use=kev_ransomware_use,
+                kev_due_date=kev_due_date,
+                days_until_due=days_until_due,
+                exploit_maturity=exploit_maturity,
+                max_risk_score=max_risk,
+                days_known=days_known,
+                has_fix=has_fix,
+                fix_versions=list(fix_versions)[:3],
+                priority_reasons=priority_reasons,
             )
         )
 
@@ -569,7 +765,7 @@ async def get_impact_analysis(
 async def get_vulnerability_hotspots(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=100),
-    sort_by: str = Query("finding_count", description="Sort field: finding_count, component, first_seen"),
+    sort_by: str = Query("finding_count", description="Sort field: finding_count, component, first_seen, epss, risk"),
     sort_order: str = Query("desc", description="Sort order: asc, desc"),
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
@@ -595,13 +791,16 @@ async def get_vulnerability_hotspots(
     # Determine sort direction
     sort_direction = -1 if sort_order == "desc" else 1
     
-    # Map sort fields
+    # Map sort fields (for MongoDB aggregation)
     sort_field_map = {
         "finding_count": "finding_count",
         "component": "_id.component",
         "first_seen": "first_seen",
     }
     mongo_sort_field = sort_field_map.get(sort_by, "finding_count")
+    
+    # For EPSS/risk sorting, we'll sort after enrichment
+    post_sort_by = sort_by if sort_by in ["epss", "risk"] else None
 
     pipeline = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
@@ -612,14 +811,36 @@ async def get_vulnerability_hotspots(
                 "finding_count": {"$sum": 1},
                 "severities": {"$push": "$severity"},
                 "first_seen": {"$min": "$created_at"},
+                "finding_ids": {"$push": "$finding_id"},
+                "details_list": {"$push": "$details"},
             }
         },
         {"$sort": {mongo_sort_field: sort_direction}},
-        {"$skip": skip},
-        {"$limit": limit},
+        # Fetch more if we need to sort by enrichment data
+        {"$limit": limit * 3 if post_sort_by else skip + limit},
     ]
 
     results = await db.findings.aggregate(pipeline).to_list(None)
+    
+    if not post_sort_by:
+        results = results[skip:skip + limit]
+
+    # Collect all CVE IDs for enrichment
+    all_cves = []
+    for r in results:
+        for fid in r.get("finding_ids", []):
+            if fid and fid.startswith("CVE-"):
+                all_cves.append(fid)
+
+    # Enrich with EPSS/KEV data
+    enrichments = {}
+    if all_cves:
+        try:
+            from app.services.vulnerability_enrichment import get_cve_enrichment
+            enrichments = await get_cve_enrichment(list(set(all_cves)))
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to enrich CVEs: {e}")
 
     hotspots = []
     for r in results:
@@ -635,11 +856,90 @@ async def get_vulnerability_hotspots(
         dep_type = dep.get("type", "unknown") if dep else "unknown"
 
         first_seen_str = ""
+        days_known = None
         if r.get("first_seen"):
             if isinstance(r["first_seen"], datetime):
                 first_seen_str = r["first_seen"].isoformat()
+                try:
+                    days_known = (datetime.now(r["first_seen"].tzinfo or None) - r["first_seen"]).days
+                except Exception:
+                    pass
             else:
                 first_seen_str = str(r["first_seen"])
+
+        # Extract fix versions from details
+        fix_versions = set()
+        for details in r.get("details_list", []):
+            if isinstance(details, dict):
+                if details.get("fixed_version"):
+                    fix_versions.add(details["fixed_version"])
+                for vuln in details.get("vulnerabilities", []):
+                    if vuln.get("fixed_version"):
+                        fix_versions.add(vuln["fixed_version"])
+
+        # Get enrichment data for this component's CVEs
+        max_epss = None
+        max_percentile = None
+        max_risk = None
+        has_kev = False
+        kev_count = 0
+        kev_ransomware_use = False
+        kev_due_date = None
+        exploit_maturity = "unknown"
+        top_cves = []
+        maturity_levels = {"unknown": 0, "low": 1, "medium": 2, "high": 3, "active": 4, "weaponized": 5}
+        
+        for fid in r.get("finding_ids", []):
+            if fid and fid.startswith("CVE-"):
+                if fid not in top_cves:
+                    top_cves.append(fid)
+                if fid in enrichments:
+                    enr = enrichments[fid]
+                    if enr.epss_score is not None:
+                        if max_epss is None or enr.epss_score > max_epss:
+                            max_epss = enr.epss_score
+                            max_percentile = enr.epss_percentile
+                    if enr.risk_score is not None:
+                        if max_risk is None or enr.risk_score > max_risk:
+                            max_risk = enr.risk_score
+                    if enr.is_kev:
+                        has_kev = True
+                        kev_count += 1
+                        if enr.kev_ransomware_use:
+                            kev_ransomware_use = True
+                        if enr.kev_due_date:
+                            if kev_due_date is None or enr.kev_due_date < kev_due_date:
+                                kev_due_date = enr.kev_due_date
+                    if maturity_levels.get(enr.exploit_maturity, 0) > maturity_levels.get(exploit_maturity, 0):
+                        exploit_maturity = enr.exploit_maturity
+
+        # Calculate days until KEV due date
+        days_until_due = None
+        if kev_due_date:
+            try:
+                from datetime import date
+                due = datetime.strptime(kev_due_date, "%Y-%m-%d").date()
+                days_until_due = (due - date.today()).days
+            except Exception:
+                pass
+
+        # Build priority reasons
+        priority_reasons = []
+        if kev_ransomware_use:
+            priority_reasons.append("🔒 Used in ransomware campaigns")
+        if days_until_due is not None and days_until_due < 0:
+            priority_reasons.append(f"⚠️ CISA deadline overdue by {abs(days_until_due)} days")
+        elif days_until_due is not None and days_until_due <= 30:
+            priority_reasons.append(f"📅 CISA deadline in {days_until_due} days")
+        if has_kev and not kev_ransomware_use:
+            priority_reasons.append("🎯 Actively exploited (CISA KEV)")
+        if max_epss and max_epss >= 0.1:
+            priority_reasons.append(f"📈 High EPSS ({max_epss*100:.1f}%)")
+        if severity_counts["critical"] > 0:
+            priority_reasons.append(f"🔴 {severity_counts['critical']} critical vulns")
+        has_fix = len(fix_versions) > 0
+        if has_fix:
+            priority_reasons.append("✅ Fix available")
 
         hotspots.append(
             VulnerabilityHotspot(
@@ -653,8 +953,30 @@ async def get_vulnerability_hotspots(
                     for pid in r["project_ids"][:10]
                 ],
                 first_seen=first_seen_str,
+                max_epss_score=max_epss,
+                epss_percentile=max_percentile,
+                has_kev=has_kev,
+                kev_count=kev_count,
+                kev_ransomware_use=kev_ransomware_use,
+                kev_due_date=kev_due_date,
+                days_until_due=days_until_due,
+                exploit_maturity=exploit_maturity,
+                max_risk_score=max_risk,
+                days_known=days_known,
+                has_fix=has_fix,
+                fix_versions=list(fix_versions)[:3],
+                top_cves=top_cves[:5],
+                priority_reasons=priority_reasons,
             )
         )
+
+    # Post-sort by enrichment data if needed
+    if post_sort_by == "epss":
+        hotspots.sort(key=lambda x: x.max_epss_score or 0, reverse=(sort_order == "desc"))
+        hotspots = hotspots[skip:skip + limit]
+    elif post_sort_by == "risk":
+        hotspots.sort(key=lambda x: x.max_risk_score or 0, reverse=(sort_order == "desc"))
+        hotspots = hotspots[skip:skip + limit]
 
     return hotspots
 
