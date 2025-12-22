@@ -1,3 +1,11 @@
+# Release 0.8.9
+
+## 🚀 Features
+
+- feat: add sorting functionality to dependency search and enhance modal integration for dependency details (#0)
+
+
+
 # Release 0.8.8
 
 ## 🚀 Features
