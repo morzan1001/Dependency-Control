@@ -996,6 +996,8 @@ async def search_dependencies_advanced(
     project_ids: Optional[str] = Query(
         None, description="Comma-separated list of project IDs"
     ),
+    sort_by: str = Query("name", description="Sort field: name, version, type, project_name, license, direct"),
+    sort_order: str = Query("asc", description="Sort order: asc or desc"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(50, ge=1, le=500),
     current_user: User = Depends(deps.get_current_active_user),
@@ -1038,8 +1040,24 @@ async def search_dependencies_advanced(
     # Get total count for pagination
     total_count = await db.dependencies.count_documents(query)
 
+    # Map sort fields to MongoDB fields
+    sort_field_map = {
+        "name": "name",
+        "version": "version", 
+        "type": "type",
+        "project_name": "project_id",  # Will sort by project_id, but close enough
+        "license": "license",
+        "direct": "direct",
+    }
+    mongo_sort_field = sort_field_map.get(sort_by, "name")
+    sort_direction = 1 if sort_order == "asc" else -1
+
     dependencies = (
-        await db.dependencies.find(query).skip(skip).limit(limit).to_list(limit)
+        await db.dependencies.find(query)
+        .sort(mongo_sort_field, sort_direction)
+        .skip(skip)
+        .limit(limit)
+        .to_list(limit)
     )
 
     results = []

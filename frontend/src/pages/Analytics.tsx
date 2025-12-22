@@ -2,14 +2,13 @@ import { useState, useMemo } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AnalyticsSummaryCards, SeverityDistribution, DependencyTypesChart } from '@/components/analytics/AnalyticsSummary'
 import { DependencyStats } from '@/components/analytics/DependencyStats'
-import { DependencyList } from '@/components/analytics/DependencyList'
 import { DependencyTree } from '@/components/analytics/DependencyTree'
 import { ImpactAnalysis } from '@/components/analytics/ImpactAnalysis'
 import { VulnerabilityHotspots } from '@/components/analytics/VulnerabilityHotspots'
 import { CrossProjectSearch } from '@/components/analytics/CrossProjectSearch'
 import { Recommendations } from '@/components/analytics/Recommendations'
-import { ComponentFindingsModal } from '@/components/analytics/ComponentFindingsModal'
-import { BarChart3, Package, GitBranch, Zap, Flame, Search, Lightbulb } from 'lucide-react'
+import { AnalyticsDependencyModal } from '@/components/analytics/AnalyticsDependencyModal'
+import { BarChart3, GitBranch, Zap, Flame, Search, Lightbulb } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 
 export default function AnalyticsPage() {
@@ -19,7 +18,6 @@ export default function AnalyticsPage() {
 
   // Check individual tab permissions
   const canViewSummary = hasPermission('analytics:read') || hasPermission('analytics:summary')
-  const canViewDependencies = hasPermission('analytics:read') || hasPermission('analytics:dependencies')
   const canViewTree = hasPermission('analytics:read') || hasPermission('analytics:tree')
   const canViewImpact = hasPermission('analytics:read') || hasPermission('analytics:impact')
   const canViewHotspots = hasPermission('analytics:read') || hasPermission('analytics:hotspots')
@@ -30,14 +28,13 @@ export default function AnalyticsPage() {
   const availableTabs = useMemo(() => {
     const tabs: { id: string; label: string; icon: typeof BarChart3 }[] = []
     if (canViewSummary) tabs.push({ id: 'overview', label: 'Overview', icon: BarChart3 })
-    if (canViewDependencies) tabs.push({ id: 'dependencies', label: 'Dependencies', icon: Package })
     if (canViewTree) tabs.push({ id: 'tree', label: 'Tree', icon: GitBranch })
     if (canViewImpact) tabs.push({ id: 'impact', label: 'Impact', icon: Zap })
     if (canViewHotspots) tabs.push({ id: 'hotspots', label: 'Hotspots', icon: Flame })
     if (canViewRecommendations) tabs.push({ id: 'recommendations', label: 'Recommendations', icon: Lightbulb })
     if (canViewSearch) tabs.push({ id: 'search', label: 'Search', icon: Search })
     return tabs
-  }, [canViewSummary, canViewDependencies, canViewTree, canViewImpact, canViewHotspots, canViewRecommendations, canViewSearch])
+  }, [canViewSummary, canViewTree, canViewImpact, canViewHotspots, canViewRecommendations, canViewSearch])
 
   const defaultTab = availableTabs.length > 0 ? availableTabs[0].id : 'overview'
 
@@ -79,18 +76,9 @@ export default function AnalyticsPage() {
               <SeverityDistribution />
               <DependencyTypesChart />
             </div>
-            {canViewDependencies && (
-              <DependencyStats 
-                onSelectDependency={(dep) => handleComponentSelect(dep.name)}
-              />
-            )}
-          </TabsContent>
-        )}
-
-        {/* Dependencies Tab */}
-        {canViewDependencies && (
-          <TabsContent value="dependencies">
-            <DependencyList />
+            <DependencyStats 
+              onSelectDependency={(dep) => handleComponentSelect(dep.name)}
+            />
           </TabsContent>
         )}
 
@@ -138,8 +126,8 @@ export default function AnalyticsPage() {
         )}
       </Tabs>
 
-      {/* Component Findings Modal */}
-      <ComponentFindingsModal
+      {/* Component Details Modal */}
+      <AnalyticsDependencyModal
         component={selectedComponent?.name || ''}
         version={selectedComponent?.version}
         open={showFindingsModal}

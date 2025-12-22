@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getTopDependencies, getDependencyTypes, DependencyUsage, searchDependenciesAdvanced, AdvancedSearchResult } from '@/lib/api'
+import { getTopDependencies, getDependencyTypes, DependencyUsage } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -12,8 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { AlertTriangle, Package, Loader2, ExternalLink } from 'lucide-react'
-import { DependencyDetailsDialog } from './DependencyDetailsDialog'
+import { AlertTriangle, Package, ExternalLink } from 'lucide-react'
+import { AnalyticsDependencyModal } from './AnalyticsDependencyModal'
+
+interface SelectedDep {
+  name: string;
+  type?: string;
+}
 
 interface DependencyStatsProps {
   onSelectDependency?: (dep: DependencyUsage) => void;
@@ -22,9 +27,8 @@ interface DependencyStatsProps {
 export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
-  const [selectedDependency, setSelectedDependency] = useState<AdvancedSearchResult | null>(null)
-  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
-  const [loadingDetails, setLoadingDetails] = useState<string | null>(null)
+  const [selectedDep, setSelectedDep] = useState<SelectedDep | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
 
   const { data: types } = useQuery({
     queryKey: ['dependency-types'],
@@ -36,26 +40,13 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
     queryFn: () => getTopDependencies(limit, selectedType),
   })
 
-  const handleRowClick = async (dep: DependencyUsage) => {
+  const handleRowClick = (dep: DependencyUsage) => {
     // Also call the original handler if provided
     onSelectDependency?.(dep)
     
-    // Load full details via search API
-    setLoadingDetails(dep.name)
-    try {
-      const result = await searchDependenciesAdvanced(dep.name, {
-        type: dep.type || undefined,
-        limit: 1,
-      })
-      if (result.items.length > 0) {
-        setSelectedDependency(result.items[0])
-        setDetailsDialogOpen(true)
-      }
-    } catch (error) {
-      console.error('Failed to load dependency details:', error)
-    } finally {
-      setLoadingDetails(null)
-    }
+    // Open the modal with the dependency details
+    setSelectedDep({ name: dep.name, type: dep.type })
+    setModalOpen(true)
   }
 
   return (
@@ -120,11 +111,7 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
                 >
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      {loadingDetails === dep.name ? (
-                        <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
-                      ) : (
-                        <Package className="h-4 w-4 text-muted-foreground" />
-                      )}
+                      <Package className="h-4 w-4 text-muted-foreground" />
                       <span className="font-medium">{dep.name}</span>
                       <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>
@@ -165,11 +152,12 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
           </div>
         )}
 
-        {/* Dependency Details Dialog */}
-        <DependencyDetailsDialog
-          dependency={selectedDependency}
-          open={detailsDialogOpen}
-          onOpenChange={setDetailsDialogOpen}
+        {/* Dependency Details Modal */}
+        <AnalyticsDependencyModal
+          component={selectedDep?.name || ''}
+          type={selectedDep?.type}
+          open={modalOpen}
+          onOpenChange={setModalOpen}
         />
       </CardContent>
     </Card>

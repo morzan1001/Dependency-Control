@@ -1168,6 +1168,8 @@ export const searchDependenciesAdvanced = async (
     source_type?: string;
     has_vulnerabilities?: boolean;
     project_ids?: string[];
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
     skip?: number;
     limit?: number;
   }
@@ -1183,6 +1185,8 @@ export const searchDependenciesAdvanced = async (
   if (options?.project_ids?.length) {
     params.append('project_ids', options.project_ids.join(','));
   }
+  if (options?.sort_by) params.append('sort_by', options.sort_by);
+  if (options?.sort_order) params.append('sort_order', options.sort_order);
   if (options?.skip !== undefined) params.append('skip', options.skip.toString());
   if (options?.limit) params.append('limit', options.limit.toString());
   const response = await api.get<AdvancedSearchResponse>('/analytics/search', { params });

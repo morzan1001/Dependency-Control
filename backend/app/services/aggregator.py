@@ -323,10 +323,52 @@ class ResultAggregator:
                     final_findings.append(p)
                     merged_ids.add(p.id)
 
+        # Link OUTDATED findings with VULNERABILITY findings for the same component
+        self._link_outdated_with_vulnerabilities(final_findings)
+
         # Enrich findings with scorecard data
         self._enrich_with_scorecard(final_findings)
 
         return final_findings
+
+    def _link_outdated_with_vulnerabilities(self, findings: List[Finding]):
+        """
+        Links OUTDATED findings with VULNERABILITY findings for the same component/version.
+        Adds outdated info to vulnerability details and cross-references related findings.
+        """
+        # Build a map of OUTDATED findings by component (normalized lowercase)
+        outdated_map: Dict[str, Finding] = {}
+        for f in findings:
+            if f.type == FindingType.OUTDATED and f.component:
+                key = f.component.lower()
+                outdated_map[key] = f
+
+        if not outdated_map:
+            return
+
+        # Find vulnerability findings and link them with outdated findings
+        for f in findings:
+            if f.type != FindingType.VULNERABILITY or not f.component:
+                continue
+
+            component_key = f.component.lower()
+            outdated_finding = outdated_map.get(component_key)
+
+            if outdated_finding:
+                # Add outdated info to vulnerability details
+                if "outdated_info" not in f.details:
+                    f.details["outdated_info"] = {
+                        "is_outdated": True,
+                        "current_version": outdated_finding.version,
+                        "latest_version": outdated_finding.details.get("fixed_version"),
+                        "message": outdated_finding.description,
+                    }
+
+                # Cross-reference as related findings
+                if outdated_finding.id not in f.related_findings:
+                    f.related_findings.append(outdated_finding.id)
+                if f.id not in outdated_finding.related_findings:
+                    outdated_finding.related_findings.append(f.id)
 
     def get_package_metadata(self) -> Dict[str, Dict[str, Any]]:
         """

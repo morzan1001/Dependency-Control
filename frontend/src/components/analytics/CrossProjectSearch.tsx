@@ -22,11 +22,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Search, Package, Filter, X, Container, FileCode, HardDrive, Eye, Loader2 } from 'lucide-react'
+import { Search, Package, Filter, X, Container, FileCode, HardDrive, Loader2, ArrowUp, ArrowDown } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
 import { cn } from '@/lib/utils'
-import { DependencyDetailsDialog } from './DependencyDetailsDialog'
+import { AnalyticsDependencyModal } from './AnalyticsDependencyModal'
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants'
 
 // Helper to get source icon and label
@@ -47,6 +47,9 @@ interface CrossProjectSearchProps {
   onSelectResult?: (result: AdvancedSearchResult) => void;
 }
 
+type SortField = 'name' | 'version' | 'type' | 'project_name' | 'license' | 'direct'
+type SortOrder = 'asc' | 'desc'
+
 export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) {
   const [query, setQuery] = useState('')
   const [version, setVersion] = useState('')
@@ -55,8 +58,10 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const [hasVulnerabilities, setHasVulnerabilities] = useState<string>('__all__')
   const [selectedProject, setSelectedProject] = useState<string>('__all__')
   const [showFilters, setShowFilters] = useState(false)
-  const [selectedDependency, setSelectedDependency] = useState<AdvancedSearchResult | null>(null)
-  const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
+  const [selectedDep, setSelectedDep] = useState<{ name: string; version?: string; type?: string } | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [sortBy, setSortBy] = useState<SortField>('name')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
 
   const parentRef = useRef<HTMLDivElement>(null)
   const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
@@ -99,7 +104,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
     isFetchingNextPage,
     isLoading
   } = useInfiniteQuery({
-    queryKey: ['advanced-search', debouncedQuery, version, selectedType, selectedSourceType, hasVulnerabilities, selectedProject],
+    queryKey: ['advanced-search', debouncedQuery, version, selectedType, selectedSourceType, hasVulnerabilities, selectedProject, sortBy, sortOrder],
     queryFn: async ({ pageParam = 0 }) => {
       return searchDependenciesAdvanced(debouncedQuery, {
         version: version || undefined,
@@ -107,6 +112,8 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
         source_type: selectedSourceType !== '__all__' ? selectedSourceType : undefined,
         has_vulnerabilities: hasVulnerabilities === '__all__' ? undefined : hasVulnerabilities === 'true',
         project_ids: selectedProject !== '__all__' ? [selectedProject] : undefined,
+        sort_by: sortBy,
+        sort_order: sortOrder,
         skip: pageParam,
         limit: DEFAULT_PAGE_SIZE,
       })
@@ -166,6 +173,22 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   }
 
   const hasActiveFilters = version || selectedType !== '__all__' || selectedSourceType !== '__all__' || hasVulnerabilities !== '__all__' || selectedProject !== '__all__'
+
+  const handleSort = (field: SortField) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(field)
+      setSortOrder('asc')
+    }
+  }
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortBy !== field) return null
+    return sortOrder === 'asc' 
+      ? <ArrowUp className="h-3 w-3 inline-block ml-1" />
+      : <ArrowDown className="h-3 w-3 inline-block ml-1" />
+  }
 
   return (
     <Card>
@@ -342,14 +365,43 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
               <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[200px]">Package</TableHead>
-                    <TableHead className="w-[100px]">Version</TableHead>
-                    <TableHead className="w-[80px]">Type</TableHead>
+                    <TableHead 
+                      className="w-[200px] cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort('name')}
+                    >
+                      Package<SortIcon field="name" />
+                    </TableHead>
+                    <TableHead 
+                      className="w-[100px] cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort('version')}
+                    >
+                      Version<SortIcon field="version" />
+                    </TableHead>
+                    <TableHead 
+                      className="w-[80px] cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort('type')}
+                    >
+                      Type<SortIcon field="type" />
+                    </TableHead>
                     <TableHead className="w-[130px]">Source</TableHead>
-                    <TableHead className="w-[120px]">License</TableHead>
-                    <TableHead className="w-[150px]">Project</TableHead>
-                    <TableHead className="w-[100px]">Dep Type</TableHead>
-                    <TableHead className="w-[60px]"></TableHead>
+                    <TableHead 
+                      className="w-[120px] cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort('license')}
+                    >
+                      License<SortIcon field="license" />
+                    </TableHead>
+                    <TableHead 
+                      className="w-[150px] cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort('project_name')}
+                    >
+                      Project<SortIcon field="project_name" />
+                    </TableHead>
+                    <TableHead 
+                      className="w-[100px] cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort('direct')}
+                    >
+                      Dep Type<SortIcon field="direct" />
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -372,8 +424,12 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                     return (
                       <TableRow 
                         key={`${result.project_id}-${result.package}-${result.version}-${virtualRow.index}`}
-                        className={onSelectResult ? "cursor-pointer hover:bg-muted" : ""}
-                        onClick={() => onSelectResult?.(result)}
+                        className="cursor-pointer hover:bg-muted"
+                        onClick={() => {
+                          onSelectResult?.(result)
+                          setSelectedDep({ name: result.package, version: result.version, type: result.type })
+                          setModalOpen(true)
+                        }}
                       >
                         <TableCell className="truncate">
                           <div className="flex items-center gap-2 min-w-0">
@@ -444,23 +500,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                             {result.direct ? "Direct" : "Trans."}
                           </Badge>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex items-center">
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={(e: React.MouseEvent) => {
-                                e.stopPropagation()
-                                setSelectedDependency(result)
-                                setDetailsDialogOpen(true)
-                              }}
-                              title="View details"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
                       </TableRow>
                     )
                   })}
@@ -480,11 +519,13 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
           </div>
         )}
 
-        {/* Dependency Details Dialog */}
-        <DependencyDetailsDialog
-          dependency={selectedDependency}
-          open={detailsDialogOpen}
-          onOpenChange={setDetailsDialogOpen}
+        {/* Dependency Details Modal */}
+        <AnalyticsDependencyModal
+          component={selectedDep?.name || ''}
+          version={selectedDep?.version}
+          type={selectedDep?.type}
+          open={modalOpen}
+          onOpenChange={setModalOpen}
         />
       </CardContent>
     </Card>

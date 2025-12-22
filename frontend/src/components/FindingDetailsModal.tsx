@@ -1303,6 +1303,23 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                         ? `Found ${vulns.length} vulnerabilities in ${getFindingPackage(finding)}` 
                                                         : "Vulnerability Details"}
                                                 </h4>
+                                                
+                                                {/* Show outdated info if this package is also flagged as outdated */}
+                                                {finding.details?.outdated_info?.is_outdated && (
+                                                    <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                                                        <Clock className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                                                        <div className="text-sm">
+                                                            <span className="font-medium text-amber-600 dark:text-amber-400">Outdated Package: </span>
+                                                            <span className="text-muted-foreground">
+                                                                Current version <span className="font-mono font-medium text-foreground">{finding.details.outdated_info.current_version}</span>
+                                                                {finding.details.outdated_info.latest_version && (
+                                                                    <> → Latest <span className="font-mono font-medium text-foreground">{finding.details.outdated_info.latest_version}</span></>
+                                                                )}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                
                                                 {vulns.map((vuln: any, idx: number) => (
                                                     <div key={idx} className="border rounded-lg p-4 space-y-3">
                                                         <div className="flex items-center justify-between">
