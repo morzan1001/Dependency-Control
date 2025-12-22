@@ -1,3 +1,11 @@
+# Release 0.8.2
+
+## 🚀 Features
+
+- feat(analytics): standardize default values for filters in CrossProjectSearch component (#0)
+
+
+
 # Release 0.8.1
 
 ## 🚀 Features
