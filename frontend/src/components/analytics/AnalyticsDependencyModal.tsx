@@ -289,13 +289,22 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </CollapsibleTrigger>
         <CollapsibleContent className="space-y-4 pt-4">
           {/* Package Identity */}
-          <div className="space-y-1">
-            <h4 className="text-sm font-medium flex items-center gap-2">
-              <Tag className="h-4 w-4" /> Package Identity
-            </h4>
-            <InfoRow icon={Tag} label="PURL" value={metadata.purl} copyable />
-            {metadata.group && <InfoRow icon={Tag} label="Group" value={metadata.group} />}
-          </div>
+          {metadata.purl && (
+            <div className="space-y-1">
+              <h4 className="text-sm font-medium flex items-center gap-2">
+                <Tag className="h-4 w-4" /> PURL
+              </h4>
+              <div className="flex items-center gap-2 ml-6">
+                <code className="text-xs font-mono break-all bg-muted px-2 py-1 rounded">{metadata.purl}</code>
+                <CopyButton text={metadata.purl} />
+              </div>
+            </div>
+          )}
+
+          {/* Group */}
+          {metadata.group && (
+            <InfoRow icon={Tag} label="Group" value={metadata.group} />
+          )}
 
           {/* Maintainers */}
           {(metadata.author || metadata.publisher) && (
@@ -360,10 +369,23 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
                   </Badge>
                 )}
               </h4>
-              <InfoRow icon={FileText} label="License" value={metadata.license} href={metadata.license_url ?? undefined} />
+              <div className="ml-6">
+                {metadata.license_url ? (
+                  <a
+                    href={metadata.license_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline"
+                  >
+                    {metadata.license}
+                  </a>
+                ) : (
+                  <p className="text-sm">{metadata.license}</p>
+                )}
+              </div>
               
               {metadata.license_risks && metadata.license_risks.length > 0 && (
-                <div className="space-y-1 ml-7">
+                <div className="space-y-1 ml-6">
                   <p className="text-xs text-muted-foreground">Risks</p>
                   {metadata.license_risks.map((risk, i) => (
                     <div key={i} className="flex items-start gap-2 text-sm text-amber-600 dark:text-amber-400">

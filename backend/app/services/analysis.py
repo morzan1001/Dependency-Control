@@ -29,6 +29,7 @@ from app.services.analyzers import (
 from app.services.gitlab import GitLabService
 from app.services.notifications import notification_service
 from app.services.sbom_parser import parse_sbom
+from app.services.vulnerability_enrichment import enrich_vulnerability_findings
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +317,19 @@ async def run_analysis(
         record["finding_id"] = f.id  # Map logical ID
         record["_id"] = str(uuid.uuid4())  # New Mongo ID
         findings_to_insert.append(record)
+
+    # Enrich vulnerability findings with EPSS/KEV data (after conversion to dicts)
+    vulnerability_findings = [
+        f for f in findings_to_insert if f.get("type") == "vulnerability"
+    ]
+    if vulnerability_findings:
+        try:
+            await enrich_vulnerability_findings(vulnerability_findings)
+            logger.info(
+                f"Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to enrich findings with EPSS/KEV: {e}")
 
     if findings_to_insert:
         await db.findings.insert_many(findings_to_insert)
