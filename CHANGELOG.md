@@ -1,3 +1,11 @@
+# Release 0.9.1
+
+## 🚀 Features
+
+- feat: enrich vulnerability findings with EPSS/KEV data and improve metadata display in analytics modal (#0)
+
+
+
 # Release 0.9.0
 
 
