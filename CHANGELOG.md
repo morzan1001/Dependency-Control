@@ -1,3 +1,11 @@
+# Release 0.9.3
+
+## 🚀 Features
+
+- feat: enhance quality issue display and improve related findings formatting (#0)
+
+
+
 # Release 0.9.2
 
 ## 🚀 Features
