@@ -492,11 +492,11 @@ async def run_analysis(
                             f"{dashboard_url}/projects/{project.id}/scans/{scan_id}"
                         )
 
-                        status_emoji = "✅"
+                        status_emoji = "[OK]"
                         if stats.risk_score > 0:
-                            status_emoji = "⚠️"
+                            status_emoji = "[WARNING]"
                         if stats.critical > 0 or stats.high > 0:
-                            status_emoji = "🚨"
+                            status_emoji = "[ALERT]"
 
                         comment_body = f"""
 ### {status_emoji} Dependency Control Scan Results
@@ -506,10 +506,10 @@ async def run_analysis(
 
 | Severity | Count |
 | :--- | :--- |
-| 🔴 Critical | {stats.critical} |
-| 🟠 High | {stats.high} |
-| 🟡 Medium | {stats.medium} |
-| 🔵 Low | {stats.low} |
+| Critical | {stats.critical} |
+| High | {stats.high} |
+| Medium | {stats.medium} |
+| Low | {stats.low} |
 
 [View Full Report]({scan_url})
 """

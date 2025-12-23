@@ -599,32 +599,32 @@ async def get_impact_analysis(
         # Build priority reasons (human-readable explanations)
         priority_reasons = []
         if kev_ransomware_use:
-            priority_reasons.append("🔒 Used in ransomware campaigns - fix immediately")
+            priority_reasons.append("ransomware:Used in ransomware campaigns - fix immediately")
         if days_until_due is not None and days_until_due < 0:
             priority_reasons.append(
-                f"⚠️ CISA deadline overdue by {abs(days_until_due)} days"
+                f"deadline_overdue:CISA deadline overdue by {abs(days_until_due)} days"
             )
         elif days_until_due is not None and days_until_due <= 30:
-            priority_reasons.append(f"📅 CISA deadline in {days_until_due} days")
+            priority_reasons.append(f"deadline:CISA deadline in {days_until_due} days")
         if has_kev and not kev_ransomware_use:
-            priority_reasons.append("🎯 Actively exploited in the wild (CISA KEV)")
+            priority_reasons.append("kev:Actively exploited in the wild (CISA KEV)")
         if max_epss and max_epss >= 0.1:
             priority_reasons.append(
-                f"📈 High exploitation probability ({max_epss*100:.1f}% EPSS)"
+                f"epss:High exploitation probability ({max_epss*100:.1f}% EPSS)"
             )
         if severity_counts["critical"] > 0:
             priority_reasons.append(
-                f"🔴 {severity_counts['critical']} critical vulnerabilities"
+                f"critical:{severity_counts['critical']} critical vulnerabilities"
             )
         if r["affected_projects"] >= 3:
             priority_reasons.append(
-                f"🌐 Affects {r['affected_projects']} projects (high blast radius)"
+                f"blast_radius:Affects {r['affected_projects']} projects (high blast radius)"
             )
         if has_fix:
-            priority_reasons.append("✅ Fix available - easy to remediate")
+            priority_reasons.append("fix_available:Fix available - easy to remediate")
         if days_known and days_known > 90:
             priority_reasons.append(
-                f"⏰ Known for {days_known} days - overdue for remediation"
+                f"overdue:Known for {days_known} days - overdue for remediation"
             )
 
         impact_results.append(
@@ -842,22 +842,22 @@ async def get_vulnerability_hotspots(
         # Build priority reasons
         priority_reasons = []
         if kev_ransomware_use:
-            priority_reasons.append("🔒 Used in ransomware campaigns")
+            priority_reasons.append("ransomware:Used in ransomware campaigns")
         if days_until_due is not None and days_until_due < 0:
             priority_reasons.append(
-                f"⚠️ CISA deadline overdue by {abs(days_until_due)} days"
+                f"deadline_overdue:CISA deadline overdue by {abs(days_until_due)} days"
             )
         elif days_until_due is not None and days_until_due <= 30:
-            priority_reasons.append(f"📅 CISA deadline in {days_until_due} days")
+            priority_reasons.append(f"deadline:CISA deadline in {days_until_due} days")
         if has_kev and not kev_ransomware_use:
-            priority_reasons.append("🎯 Actively exploited (CISA KEV)")
+            priority_reasons.append("kev:Actively exploited (CISA KEV)")
         if max_epss and max_epss >= 0.1:
-            priority_reasons.append(f"📈 High EPSS ({max_epss*100:.1f}%)")
+            priority_reasons.append(f"epss:High EPSS ({max_epss*100:.1f}%)")
         if severity_counts["critical"] > 0:
-            priority_reasons.append(f"🔴 {severity_counts['critical']} critical vulns")
+            priority_reasons.append(f"critical:{severity_counts['critical']} critical vulns")
         has_fix = len(fix_versions) > 0
         if has_fix:
-            priority_reasons.append("✅ Fix available")
+            priority_reasons.append("fix_available:Fix available")
 
         hotspots.append(
             VulnerabilityHotspot(

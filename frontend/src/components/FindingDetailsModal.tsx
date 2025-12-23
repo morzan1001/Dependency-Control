@@ -953,7 +953,7 @@ function LicenseDetailsView({ details }: { details: Record<string, unknown> }) {
             <div className="p-3 rounded-lg border border-red-200 bg-red-50/50 space-y-2">
               {risks.map((risk, idx) => (
                 <div key={idx} className="flex items-start gap-2 text-sm">
-                  <span className="text-red-500 mt-0.5">⚠</span>
+                  <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
                   <span>{risk}</span>
                 </div>
               ))}

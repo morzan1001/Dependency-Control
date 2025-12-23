@@ -942,7 +942,7 @@ class LicenseAnalyzer(Analyzer):
                     severity=Severity.CRITICAL,
                     category=license_info.category,
                     message=f"Network copyleft license: {license_info.name}",
-                    explanation=f"{license_info.description}\n\n⚠️ CRITICAL: Unlike GPL, AGPL/SSPL obligations are triggered when users interact with the software over a network, even if you never distribute binaries. This affects SaaS, web applications, and APIs.",
+                    explanation=f"{license_info.description}\n\n[CRITICAL] Unlike GPL, AGPL/SSPL obligations are triggered when users interact with the software over a network, even if you never distribute binaries. This affects SaaS, web applications, and APIs.",
                     recommendation="This license is highly problematic for commercial/proprietary use:\n• Find an alternative package with a permissive license\n• If no alternative exists, consider isolating this component as a separate service\n• Consult with legal counsel before proceeding",
                     obligations=license_info.obligations,
                     risks=license_info.risks,

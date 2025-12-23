@@ -5,7 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Progress } from '@/components/ui/progress'
-import { AlertTriangle, TrendingUp, Zap, Shield, CheckCircle, XCircle } from 'lucide-react'
+import { AlertTriangle, TrendingUp, Zap, Shield, CheckCircle, XCircle, Lock, Calendar, Target, TrendingUp as TrendingUpIcon, CircleAlert, Globe, Clock } from 'lucide-react'
 import {
   Tooltip,
   TooltipContent,
@@ -41,6 +41,33 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
       'low': 'text-blue-500',
     }
     return colors[maturity] || 'text-muted-foreground'
+  }
+
+  // Helper to render priority reason with icon instead of emoji
+  const renderPriorityReason = (reason: string) => {
+    const [type, text] = reason.includes(':') ? reason.split(':', 2) : ['', reason]
+    
+    const iconMap: Record<string, React.ReactNode> = {
+      'ransomware': <Lock className="h-3 w-3 text-purple-500 flex-shrink-0" />,
+      'deadline_overdue': <AlertTriangle className="h-3 w-3 text-red-500 flex-shrink-0" />,
+      'deadline': <Calendar className="h-3 w-3 text-orange-500 flex-shrink-0" />,
+      'kev': <Target className="h-3 w-3 text-red-500 flex-shrink-0" />,
+      'epss': <TrendingUpIcon className="h-3 w-3 text-orange-500 flex-shrink-0" />,
+      'critical': <CircleAlert className="h-3 w-3 text-red-500 flex-shrink-0" />,
+      'blast_radius': <Globe className="h-3 w-3 text-blue-500 flex-shrink-0" />,
+      'fix_available': <CheckCircle className="h-3 w-3 text-green-500 flex-shrink-0" />,
+      'overdue': <Clock className="h-3 w-3 text-yellow-500 flex-shrink-0" />,
+    }
+
+    const icon = iconMap[type] || null
+    const displayText = text || reason
+
+    return (
+      <span className="flex items-center gap-1">
+        {icon}
+        <span>{displayText}</span>
+      </span>
+    )
   }
 
   return (
@@ -268,7 +295,7 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                                   KEV{r.kev_count && r.kev_count > 1 ? ` (${r.kev_count})` : ''}
                                 </Badge>
                                 {r.kev_ransomware_use && (
-                                  <Badge className="text-xs bg-purple-600">🔒 Ransomware</Badge>
+                                  <Badge className="text-xs bg-purple-600 gap-1"><Lock className="h-3 w-3" />Ransomware</Badge>
                                 )}
                               </div>
                             </TooltipTrigger>
@@ -276,10 +303,10 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                               <p className="font-medium">CISA Known Exploited Vulnerability</p>
                               <p className="text-xs">Actively exploited in the wild</p>
                               {r.kev_ransomware_use && (
-                                <p className="text-xs text-purple-400 mt-1">⚠️ Used in ransomware campaigns</p>
+                                <p className="text-xs text-purple-400 mt-1 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Used in ransomware campaigns</p>
                               )}
                               {r.kev_due_date && (
-                                <p className="text-xs mt-1">📅 Remediation due: {r.kev_due_date}</p>
+                                <p className="text-xs mt-1 flex items-center gap-1"><Calendar className="h-3 w-3" />Remediation due: {r.kev_due_date}</p>
                               )}
                             </TooltipContent>
                           </Tooltip>
@@ -313,7 +340,7 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                               </p>
                             )}
                             {r.days_known !== undefined && r.days_known !== null && (
-                              <p className="text-xs mt-1">⏱️ Known for {r.days_known} days</p>
+                              <p className="text-xs mt-1 flex items-center gap-1"><Clock className="h-3 w-3" />Known for {r.days_known} days</p>
                             )}
                           </TooltipContent>
                         </Tooltip>
@@ -345,7 +372,7 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <div className="max-w-[200px]">
-                                <p className="text-xs truncate">{r.priority_reasons[0]}</p>
+                                <div className="text-xs truncate">{renderPriorityReason(r.priority_reasons[0])}</div>
                                 {r.priority_reasons.length > 1 && (
                                   <span className="text-xs text-muted-foreground">
                                     +{r.priority_reasons.length - 1} more
@@ -357,7 +384,7 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                               <p className="font-medium mb-1">Priority Reasons:</p>
                               <ul className="text-xs space-y-1">
                                 {r.priority_reasons.map((reason, i) => (
-                                  <li key={i}>{reason}</li>
+                                  <li key={i}>{renderPriorityReason(reason)}</li>
                                 ))}
                               </ul>
                             </TooltipContent>
