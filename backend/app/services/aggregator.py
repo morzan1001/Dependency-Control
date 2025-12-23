@@ -1,6 +1,6 @@
 import hashlib
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List
 
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding import (
@@ -29,9 +29,6 @@ class ResultAggregator:
         self._scorecard_cache: Dict[str, Dict[str, Any]] = (
             {}
         )  # component@version -> scorecard data
-        self._package_metadata: Dict[str, Dict[str, Any]] = (
-            {}
-        )  # component@version -> deps.dev metadata
         self._dependency_enrichments: Dict[str, DependencyEnrichment] = (
             {}
         )  # name@version -> enrichment
@@ -369,14 +366,6 @@ class ResultAggregator:
                     f.related_findings.append(outdated_finding.id)
                 if f.id not in outdated_finding.related_findings:
                     outdated_finding.related_findings.append(f.id)
-
-    def get_package_metadata(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Returns package metadata collected from deps.dev.
-        Key format: "package_name@version"
-        DEPRECATED: Use get_dependency_enrichments() instead for aggregated data.
-        """
-        return self._package_metadata
 
     def get_dependency_enrichments(self) -> Dict[str, Dict[str, Any]]:
         """
@@ -942,7 +931,11 @@ class ResultAggregator:
             risks = finding.details.get("risks", [])
             for risk in risks:
                 risk_type = risk.get("type", "")
-                if risk_type in ("stale_package", "infrequent_updates", "archived_repo"):
+                if risk_type in (
+                    "stale_package",
+                    "infrequent_updates",
+                    "archived_repo",
+                ):
                     has_maintenance = True
                     break
 
@@ -959,16 +952,21 @@ class ResultAggregator:
                 existing.severity = finding.severity
 
             # 3. Add to quality_issues list (check for duplicates by ID)
-            quality_list: List[QualityEntry] = existing.details.get("quality_issues", [])
+            quality_list: List[QualityEntry] = existing.details.get(
+                "quality_issues", []
+            )
             existing_ids = {q.get("id") for q in quality_list}
-            
+
             if finding.id not in existing_ids:
                 quality_list.append(quality_entry)
                 existing.details["quality_issues"] = quality_list
                 existing.details["issue_count"] = len(quality_list)
 
             # 4. Update overall_score if this is a scorecard finding
-            if issue_type == "scorecard" and finding.details.get("overall_score") is not None:
+            if (
+                issue_type == "scorecard"
+                and finding.details.get("overall_score") is not None
+            ):
                 existing.details["overall_score"] = finding.details.get("overall_score")
 
             # 5. Update maintenance flag
@@ -986,7 +984,11 @@ class ResultAggregator:
             # Create new Aggregate Quality Finding
             agg_details: QualityAggregatedDetails = {
                 "quality_issues": [quality_entry],
-                "overall_score": finding.details.get("overall_score") if issue_type == "scorecard" else None,
+                "overall_score": (
+                    finding.details.get("overall_score")
+                    if issue_type == "scorecard"
+                    else None
+                ),
                 "has_maintenance_issues": has_maintenance,
                 "issue_count": 1,
                 "scanners": finding.scanners or [],
@@ -1009,38 +1011,40 @@ class ResultAggregator:
         """Updates the description of an aggregated quality finding."""
         quality_issues = finding.details.get("quality_issues", [])
         count = len(quality_issues)
-        
+
         if count == 0:
             finding.description = "Quality issues detected"
             return
-        
+
         if count == 1:
             # Use the original description from the single issue
-            finding.description = quality_issues[0].get("description", "Quality issue detected")
+            finding.description = quality_issues[0].get(
+                "description", "Quality issue detected"
+            )
             return
-        
+
         # Multiple issues - create summary
         parts = []
-        
+
         # Check for scorecard
         scorecard_issues = [q for q in quality_issues if q.get("type") == "scorecard"]
         if scorecard_issues:
             score = scorecard_issues[0].get("details", {}).get("overall_score")
             if score is not None:
                 parts.append(f"Scorecard: {score:.1f}/10")
-        
+
         # Check for maintainer risk
         maint_issues = [q for q in quality_issues if q.get("type") == "maintainer_risk"]
         if maint_issues:
             risks = maint_issues[0].get("details", {}).get("risks", [])
             if risks:
                 parts.append(f"{len(risks)} maintainer risks")
-        
+
         # Other issues
         other_count = count - len(scorecard_issues) - len(maint_issues)
         if other_count > 0:
             parts.append(f"{other_count} other issues")
-        
+
         finding.description = " | ".join(parts) if parts else f"{count} quality issues"
 
     def _add_generic_finding(self, finding: Finding, source: str = None):
@@ -1416,9 +1420,7 @@ class ResultAggregator:
         """
         # Process package metadata (not findings, but enrichment data)
         for key, metadata in result.get("package_metadata", {}).items():
-            self._package_metadata[key] = metadata
-
-            # Also populate the new DependencyEnrichment structure
+            # Populate the DependencyEnrichment structure
             name = metadata.get("name", "")
             version = metadata.get("version", "")
             if name and version:

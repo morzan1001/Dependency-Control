@@ -211,7 +211,7 @@ class SBOMParser:
         deps_graph = {}
         # Build reverse map: child -> list of parents (for parent_components)
         reverse_deps_graph = {}
-        
+
         for dep_entry in dependencies_map:
             ref = dep_entry.get("ref", "")
             depends_on = dep_entry.get("dependsOn", [])
@@ -442,11 +442,15 @@ class SBOMParser:
         direct = False
         parent_components = []
         check_ref = bom_ref or purl
-        
+
         # Only determine direct status if we have dependency relationship info
         has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
-        
-        if has_dependency_graph and direct_refs is not None and all_transitive_refs is not None:
+
+        if (
+            has_dependency_graph
+            and direct_refs is not None
+            and all_transitive_refs is not None
+        ):
             # Use bom-ref or purl to check
             if check_ref in direct_refs:
                 direct = True
@@ -455,7 +459,7 @@ class SBOMParser:
                 # This component might be isolated or a root-level dependency
                 direct = True
         # If no dependency graph at all, leave direct as False (unknown)
-        
+
         # Get parent components from reverse dependency graph
         if reverse_deps_graph and check_ref in reverse_deps_graph:
             parent_components = reverse_deps_graph[check_ref]
@@ -687,19 +691,19 @@ class SBOMParser:
         # Direct dependencies are those directly referenced by the source (root)
         # or by application-level packages (not OS packages)
         relationships = sbom.get("artifactRelationships", [])
-        
+
         # Find direct artifact IDs - artifacts that the source directly contains/depends on
         direct_artifact_ids = set()
         all_child_ids = set()  # All artifacts that are children of something
-        
+
         # Build reverse dependency graph: child -> list of parents
         reverse_deps_graph = {}
-        
+
         for rel in relationships:
             parent = rel.get("parent", "")
             child = rel.get("child", "")
             rel_type = rel.get("type", "")
-            
+
             # Track all child relationships and build reverse graph
             if child:
                 all_child_ids.add(child)
@@ -708,27 +712,37 @@ class SBOMParser:
                     reverse_deps_graph[child] = []
                 if parent and parent != source_id:  # Don't include source as parent
                     reverse_deps_graph[child].append(parent)
-            
+
             # Direct dependencies: artifacts directly connected to the source
             if parent == source_id:
                 if rel_type in ("contains", "dependency-of", "depends-on"):
                     direct_artifact_ids.add(child)
-        
+
         # For container images, we need a different heuristic:
         # - Application packages (npm, pip, go, etc.) that are in the top layer are typically direct
         # - OS packages are usually considered as "base image" dependencies (transitive from app perspective)
         # If no explicit relationships from source, use heuristics based on package type
-        
+
         if not direct_artifact_ids and result.source_type == "image":
             # Fallback heuristic for images without clear relationship graph:
             # Consider application-level packages as potentially direct
             for artifact in artifacts:
                 artifact_type = artifact.get("type", "")
                 # These types are typically application dependencies, not OS packages
-                if artifact_type in ("npm", "python", "go-module", "gem", "cargo", 
-                                     "composer", "maven", "gradle", "nuget", "pub"):
+                if artifact_type in (
+                    "npm",
+                    "python",
+                    "go-module",
+                    "gem",
+                    "cargo",
+                    "composer",
+                    "maven",
+                    "gradle",
+                    "nuget",
+                    "pub",
+                ):
                     direct_artifact_ids.add(artifact.get("id"))
-        
+
         logger.debug(
             f"Syft relationship analysis: {len(direct_artifact_ids)} direct, "
             f"{len(all_child_ids)} total children from {len(relationships)} relationships"
@@ -739,9 +753,13 @@ class SBOMParser:
             artifact_id = artifact.get("id", "")
             is_direct = artifact_id in direct_artifact_ids
             parent_components = reverse_deps_graph.get(artifact_id, [])
-            
+
             parsed = self._parse_syft_artifact(
-                artifact, result.source_type, result.source_target, is_direct, parent_components
+                artifact,
+                result.source_type,
+                result.source_target,
+                is_direct,
+                parent_components,
             )
             if parsed:
                 result.dependencies.append(parsed)
@@ -761,7 +779,7 @@ class SBOMParser:
         purl = artifact.get("purl")
         name = artifact.get("name")
         version = artifact.get("version", "unknown")
-        
+
         if parent_components is None:
             parent_components = []
 
@@ -976,7 +994,7 @@ class SBOMParser:
         all_dependency_targets = (
             set()
         )  # All packages that are dependencies of something
-        
+
         # Build reverse dependency graph: child -> list of parents
         reverse_deps_graph = {}
 
@@ -1020,7 +1038,7 @@ class SBOMParser:
             ):
                 # Has dependencies but no one depends on it - likely a root package
                 is_direct = True
-            
+
             # Get parent components
             parent_components = reverse_deps_graph.get(pkg_spdx_id, [])
 
@@ -1031,7 +1049,10 @@ class SBOMParser:
                 result.skipped_components += 1
 
     def _parse_spdx_package(
-        self, pkg: Dict[str, Any], is_direct: bool = False, parent_components: List[str] = None
+        self,
+        pkg: Dict[str, Any],
+        is_direct: bool = False,
+        parent_components: List[str] = None,
     ) -> Optional[ParsedDependency]:
         """Parse a single SPDX package with all available fields."""
 
@@ -1040,7 +1061,7 @@ class SBOMParser:
 
         if not name:
             return None
-        
+
         if parent_components is None:
             parent_components = []
 

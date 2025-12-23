@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 class SBOMFormat(Enum):
     """Supported SBOM formats."""
+
     CYCLONEDX = "cyclonedx"
     SPDX = "spdx"
     SYFT = "syft"
@@ -20,6 +21,7 @@ class SBOMFormat(Enum):
 
 class SourceType(Enum):
     """Source types for SBOM origin."""
+
     IMAGE = "image"
     DIRECTORY = "directory"
     FILE = "file"

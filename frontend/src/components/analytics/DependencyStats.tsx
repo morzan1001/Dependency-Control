@@ -13,12 +13,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AlertTriangle, Package, ExternalLink } from 'lucide-react'
-import { AnalyticsDependencyModal } from './AnalyticsDependencyModal'
-
-interface SelectedDep {
-  name: string;
-  type?: string;
-}
 
 interface DependencyStatsProps {
   onSelectDependency?: (dep: DependencyUsage) => void;
@@ -27,8 +21,6 @@ interface DependencyStatsProps {
 export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
-  const [selectedDep, setSelectedDep] = useState<SelectedDep | null>(null)
-  const [modalOpen, setModalOpen] = useState(false)
 
   const { data: types } = useQuery({
     queryKey: ['dependency-types'],
@@ -41,12 +33,7 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   })
 
   const handleRowClick = (dep: DependencyUsage) => {
-    // Also call the original handler if provided
     onSelectDependency?.(dep)
-    
-    // Open the modal with the dependency details
-    setSelectedDep({ name: dep.name, type: dep.type })
-    setModalOpen(true)
   }
 
   return (
@@ -151,14 +138,6 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
             <p>No dependencies found</p>
           </div>
         )}
-
-        {/* Dependency Details Modal */}
-        <AnalyticsDependencyModal
-          component={selectedDep?.name || ''}
-          type={selectedDep?.type}
-          open={modalOpen}
-          onOpenChange={setModalOpen}
-        />
       </CardContent>
     </Card>
   )

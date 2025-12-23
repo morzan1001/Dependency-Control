@@ -37,12 +37,6 @@ async def create_indexes(db):
         [("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)]
     )
 
-    # Indexes for SBOM analysis (finding components across projects)
-    # Required for dependency usage queries.
-    await db["scans"].create_index("sboms.components.name")
-    await db["scans"].create_index("sboms.components.purl")
-    await db["scans"].create_index("sboms.components.version")
-
     # Analysis Results
     await db["analysis_results"].create_index("scan_id")
     await db["analysis_results"].create_index(
@@ -102,8 +96,97 @@ async def create_indexes(db):
         [("scan_id", pymongo.ASCENDING), ("finding.type", pymongo.ASCENDING)]
     )
 
-    # Projects
+    # Projects - Additional indexes
     await db["projects"].create_index("gitlab_project_id")
+    await db["projects"].create_index("latest_scan_id")
+    await db["projects"].create_index("retention_days")
+    await db["projects"].create_index([("last_scan_at", pymongo.DESCENDING)])
+    await db["projects"].create_index([("created_at", pymongo.DESCENDING)])
+
+    # Scans - Additional compound indexes for common query patterns
+    await db["scans"].create_index(
+        [("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)]
+    )
+    await db["scans"].create_index(
+        [("project_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)]
+    )
+    await db["scans"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("status", pymongo.ASCENDING),
+            ("created_at", pymongo.DESCENDING),
+        ]
+    )
+    await db["scans"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("branch", pymongo.ASCENDING),
+            ("created_at", pymongo.DESCENDING),
+        ]
+    )
+    await db["scans"].create_index(
+        [("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)]
+    )
+    await db["scans"].create_index("original_scan_id")
+
+    # Findings - Additional indexes for analytics and stats
+    await db["findings"].create_index("waived")
+    await db["findings"].create_index("component")
+    await db["findings"].create_index("version")
+    await db["findings"].create_index([("created_at", pymongo.DESCENDING)])
+    await db["findings"].create_index(
+        [("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)]
+    )
+    await db["findings"].create_index(
+        [("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)]
+    )
+    await db["findings"].create_index(
+        [
+            ("scan_id", pymongo.ASCENDING),
+            ("component", pymongo.ASCENDING),
+            ("version", pymongo.ASCENDING),
+        ]
+    )
+    await db["findings"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("component", pymongo.ASCENDING),
+            ("type", pymongo.ASCENDING),
+        ]
+    )
+
+    # Dependencies - Additional compound indexes
+    await db["dependencies"].create_index(
+        [
+            ("scan_id", pymongo.ASCENDING),
+            ("name", pymongo.ASCENDING),
+            ("version", pymongo.ASCENDING),
+        ]
+    )
+    await db["dependencies"].create_index("source_type")
+
+    # Waivers - Additional indexes for finding/package lookups
+    await db["waivers"].create_index("finding_id")
+    await db["waivers"].create_index("package_name")
+
+    # Webhooks
+    await db["webhooks"].create_index("project_id")
+
+    # System Invitations
+    await db["system_invitations"].create_index("token", unique=True)
+    await db["system_invitations"].create_index(
+        [
+            ("email", pymongo.ASCENDING),
+            ("is_used", pymongo.ASCENDING),
+            ("expires_at", pymongo.ASCENDING),
+        ]
+    )
+    await db["system_invitations"].create_index(
+        [("is_used", pymongo.ASCENDING), ("expires_at", pymongo.ASCENDING)]
+    )
+
+    # Dependency Enrichments (cached package metadata)
+    await db["dependency_enrichments"].create_index("purl", unique=True)
 
     # Invitations
     await db["project_invitations"].create_index("token", unique=True)

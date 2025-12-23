@@ -104,6 +104,32 @@ function AdditionalDetailsView({ details }: { details: Record<string, unknown> }
     
     // Handle arrays
     if (Array.isArray(value)) {
+      // Check if array contains URLs
+      const hasUrls = value.some(item => typeof item === 'string' && (item.startsWith('http://') || item.startsWith('https://')))
+      if (hasUrls) {
+        return (
+          <div className="flex flex-col gap-1">
+            {value.map((item, i) => (
+              typeof item === 'string' && (item.startsWith('http://') || item.startsWith('https://')) ? (
+                <a 
+                  key={i}
+                  href={item} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline break-all text-xs flex items-center gap-1"
+                >
+                  <ExternalLink className="h-3 w-3 flex-shrink-0" />
+                  {item}
+                </a>
+              ) : (
+                <Badge key={i} variant="outline" className="font-mono text-xs w-fit">
+                  {String(item)}
+                </Badge>
+              )
+            ))}
+          </div>
+        )
+      }
       return (
         <div className="flex flex-wrap gap-1">
           {value.map((item, i) => (
@@ -1353,6 +1379,52 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium">CVSS: {vuln.cvss_score || finding.details?.cvss_score}</span>
                                                                     {(vuln.cvss_vector || finding.details?.cvss_vector) && <span className="font-mono text-muted-foreground">{vuln.cvss_vector || finding.details?.cvss_vector}</span>}
+                                                                </div>
+                                                            )}
+                                                            {(vuln.epss_score !== undefined || finding.details?.epss_score !== undefined) && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={`font-medium ${
+                                                                        (vuln.epss_score || finding.details?.epss_score) >= 0.1 ? 'text-red-500' :
+                                                                        (vuln.epss_score || finding.details?.epss_score) >= 0.01 ? 'text-orange-500' : ''
+                                                                    }`}>
+                                                                        EPSS: {((vuln.epss_score || finding.details?.epss_score) * 100).toFixed(2)}%
+                                                                    </span>
+                                                                    {(vuln.epss_percentile || finding.details?.epss_percentile) && (
+                                                                        <span className="text-muted-foreground">(Top {(100 - (vuln.epss_percentile || finding.details?.epss_percentile) * 100).toFixed(0)}%)</span>
+                                                                    )}
+                                                                    {(vuln.epss_date || finding.details?.epss_date) && (
+                                                                        <span className="text-muted-foreground text-[10px]">as of {new Date(vuln.epss_date || finding.details?.epss_date).toLocaleDateString()}</span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                            {(vuln.in_kev || finding.details?.in_kev) && (
+                                                                <div className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 text-red-600 rounded-md flex-wrap">
+                                                                    <AlertTriangle className="h-3 w-3" />
+                                                                    <span className="font-medium">Known Exploited</span>
+                                                                    {(vuln.kev_ransomware_use || finding.details?.kev_ransomware_use) && (
+                                                                        <Badge variant="destructive" className="text-[10px] py-0 h-4">Ransomware</Badge>
+                                                                    )}
+                                                                    {(vuln.kev_date_added || finding.details?.kev_date_added) && (
+                                                                        <span className="text-muted-foreground text-[10px] ml-1">
+                                                                            (since {new Date(vuln.kev_date_added || finding.details?.kev_date_added).toLocaleDateString()})
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                            {(vuln.kev_required_action || finding.details?.kev_required_action) && (
+                                                                <div className="flex items-center gap-2 w-full">
+                                                                    <span className="font-medium text-muted-foreground">Required Action:</span>
+                                                                    <span className="text-red-600">{vuln.kev_required_action || finding.details?.kev_required_action}</span>
+                                                                </div>
+                                                            )}
+                                                            {(vuln.exploit_maturity || finding.details?.exploit_maturity) && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="font-medium text-muted-foreground">Exploit:</span>
+                                                                    <span className={`${
+                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'high' ? 'text-red-500 font-medium' :
+                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'functional' ? 'text-orange-500' :
+                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'poc' ? 'text-yellow-600' : ''
+                                                                    }`}>{vuln.exploit_maturity || finding.details?.exploit_maturity}</span>
                                                                 </div>
                                                             )}
                                                             {(vuln.details?.published_date || finding.details?.published_date) && (

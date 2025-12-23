@@ -1,7 +1,7 @@
 """
 Schema Exports
 
-Centralized export of all Pydantic models, TypedDicts, and dataclasses 
+Centralized export of all Pydantic models, TypedDicts, and dataclasses
 used across the application.
 """
 
@@ -9,8 +9,6 @@ used across the application.
 from app.schemas.analytics import (
     SeverityBreakdown,
     DependencyUsage,
-    DependencyListItem,
-    DependencyListResponse,
     DependencyTreeNode,
     ImpactAnalysisResult,
     VulnerabilityHotspot,
@@ -52,8 +50,6 @@ __all__ = [
     # Analytics
     "SeverityBreakdown",
     "DependencyUsage",
-    "DependencyListItem",
-    "DependencyListResponse",
     "DependencyTreeNode",
     "ImpactAnalysisResult",
     "VulnerabilityHotspot",

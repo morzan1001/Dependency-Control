@@ -103,7 +103,9 @@ class Recommendation:
     affected_components: List[str]
     action: Dict[str, Any]  # Specific action details
     effort: str = "medium"  # low, medium, high
-    affected_projects: List[Dict[str, Any]] = field(default_factory=list)  # [{id, name}]
+    affected_projects: List[Dict[str, Any]] = field(
+        default_factory=list
+    )  # [{id, name}]
 
     def to_dict(self) -> Dict[str, Any]:
         return {

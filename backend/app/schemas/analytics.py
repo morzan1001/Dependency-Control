@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 class SeverityBreakdown(BaseModel):
     """Breakdown of findings by severity level."""
+
     critical: int = 0
     high: int = 0
     medium: int = 0
@@ -20,6 +21,7 @@ class SeverityBreakdown(BaseModel):
 
 class DependencyUsage(BaseModel):
     """Usage statistics for a dependency across projects."""
+
     name: str
     type: str
     versions: List[str]
@@ -29,33 +31,9 @@ class DependencyUsage(BaseModel):
     vulnerability_count: int
 
 
-class DependencyListItem(BaseModel):
-    """Single dependency item with full details for list view."""
-    name: str
-    version: str
-    type: str
-    purl: Optional[str] = None
-    license: Optional[str] = None
-    direct: bool = False
-    project_count: int = 1
-    project_id: str
-    project_name: str
-    has_vulnerabilities: bool = False
-    vulnerability_count: int = 0
-    source_type: Optional[str] = None
-
-
-class DependencyListResponse(BaseModel):
-    """Paginated response for dependency list."""
-    items: List[DependencyListItem]
-    total: int
-    page: int
-    size: int
-    has_more: bool
-
-
 class DependencyTreeNode(BaseModel):
     """Node in a dependency tree with findings info."""
+
     id: str
     name: str
     version: str
@@ -75,6 +53,7 @@ class DependencyTreeNode(BaseModel):
 
 class ImpactAnalysisResult(BaseModel):
     """Result of impact analysis for a component."""
+
     component: str
     version: str
     affected_projects: int
@@ -104,6 +83,7 @@ class ImpactAnalysisResult(BaseModel):
 
 class VulnerabilityHotspot(BaseModel):
     """A vulnerability hotspot - component with many findings."""
+
     component: str
     version: str
     type: str
@@ -134,6 +114,7 @@ class VulnerabilityHotspot(BaseModel):
 
 class DependencyTypeStats(BaseModel):
     """Statistics for a dependency type."""
+
     type: str
     count: int
     percentage: float
@@ -141,6 +122,7 @@ class DependencyTypeStats(BaseModel):
 
 class AnalyticsSummary(BaseModel):
     """Summary of analytics across all accessible projects."""
+
     total_dependencies: int
     total_vulnerabilities: int
     unique_packages: int
@@ -150,12 +132,12 @@ class AnalyticsSummary(BaseModel):
 
 class DependencyMetadata(BaseModel):
     """Aggregated metadata for a dependency across all projects."""
-    
+
     name: str
     version: str
     type: str
     purl: Optional[str] = None
-    
+
     # Package metadata (dependency-specific, not project-specific)
     description: Optional[str] = None
     author: Optional[str] = None
@@ -164,22 +146,22 @@ class DependencyMetadata(BaseModel):
     repository_url: Optional[str] = None
     download_url: Optional[str] = None
     group: Optional[str] = None
-    
+
     # License info
     license: Optional[str] = None
     license_url: Optional[str] = None
     license_category: Optional[str] = None
     license_risks: List[str] = []
     license_obligations: List[str] = []
-    
+
     # deps.dev enrichment data
     deps_dev: Optional[Dict[str, Any]] = None
-    
+
     # Aggregated info across projects
     project_count: int = 0
     affected_projects: List[Dict[str, Any]] = []  # [{id, name, direct}]
     total_vulnerability_count: int = 0
     total_finding_count: int = 0
-    
+
     # Enrichment sources
     enrichment_sources: List[str] = []

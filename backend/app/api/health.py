@@ -62,7 +62,7 @@ async def readiness():
 
     if is_ready:
         return {"status": "ready", "components": components}
-    
+
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"status": "not_ready", "components": components},

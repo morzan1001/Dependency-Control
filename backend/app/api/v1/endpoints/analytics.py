@@ -3,16 +3,14 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel
 
 from app.api import deps
-from app.api.deps import PermissionChecker
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.schemas.analytics import (
     SeverityBreakdown,
     DependencyUsage,
-    DependencyListItem,
-    DependencyListResponse,
     DependencyTreeNode,
     ImpactAnalysisResult,
     VulnerabilityHotspot,
@@ -42,7 +40,6 @@ def require_analytics_permission(user: User, permission: str):
             status_code=403,
             detail=f"Analytics permission required: {permission}. Grant 'analytics:read' for full analytics access or '{permission}' for this specific feature.",
         )
-
 
 
 # Helper to get user-accessible project IDs
@@ -254,127 +251,6 @@ async def get_top_dependencies(
     return enriched
 
 
-@router.get("/dependencies/list", response_model=DependencyListResponse)
-async def get_dependencies_list(
-    page: int = Query(1, ge=1, description="Page number"),
-    size: int = Query(50, ge=1, le=200, description="Items per page"),
-    sort_by: str = Query("name", description="Sort field: name, version, type, project_count, vulnerability_count"),
-    sort_order: str = Query("asc", description="Sort order: asc or desc"),
-    type_filter: Optional[str] = Query(None, description="Filter by dependency type"),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
-    """Get paginated list of all dependencies with sorting."""
-    require_analytics_permission(current_user, "analytics:dependencies")
-
-    project_ids = await get_user_project_ids(current_user, db)
-    if not project_ids:
-        return DependencyListResponse(items=[], total=0, page=page, size=size, has_more=False)
-
-    # Build match stage
-    match_stage: dict = {"project_id": {"$in": project_ids}}
-    if type_filter:
-        match_stage["type"] = type_filter
-
-    # Define sort mapping
-    sort_map = {
-        "name": "name",
-        "version": "version",
-        "type": "type",
-        "project_name": "project_name",
-        "direct": "direct",
-    }
-    sort_field = sort_map.get(sort_by, "name")
-    sort_direction = 1 if sort_order == "asc" else -1
-
-    # Get total count
-    total = await db.dependencies.count_documents(match_stage)
-
-    # Calculate skip
-    skip = (page - 1) * size
-
-    # Main pipeline - first get dependencies grouped by project
-    pipeline = [
-        {"$match": match_stage},
-        {
-            "$lookup": {
-                "from": "projects",
-                "localField": "project_id",
-                "foreignField": "_id",
-                "as": "project_info",
-            }
-        },
-        {"$unwind": {"path": "$project_info", "preserveNullAndEmptyArrays": True}},
-        {
-            "$project": {
-                "name": 1,
-                "version": 1,
-                "type": 1,
-                "purl": 1,
-                "license": "$licenses",
-                "direct": 1,
-                "project_id": 1,
-                "project_name": {"$ifNull": ["$project_info.name", "Unknown"]},
-                "source_type": 1,
-            }
-        },
-        {"$sort": {sort_field: sort_direction, "_id": 1}},
-        {"$skip": skip},
-        {"$limit": size},
-    ]
-
-    results = await db.dependencies.aggregate(pipeline).to_list(None)
-
-    # Get vulnerability counts for each dependency
-    items = []
-    for dep in results:
-        # Count vulnerabilities for this dependency in this project
-        vuln_count = await db.findings.count_documents({
-            "project_id": dep["project_id"],
-            "component": dep["name"],
-            "type": "vulnerability",
-        })
-        
-        # Count how many projects use this dependency
-        project_count = await db.dependencies.count_documents({
-            "project_id": {"$in": project_ids},
-            "name": dep["name"],
-        })
-        
-        # Get license as string
-        license_str = None
-        if dep.get("license"):
-            if isinstance(dep["license"], list) and len(dep["license"]) > 0:
-                license_str = dep["license"][0]
-            elif isinstance(dep["license"], str):
-                license_str = dep["license"]
-
-        items.append(DependencyListItem(
-            name=dep["name"],
-            version=dep.get("version", "unknown"),
-            type=dep.get("type", "unknown"),
-            purl=dep.get("purl"),
-            license=license_str,
-            direct=dep.get("direct", False),
-            project_count=project_count,
-            project_id=dep["project_id"],
-            project_name=dep.get("project_name", "Unknown"),
-            has_vulnerabilities=vuln_count > 0,
-            vulnerability_count=vuln_count,
-            source_type=dep.get("source_type"),
-        ))
-
-    has_more = skip + len(items) < total
-
-    return DependencyListResponse(
-        items=items,
-        total=total,
-        page=page,
-        size=size,
-        has_more=has_more,
-    )
-
-
 @router.get(
     "/projects/{project_id}/dependency-tree", response_model=List[DependencyTreeNode]
 )
@@ -536,7 +412,7 @@ async def get_impact_analysis(
     all_cves = []
     cve_to_result = {}
     cvss_scores = {}
-    
+
     for r in results:
         for fid in r.get("finding_ids", []):
             if fid and fid.startswith("CVE-"):
@@ -544,7 +420,7 @@ async def get_impact_analysis(
                 if fid not in cve_to_result:
                     cve_to_result[fid] = []
                 cve_to_result[fid].append(r)
-        
+
         # Extract CVSS scores from details
         for details in r.get("details_list", []):
             if isinstance(details, dict):
@@ -558,9 +434,11 @@ async def get_impact_analysis(
     if all_cves:
         try:
             from app.services.vulnerability_enrichment import get_cve_enrichment
+
             enrichments = await get_cve_enrichment(all_cves)
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).warning(f"Failed to enrich CVEs: {e}")
 
     impact_results = []
@@ -591,8 +469,15 @@ async def get_impact_analysis(
         kev_ransomware_use = False
         kev_due_date = None
         exploit_maturity = "unknown"
-        maturity_levels = {"unknown": 0, "low": 1, "medium": 2, "high": 3, "active": 4, "weaponized": 5}
-        
+        maturity_levels = {
+            "unknown": 0,
+            "low": 1,
+            "medium": 2,
+            "high": 3,
+            "active": 4,
+            "weaponized": 5,
+        }
+
         for fid in r.get("finding_ids", []):
             if fid in enrichments:
                 enr = enrichments[fid]
@@ -613,7 +498,9 @@ async def get_impact_analysis(
                     if enr.kev_due_date:
                         if kev_due_date is None or enr.kev_due_date < kev_due_date:
                             kev_due_date = enr.kev_due_date
-                if maturity_levels.get(enr.exploit_maturity, 0) > maturity_levels.get(exploit_maturity, 0):
+                if maturity_levels.get(enr.exploit_maturity, 0) > maturity_levels.get(
+                    exploit_maturity, 0
+                ):
                     exploit_maturity = enr.exploit_maturity
 
         # Calculate days known
@@ -622,7 +509,9 @@ async def get_impact_analysis(
             try:
                 first_seen_dt = r["first_seen"]
                 if isinstance(first_seen_dt, datetime):
-                    days_known = (datetime.now(first_seen_dt.tzinfo or None) - first_seen_dt).days
+                    days_known = (
+                        datetime.now(first_seen_dt.tzinfo or None) - first_seen_dt
+                    ).days
             except Exception:
                 pass
 
@@ -631,6 +520,7 @@ async def get_impact_analysis(
         if kev_due_date:
             try:
                 from datetime import date
+
                 due = datetime.strptime(kev_due_date, "%Y-%m-%d").date()
                 days_until_due = (due - date.today()).days
             except Exception:
@@ -648,7 +538,7 @@ async def get_impact_analysis(
         # 7. Fix availability (prefer fixable issues)
         # 8. Days known (older = more urgent)
         # ============================================================
-        
+
         # Base score from severity (weighted)
         severity_score = (
             severity_counts["critical"] * 10
@@ -656,12 +546,12 @@ async def get_impact_analysis(
             + severity_counts["medium"] * 2
             + severity_counts["low"] * 1
         )
-        
+
         # Reach multiplier (how many projects affected)
         reach_multiplier = min(r["affected_projects"], 10)  # Cap at 10x
-        
+
         base_impact = severity_score * reach_multiplier
-        
+
         # KEV Boost (strongest signal - actively exploited)
         if has_kev:
             # Ransomware usage = highest priority
@@ -676,7 +566,7 @@ async def get_impact_analysis(
             # KEV but no urgent deadline
             else:
                 base_impact *= 1.8
-        
+
         # EPSS Boost (probability of exploitation)
         if max_epss:
             if max_epss >= 0.5:  # 50%+ chance of exploitation
@@ -685,7 +575,7 @@ async def get_impact_analysis(
                 base_impact *= 1.3
             elif max_epss >= 0.01:  # 1%+ chance
                 base_impact *= 1.1
-        
+
         # Exploit maturity boost
         maturity_boost = {
             "weaponized": 1.4,
@@ -696,12 +586,12 @@ async def get_impact_analysis(
             "unknown": 1.0,
         }
         base_impact *= maturity_boost.get(exploit_maturity, 1.0)
-        
+
         # Fix availability boost (prioritize fixable issues)
         has_fix = len(fix_versions) > 0
         if has_fix:
             base_impact *= 1.2  # Boost fixable issues
-        
+
         # Age factor (older vulnerabilities slightly higher priority)
         if days_known and days_known > 90:
             base_impact *= 1.1  # Known for over 3 months
@@ -711,21 +601,31 @@ async def get_impact_analysis(
         if kev_ransomware_use:
             priority_reasons.append("🔒 Used in ransomware campaigns - fix immediately")
         if days_until_due is not None and days_until_due < 0:
-            priority_reasons.append(f"⚠️ CISA deadline overdue by {abs(days_until_due)} days")
+            priority_reasons.append(
+                f"⚠️ CISA deadline overdue by {abs(days_until_due)} days"
+            )
         elif days_until_due is not None and days_until_due <= 30:
             priority_reasons.append(f"📅 CISA deadline in {days_until_due} days")
         if has_kev and not kev_ransomware_use:
             priority_reasons.append("🎯 Actively exploited in the wild (CISA KEV)")
         if max_epss and max_epss >= 0.1:
-            priority_reasons.append(f"📈 High exploitation probability ({max_epss*100:.1f}% EPSS)")
+            priority_reasons.append(
+                f"📈 High exploitation probability ({max_epss*100:.1f}% EPSS)"
+            )
         if severity_counts["critical"] > 0:
-            priority_reasons.append(f"🔴 {severity_counts['critical']} critical vulnerabilities")
+            priority_reasons.append(
+                f"🔴 {severity_counts['critical']} critical vulnerabilities"
+            )
         if r["affected_projects"] >= 3:
-            priority_reasons.append(f"🌐 Affects {r['affected_projects']} projects (high blast radius)")
+            priority_reasons.append(
+                f"🌐 Affects {r['affected_projects']} projects (high blast radius)"
+            )
         if has_fix:
             priority_reasons.append("✅ Fix available - easy to remediate")
         if days_known and days_known > 90:
-            priority_reasons.append(f"⏰ Known for {days_known} days - overdue for remediation")
+            priority_reasons.append(
+                f"⏰ Known for {days_known} days - overdue for remediation"
+            )
 
         impact_results.append(
             ImpactAnalysisResult(
@@ -736,8 +636,7 @@ async def get_impact_analysis(
                 findings_by_severity=SeverityBreakdown(**severity_counts),
                 fix_impact_score=float(base_impact),
                 affected_project_names=[
-                    project_name_map.get(pid, "Unknown")
-                    for pid in r["project_ids"][:5]
+                    project_name_map.get(pid, "Unknown") for pid in r["project_ids"][:5]
                 ],
                 max_epss_score=max_epss,
                 epss_percentile=max_percentile,
@@ -765,7 +664,10 @@ async def get_impact_analysis(
 async def get_vulnerability_hotspots(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=100),
-    sort_by: str = Query("finding_count", description="Sort field: finding_count, component, first_seen, epss, risk"),
+    sort_by: str = Query(
+        "finding_count",
+        description="Sort field: finding_count, component, first_seen, epss, risk",
+    ),
     sort_order: str = Query("desc", description="Sort order: asc, desc"),
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
@@ -790,7 +692,7 @@ async def get_vulnerability_hotspots(
 
     # Determine sort direction
     sort_direction = -1 if sort_order == "desc" else 1
-    
+
     # Map sort fields (for MongoDB aggregation)
     sort_field_map = {
         "finding_count": "finding_count",
@@ -798,7 +700,7 @@ async def get_vulnerability_hotspots(
         "first_seen": "first_seen",
     }
     mongo_sort_field = sort_field_map.get(sort_by, "finding_count")
-    
+
     # For EPSS/risk sorting, we'll sort after enrichment
     post_sort_by = sort_by if sort_by in ["epss", "risk"] else None
 
@@ -821,9 +723,9 @@ async def get_vulnerability_hotspots(
     ]
 
     results = await db.findings.aggregate(pipeline).to_list(None)
-    
+
     if not post_sort_by:
-        results = results[skip:skip + limit]
+        results = results[skip : skip + limit]
 
     # Collect all CVE IDs for enrichment
     all_cves = []
@@ -837,9 +739,11 @@ async def get_vulnerability_hotspots(
     if all_cves:
         try:
             from app.services.vulnerability_enrichment import get_cve_enrichment
+
             enrichments = await get_cve_enrichment(list(set(all_cves)))
         except Exception as e:
             import logging
+
             logging.getLogger(__name__).warning(f"Failed to enrich CVEs: {e}")
 
     hotspots = []
@@ -861,7 +765,9 @@ async def get_vulnerability_hotspots(
             if isinstance(r["first_seen"], datetime):
                 first_seen_str = r["first_seen"].isoformat()
                 try:
-                    days_known = (datetime.now(r["first_seen"].tzinfo or None) - r["first_seen"]).days
+                    days_known = (
+                        datetime.now(r["first_seen"].tzinfo or None) - r["first_seen"]
+                    ).days
                 except Exception:
                     pass
             else:
@@ -887,8 +793,15 @@ async def get_vulnerability_hotspots(
         kev_due_date = None
         exploit_maturity = "unknown"
         top_cves = []
-        maturity_levels = {"unknown": 0, "low": 1, "medium": 2, "high": 3, "active": 4, "weaponized": 5}
-        
+        maturity_levels = {
+            "unknown": 0,
+            "low": 1,
+            "medium": 2,
+            "high": 3,
+            "active": 4,
+            "weaponized": 5,
+        }
+
         for fid in r.get("finding_ids", []):
             if fid and fid.startswith("CVE-"):
                 if fid not in top_cves:
@@ -910,7 +823,9 @@ async def get_vulnerability_hotspots(
                         if enr.kev_due_date:
                             if kev_due_date is None or enr.kev_due_date < kev_due_date:
                                 kev_due_date = enr.kev_due_date
-                    if maturity_levels.get(enr.exploit_maturity, 0) > maturity_levels.get(exploit_maturity, 0):
+                    if maturity_levels.get(
+                        enr.exploit_maturity, 0
+                    ) > maturity_levels.get(exploit_maturity, 0):
                         exploit_maturity = enr.exploit_maturity
 
         # Calculate days until KEV due date
@@ -918,6 +833,7 @@ async def get_vulnerability_hotspots(
         if kev_due_date:
             try:
                 from datetime import date
+
                 due = datetime.strptime(kev_due_date, "%Y-%m-%d").date()
                 days_until_due = (due - date.today()).days
             except Exception:
@@ -928,7 +844,9 @@ async def get_vulnerability_hotspots(
         if kev_ransomware_use:
             priority_reasons.append("🔒 Used in ransomware campaigns")
         if days_until_due is not None and days_until_due < 0:
-            priority_reasons.append(f"⚠️ CISA deadline overdue by {abs(days_until_due)} days")
+            priority_reasons.append(
+                f"⚠️ CISA deadline overdue by {abs(days_until_due)} days"
+            )
         elif days_until_due is not None and days_until_due <= 30:
             priority_reasons.append(f"📅 CISA deadline in {days_until_due} days")
         if has_kev and not kev_ransomware_use:
@@ -972,11 +890,15 @@ async def get_vulnerability_hotspots(
 
     # Post-sort by enrichment data if needed
     if post_sort_by == "epss":
-        hotspots.sort(key=lambda x: x.max_epss_score or 0, reverse=(sort_order == "desc"))
-        hotspots = hotspots[skip:skip + limit]
+        hotspots.sort(
+            key=lambda x: x.max_epss_score or 0, reverse=(sort_order == "desc")
+        )
+        hotspots = hotspots[skip : skip + limit]
     elif post_sort_by == "risk":
-        hotspots.sort(key=lambda x: x.max_risk_score or 0, reverse=(sort_order == "desc"))
-        hotspots = hotspots[skip:skip + limit]
+        hotspots.sort(
+            key=lambda x: x.max_risk_score or 0, reverse=(sort_order == "desc")
+        )
+        hotspots = hotspots[skip : skip + limit]
 
     return hotspots
 
@@ -996,7 +918,10 @@ async def search_dependencies_advanced(
     project_ids: Optional[str] = Query(
         None, description="Comma-separated list of project IDs"
     ),
-    sort_by: str = Query("name", description="Sort field: name, version, type, project_name, license, direct"),
+    sort_by: str = Query(
+        "name",
+        description="Sort field: name, version, type, project_name, license, direct",
+    ),
     sort_order: str = Query("asc", description="Sort order: asc or desc"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(50, ge=1, le=500),
@@ -1043,7 +968,7 @@ async def search_dependencies_advanced(
     # Map sort fields to MongoDB fields
     sort_field_map = {
         "name": "name",
-        "version": "version", 
+        "version": "version",
         "type": "type",
         "project_name": "project_id",  # Will sort by project_id, but close enough
         "license": "license",
@@ -1200,7 +1125,7 @@ async def get_dependency_metadata_endpoint(
 
     # Aggregate dependency-specific metadata (take first non-null value)
     first_dep = dependencies[0]
-    
+
     # Collect affected projects (with deduplication)
     affected_projects = {}
     for dep in dependencies:
@@ -1211,11 +1136,11 @@ async def get_dependency_metadata_endpoint(
                 "name": project_name_map.get(proj_id, "Unknown"),
                 "direct": dep.get("direct", False),
             }
-    
+
     # Get deps.dev enrichment if available
     deps_dev_data = None
     enrichment_sources = []
-    
+
     dep_purl = first_dep.get("purl")
     if dep_purl:
         enrichment = await db.dependency_enrichments.find_one({"purl": dep_purl})
@@ -1223,12 +1148,12 @@ async def get_dependency_metadata_endpoint(
             deps_dev_data = enrichment.get("deps_dev")
             if deps_dev_data:
                 enrichment_sources.append("deps_dev")
-            
+
             # Get license enrichment
             license_info = enrichment.get("license_compliance")
             if license_info:
                 enrichment_sources.append("license_compliance")
-    
+
     # Helper function to get first non-null value from dependencies
     def first_value(key: str):
         for dep in dependencies:
@@ -1236,23 +1161,23 @@ async def get_dependency_metadata_endpoint(
             if val:
                 return val
         return None
-    
+
     # Count findings for this component
     finding_query = {"scan_id": {"$in": scan_ids}, "component": component}
     if version:
         finding_query["version"] = version
-    
+
     finding_count = await db.findings.count_documents(finding_query)
-    
+
     # Count vulnerabilities specifically
     vuln_query = {**finding_query, "type": "VULNERABILITY"}
     vuln_count = await db.findings.count_documents(vuln_query)
-    
+
     # Collect license info (may come from enrichment or SBOM)
     license_category = None
     license_risks = []
     license_obligations = []
-    
+
     if dep_purl:
         enrichment = await db.dependency_enrichments.find_one({"purl": dep_purl})
         if enrichment and enrichment.get("license_compliance"):
@@ -1260,7 +1185,7 @@ async def get_dependency_metadata_endpoint(
             license_category = lic_info.get("category")
             license_risks = lic_info.get("risks", [])
             license_obligations = lic_info.get("obligations", [])
-    
+
     return DependencyMetadata(
         name=first_dep.get("name", component),
         version=first_dep.get("version", version or "unknown"),

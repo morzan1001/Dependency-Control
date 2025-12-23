@@ -6,7 +6,7 @@ import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, Copy, Check, RefreshCw, Loader2 } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, Copy, Check, RefreshCw, Loader2, Tag, Folder } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
@@ -312,6 +312,37 @@ export default function ScanDetails() {
                                     <span className="font-medium">#{scan.metadata.CI_JOB_ID}</span>
                                     <ExternalLink className="h-3 w-3" />
                                 </a>
+                            </div>
+                        )}
+                        {scan.metadata?.CI_COMMIT_TAG && (
+                            <div className="flex flex-col space-y-1">
+                                <span className="text-sm text-muted-foreground">Tag</span>
+                                <div className="flex items-center gap-2">
+                                    <Tag className="h-4 w-4 text-amber-500" />
+                                    <span className="font-medium">{scan.metadata.CI_COMMIT_TAG}</span>
+                                </div>
+                            </div>
+                        )}
+                        {scan.metadata?.CI_PROJECT_PATH && (
+                            <div className="flex flex-col space-y-1">
+                                <span className="text-sm text-muted-foreground">Project Path</span>
+                                {scan.metadata?.CI_PROJECT_URL ? (
+                                    <a 
+                                        href={scan.metadata.CI_PROJECT_URL}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-2 text-primary hover:underline"
+                                    >
+                                        <Folder className="h-4 w-4" />
+                                        <span className="font-medium text-sm">{scan.metadata.CI_PROJECT_PATH}</span>
+                                        <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <Folder className="h-4 w-4" />
+                                        <span className="font-medium text-sm">{scan.metadata.CI_PROJECT_PATH}</span>
+                                    </div>
+                                )}
                             </div>
                         )}
                         {scan.metadata?.CI_COMMIT_MESSAGE && (

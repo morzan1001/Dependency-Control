@@ -8,18 +8,16 @@ to generate actionable remediation recommendations.
 import logging
 import re
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.schemas.recommendation import (
     RecommendationType,
     Priority,
-    FindingInfo,
     VulnerabilityInfo,
     Recommendation,
 )
 
 logger = logging.getLogger(__name__)
-
 
 
 # OS package types that typically come from base images
@@ -1299,21 +1297,49 @@ class RecommendationEngine:
         # match_type: "exact" = exact match, "startswith" = name starts with pattern, "contains" = pattern in name
         known_outdated = {
             # JavaScript/Frontend frameworks - use "exact" or "startswith" to avoid false matches
-            "react": (18, "React 18+ offers concurrent features and better performance", "exact"),
-            "@angular/core": (15, "Consider upgrading to Angular 15+ for better performance", "exact"),
-            "vue": (3, "Vue 3 offers Composition API and improved TypeScript support", "exact"),
+            "react": (
+                18,
+                "React 18+ offers concurrent features and better performance",
+                "exact",
+            ),
+            "@angular/core": (
+                15,
+                "Consider upgrading to Angular 15+ for better performance",
+                "exact",
+            ),
+            "vue": (
+                3,
+                "Vue 3 offers Composition API and improved TypeScript support",
+                "exact",
+            ),
             # Python frameworks - exact matches only
-            "django": (4, "Django 4+ offers async support and improved security", "exact"),
+            "django": (
+                4,
+                "Django 4+ offers async support and improved security",
+                "exact",
+            ),
             "flask": (2, "Flask 2+ has async support and improved CLI", "exact"),
             # Node.js packages
             "express": (4, "Express 4+ is the stable maintained version", "exact"),
             "lodash": (4, "Lodash 4+ is the current stable release", "exact"),
             # Deprecated packages
-            "jquery": (3, "Consider migrating away from jQuery to modern frameworks", "exact"),
-            "moment": (2, "Consider migrating to date-fns or dayjs - moment is in maintenance mode", "exact"),
-            "request": (2, "The 'request' package is deprecated - use axios or node-fetch", "exact"),
+            "jquery": (
+                3,
+                "Consider migrating away from jQuery to modern frameworks",
+                "exact",
+            ),
+            "moment": (
+                2,
+                "Consider migrating to date-fns or dayjs - moment is in maintenance mode",
+                "exact",
+            ),
+            "request": (
+                2,
+                "The 'request' package is deprecated - use axios or node-fetch",
+                "exact",
+            ),
         }
-        
+
         # Separate patterns for runtime versions (need special handling)
         runtime_patterns = {
             # Only match actual Python interpreter, not python packages
@@ -1325,22 +1351,26 @@ class RecommendationEngine:
         for dep in dependencies:
             name = dep.get("name", "").lower()
             version = dep.get("version", "")
-            
+
             # Skip python library packages (python3-*, python-*, *-python)
             # These are NOT Python interpreter versions
-            if name.startswith("python3-") or name.startswith("python-") or name.endswith("-python"):
+            if (
+                name.startswith("python3-")
+                or name.startswith("python-")
+                or name.endswith("-python")
+            ):
                 continue
 
             # Check against known patterns with proper matching
             for pattern, (min_major, message, match_type) in known_outdated.items():
                 matched = False
                 if match_type == "exact":
-                    matched = (name == pattern)
+                    matched = name == pattern
                 elif match_type == "startswith":
                     matched = name.startswith(pattern)
                 elif match_type == "contains":
-                    matched = (pattern in name)
-                
+                    matched = pattern in name
+
                 if matched:
                     try:
                         # Extract major version
@@ -1464,10 +1494,12 @@ class RecommendationEngine:
 
         # Only report if there are significant fragmentation issues (3+ versions)
         significant_fragmented = [f for f in fragmented if f["count"] >= 3]
-        
+
         if significant_fragmented:
             # High priority if many packages have 3+ versions
-            priority = Priority.MEDIUM if len(significant_fragmented) > 3 else Priority.LOW
+            priority = (
+                Priority.MEDIUM if len(significant_fragmented) > 3 else Priority.LOW
+            )
 
             # Limit to top 15 most fragmented
             top_fragmented = significant_fragmented[:15]
@@ -1480,21 +1512,26 @@ class RecommendationEngine:
                     description=f"These packages have 3 or more versions in your dependency tree. This can increase bundle size and cause subtle bugs. Consider deduplication or pinning to a single version.",
                     impact={
                         "critical": 0,
-                        "high": len([f for f in significant_fragmented if f["count"] >= 5]),
-                        "medium": len([f for f in significant_fragmented if 3 <= f["count"] < 5]),
+                        "high": len(
+                            [f for f in significant_fragmented if f["count"] >= 5]
+                        ),
+                        "medium": len(
+                            [f for f in significant_fragmented if 3 <= f["count"] < 5]
+                        ),
                         "low": 0,
                         "total": len(significant_fragmented),
                     },
                     affected_components=[
-                        f"{f['name']} ({f['count']} versions)"
-                        for f in top_fragmented
+                        f"{f['name']} ({f['count']} versions)" for f in top_fragmented
                     ],
                     action={
                         "type": "deduplicate_versions",
                         "packages": [
                             {
                                 "name": f["name"],
-                                "versions": f["versions"][:5],  # Limit displayed versions
+                                "versions": f["versions"][
+                                    :5
+                                ],  # Limit displayed versions
                                 "version_count": f["count"],
                                 "suggestion": f"Pin to {max(f['versions'], key=lambda v: self._parse_version_tuple(v))}",
                             }
@@ -1502,7 +1539,7 @@ class RecommendationEngine:
                         ],
                         "commands": [
                             "# For npm: npm dedupe",
-                            "# For yarn: yarn dedupe", 
+                            "# For yarn: yarn dedupe",
                             "# For pnpm: pnpm dedupe",
                         ],
                     },

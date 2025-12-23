@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
-from pymongo.errors import DocumentTooLarge
 
 from app.api import deps
 from app.core.worker import worker_manager
@@ -19,7 +18,7 @@ from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.aggregator import ResultAggregator
-from app.services.sbom_parser import SBOMFormat, parse_sbom
+from app.services.sbom_parser import parse_sbom
 
 logger = logging.getLogger(__name__)
 

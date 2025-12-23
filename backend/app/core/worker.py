@@ -1,10 +1,7 @@
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop

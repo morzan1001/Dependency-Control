@@ -8,7 +8,6 @@ from typing import Any, Dict, List
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
-from app.models.finding_record import FindingRecord
 from app.models.project import Project
 from app.models.stats import Stats
 from app.models.system import SystemSettings
@@ -29,7 +28,7 @@ from app.services.analyzers import (
 )
 from app.services.gitlab import GitLabService
 from app.services.notifications import notification_service
-from app.services.sbom_parser import ParsedDependency, parse_sbom
+from app.services.sbom_parser import parse_sbom
 
 logger = logging.getLogger(__name__)
 

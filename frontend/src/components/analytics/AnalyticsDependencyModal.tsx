@@ -554,7 +554,7 @@ export function AnalyticsDependencyModal({
                 <TableHeader>
                   <TableRow>
                     <TableHead 
-                      className="w-[150px] cursor-pointer hover:bg-muted/50"
+                      className="w-[180px] cursor-pointer hover:bg-muted/50"
                       onClick={() => handleSort('id')}
                     >
                       Finding
@@ -581,7 +581,6 @@ export function AnalyticsDependencyModal({
                       Project
                       <SortIcon field="project_name" />
                     </TableHead>
-                    <TableHead className="w-[80px]">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -621,20 +620,6 @@ export function AnalyticsDependencyModal({
                         >
                           {(finding as any).project_name || 'Unknown'}
                         </Link>
-                      </TableCell>
-                      <TableCell>
-                        {finding.id?.startsWith('CVE-') && (
-                          <a
-                            href={`https://nvd.nist.gov/vuln/detail/${finding.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Button variant="ghost" size="sm" className="h-7 px-2">
-                              <ExternalLink className="h-3 w-3" />
-                            </Button>
-                          </a>
-                        )}
                       </TableCell>
                     </TableRow>
                   ))}

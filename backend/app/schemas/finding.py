@@ -5,6 +5,7 @@ from app.models.finding import Severity
 
 class VulnerabilityEnrichmentData(TypedDict, total=False):
     """EPSS and CISA KEV enrichment data for a vulnerability."""
+
     cve: str
     epss_score: Optional[float]  # 0.0 - 1.0, probability of exploitation in 30 days
     epss_percentile: Optional[float]  # 0.0 - 100.0, percentile rank
@@ -55,6 +56,7 @@ class VulnerabilityAggregatedDetails(TypedDict, total=False):
 
 class QualityEntry(TypedDict, total=False):
     """A single quality issue entry (from scorecard, maintainer_risk, etc.)."""
+
     id: str
     type: str  # "scorecard", "maintainer_risk", etc.
     severity: str
@@ -66,6 +68,7 @@ class QualityEntry(TypedDict, total=False):
 
 class QualityAggregatedDetails(TypedDict, total=False):
     """Aggregated quality data from multiple sources."""
+
     quality_issues: List[QualityEntry]
     # Computed summary fields
     overall_score: Optional[float]  # Best available score (from scorecard)
