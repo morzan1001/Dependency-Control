@@ -1,3 +1,11 @@
+# Release 0.9.5
+
+## 🚀 Features
+
+- feat: enhance finding selection logic and improve priority reason rendering in analytics components (#0)
+
+
+
 # Release 0.9.4
 
 ## 🚀 Features
