@@ -670,6 +670,59 @@ export function AnalyticsDependencyModal({
             }}
             projectId={(selectedFinding as any).project_id}
             scanId={(selectedFinding as any).scan_id}
+            onSelectFinding={(id) => {
+              // First try exact match by ID
+              let found = sortedFindings.find(f => f.id === id);
+              
+              if (!found) {
+                // Handle OUTDATED-{component} format
+                if (id.startsWith("OUTDATED-")) {
+                  const comp = id.replace("OUTDATED-", "");
+                  found = sortedFindings.find(f => 
+                    f.type === "outdated" && 
+                    f.component?.toLowerCase() === comp.toLowerCase()
+                  );
+                }
+                // Handle QUALITY:{component}:{version} format
+                else if (id.startsWith("QUALITY:")) {
+                  const parts = id.split(":");
+                  if (parts.length >= 2) {
+                    const comp = parts[1];
+                    const ver = parts[2];
+                    found = sortedFindings.find(f => 
+                      f.type === "quality" && 
+                      f.component?.toLowerCase() === comp?.toLowerCase() &&
+                      (!ver || f.version === ver)
+                    );
+                  }
+                }
+                // Handle LIC-{license} format
+                else if (id.startsWith("LIC-")) {
+                  found = sortedFindings.find(f => f.id === id || f.type === "license");
+                }
+                // Handle EOL-{component}-{cycle} format
+                else if (id.startsWith("EOL-")) {
+                  const parts = id.replace("EOL-", "").split("-");
+                  const comp = parts[0];
+                  found = sortedFindings.find(f => 
+                    f.type === "eol" && 
+                    f.component?.toLowerCase() === comp?.toLowerCase()
+                  );
+                }
+                // Handle component:version format (vulnerabilities)
+                else if (id.includes(":") && !id.startsWith("AGG:")) {
+                  const [comp, ver] = id.split(":");
+                  found = sortedFindings.find(f => 
+                    f.component?.toLowerCase() === comp?.toLowerCase() && 
+                    f.version === ver
+                  );
+                }
+              }
+              
+              if (found) {
+                setSelectedFinding(found);
+              }
+            }}
             onNavigate={() => {
               // Close both modals when navigating
               setFindingModalOpen(false)

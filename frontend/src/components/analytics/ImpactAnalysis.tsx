@@ -45,7 +45,8 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
 
   // Helper to render priority reason with icon instead of emoji
   const renderPriorityReason = (reason: string) => {
-    const [type, text] = reason.includes(':') ? reason.split(':', 2) : ['', reason]
+    const [type, ...rest] = reason.includes(':') ? reason.split(':') : ['', reason]
+    const text = rest.join(':').trim() // Rejoin in case text contains colons
     
     const iconMap: Record<string, React.ReactNode> = {
       'ransomware': <Lock className="h-3 w-3 text-purple-500 flex-shrink-0" />,
@@ -59,7 +60,8 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
       'overdue': <Clock className="h-3 w-3 text-yellow-500 flex-shrink-0" />,
     }
 
-    const icon = iconMap[type] || null
+    const trimmedType = type.trim().toLowerCase()
+    const icon = iconMap[trimmedType] || null
     const displayText = text || reason
 
     return (
@@ -190,7 +192,7 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                       <div className="mt-2 pt-2 border-t border-muted">
                         <ul className="text-xs text-muted-foreground space-y-0.5">
                           {r.priority_reasons.slice(0, 3).map((reason, i) => (
-                            <li key={i}>{reason}</li>
+                            <li key={i}>{renderPriorityReason(reason)}</li>
                           ))}
                         </ul>
                       </div>
