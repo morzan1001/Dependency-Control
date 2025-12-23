@@ -110,15 +110,18 @@ function InfoRow({
 }) {
   if (!value) return null
 
+  // Only use href if it's a valid absolute URL
+  const validHref = href && (href.startsWith('http://') || href.startsWith('https://')) ? href : undefined
+
   return (
     <div className="flex items-start gap-3 py-1.5">
       <Icon className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-xs text-muted-foreground">{label}</p>
         <div className="flex items-center gap-2">
-          {href ? (
+          {validHref ? (
             <a
-              href={href}
+              href={validHref}
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-primary hover:underline break-all"

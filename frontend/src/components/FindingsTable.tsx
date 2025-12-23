@@ -248,7 +248,11 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                                 ? 'Multiple Vulnerabilities' 
                                                 : (finding.type === 'vulnerability' && finding.details?.vulnerabilities?.length === 1 
                                                     ? finding.details.vulnerabilities[0].id 
-                                                    : finding.id)}
+                                                    : finding.type === 'quality' && finding.details?.quality_issues?.length > 1
+                                                        ? 'Multiple Quality Issues'
+                                                        : finding.type === 'quality' && finding.details?.quality_issues?.length === 1
+                                                            ? finding.details.quality_issues[0].id
+                                                            : finding.id)}
                                         </TableCell>
                                         <TableCell className="p-4 align-middle">
                                             <div className="flex flex-col truncate">
@@ -310,7 +314,18 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                     isOpen={!!selectedFinding} 
                     onClose={() => setSelectedFinding(null)} 
                     onSelectFinding={(id) => {
-                        const found = allRows.find(f => f.id === id);
+                        // First try exact match
+                        let found = allRows.find(f => f.id === id);
+                        
+                        // If not found and id is component:version format, try matching
+                        if (!found && id.includes(":") && !id.startsWith("OUTDATED") && !id.startsWith("QUALITY")) {
+                            const [component, version] = id.split(":");
+                            found = allRows.find(f => 
+                                f.component?.toLowerCase() === component?.toLowerCase() && 
+                                f.version === version
+                            );
+                        }
+                        
                         if (found) setSelectedFinding(found);
                     }}
                 />

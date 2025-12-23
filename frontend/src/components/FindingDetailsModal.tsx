@@ -725,14 +725,30 @@ function AggregatedQualityView({ details }: { details: Record<string, unknown> }
     }
   }
 
+  // If there's only one quality issue, render it directly without accordion
+  if (qualityIssues.length === 1) {
+    const singleIssue = qualityIssues[0]
+    return (
+      <div className="space-y-4">
+        {singleIssue.type === 'scorecard' ? (
+          <QualityDetailsView details={singleIssue.details} />
+        ) : singleIssue.type === 'maintainer_risk' ? (
+          <MaintainerRiskDetailsView details={singleIssue.details} />
+        ) : (
+          <AdditionalDetailsView details={singleIssue.details} />
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
-      {/* Summary Header */}
+      {/* Summary Header - only show when multiple issues */}
       <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
             <h4 className="font-medium">
-              {issueCount === 1 ? 'Quality Issue' : `${issueCount} Quality Issues`}
+              {`${issueCount} Quality Issues`}
             </h4>
             {hasMaintenanceIssues && (
               <Badge variant="destructive" className="text-xs">
@@ -1233,18 +1249,32 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                         <h4 className="text-sm font-medium text-muted-foreground mb-1">Related Findings</h4>
                                         <div className="flex flex-wrap gap-2">
                                             {finding.related_findings.map((relatedId) => {
+                                                // Format the label nicely
                                                 let label = relatedId;
+                                                // Handle component:version format (e.g., "requests:2.28.0")
+                                                if (relatedId.includes(":") && !relatedId.startsWith("AGG:") && !relatedId.startsWith("OUTDATED") && !relatedId.startsWith("QUALITY")) {
+                                                    const parts = relatedId.split(":");
+                                                    if (parts.length === 2) {
+                                                        label = `${parts[0]} (${parts[1]})`;
+                                                    }
+                                                }
+                                                // Handle legacy AGG:VULN: format if still present
                                                 if (relatedId.startsWith("AGG:VULN:")) {
                                                     const parts = relatedId.split(":");
                                                     if (parts.length >= 4) {
                                                         label = `${parts[2]} (${parts[3]})`;
                                                     }
                                                 }
+                                                // Determine badge color based on type
+                                                const isVulnerability = !relatedId.startsWith("OUTDATED") && !relatedId.startsWith("QUALITY");
+                                                const badgeClass = isVulnerability 
+                                                    ? "font-mono text-xs border-red-200 bg-red-50 text-red-700 cursor-pointer hover:bg-red-100"
+                                                    : "font-mono text-xs border-blue-200 bg-blue-50 text-blue-700 cursor-pointer hover:bg-blue-100";
                                                 return (
                                                     <Badge 
                                                         key={relatedId} 
                                                         variant="outline" 
-                                                        className="font-mono text-xs border-blue-200 bg-blue-50 text-blue-700 cursor-pointer hover:bg-blue-100"
+                                                        className={badgeClass}
                                                         onClick={() => onSelectFinding?.(relatedId)}
                                                     >
                                                         {label}
