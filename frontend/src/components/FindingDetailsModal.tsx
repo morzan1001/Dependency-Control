@@ -1249,27 +1249,49 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                         <h4 className="text-sm font-medium text-muted-foreground mb-1">Related Findings</h4>
                                         <div className="flex flex-wrap gap-2">
                                             {finding.related_findings.map((relatedId) => {
-                                                // Format the label nicely
+                                                // Format the label and determine badge color based on type
                                                 let label = relatedId;
-                                                // Handle component:version format (e.g., "requests:2.28.0")
-                                                if (relatedId.includes(":") && !relatedId.startsWith("AGG:") && !relatedId.startsWith("OUTDATED") && !relatedId.startsWith("QUALITY")) {
+                                                let badgeClass = "font-mono text-xs cursor-pointer ";
+                                                
+                                                if (relatedId.startsWith("OUTDATED-")) {
+                                                    // OUTDATED-{component} format
+                                                    const component = relatedId.replace("OUTDATED-", "");
+                                                    label = `Outdated: ${component}`;
+                                                    badgeClass += "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100";
+                                                } else if (relatedId.startsWith("QUALITY:")) {
+                                                    // QUALITY:{component}:{version} format
                                                     const parts = relatedId.split(":");
-                                                    if (parts.length === 2) {
-                                                        label = `${parts[0]} (${parts[1]})`;
-                                                    }
-                                                }
-                                                // Handle legacy AGG:VULN: format if still present
-                                                if (relatedId.startsWith("AGG:VULN:")) {
+                                                    label = `Quality: ${parts[1]}${parts[2] ? ` (${parts[2]})` : ""}`;
+                                                    badgeClass += "border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100";
+                                                } else if (relatedId.startsWith("LIC-")) {
+                                                    // LIC-{license} format
+                                                    const license = relatedId.replace("LIC-", "");
+                                                    label = `License: ${license}`;
+                                                    badgeClass += "border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100";
+                                                } else if (relatedId.startsWith("EOL-")) {
+                                                    // EOL-{component}-{cycle} format
+                                                    const info = relatedId.replace("EOL-", "");
+                                                    label = `EOL: ${info}`;
+                                                    badgeClass += "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100";
+                                                } else if (relatedId.startsWith("AGG:VULN:")) {
+                                                    // Handle legacy AGG:VULN: format
                                                     const parts = relatedId.split(":");
                                                     if (parts.length >= 4) {
-                                                        label = `${parts[2]} (${parts[3]})`;
+                                                        label = `Vuln: ${parts[2]} (${parts[3]})`;
                                                     }
+                                                    badgeClass += "border-red-200 bg-red-50 text-red-700 hover:bg-red-100";
+                                                } else if (relatedId.includes(":") && !relatedId.startsWith("AGG:")) {
+                                                    // component:version format (vulnerabilities)
+                                                    const parts = relatedId.split(":");
+                                                    if (parts.length === 2) {
+                                                        label = `Vuln: ${parts[0]} (${parts[1]})`;
+                                                    }
+                                                    badgeClass += "border-red-200 bg-red-50 text-red-700 hover:bg-red-100";
+                                                } else {
+                                                    // Unknown format - default styling
+                                                    badgeClass += "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100";
                                                 }
-                                                // Determine badge color based on type
-                                                const isVulnerability = !relatedId.startsWith("OUTDATED") && !relatedId.startsWith("QUALITY");
-                                                const badgeClass = isVulnerability 
-                                                    ? "font-mono text-xs border-red-200 bg-red-50 text-red-700 cursor-pointer hover:bg-red-100"
-                                                    : "font-mono text-xs border-blue-200 bg-blue-50 text-blue-700 cursor-pointer hover:bg-blue-100";
+                                                
                                                 return (
                                                     <Badge 
                                                         key={relatedId} 
@@ -1283,7 +1305,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                             })}
                                         </div>
                                         <p className="text-xs text-muted-foreground mt-1">
-                                            These components share the exact same version and set of vulnerabilities.
+                                            Click to view related findings for this component.
                                         </p>
                                     </div>
                                 )}

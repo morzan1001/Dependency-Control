@@ -320,52 +320,103 @@ class ResultAggregator:
                     final_findings.append(p)
                     merged_ids.add(p.id)
 
-        # Link OUTDATED findings with VULNERABILITY findings for the same component
-        self._link_outdated_with_vulnerabilities(final_findings)
+        # Link all findings for the same component together
+        self._link_related_findings_by_component(final_findings)
 
         # Enrich findings with scorecard data
         self._enrich_with_scorecard(final_findings)
 
         return final_findings
 
-    def _link_outdated_with_vulnerabilities(self, findings: List[Finding]):
+    def _link_related_findings_by_component(self, findings: List[Finding]):
         """
-        Links OUTDATED findings with VULNERABILITY findings for the same component/version.
-        Adds outdated info to vulnerability details and cross-references related findings.
+        Links ALL findings for the same component together, regardless of type.
+        This creates a web of related findings where:
+        - Vulnerability ↔ Outdated ↔ Quality ↔ License ↔ EOL
+        
+        Also adds contextual info from other finding types to vulnerability findings.
         """
-        # Build a map of OUTDATED findings by component (normalized lowercase)
-        outdated_map: Dict[str, Finding] = {}
+        # Build a map of all findings by component (normalized lowercase)
+        # Key: component_lower -> List[Finding]
+        component_map: Dict[str, List[Finding]] = {}
+        
         for f in findings:
-            if f.type == FindingType.OUTDATED and f.component:
-                key = f.component.lower()
-                outdated_map[key] = f
-
-        if not outdated_map:
-            return
-
-        # Find vulnerability findings and link them with outdated findings
-        for f in findings:
-            if f.type != FindingType.VULNERABILITY or not f.component:
+            if not f.component:
                 continue
+            key = f.component.lower()
+            if key not in component_map:
+                component_map[key] = []
+            component_map[key].append(f)
 
-            component_key = f.component.lower()
-            outdated_finding = outdated_map.get(component_key)
+        # Process each component group
+        for component_key, component_findings in component_map.items():
+            if len(component_findings) <= 1:
+                continue  # Nothing to link
+            
+            # Link all findings in this component group to each other
+            for i, f1 in enumerate(component_findings):
+                for f2 in component_findings[i + 1:]:
+                    # Skip if same finding
+                    if f1.id == f2.id:
+                        continue
+                    
+                    # Add cross-references
+                    if f2.id not in f1.related_findings:
+                        f1.related_findings.append(f2.id)
+                    if f1.id not in f2.related_findings:
+                        f2.related_findings.append(f1.id)
+                    
+                    # Add contextual info to vulnerability findings
+                    self._add_context_to_vulnerability(f1, f2)
+                    self._add_context_to_vulnerability(f2, f1)
 
-            if outdated_finding:
-                # Add outdated info to vulnerability details
-                if "outdated_info" not in f.details:
-                    f.details["outdated_info"] = {
-                        "is_outdated": True,
-                        "current_version": outdated_finding.version,
-                        "latest_version": outdated_finding.details.get("fixed_version"),
-                        "message": outdated_finding.description,
-                    }
-
-                # Cross-reference as related findings
-                if outdated_finding.id not in f.related_findings:
-                    f.related_findings.append(outdated_finding.id)
-                if f.id not in outdated_finding.related_findings:
-                    outdated_finding.related_findings.append(f.id)
+    def _add_context_to_vulnerability(self, vuln_finding: Finding, other_finding: Finding):
+        """
+        Adds contextual information from other finding types to a vulnerability finding.
+        """
+        if vuln_finding.type != FindingType.VULNERABILITY:
+            return
+        
+        if other_finding.type == FindingType.OUTDATED:
+            if "outdated_info" not in vuln_finding.details:
+                vuln_finding.details["outdated_info"] = {
+                    "is_outdated": True,
+                    "current_version": other_finding.version,
+                    "latest_version": other_finding.details.get("fixed_version"),
+                    "message": other_finding.description,
+                }
+        
+        elif other_finding.type == FindingType.QUALITY:
+            if "quality_info" not in vuln_finding.details:
+                quality_issues = other_finding.details.get("quality_issues", [])
+                vuln_finding.details["quality_info"] = {
+                    "has_quality_issues": True,
+                    "issue_count": len(quality_issues),
+                    "overall_score": other_finding.details.get("overall_score"),
+                    "has_maintenance_issues": other_finding.details.get(
+                        "has_maintenance_issues", False
+                    ),
+                    "quality_finding_id": other_finding.id,
+                }
+        
+        elif other_finding.type == FindingType.LICENSE:
+            if "license_info" not in vuln_finding.details:
+                vuln_finding.details["license_info"] = {
+                    "has_license_issue": True,
+                    "license": other_finding.details.get("license"),
+                    "category": other_finding.details.get("category"),
+                    "license_finding_id": other_finding.id,
+                }
+        
+        elif other_finding.type == FindingType.EOL:
+            if "eol_info" not in vuln_finding.details:
+                vuln_finding.details["eol_info"] = {
+                    "is_eol": True,
+                    "eol_date": other_finding.details.get("eol_date"),
+                    "cycle": other_finding.details.get("cycle"),
+                    "latest_version": other_finding.details.get("fixed_version"),
+                    "eol_finding_id": other_finding.id,
+                }
 
     def get_dependency_enrichments(self) -> Dict[str, Dict[str, Any]]:
         """

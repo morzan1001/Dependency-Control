@@ -314,16 +314,52 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                     isOpen={!!selectedFinding} 
                     onClose={() => setSelectedFinding(null)} 
                     onSelectFinding={(id) => {
-                        // First try exact match
+                        // First try exact match by ID
                         let found = allRows.find(f => f.id === id);
                         
-                        // If not found and id is component:version format, try matching
-                        if (!found && id.includes(":") && !id.startsWith("OUTDATED") && !id.startsWith("QUALITY")) {
-                            const [component, version] = id.split(":");
-                            found = allRows.find(f => 
-                                f.component?.toLowerCase() === component?.toLowerCase() && 
-                                f.version === version
-                            );
+                        if (!found) {
+                            // Handle OUTDATED-{component} format
+                            if (id.startsWith("OUTDATED-")) {
+                                const component = id.replace("OUTDATED-", "");
+                                found = allRows.find(f => 
+                                    f.type === "outdated" && 
+                                    f.component?.toLowerCase() === component.toLowerCase()
+                                );
+                            }
+                            // Handle QUALITY:{component}:{version} format
+                            else if (id.startsWith("QUALITY:")) {
+                                const parts = id.split(":");
+                                if (parts.length >= 2) {
+                                    const component = parts[1];
+                                    const version = parts[2];
+                                    found = allRows.find(f => 
+                                        f.type === "quality" && 
+                                        f.component?.toLowerCase() === component?.toLowerCase() &&
+                                        (!version || f.version === version)
+                                    );
+                                }
+                            }
+                            // Handle LIC-{license} format
+                            else if (id.startsWith("LIC-")) {
+                                found = allRows.find(f => f.id === id || f.type === "license");
+                            }
+                            // Handle EOL-{component}-{cycle} format
+                            else if (id.startsWith("EOL-")) {
+                                const parts = id.replace("EOL-", "").split("-");
+                                const component = parts[0];
+                                found = allRows.find(f => 
+                                    f.type === "eol" && 
+                                    f.component?.toLowerCase() === component?.toLowerCase()
+                                );
+                            }
+                            // Handle component:version format (vulnerabilities)
+                            else if (id.includes(":") && !id.startsWith("AGG:")) {
+                                const [component, version] = id.split(":");
+                                found = allRows.find(f => 
+                                    f.component?.toLowerCase() === component?.toLowerCase() && 
+                                    f.version === version
+                                );
+                            }
                         }
                         
                         if (found) setSelectedFinding(found);

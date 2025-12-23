@@ -202,7 +202,7 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
 
             {/* Full Table */}
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                 <TableRow>
                   <TableHead>Component</TableHead>
                   <TableHead>Version</TableHead>
