@@ -1,3 +1,11 @@
+# Release 0.9.2
+
+## 🚀 Features
+
+- feat: update priority reasons in impact analysis and vulnerability hotspots with icons and improved formatting (#0)
+
+
+
 # Release 0.9.1
 
 ## 🚀 Features
