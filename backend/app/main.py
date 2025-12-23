@@ -49,7 +49,7 @@ app = FastAPI(
 
     Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
     """,
-    version="0.9.3",
+    version="0.9.4",
     license_info={
         "name": "MIT License",
         "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",

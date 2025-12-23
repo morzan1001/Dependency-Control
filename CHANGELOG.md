@@ -1,3 +1,11 @@
+# Release 0.9.4
+
+## 🚀 Features
+
+- feat: enhance finding linking and display in aggregator and UI components (#0)
+
+
+
 # Release 0.9.3
 
 ## 🚀 Features
