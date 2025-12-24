@@ -1,3 +1,11 @@
+# Release 0.9.8
+
+## 🚀 Features
+
+- feat: enhance project stats with threat intelligence and reachability data checks (#0)
+
+
+
 # Release 0.9.7
 
 ## 📦 Build & CI
