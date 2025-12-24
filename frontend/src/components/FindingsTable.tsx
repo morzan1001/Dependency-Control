@@ -163,8 +163,8 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                 <table className="w-full text-sm table-fixed">
                     <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
                         <TableRow className="w-full">
-                            <TableHead className="w-[100px] bg-background">Severity</TableHead>
-                            <TableHead className="w-[180px] bg-background">ID</TableHead>
+                            <TableHead className="w-[120px] bg-background">Severity</TableHead>
+                            <TableHead className="w-[200px] bg-background">ID</TableHead>
                             <TableHead className="w-auto bg-background">Component</TableHead>
                             <TableHead className="w-[80px] bg-background">Source</TableHead>
                             <TableHead className="w-[120px] bg-background">Type</TableHead>
@@ -197,10 +197,10 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
             <table className="w-full caption-bottom text-sm table-fixed">
                 <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
                     <TableRow className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                        <TableHead className="w-[100px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('severity')}>
+                        <TableHead className="w-[120px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('severity')}>
                             Severity {renderSortIcon('severity')}
                         </TableHead>
-                        <TableHead className="w-[180px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('vuln_id')}>
+                        <TableHead className="w-[200px] h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('vuln_id')}>
                             ID {renderSortIcon('vuln_id')}
                         </TableHead>
                         <TableHead className="w-auto h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground bg-background" onClick={() => handleSort('component')}>

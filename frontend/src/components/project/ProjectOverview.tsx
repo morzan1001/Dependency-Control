@@ -101,7 +101,22 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
   const stats = projectStats?.stats || { critical: 0, high: 0, medium: 0, low: 0, risk_score: 0 }
   const branchStats = projectStats?.branchStats || []
-  const hasEnhancedStats = 'threat_intel' in stats || 'reachability' in stats
+  
+  // Check if we have actual threat intelligence data (not just empty objects)
+  const threatIntel = 'threat_intel' in stats ? stats.threat_intel : null
+  const hasThreatIntelData = threatIntel && (
+    threatIntel.kev_count > 0 || 
+    threatIntel.high_epss_count > 0 || 
+    threatIntel.exploitable_count > 0 ||
+    threatIntel.total_enriched > 0
+  )
+  const reachability = 'reachability' in stats ? stats.reachability : null
+  const hasReachabilityData = reachability && (
+    reachability.reachable > 0 || 
+    reachability.potentially_reachable > 0 ||
+    reachability.total_analyzed > 0
+  )
+  const hasEnhancedStats = hasThreatIntelData || hasReachabilityData
   
   // Trend Data Processing
   const sortedScans = [...filteredScans].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
