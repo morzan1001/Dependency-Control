@@ -23,13 +23,22 @@ class OutdatedAnalyzer(Analyzer):
         components = self._get_components(sbom, parsed_components)
         results = []
 
-        async with httpx.AsyncClient() as client:
-            tasks = []
-            for component in components:
-                tasks.append(self._check_component(client, component))
-
-            component_results = await asyncio.gather(*tasks)
-            results = [r for r in component_results if r]
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Process in batches to avoid overwhelming deps.dev API
+            batch_size = 25
+            for i in range(0, len(components), batch_size):
+                batch = components[i:i + batch_size]
+                tasks = [self._check_component(client, comp) for comp in batch]
+                
+                component_results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                for result in component_results:
+                    if result and not isinstance(result, Exception):
+                        results.append(result)
+                
+                # Small delay between batches to avoid rate limits
+                if i + batch_size < len(components):
+                    await asyncio.sleep(0.1)
 
         return {"outdated_dependencies": results}
 
@@ -79,6 +88,12 @@ class OutdatedAnalyzer(Analyzer):
                         "message": f"Update available: {default_version}",
                     }
             return None
+        except httpx.TimeoutException:
+            logger.debug(f"Timeout checking outdated for {name}")
+            return None
+        except httpx.ConnectError:
+            logger.debug(f"Connection error checking outdated for {name}")
+            return None
         except Exception as e:
-            logger.error(f"Error checking outdated for {name}: {e}")
+            logger.debug(f"Error checking outdated for {name}: {type(e).__name__}")
             return None

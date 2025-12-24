@@ -30,7 +30,7 @@ class TyposquattingAnalyzer(Analyzer):
 
         logger.info("Updating popular packages list for Typosquatting detection...")
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             # 1. PyPI - Top 5000
             try:
                 # Source: https://github.com/hugovk/top-pypi-packages
@@ -45,8 +45,16 @@ class TyposquattingAnalyzer(Analyzer):
                     }
                     self._popular_packages_cache["pypi"] = packages
                     logger.info(f"Loaded {len(packages)} popular PyPI packages.")
+            except httpx.TimeoutException:
+                logger.debug("Timeout fetching PyPI top packages, using fallback")
+                if not self._popular_packages_cache["pypi"]:
+                    self._popular_packages_cache["pypi"] = self._get_static_pypi()
+            except httpx.ConnectError:
+                logger.debug("Connection error fetching PyPI top packages, using fallback")
+                if not self._popular_packages_cache["pypi"]:
+                    self._popular_packages_cache["pypi"] = self._get_static_pypi()
             except Exception as e:
-                logger.error(f"Failed to fetch PyPI top packages: {e}")
+                logger.debug(f"Failed to fetch PyPI top packages: {type(e).__name__}")
                 # Fallback to static list if empty
                 if not self._popular_packages_cache["pypi"]:
                     self._popular_packages_cache["pypi"] = self._get_static_pypi()

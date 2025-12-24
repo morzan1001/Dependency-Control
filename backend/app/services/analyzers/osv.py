@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Dict, List
 
@@ -21,47 +22,63 @@ class OSVAnalyzer(Analyzer):
         components = self._get_components(sbom, parsed_components)
         results = []
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             # OSV Batch API: POST https://api.osv.dev/v1/querybatch
+            # Process in chunks to avoid payload limits (max ~1000 queries per batch)
+            batch_size = 500
+            
+            for chunk_start in range(0, len(components), batch_size):
+                chunk = components[chunk_start:chunk_start + batch_size]
+                
+                batch_payload = {"queries": []}
+                valid_indices = []
 
-            batch_payload = {"queries": []}
-            valid_indices = []
+                for i, component in enumerate(chunk):
+                    purl = component.get("purl")
+                    if purl:
+                        batch_payload["queries"].append({"package": {"purl": purl}})
+                        valid_indices.append(chunk_start + i)
 
-            for i, component in enumerate(components):
-                purl = component.get("purl")
-                if purl:
-                    batch_payload["queries"].append({"package": {"purl": purl}})
-                    valid_indices.append(i)
+                if not batch_payload["queries"]:
+                    continue
 
-            if not batch_payload["queries"]:
-                return {"results": []}
+                try:
+                    response = await client.post(
+                        "https://api.osv.dev/v1/querybatch", json=batch_payload
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        batch_results = data.get("results", [])
 
-            try:
-                response = await client.post(
-                    "https://api.osv.dev/v1/querybatch", json=batch_payload
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    batch_results = data.get("results", [])
+                        for idx, res in enumerate(batch_results):
+                            vulns = res.get("vulns", [])
+                            if vulns:
+                                # Map back to component
+                                comp_idx = valid_indices[idx]
+                                comp = components[comp_idx]
+                                results.append(
+                                    {
+                                        "component": comp.get("name"),
+                                        "version": comp.get("version"),
+                                        "purl": comp.get("purl"),
+                                        "vulnerabilities": vulns,
+                                    }
+                                )
+                    elif response.status_code == 429:
+                        logger.warning("OSV API rate limit hit, waiting...")
+                        await asyncio.sleep(5)
+                    else:
+                        logger.warning(f"OSV Batch API error: {response.status_code}")
 
-                    for idx, res in enumerate(batch_results):
-                        vulns = res.get("vulns", [])
-                        if vulns:
-                            # Map back to component
-                            comp_idx = valid_indices[idx]
-                            comp = components[comp_idx]
-                            results.append(
-                                {
-                                    "component": comp.get("name"),
-                                    "version": comp.get("version"),
-                                    "purl": comp.get("purl"),
-                                    "vulnerabilities": vulns,
-                                }
-                            )
-                else:
-                    logger.error(f"OSV Batch API error: {response.status_code}")
-
-            except Exception as e:
-                logger.error(f"OSV Analysis Exception: {e}")
+                except httpx.TimeoutException:
+                    logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
+                except httpx.ConnectError:
+                    logger.warning("OSV API connection error")
+                except Exception as e:
+                    logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
+                
+                # Small delay between batches
+                if chunk_start + batch_size < len(components):
+                    await asyncio.sleep(0.2)
 
         return {"osv_vulnerabilities": results}

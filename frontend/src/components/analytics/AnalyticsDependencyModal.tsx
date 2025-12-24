@@ -44,7 +44,6 @@ import {
   Calendar,
   AlertTriangle,
   AlertOctagon,
-  TrendingUp,
   Link2,
   ChevronDown,
   ChevronUp,
@@ -144,6 +143,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
   
   const hasExternalLinks = metadata.homepage || metadata.repository_url || metadata.download_url
   const hasDepsDevData = metadata.deps_dev
+  const hasMaintainerInfo = metadata.author || metadata.publisher
   
   return (
     <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
@@ -158,20 +158,27 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             {metadata.deps_dev?.is_deprecated && (
               <Badge variant="destructive">Deprecated</Badge>
             )}
+            {metadata.license && (
+              <Badge variant={
+                metadata.license_category === "permissive" ? "default" :
+                metadata.license_category === "public_domain" ? "default" :
+                metadata.license_category === "weak_copyleft" ? "secondary" :
+                metadata.license_category === "strong_copyleft" ? "destructive" :
+                metadata.license_category === "network_copyleft" ? "destructive" :
+                "outline"
+              } className="text-xs">
+                <FileText className="h-3 w-3 mr-1" />
+                {metadata.license}
+              </Badge>
+            )}
           </div>
           {metadata.description && (
             <p className="text-sm text-muted-foreground mt-2">{metadata.description}</p>
           )}
         </div>
         
-        {/* Quick Stats */}
+        {/* Quick Stats - Only vulnerability count (project count shown in table) */}
         <div className="flex items-center gap-3 flex-shrink-0">
-          {metadata.project_count > 0 && (
-            <div className="text-center">
-              <p className="text-lg font-semibold">{metadata.project_count}</p>
-              <p className="text-xs text-muted-foreground">Projects</p>
-            </div>
-          )}
           {metadata.total_vulnerability_count > 0 && (
             <div className="text-center text-destructive">
               <p className="text-lg font-semibold">{metadata.total_vulnerability_count}</p>
@@ -181,7 +188,41 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       </div>
 
-      {/* deps.dev Stats Grid */}
+      {/* Known Advisories Warning - Always visible when present */}
+      {metadata.deps_dev?.known_advisories && metadata.deps_dev.known_advisories.length > 0 && (
+        <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
+          <AlertOctagon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium text-red-600 dark:text-red-400">
+              {metadata.deps_dev.known_advisories.length} Known Security {metadata.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
+            </p>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {metadata.deps_dev.known_advisories.map((advisory, i) => (
+                <a
+                  key={i}
+                  href={advisory.startsWith('GHSA-') 
+                    ? `https://github.com/advisories/${advisory}` 
+                    : advisory.startsWith('CVE-')
+                    ? `https://nvd.nist.gov/vuln/detail/${advisory}`
+                    : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={advisory.startsWith('GHSA-') || advisory.startsWith('CVE-') ? 'cursor-pointer' : ''}
+                >
+                  <Badge variant="destructive" className="text-xs hover:opacity-80">
+                    {advisory}
+                    {(advisory.startsWith('GHSA-') || advisory.startsWith('CVE-')) && (
+                      <ExternalLink className="h-2.5 w-2.5 ml-1" />
+                    )}
+                  </Badge>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* deps.dev Stats Grid - Always visible */}
       {hasDepsDevData && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {metadata.deps_dev?.stars !== undefined && (
@@ -223,7 +264,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* Scorecard */}
+      {/* Scorecard - Always visible */}
       {metadata.deps_dev?.scorecard && (
         <div className="flex items-center gap-3 p-3 bg-background rounded-md">
           <Shield className={cn(
@@ -261,31 +302,74 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* Known Advisories Warning */}
-      {metadata.deps_dev?.known_advisories && metadata.deps_dev.known_advisories.length > 0 && (
-        <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
-          <AlertOctagon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+      {/* External Links - Always visible */}
+      {hasExternalLinks && (
+        <div className="flex flex-wrap gap-2">
+          {metadata.homepage && (
+            <a
+              href={metadata.homepage}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
+            >
+              <Globe className="h-4 w-4" />
+              Homepage
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+          {metadata.repository_url && (
+            <a
+              href={metadata.repository_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
+            >
+              <GitBranch className="h-4 w-4" />
+              Repository
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+          {metadata.download_url && (
+            <a
+              href={metadata.download_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
+            >
+              <Download className="h-4 w-4" />
+              Download
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      )}
+
+      {/* License Risks - Always visible when present */}
+      {metadata.license_risks && metadata.license_risks.length > 0 && (
+        <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-md">
+          <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="font-medium text-red-600 dark:text-red-400">
-              {metadata.deps_dev.known_advisories.length} Known Security {metadata.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
+            <p className="font-medium text-amber-600 dark:text-amber-400">
+              License Considerations
             </p>
-            <div className="flex flex-wrap gap-1 mt-1">
-              {metadata.deps_dev.known_advisories.map((advisory, i) => (
-                <Badge key={i} variant="destructive" className="text-xs">
-                  {advisory}
-                </Badge>
+            <ul className="mt-1 space-y-0.5">
+              {metadata.license_risks.map((risk, i) => (
+                <li key={i} className="text-sm text-muted-foreground flex items-start gap-1">
+                  <span className="text-amber-500">•</span>
+                  {risk}
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         </div>
       )}
 
-      {/* Collapsible Details */}
+      {/* Collapsible Details - For less important info */}
       <Collapsible open={showDetails} onOpenChange={setShowDetails}>
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="sm" className="w-full justify-between">
             <span className="text-sm">
-              {showDetails ? "Hide" : "Show"} Details
+              {showDetails ? "Hide" : "Show"} Additional Details
             </span>
             {showDetails ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
@@ -310,25 +394,13 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
           )}
 
           {/* Maintainers */}
-          {(metadata.author || metadata.publisher) && (
+          {hasMaintainerInfo && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <User className="h-4 w-4" /> Maintainers
               </h4>
               <InfoRow icon={User} label="Author" value={metadata.author} />
               <InfoRow icon={Building} label="Publisher" value={metadata.publisher} />
-            </div>
-          )}
-
-          {/* External Links */}
-          {hasExternalLinks && (
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <ExternalLink className="h-4 w-4" /> External Links
-              </h4>
-              <InfoRow icon={Globe} label="Homepage" value={metadata.homepage} href={metadata.homepage ?? undefined} />
-              <InfoRow icon={GitBranch} label="Repository" value={metadata.repository_url} href={metadata.repository_url ?? undefined} />
-              <InfoRow icon={Download} label="Download" value={metadata.download_url} href={metadata.download_url ?? undefined} />
             </div>
           )}
 
@@ -354,50 +426,22 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* License */}
-          {metadata.license && (
+          {/* License Details */}
+          {metadata.license && metadata.license_url && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
-                <FileText className="h-4 w-4" /> License
-                {metadata.license_category && (
-                  <Badge variant={
-                    metadata.license_category === "permissive" ? "default" :
-                    metadata.license_category === "public_domain" ? "default" :
-                    metadata.license_category === "weak_copyleft" ? "secondary" :
-                    metadata.license_category === "strong_copyleft" ? "destructive" :
-                    metadata.license_category === "network_copyleft" ? "destructive" :
-                    "outline"
-                  } className="text-xs">
-                    {metadata.license_category.replace(/_/g, ' ')}
-                  </Badge>
-                )}
+                <FileText className="h-4 w-4" /> License Details
               </h4>
               <div className="ml-6">
-                {metadata.license_url ? (
-                  <a
-                    href={metadata.license_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-primary hover:underline"
-                  >
-                    {metadata.license}
-                  </a>
-                ) : (
-                  <p className="text-sm">{metadata.license}</p>
-                )}
+                <a
+                  href={metadata.license_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary hover:underline flex items-center gap-1"
+                >
+                  View full license text <ExternalLink className="h-3 w-3" />
+                </a>
               </div>
-              
-              {metadata.license_risks && metadata.license_risks.length > 0 && (
-                <div className="space-y-1 ml-6">
-                  <p className="text-xs text-muted-foreground">Risks</p>
-                  {metadata.license_risks.map((risk, i) => (
-                    <div key={i} className="flex items-start gap-2 text-sm text-amber-600 dark:text-amber-400">
-                      <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                      <span>{risk}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
 
@@ -412,29 +456,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
                 day: "numeric"
               })}
             />
-          )}
-
-          {/* Affected Projects */}
-          {metadata.affected_projects.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium flex items-center gap-2">
-                <TrendingUp className="h-4 w-4" /> Used in {metadata.affected_projects.length} Project{metadata.affected_projects.length !== 1 ? 's' : ''}
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {metadata.affected_projects.map((proj) => (
-                  <Link
-                    key={proj.id}
-                    to={`/projects/${proj.id}`}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded-md transition-colors"
-                  >
-                    {proj.name}
-                    <Badge variant={proj.direct ? "default" : "secondary"} className="ml-1 text-[10px] px-1">
-                      {proj.direct ? 'Direct' : 'Transitive'}
-                    </Badge>
-                  </Link>
-                ))}
-              </div>
-            </div>
           )}
 
           {/* Enrichment Sources */}

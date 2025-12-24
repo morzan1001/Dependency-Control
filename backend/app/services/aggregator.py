@@ -1335,6 +1335,13 @@ class ResultAggregator:
             comp_version = item.get("version")
 
             for vuln in item.get("vulnerabilities", []):
+                vuln_id = vuln.get("id", "")
+                
+                # Check if this is a malware entry from OpenSSF (MAL- prefix)
+                if vuln_id.startswith("MAL-"):
+                    self._normalize_osv_malware(vuln, comp_name, comp_version, source)
+                    continue
+                
                 # 1. Determine Severity
                 severity = "UNKNOWN"
 
@@ -1367,7 +1374,6 @@ class ResultAggregator:
                             break
 
                 # 3. ID Normalization: Prefer CVE if available in aliases
-                vuln_id = vuln.get("id")
                 aliases = vuln.get("aliases", [])
 
                 # Handle prefixed CVEs like DEBIAN-CVE-2025-10148
@@ -1408,6 +1414,53 @@ class ResultAggregator:
                     ),
                     source=source,
                 )
+
+    def _normalize_osv_malware(
+        self, vuln: Dict[str, Any], comp_name: str, comp_version: str, source: str = None
+    ):
+        """
+        Handle OpenSSF malicious-packages entries (MAL- prefix) from OSV.dev.
+        These are not vulnerabilities but confirmed malware.
+        """
+        vuln_id = vuln.get("id", "")
+        
+        # Extract affected versions
+        affected_versions = []
+        for affected in vuln.get("affected", []):
+            versions = affected.get("versions", [])
+            affected_versions.extend(versions)
+        
+        # Build references list
+        references = []
+        for ref in vuln.get("references", []):
+            if ref.get("url"):
+                references.append(ref["url"])
+        
+        description = vuln.get("summary") or vuln.get("details", "Malicious package detected")
+        
+        self._add_finding(
+            Finding(
+                id=f"MALWARE-{comp_name}",
+                type=FindingType.MALWARE,
+                severity=Severity.CRITICAL,
+                component=comp_name,
+                version=comp_version,
+                description=f"[{vuln_id}] {description}",
+                scanners=["osv"],
+                details={
+                    "osv_id": vuln_id,
+                    "source": "openssf",
+                    "reference": references[0] if references else None,
+                    "references": references,
+                    "published": vuln.get("published"),
+                    "modified": vuln.get("modified"),
+                    "affected_versions": affected_versions[:10],
+                    "osv_url": f"https://osv.dev/vulnerability/{vuln_id}",
+                },
+                aliases=[vuln_id],
+            ),
+            source=source,
+        )
 
     def _normalize_outdated(self, result: Dict[str, Any], source: str = None):
         for item in result.get("outdated_dependencies", []):
@@ -1584,13 +1637,20 @@ class ResultAggregator:
             )
 
     def _normalize_malware(self, result: Dict[str, Any], source: str = None):
+        """
+        Normalize malware findings from the OpenSourceMalware.com API (os_malware scanner).
+        Note: OpenSSF malware data comes through OSV scanner and is handled by _normalize_osv_malware.
+        """
         for item in result.get("malware_issues", []):
             malware_info = item.get("malware_info", {})
             threats = malware_info.get("threats", [])
 
             description = "Potential malware detected"
-            if threats:
-                description = f"Malware detected: {', '.join(threats)}"
+            if isinstance(threats, list) and threats:
+                if isinstance(threats[0], str):
+                    description = f"Malware detected: {', '.join(threats[:5])}"
+                    if len(threats) > 5:
+                        description += f" (+{len(threats) - 5} more)"
             elif malware_info.get("description"):
                 description = f"Malware detected: {malware_info.get('description')}"
 
@@ -1607,6 +1667,7 @@ class ResultAggregator:
                         "info": malware_info,
                         "threats": threats,
                         "reference": malware_info.get("reference"),
+                        "source": "opensourcemalware",
                     },
                 ),
                 source=source,
