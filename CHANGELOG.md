@@ -1,3 +1,11 @@
+# Release 0.9.7
+
+## 📦 Build & CI
+
+- chore: update version to 0.9.7 and improve stats check in ProjectOverview component (#0)
+
+
+
 # Release 0.9.6
 
 
