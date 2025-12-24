@@ -11,7 +11,7 @@ import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, Copy, Check, ArrowU
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from "sonner";
-import { AVAILABLE_ANALYZERS } from '@/lib/constants';
+import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from '@/lib/constants';
 import {
   Dialog,
   DialogContent,
@@ -290,24 +290,57 @@ export default function ProjectsPage() {
                     <div className="grid gap-2">
                       <Label>Active Analyzers</Label>
                       <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[300px] overflow-y-auto">
-                        {AVAILABLE_ANALYZERS.map((analyzer) => (
-                          <div key={analyzer.id} className="flex items-start space-x-2 py-2">
-                            <Checkbox 
-                              id={`analyzer-${analyzer.id}`}
-                              checked={analyzers.includes(analyzer.id)}
-                              onCheckedChange={() => toggleAnalyzer(analyzer.id)}
-                              className="mt-1"
-                            />
-                            <div className="flex flex-col gap-1">
-                                <Label htmlFor={`analyzer-${analyzer.id}`} className="font-medium cursor-pointer">
-                                  {analyzer.label}
-                                </Label>
-                                <p className="text-xs text-muted-foreground">
-                                    {analyzer.description}
-                                </p>
+                        {Object.entries(ANALYZER_CATEGORIES).map(([categoryId, categoryInfo]) => {
+                          const categoryAnalyzers = AVAILABLE_ANALYZERS.filter(a => a.category === categoryId);
+                          if (categoryAnalyzers.length === 0) return null;
+                          
+                          return (
+                            <div key={categoryId} className="mb-3 last:mb-0">
+                              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 pb-1 border-b">
+                                {categoryInfo.label}
+                              </div>
+                              {categoryAnalyzers.map((analyzer) => {
+                                const hasRequiredDeps = !analyzer.dependsOn || analyzer.dependsOn.some(dep => analyzers.includes(dep));
+                                return (
+                                  <div key={analyzer.id} className="flex items-start space-x-2 py-2">
+                                    <Checkbox 
+                                      id={`analyzer-${analyzer.id}`}
+                                      checked={analyzers.includes(analyzer.id)}
+                                      onCheckedChange={() => toggleAnalyzer(analyzer.id)}
+                                      className="mt-1"
+                                    />
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-2">
+                                        <Label htmlFor={`analyzer-${analyzer.id}`} className="font-medium cursor-pointer">
+                                          {analyzer.label}
+                                        </Label>
+                                        {analyzer.isPostProcessor && (
+                                          <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 rounded">
+                                            Post-Processor
+                                          </span>
+                                        )}
+                                        {analyzer.requiresCallgraph && (
+                                          <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 rounded">
+                                            Callgraph Required
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-xs text-muted-foreground">
+                                        {analyzer.description}
+                                      </p>
+                                      {analyzer.isPostProcessor && !hasRequiredDeps && analyzers.includes(analyzer.id) && (
+                                        <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                                          <AlertTriangle className="h-3 w-3" />
+                                          Requires at least one vulnerability scanner to be enabled
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -361,11 +394,27 @@ export default function ProjectsPage() {
                     Last scan: {project.last_scan_at ? new Date(project.last_scan_at).toLocaleDateString() : 'Never'}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
-                    {project.active_analyzers?.map(analyzer => (
-                        <span key={analyzer} className="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
-                            {analyzer}
-                        </span>
-                    ))}
+                    {project.active_analyzers?.slice(0, 6).map(analyzerId => {
+                        const analyzerInfo = AVAILABLE_ANALYZERS.find(a => a.id === analyzerId);
+                        return (
+                          <span 
+                            key={analyzerId} 
+                            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent ${
+                              analyzerInfo?.isPostProcessor 
+                                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                            }`}
+                            title={analyzerInfo?.description}
+                          >
+                            {analyzerInfo?.label || analyzerId}
+                          </span>
+                        );
+                    })}
+                    {(project.active_analyzers?.length || 0) > 6 && (
+                      <span className="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-semibold bg-muted text-muted-foreground">
+                        +{project.active_analyzers!.length - 6} more
+                      </span>
+                    )}
                 </div>
               </CardContent>
             </Card>

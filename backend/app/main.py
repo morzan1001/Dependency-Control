@@ -21,6 +21,7 @@ from app.api import health
 from app.api.v1.endpoints import (
     analytics,
     auth,
+    callgraph,
     ingest,
     integrations,
     invitations,
@@ -135,6 +136,9 @@ app.include_router(
 )
 app.include_router(
     analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"]
+)
+app.include_router(
+    callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"]
 )
 
 

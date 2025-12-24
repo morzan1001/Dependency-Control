@@ -1341,9 +1341,6 @@ async def get_project_recommendations(
             source_target = dep["source_target"]
             break
 
-    # ----------------------------------------------------------------
-    # NEW: Fetch historical data for trend analysis
-    # ----------------------------------------------------------------
     previous_scan_findings = None
     scan_history = None
 
@@ -1371,9 +1368,6 @@ async def get_project_recommendations(
     if recent_scans:
         scan_history = recent_scans
 
-    # ----------------------------------------------------------------
-    # NEW: Fetch cross-project data (only for user's accessible projects)
-    # ----------------------------------------------------------------
     cross_project_data = None
 
     # Only gather cross-project data if user has multiple projects

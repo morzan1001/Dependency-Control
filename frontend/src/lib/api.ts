@@ -135,6 +135,54 @@ export interface ProjectMember {
   inherited_from?: string;
 }
 
+// Extended Stats Types for EPSS/KEV/Reachability
+export interface ThreatIntelligenceStats {
+  kev_count: number;
+  kev_ransomware_count: number;
+  high_epss_count: number;
+  medium_epss_count: number;
+  avg_epss_score: number | null;
+  max_epss_score: number | null;
+  weaponized_count: number;
+  active_exploitation_count: number;
+}
+
+export interface ReachabilityStats {
+  analyzed_count: number;
+  reachable_count: number;
+  likely_reachable_count: number;
+  unreachable_count: number;
+  unknown_count: number;
+  reachable_critical: number;
+  reachable_high: number;
+}
+
+export interface PrioritizedCounts {
+  total: number;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  actionable_critical: number;
+  actionable_high: number;
+  actionable_total: number;
+  deprioritized_count: number;
+}
+
+export interface EnhancedStats {
+  critical?: number;
+  high?: number;
+  medium?: number;
+  low?: number;
+  info?: number;
+  unknown?: number;
+  risk_score?: number;
+  adjusted_risk_score?: number;
+  threat_intel?: ThreatIntelligenceStats | null;
+  reachability?: ReachabilityStats | null;
+  prioritized?: PrioritizedCounts | null;
+}
+
 export interface Project {
   _id: string;
   name: string;
@@ -152,14 +200,7 @@ export interface Project {
   owner_notification_preferences?: {
     [key: string]: string[];
   };
-  stats?: {
-    critical?: number;
-    high?: number;
-    medium?: number;
-    low?: number;
-    risk_score?: number;
-    [key: string]: number | undefined;
-  } | null;
+  stats?: EnhancedStats | null;
   last_scan_at?: string;
 }
 
@@ -250,14 +291,7 @@ export interface Scan {
   findings_summary?: Finding[];
   findings_count?: number;
   ignored_count?: number;
-  stats?: {
-    critical?: number;
-    high?: number;
-    medium?: number;
-    low?: number;
-    risk_score?: number;
-    [key: string]: number | undefined;
-  } | null;
+  stats?: EnhancedStats | null;
   completed_at?: string;
   sbom?: any;
   sboms?: any[];
@@ -270,7 +304,7 @@ export interface Scan {
     scan_id: string;
     status: string;
     findings_count: number;
-    stats: any;
+    stats: EnhancedStats | null;
     completed_at?: string;
     created_at?: string;
   };
@@ -681,6 +715,9 @@ export interface SystemSettings {
   smtp_password?: string;
   smtp_encryption?: 'starttls' | 'ssl' | 'none';
   emails_from_email: string;
+  
+  // Integrations
+  github_token?: string;
   open_source_malware_api_key?: string;
   slack_bot_token?: string;
   slack_client_id?: string;

@@ -4,11 +4,20 @@ on:
   push:
   pull_request:
 
+# Cancel in-progress runs when a new run is triggered
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Default project name: use repository name (can be overridden per-job)
+  PROJECT_NAME: ${{ github.repository }}
+
 jobs:
   scan-and-upload:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Install Syft
         run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
@@ -21,7 +30,6 @@ jobs:
           # Configure these secrets in your GitHub Repository Settings
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
-          PROJECT_NAME: "your-project-name"
         run: |
           # Prepare JSON payload
           jq -n \
@@ -32,8 +40,10 @@ jobs:
             --arg pipeline_iid "${{ github.run_number }}" \
             --arg project_url "${{ github.server_url }}/${{ github.repository }}" \
             --arg pipeline_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg job_id "${{ github.run_id }}" \
             --arg job_started_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            --arg commit_message "${{ github.event.head_commit.message }}" \
+            --arg commit_message "${{ github.event.head_commit.message || github.event.pull_request.title || '' }}" \
+            --arg commit_tag "${{ github.ref_type == 'tag' && github.ref_name || '' }}" \
             --slurpfile sbom sbom.json \
             '{
               project_name: $pn, 
@@ -43,22 +53,35 @@ jobs:
               pipeline_iid: ($pipeline_iid | tonumber),
               project_url: $project_url,
               pipeline_url: $pipeline_url,
+              job_id: ($job_id | tonumber),
               job_started_at: $job_started_at,
               commit_message: $commit_message,
+              commit_tag: $commit_tag,
               sboms: $sbom
             }' > payload.json
 
-          # Send to Backend
-          curl -X POST \
+          # Send to Backend with timeout and error handling
+          response=$(curl -sS --max-time 60 -X POST \
             -H "Content-Type: application/json" \
             -H "x-api-key: $DEP_CONTROL_API_KEY" \
             -d @payload.json \
-            "$DEP_CONTROL_URL/api/v1/ingest"
+            -w "\n%{http_code}" \
+            "$DEP_CONTROL_URL/api/v1/ingest")
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          
+          echo "Response: $body"
+          
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Error: HTTP $http_code"
+            exit 1
+          fi
 
   secret-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Important for TruffleHog to see history
       
@@ -95,7 +118,7 @@ jobs:
         env:
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
-          PROJECT_NAME: "your-project-name"
+          # PROJECT_NAME is inherited from workflow-level env
         run: |
           # Prepare JSON payload using jq
           jq -n \
@@ -143,7 +166,7 @@ jobs:
     container:
       image: returntocorp/semgrep
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Check Configuration
         id: check
@@ -177,7 +200,7 @@ jobs:
         env:
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
-          PROJECT_NAME: "your-project-name"
+          # PROJECT_NAME is inherited from workflow-level env
         run: |
           jq -n \
             --arg pn "$PROJECT_NAME" \
@@ -214,7 +237,7 @@ jobs:
     container:
       image: checkmarx/kics:latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Check Configuration
         id: check
@@ -251,7 +274,7 @@ jobs:
         env:
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
-          PROJECT_NAME: "your-project-name"
+          # PROJECT_NAME is inherited from workflow-level env
         run: |
           # Prepare payload
           # KICS output structure needs to be passed correctly
@@ -290,7 +313,7 @@ jobs:
   bearer-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       
       - name: Check Configuration
         id: check
@@ -323,7 +346,7 @@ jobs:
         env:
           DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
           DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
-          PROJECT_NAME: "your-project-name"
+          # PROJECT_NAME is inherited from workflow-level env
         run: |
           jq -n \
             --arg pn "$PROJECT_NAME" \
@@ -355,3 +378,227 @@ jobs:
             -d @payload.json \
             "$DEP_CONTROL_URL/api/v1/ingest/bearer"
 
+  # ---------------------------------------------------------------------------
+  # Callgraph Upload for Reachability Analysis
+  # ---------------------------------------------------------------------------
+  # This job generates and uploads a callgraph for reachability analysis.
+  # It automatically detects the project language and uses the appropriate tool.
+  # Supported: JavaScript/TypeScript (madge), Python (pyan3), Go (go-callvis)
+  # ---------------------------------------------------------------------------
+  callgraph-upload:
+    runs-on: ubuntu-latest
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check if Reachability Analyzer is Enabled
+        id: check
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          SCANNER_NAME: "reachability"
+        run: |
+          AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
+          CONFIG=$(curl -s -H "$AUTH_HEADER" "$DEP_CONTROL_URL/api/v1/ingest/config")
+          
+          if echo "$CONFIG" | jq -e ".active_analyzers | index(\"$SCANNER_NAME\")" > /dev/null; then
+            echo "Scanner $SCANNER_NAME is enabled."
+            echo "enabled=true" >> $GITHUB_OUTPUT
+          else
+            echo "Scanner $SCANNER_NAME is disabled."
+            echo "enabled=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Detect Language and Setup
+        if: steps.check.outputs.enabled == 'true'
+        id: detect
+        run: |
+          DETECTED_LANG=""
+          
+          if [ -f "package.json" ]; then
+            if [ -f "tsconfig.json" ]; then
+              DETECTED_LANG="typescript"
+            else
+              DETECTED_LANG="javascript"
+            fi
+          elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+            DETECTED_LANG="python"
+          elif [ -f "go.mod" ]; then
+            DETECTED_LANG="go"
+          else
+            echo "Could not detect project language. Skipping callgraph generation."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Detected language: $DETECTED_LANG"
+          echo "language=$DETECTED_LANG" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Setup Node.js
+        if: steps.check.outputs.enabled == 'true' && steps.detect.outputs.skip != 'true' && (steps.detect.outputs.language == 'javascript' || steps.detect.outputs.language == 'typescript')
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Setup Python
+        if: steps.check.outputs.enabled == 'true' && steps.detect.outputs.skip != 'true' && steps.detect.outputs.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          
+      - name: Setup Go
+        if: steps.check.outputs.enabled == 'true' && steps.detect.outputs.skip != 'true' && steps.detect.outputs.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Generate JavaScript/TypeScript Callgraph
+        if: steps.check.outputs.enabled == 'true' && steps.detect.outputs.skip != 'true' && (steps.detect.outputs.language == 'javascript' || steps.detect.outputs.language == 'typescript')
+        run: |
+          npm install -g madge
+          
+          SRC_DIR="."
+          [ -d "src" ] && SRC_DIR="src"
+          [ -d "lib" ] && SRC_DIR="lib"
+          
+          if [ "${{ steps.detect.outputs.language }}" = "typescript" ]; then
+            madge --json --ts-config tsconfig.json "$SRC_DIR" > callgraph.json 2>/dev/null || \
+            madge --json "$SRC_DIR" > callgraph.json
+          else
+            madge --json "$SRC_DIR" > callgraph.json
+          fi
+          
+          echo "CALLGRAPH_FORMAT=madge" >> $GITHUB_ENV
+
+      - name: Generate Python Callgraph
+        if: steps.check.outputs.enabled == 'true' && steps.detect.outputs.skip != 'true' && steps.detect.outputs.language == 'python'
+        run: |
+          pip install pyan3
+          
+          find . -name "*.py" -not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/node_modules/*" > python_files.txt
+          
+          if [ -s python_files.txt ]; then
+            cat python_files.txt | xargs pyan3 --dot --grouped > callgraph.dot 2>/dev/null || true
+            
+            python3 << 'EOF'
+import re
+import json
+
+try:
+    with open('callgraph.dot', 'r') as f:
+        content = f.read()
+
+    edges = []
+    nodes = set()
+
+    for match in re.finditer(r'"([^"]+)"\s*->\s*"([^"]+)"', content):
+        source, target = match.groups()
+        edges.append({'source': source, 'target': target})
+        nodes.add(source)
+        nodes.add(target)
+
+    result = {
+        'nodes': list(nodes),
+        'edges': edges
+    }
+
+    with open('callgraph.json', 'w') as f:
+        json.dump(result, f)
+except Exception as e:
+    print(f"Error processing callgraph: {e}")
+    # Create empty callgraph
+    with open('callgraph.json', 'w') as f:
+        json.dump({'nodes': [], 'edges': []}, f)
+EOF
+          fi
+          
+          echo "CALLGRAPH_FORMAT=pyan" >> $GITHUB_ENV
+
+      - name: Generate Go Callgraph
+        if: steps.check.outputs.enabled == 'true' && steps.detect.outputs.skip != 'true' && steps.detect.outputs.language == 'go'
+        run: |
+          go install github.com/ondrajz/go-callvis@latest
+          
+          MODULE_NAME=$(head -1 go.mod | awk '{print $2}')
+          
+          $(go env GOPATH)/bin/go-callvis -nostd -format=dot "$MODULE_NAME" > callgraph.dot 2>/dev/null || true
+          
+          python3 << 'EOF'
+import re
+import json
+
+try:
+    with open('callgraph.dot', 'r') as f:
+        content = f.read()
+
+    edges = []
+    nodes = set()
+
+    for match in re.finditer(r'"([^"]+)"\s*->\s*"([^"]+)"', content):
+        source, target = match.groups()
+        edges.append({'source': source, 'target': target})
+        nodes.add(source)
+        nodes.add(target)
+
+    result = {
+        'nodes': list(nodes),
+        'edges': edges
+    }
+
+    with open('callgraph.json', 'w') as f:
+        json.dump(result, f)
+except Exception as e:
+    print(f"Error processing callgraph: {e}")
+    with open('callgraph.json', 'w') as f:
+        json.dump({'nodes': [], 'edges': []}, f)
+EOF
+          
+          echo "CALLGRAPH_FORMAT=generic" >> $GITHUB_ENV
+
+      - name: Upload Callgraph
+        if: steps.check.outputs.enabled == 'true' && steps.detect.outputs.skip != 'true'
+        env:
+          DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
+          DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
+          # PROJECT_NAME is inherited from workflow-level env
+        run: |
+          if [ ! -f "callgraph.json" ] || [ ! -s "callgraph.json" ]; then
+            echo "No callgraph generated. Skipping upload."
+            exit 0
+          fi
+          
+          # Prepare payload - includes run_id for matching with SBOM pipeline
+          jq -n \
+            --arg format "$CALLGRAPH_FORMAT" \
+            --arg lang "${{ steps.detect.outputs.language }}" \
+            --argjson pipeline_id "${{ github.run_id }}" \
+            --arg branch "${{ github.ref_name }}" \
+            --arg commit "${{ github.sha }}" \
+            --slurpfile graph callgraph.json \
+            '{
+              format: $format,
+              language: $lang,
+              pipeline_id: $pipeline_id,
+              branch: $branch,
+              commit_hash: $commit,
+              data: $graph[0]
+            }' > callgraph_payload.json
+          
+          # Get project ID from Dependency Control
+          PROJECT_INFO=$(curl -s -H "x-api-key: $DEP_CONTROL_API_KEY" "$DEP_CONTROL_URL/api/v1/projects?name=$PROJECT_NAME")
+          PROJECT_ID=$(echo "$PROJECT_INFO" | jq -r '.[0]._id // empty')
+          
+          if [ -z "$PROJECT_ID" ]; then
+            echo "Project not found in Dependency Control. Skipping callgraph upload."
+            exit 0
+          fi
+          
+          echo "Uploading callgraph to project: $PROJECT_ID"
+          
+          response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/projects/$PROJECT_ID/callgraph" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $DEP_CONTROL_API_KEY" \
+            -d @callgraph_payload.json)
+          
+          echo "Response: $response"

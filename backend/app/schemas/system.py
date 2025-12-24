@@ -10,6 +10,9 @@ class SystemSettingsBase(BaseModel):
     enforce_2fa: bool = False
     enforce_email_verification: bool = False
 
+    # Integrations
+    github_token: Optional[str] = None
+
     smtp_host: Optional[str] = None
     smtp_port: int = 587
     smtp_user: Optional[str] = None

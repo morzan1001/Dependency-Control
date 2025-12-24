@@ -188,6 +188,87 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
     color: 'text-red-500',
     bgColor: 'bg-red-500/10',
   },
+  // ================================================================
+  // NEW: Hotspot & Actionable Recommendations
+  // ================================================================
+  critical_hotspot: {
+    icon: Zap,
+    label: 'Critical Hotspot',
+    color: 'text-red-600',
+    bgColor: 'bg-red-600/20',
+  },
+  known_exploit: {
+    icon: ShieldAlert,
+    label: 'Known Exploit (KEV)',
+    color: 'text-red-500',
+    bgColor: 'bg-red-500/20',
+  },
+  ransomware_risk: {
+    icon: ShieldX,
+    label: 'Ransomware Risk',
+    color: 'text-red-700',
+    bgColor: 'bg-red-700/20',
+  },
+  actively_exploited: {
+    icon: TrendingUp,
+    label: 'High Exploit Probability',
+    color: 'text-orange-600',
+    bgColor: 'bg-orange-600/20',
+  },
+  malware_detected: {
+    icon: ShieldX,
+    label: 'Malware Detected',
+    color: 'text-red-800',
+    bgColor: 'bg-red-800/20',
+  },
+  typosquat_detected: {
+    icon: AlertTriangle,
+    label: 'Typosquatting',
+    color: 'text-amber-600',
+    bgColor: 'bg-amber-600/20',
+  },
+  hash_mismatch: {
+    icon: Shield,
+    label: 'Hash Mismatch',
+    color: 'text-red-500',
+    bgColor: 'bg-red-500/10',
+  },
+  eol_dependency: {
+    icon: Clock,
+    label: 'End-of-Life',
+    color: 'text-gray-600',
+    bgColor: 'bg-gray-600/20',
+  },
+  quick_win: {
+    icon: Lightbulb,
+    label: 'Quick Win',
+    color: 'text-green-600',
+    bgColor: 'bg-green-600/20',
+  },
+  single_update_multi_fix: {
+    icon: ArrowUpCircle,
+    label: 'Multi-Fix Update',
+    color: 'text-green-500',
+    bgColor: 'bg-green-500/20',
+  },
+  toxic_dependency: {
+    icon: AlertTriangle,
+    label: 'Toxic Dependency',
+    color: 'text-purple-600',
+    bgColor: 'bg-purple-600/20',
+  },
+  attack_surface_reduction: {
+    icon: Shield,
+    label: 'Reduce Attack Surface',
+    color: 'text-blue-600',
+    bgColor: 'bg-blue-600/10',
+  },
+  critical_risk: {
+    icon: ShieldAlert,
+    label: 'Critical Risk',
+    color: 'text-red-500',
+    bgColor: 'bg-red-500/10',
+  },
 }
 
 const effortConfig = {
@@ -733,8 +814,9 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                     </div>
                   ))}
                   {recommendation.action.suggestion && (
-                    <div className="text-muted-foreground mt-2 text-xs">
-                      💡 {recommendation.action.suggestion}
+                    <div className="text-muted-foreground mt-2 text-xs flex items-center gap-1">
+                      <Lightbulb className="h-3 w-3" />
+                      {recommendation.action.suggestion}
                     </div>
                   )}
                 </div>
@@ -804,23 +886,35 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
             {/* CVEs */}
             {recommendation.action.cves && recommendation.action.cves.length > 0 && (
               <div className="space-y-2">
-                <h5 className="text-sm font-medium">Related CVEs</h5>
+                <h5 className="text-sm font-medium">Related Vulnerabilities</h5>
                 <div className="flex flex-wrap gap-1">
-                  {recommendation.action.cves.map((cve) => (
-                    <a
-                      key={cve}
-                      href={`https://nvd.nist.gov/vuln/detail/${cve}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1"
-                    >
-                      <Badge variant="outline" className="hover:bg-muted cursor-pointer">
-                        {cve}
-                        <ExternalLink className="h-3 w-3 ml-1" />
-                      </Badge>
-                    </a>
-                  ))}
+                  {recommendation.action.cves.map((cve) => {
+                    const isCve = cve.startsWith('CVE-');
+                    const isGhsa = cve.startsWith('GHSA-');
+                    const link = isCve 
+                      ? `https://nvd.nist.gov/vuln/detail/${cve}`
+                      : isGhsa 
+                        ? `https://github.com/advisories/${cve}`
+                        : null;
+                    
+                    return link ? (
+                      <a
+                        key={cve}
+                        href={link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1"
+                      >
+                        <Badge variant="outline" className="hover:bg-muted cursor-pointer">
+                          {cve}
+                          <ExternalLink className="h-3 w-3 ml-1" />
+                        </Badge>
+                      </a>
+                    ) : (
+                      <Badge key={cve} variant="outline">{cve}</Badge>
+                    );
+                  })}
                 </div>
               </div>
             )}

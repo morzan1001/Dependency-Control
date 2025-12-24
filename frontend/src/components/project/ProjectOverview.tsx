@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Activity, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ThreatIntelligenceDashboard } from '@/components/ThreatIntelligenceDashboard'
 
 interface ProjectOverviewProps {
   projectId: string
@@ -57,7 +58,11 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       }));
 
       // 2. Calculate Global Stats (Use the absolute latest scan across all selected branches)
-      let globalStats = { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
+      let globalStats = { 
+          critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0,
+          risk_score: 0, adjusted_risk_score: 0,
+          threat_intel: null as any, reachability: null as any, prioritized: null as any
+      };
       
       // Find the most recent scan overall
       const latestScan = Object.values(latestScansByBranch).sort((a, b) => 
@@ -71,11 +76,16 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
               medium: latestScan.stats.medium || 0,
               low: latestScan.stats.low || 0,
               info: latestScan.stats.info || 0,
-              unknown: latestScan.stats.unknown || 0
+              unknown: latestScan.stats.unknown || 0,
+              risk_score: latestScan.stats.risk_score || 0,
+              adjusted_risk_score: latestScan.stats.adjusted_risk_score || 0,
+              threat_intel: latestScan.stats.threat_intel || null,
+              reachability: latestScan.stats.reachability || null,
+              prioritized: latestScan.stats.prioritized || null,
           };
       }
 
-      return { stats: globalStats, branchStats: branchStatsData };
+      return { stats: globalStats, branchStats: branchStatsData, latestScan };
   }, [filteredScans]);
 
   if (isLoading) {
@@ -89,8 +99,9 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
     )
   }
 
-  const stats = projectStats?.stats || { critical: 0, high: 0, medium: 0, low: 0 }
+  const stats = projectStats?.stats || { critical: 0, high: 0, medium: 0, low: 0, risk_score: 0 }
   const branchStats = projectStats?.branchStats || []
+  const hasEnhancedStats = stats.threat_intel || stats.reachability
   
   // Trend Data Processing
   const sortedScans = [...filteredScans].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
@@ -170,6 +181,11 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           </CardContent>
         </Card>
       </div>
+
+      {/* Threat Intelligence Dashboard - shown when EPSS/KEV/Reachability data is available */}
+      {hasEnhancedStats && (
+        <ThreatIntelligenceDashboard stats={stats} />
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
         <Card className="col-span-4">

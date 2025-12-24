@@ -24,6 +24,10 @@ class SystemSettings(BaseModel):
     emails_from_email: str = "info@dependencycontrol.local"
 
     # Integrations
+    github_token: Optional[str] = Field(
+        None,
+        description="Personal Access Token for GitHub API. Increases rate limits for GHSA lookups and maintainer checks.",
+    )
     open_source_malware_api_key: Optional[str] = None
     slack_bot_token: Optional[str] = None
     slack_client_id: Optional[str] = None

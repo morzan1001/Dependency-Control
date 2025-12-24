@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
+import { isPostProcessorResult, PostProcessorResultCard } from '@/components/PostProcessorResults'
 
 function CodeBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)
@@ -44,13 +45,28 @@ export default function ScanDetails() {
   const { projectId, scanId } = useParams<{ projectId: string, scanId: string }>()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+    const [searchParams, setSearchParams] = useSearchParams()
   const sbomRefs = useRef<(HTMLDivElement | null)[]>([])
   
   // Get tab and sbom from URL params
   const tabParam = searchParams.get('tab')
   const sbomParam = searchParams.get('sbom')
   const [activeTab, setActiveTab] = useState(tabParam || 'overview')
+
+    // Keep active tab in sync with URL params (important when navigating within the same route)
+    useEffect(() => {
+        setActiveTab(tabParam || 'overview')
+    }, [tabParam])
+
+    const handleTabChange = (value: string) => {
+        setActiveTab(value)
+        const next = new URLSearchParams(searchParams)
+        next.set('tab', value)
+        if (value !== 'raw') {
+            next.delete('sbom')
+        }
+        setSearchParams(next, { replace: true })
+    }
 
   const { data: scan, isLoading: isScanLoading } = useQuery({
     queryKey: ['scan', scanId],
@@ -123,7 +139,7 @@ export default function ScanDetails() {
         }
       }, 100)
     }
-  }, [activeTab, sbomParam, isResultsLoading])
+    }, [activeTab, sbomParam, isSbomsLoading, scanSboms?.length])
 
   if (isScanLoading || isProjectLoading) {
     return (
@@ -412,7 +428,7 @@ export default function ScanDetails() {
             </Card>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+            <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
         <TabsList>
             <TabsTrigger value="overview">All Findings</TabsTrigger>
             {showSecurity && <TabsTrigger value="security">Security</TabsTrigger>}
@@ -466,12 +482,31 @@ export default function ScanDetails() {
                 </div>
             ) : (
                 <div className="space-y-8">
-                    {/* Analysis Results */}
-                    {scanResults && scanResults.length > 0 && (
+                    {/* Post-Processor Results (EPSS/KEV, Reachability) */}
+                    {scanResults && scanResults.filter(r => isPostProcessorResult(r.analyzer_name)).length > 0 && (
                         <div className="space-y-4">
-                            <h3 className="text-lg font-medium">Analysis Results</h3>
+                            <h3 className="text-lg font-medium">Post-Processor Results</h3>
                             <div className="grid gap-6">
                                 {scanResults
+                                    .filter(r => isPostProcessorResult(r.analyzer_name))
+                                    .map((result) => (
+                                        <PostProcessorResultCard 
+                                            key={result._id}
+                                            analyzerName={result.analyzer_name}
+                                            result={result.result}
+                                        />
+                                    ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Analysis Results (non-post-processor) */}
+                    {scanResults && scanResults.filter(r => !isPostProcessorResult(r.analyzer_name)).length > 0 && (
+                        <div className="space-y-4">
+                            <h3 className="text-lg font-medium">Scanner Results</h3>
+                            <div className="grid gap-6">
+                                {scanResults
+                                    .filter(r => !isPostProcessorResult(r.analyzer_name))
                                     .map((result) => (
                                     <Card key={result._id} className="overflow-hidden">
                                         <CardHeader className="bg-muted/50 pb-4">

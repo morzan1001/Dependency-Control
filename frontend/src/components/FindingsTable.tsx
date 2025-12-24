@@ -6,7 +6,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
-import { ArrowUp, ArrowDown, Container, FileCode, HardDrive, Layers } from 'lucide-react';
+import { ArrowUp, ArrowDown, Container, FileCode, HardDrive, Layers, Shield, AlertTriangle, AlertCircle, AlertOctagon, Info, CircleAlert } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants';
 import {
   Tooltip,
@@ -241,7 +241,48 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                 ) : (
                                     <>
                                         <TableCell className="p-4 align-middle">
-                                            <SeverityBadge severity={finding.severity} />
+                                            <div className="flex items-center gap-1.5">
+                                                <SeverityBadge severity={finding.severity} />
+                                                {/* Reachability indicator */}
+                                                {finding.details?.reachability && (
+                                                    <TooltipProvider>
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <div className={`flex items-center justify-center w-5 h-5 rounded-full ${
+                                                                    finding.details.reachability.is_reachable
+                                                                        ? 'bg-red-100 text-red-600'
+                                                                        : 'bg-green-100 text-green-600'
+                                                                }`}>
+                                                                    {finding.details.reachability.is_reachable ? (
+                                                                        <AlertTriangle className="h-3 w-3" />
+                                                                    ) : (
+                                                                        <Shield className="h-3 w-3" />
+                                                                    )}
+                                                                </div>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent side="right">
+                                                                <div className="space-y-1">
+                                                                    <p className="font-medium">
+                                                                        {finding.details.reachability.is_reachable 
+                                                                            ? 'Reachable Code' 
+                                                                            : 'Not Reachable'}
+                                                                    </p>
+                                                                    {finding.details.reachability.analysis_level && (
+                                                                        <p className="text-xs">
+                                                                            Analysis: {finding.details.reachability.analysis_level}
+                                                                        </p>
+                                                                    )}
+                                                                    {finding.details.reachability.confidence_score && (
+                                                                        <p className="text-xs">
+                                                                            Confidence: {Math.round(finding.details.reachability.confidence_score * 100)}%
+                                                                        </p>
+                                                                    )}
+                                                                </div>
+                                                            </TooltipContent>
+                                                        </Tooltip>
+                                                    </TooltipProvider>
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell className="p-4 align-middle font-mono text-xs truncate" title={finding.id}>
                                             {finding.type === 'vulnerability' && finding.details?.vulnerabilities?.length > 1 
@@ -313,7 +354,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                     scanId={scanId}
                     isOpen={!!selectedFinding} 
                     onClose={() => setSelectedFinding(null)} 
-                    onSelectFinding={(id) => {
+                    onSelectFinding={async (id) => {
                         // First try exact match by ID
                         let found = allRows.find(f => f.id === id);
                         
@@ -361,6 +402,39 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                 );
                             }
                         }
+
+                        // If not found in the currently loaded rows (e.g., switching between quality/security), fetch from API
+                        if (!found) {
+                            try {
+                                if (id.startsWith("OUTDATED-")) {
+                                    const component = id.replace("OUTDATED-", "")
+                                    const res = await getScanFindings(scanId, { type: 'outdated', search: component, skip: 0, limit: 200 })
+                                    found = res.items.find(f => f.type === 'outdated' && f.component?.toLowerCase() === component.toLowerCase())
+                                } else if (id.startsWith("QUALITY:")) {
+                                    const parts = id.split(":")
+                                    const component = parts[1]
+                                    const version = parts[2]
+                                    const res = await getScanFindings(scanId, { type: 'quality', search: component, skip: 0, limit: 200 })
+                                    found = res.items.find(f => f.type === 'quality' && f.component?.toLowerCase() === component?.toLowerCase() && (!version || f.version === version))
+                                } else if (id.startsWith("LIC-")) {
+                                    const res = await getScanFindings(scanId, { type: 'license', search: id, skip: 0, limit: 200 })
+                                    found = res.items.find(f => f.id === id) || res.items[0]
+                                } else if (id.startsWith("EOL-")) {
+                                    const component = id.replace("EOL-", "").split("-")[0]
+                                    const res = await getScanFindings(scanId, { type: 'eol', search: component, skip: 0, limit: 200 })
+                                    found = res.items.find(f => f.type === 'eol' && f.component?.toLowerCase() === component?.toLowerCase())
+                                } else if (id.includes(":") && !id.startsWith("AGG:")) {
+                                    const [component, version] = id.split(":")
+                                    const res = await getScanFindings(scanId, { type: 'vulnerability', search: component, skip: 0, limit: 200 })
+                                    found = res.items.find(f => f.type === 'vulnerability' && f.component?.toLowerCase() === component?.toLowerCase() && f.version === version)
+                                } else {
+                                    const res = await getScanFindings(scanId, { search: id, skip: 0, limit: 200 })
+                                    found = res.items.find(f => f.id === id) || res.items[0]
+                                }
+                            } catch {
+                                // ignore; keep modal as-is
+                            }
+                        }
                         
                         if (found) setSelectedFinding(found);
                     }}
@@ -371,14 +445,21 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-    const color = {
-        CRITICAL: "bg-red-500",
-        HIGH: "bg-orange-500",
-        MEDIUM: "bg-yellow-500",
-        LOW: "bg-blue-500",
-        INFO: "bg-gray-500",
-        UNKNOWN: "bg-gray-400"
-    }[severity] || "bg-gray-400"
+    const config = {
+        CRITICAL: { color: "bg-red-500", icon: AlertOctagon },
+        HIGH: { color: "bg-orange-500", icon: AlertTriangle },
+        MEDIUM: { color: "bg-yellow-500", icon: AlertCircle },
+        LOW: { color: "bg-blue-500", icon: Info },
+        INFO: { color: "bg-gray-500", icon: Info },
+        UNKNOWN: { color: "bg-gray-400", icon: CircleAlert }
+    }[severity] || { color: "bg-gray-400", icon: CircleAlert }
 
-    return <Badge className={`${color} hover:${color} text-white`}>{severity}</Badge>
+    const Icon = config.icon
+
+    return (
+        <Badge className={`${config.color} hover:${config.color} text-white flex items-center gap-1`}>
+            <Icon className="h-3 w-3" />
+            {severity}
+        </Badge>
+    )
 }

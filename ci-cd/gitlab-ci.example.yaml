@@ -90,19 +90,28 @@ dependency-scan:
       # Method 1: GitLab Integration (Recommended)
       if [ -z "$DEP_CONTROL_API_KEY" ]; then
         echo "Using GitLab Identity Token (OIDC)..."
-        curl -X POST \
-          -H "Content-Type: application/json" \
-          -H "Job-Token: $DEP_CONTROL_TOKEN" \
-          -d @payload.json \
-          "$DEP_CONTROL_URL/api/v1/ingest"
+        AUTH_HEADER="Job-Token: $DEP_CONTROL_TOKEN"
       else
         # Method 2: API Key
         echo "Using API Key..."
-        curl -X POST \
-          -H "Content-Type: application/json" \
-          -H "x-api-key: $DEP_CONTROL_API_KEY" \
-          -d @payload.json \
-          "$DEP_CONTROL_URL/api/v1/ingest"
+        AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
+      fi
+      
+      response=$(curl -sS --max-time 60 -X POST \
+        -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
+        -d @payload.json \
+        -w "\n%{http_code}" \
+        "$DEP_CONTROL_URL/api/v1/ingest")
+      
+      http_code=$(echo "$response" | tail -n1)
+      body=$(echo "$response" | sed '$d')
+      
+      echo "Response: $body"
+      
+      if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+        echo "Error: HTTP $http_code"
+        exit 1
       fi
 
 secret-scan:
@@ -364,3 +373,214 @@ bearer-scan:
           -d @payload.json
       fi
 
+# ---------------------------------------------------------------------------
+# Callgraph Upload for Reachability Analysis
+# ---------------------------------------------------------------------------
+# This job generates and uploads a callgraph for reachability analysis.
+# It automatically detects the project language and uses the appropriate tool.
+# Supported: JavaScript/TypeScript (madge), Python (pyan3), Go (go-callvis)
+# ---------------------------------------------------------------------------
+callgraph-upload:
+  stage: dependency-scan
+  image: node:20-alpine
+  id_tokens:
+    DEP_CONTROL_TOKEN:
+      aud: dependency-control
+  variables:
+    # Optionally specify the language: auto, javascript, typescript, python, go
+    CALLGRAPH_LANGUAGE: "auto"
+    SCANNER_NAME: "reachability"
+  before_script:
+    - apk add --no-cache curl jq bash git python3 py3-pip graphviz go
+  script:
+    - *check_scanner
+    
+    - echo "Detecting project language..."
+    - |
+      DETECTED_LANG=""
+      
+      # Auto-detect language
+      if [ "$CALLGRAPH_LANGUAGE" = "auto" ]; then
+        if [ -f "package.json" ]; then
+          if [ -f "tsconfig.json" ]; then
+            DETECTED_LANG="typescript"
+          else
+            DETECTED_LANG="javascript"
+          fi
+        elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+          DETECTED_LANG="python"
+        elif [ -f "go.mod" ]; then
+          DETECTED_LANG="go"
+        else
+          echo "Could not detect project language. Skipping callgraph generation."
+          exit 0
+        fi
+      else
+        DETECTED_LANG="$CALLGRAPH_LANGUAGE"
+      fi
+      
+      echo "Detected language: $DETECTED_LANG"
+
+    - echo "Generating callgraph..."
+    - |
+      case "$DETECTED_LANG" in
+        javascript|typescript)
+          echo "Using madge for $DETECTED_LANG..."
+          npm install -g madge
+          
+          # Find the source directory
+          SRC_DIR="."
+          [ -d "src" ] && SRC_DIR="src"
+          [ -d "lib" ] && SRC_DIR="lib"
+          
+          # Generate callgraph in JSON format
+          if [ "$DETECTED_LANG" = "typescript" ]; then
+            madge --json --ts-config tsconfig.json "$SRC_DIR" > callgraph.json 2>/dev/null || \
+            madge --json "$SRC_DIR" > callgraph.json
+          else
+            madge --json "$SRC_DIR" > callgraph.json
+          fi
+          
+          CALLGRAPH_FORMAT="madge"
+          ;;
+          
+        python)
+          echo "Using pyan3 for Python..."
+          pip3 install pyan3 --quiet
+          
+          # Find all Python files
+          find . -name "*.py" -not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/node_modules/*" > python_files.txt
+          
+          # Generate callgraph
+          if [ -s python_files.txt ]; then
+            cat python_files.txt | xargs pyan3 --dot --grouped > callgraph.dot 2>/dev/null || true
+            
+            # Convert to JSON format
+            python3 -c "
+import re
+import json
+
+with open('callgraph.dot', 'r') as f:
+    content = f.read()
+
+edges = []
+nodes = set()
+
+# Parse DOT format
+for match in re.finditer(r'\"([^\"]+)\"\s*->\s*\"([^\"]+)\"', content):
+    source, target = match.groups()
+    edges.append({'source': source, 'target': target})
+    nodes.add(source)
+    nodes.add(target)
+
+result = {
+    'nodes': list(nodes),
+    'edges': edges
+}
+
+with open('callgraph.json', 'w') as f:
+    json.dump(result, f)
+" || true
+          fi
+          
+          CALLGRAPH_FORMAT="pyan"
+          ;;
+          
+        go)
+          echo "Using go-callvis for Go..."
+          go install github.com/ondrajz/go-callvis@latest
+          
+          # Get module name
+          MODULE_NAME=$(head -1 go.mod | awk '{print $2}')
+          
+          # Generate callgraph
+          $(go env GOPATH)/bin/go-callvis -nostd -format=dot "$MODULE_NAME" > callgraph.dot 2>/dev/null || true
+          
+          # Convert to JSON format
+          python3 -c "
+import re
+import json
+
+with open('callgraph.dot', 'r') as f:
+    content = f.read()
+
+edges = []
+nodes = set()
+
+for match in re.finditer(r'\"([^\"]+)\"\s*->\s*\"([^\"]+)\"', content):
+    source, target = match.groups()
+    edges.append({'source': source, 'target': target})
+    nodes.add(source)
+    nodes.add(target)
+
+result = {
+    'nodes': list(nodes),
+    'edges': edges
+}
+
+with open('callgraph.json', 'w') as f:
+    json.dump(result, f)
+" || true
+          
+          CALLGRAPH_FORMAT="generic"
+          ;;
+          
+        *)
+          echo "Unsupported language: $DETECTED_LANG"
+          exit 0
+          ;;
+      esac
+
+    - echo "Uploading callgraph..."
+    - |
+      if [ ! -f "callgraph.json" ] || [ ! -s "callgraph.json" ]; then
+        echo "No callgraph generated. Skipping upload."
+        exit 0
+      fi
+      
+      # Prepare payload
+      jq -n \
+        --arg format "$CALLGRAPH_FORMAT" \
+        --arg lang "$DETECTED_LANG" \
+        --arg pipeline_id "$CI_PIPELINE_ID" \
+        --arg branch "$CI_COMMIT_REF_NAME" \
+        --arg commit "$CI_COMMIT_SHA" \
+        --slurpfile graph callgraph.json \
+        '{
+          format: $format,
+          language: $lang,
+          pipeline_id: ($pipeline_id | tonumber),
+          branch: $branch,
+          commit_hash: $commit,
+          data: $graph[0]
+        }' > callgraph_payload.json
+      
+      # Get project ID from Dependency Control
+      if [ -z "$DEP_CONTROL_API_KEY" ]; then
+        AUTH_HEADER="Job-Token: $DEP_CONTROL_TOKEN"
+      else
+        AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
+      fi
+      
+      # Get project info
+      PROJECT_INFO=$(curl -s -H "$AUTH_HEADER" "$DEP_CONTROL_URL/api/v1/projects?name=$CI_PROJECT_PATH")
+      PROJECT_ID=$(echo "$PROJECT_INFO" | jq -r '.[0]._id // empty')
+      
+      if [ -z "$PROJECT_ID" ]; then
+        echo "Project not found in Dependency Control. Skipping callgraph upload."
+        exit 0
+      fi
+      
+      echo "Uploading callgraph to project: $PROJECT_ID"
+      
+      response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/projects/$PROJECT_ID/callgraph" \
+        -H "Content-Type: application/json" \
+        -H "$AUTH_HEADER" \
+        -d @callgraph_payload.json)
+      
+      echo "Response: $response"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: always
+    - when: manual
+  allow_failure: true

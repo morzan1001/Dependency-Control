@@ -58,13 +58,16 @@ class MaintainerRiskAnalyzer(Analyzer):
         issues = []
         checked_count = 0
 
+        # Extract GitHub token from settings for authenticated API access
+        github_token = settings.get("github_token") if settings else None
+
         async with httpx.AsyncClient(timeout=15.0) as client:
             # Process in batches to avoid rate limiting
             batch_size = 10
 
             for i in range(0, len(components), batch_size):
                 batch = components[i : i + batch_size]
-                tasks = [self._check_component(client, comp) for comp in batch]
+                tasks = [self._check_component(client, comp, github_token) for comp in batch]
                 results = await asyncio.gather(*tasks)
 
                 for result in results:
@@ -83,7 +86,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         }
 
     async def _check_component(
-        self, client: httpx.AsyncClient, component: Dict[str, Any]
+        self, client: httpx.AsyncClient, component: Dict[str, Any], github_token: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """Check maintainer health for a single component."""
 
@@ -113,7 +116,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         # Check GitHub repository if available
         github_repo = self._extract_github_repo(repo_url)
         if github_repo:
-            gh_info = await self._check_github(client, github_repo)
+            gh_info = await self._check_github(client, github_repo, github_token)
             if gh_info:
                 maintainer_info["github"] = gh_info
                 risks.extend(self._assess_github_risks(gh_info))
@@ -237,13 +240,23 @@ class MaintainerRiskAnalyzer(Analyzer):
             return None
 
     async def _check_github(
-        self, client: httpx.AsyncClient, repo: str
+        self, client: httpx.AsyncClient, repo: str, github_token: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """Fetch repository health from GitHub API (unauthenticated)."""
+        """Fetch repository health from GitHub API.
+        
+        If a GitHub token is provided, uses authenticated requests for higher rate limits.
+        """
         try:
+            headers = {
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            if github_token:
+                headers["Authorization"] = f"Bearer {github_token}"
+                
             response = await client.get(
                 f"https://api.github.com/repos/{repo}",
-                headers={"Accept": "application/vnd.github.v3+json"},
+                headers=headers,
             )
             if response.status_code != 200:
                 return None

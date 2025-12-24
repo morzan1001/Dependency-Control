@@ -1398,11 +1398,56 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     </div>
                                                 )}
                                                 
-                                                {vulns.map((vuln: any, idx: number) => (
+                                                {vulns.map((vuln: any, idx: number) => {
+                                                    const vulnId = vuln.id || getFindingId(finding);
+                                                    const isCve = vulnId?.startsWith('CVE-');
+                                                    const isGhsa = vulnId?.startsWith('GHSA-');
+                                                    const resolvedCve = vuln.resolved_cve;
+                                                    const githubAdvisoryUrl = vuln.github_advisory_url || finding.details?.github_advisory_url;
+                                                    
+                                                    // Determine the best link for the vulnerability
+                                                    let vulnLink = null;
+                                                    if (isCve) {
+                                                        vulnLink = `https://nvd.nist.gov/vuln/detail/${vulnId}`;
+                                                    } else if (isGhsa) {
+                                                        vulnLink = githubAdvisoryUrl || `https://github.com/advisories/${vulnId}`;
+                                                    }
+                                                    
+                                                    return (
                                                     <div key={idx} className="border rounded-lg p-4 space-y-3">
                                                         <div className="flex items-center justify-between">
                                                             <div className="flex items-center gap-2">
-                                                                <Badge variant="outline">{vuln.id || getFindingId(finding)}</Badge>
+                                                                {vulnLink ? (
+                                                                    <a
+                                                                        href={vulnLink}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="inline-flex items-center gap-1"
+                                                                        onClick={(e) => e.stopPropagation()}
+                                                                    >
+                                                                        <Badge variant="outline" className="hover:bg-muted cursor-pointer">
+                                                                            {vulnId}
+                                                                            <ExternalLink className="h-3 w-3 ml-1" />
+                                                                        </Badge>
+                                                                    </a>
+                                                                ) : (
+                                                                    <Badge variant="outline">{vulnId}</Badge>
+                                                                )}
+                                                                {/* Show resolved CVE if GHSA was resolved */}
+                                                                {isGhsa && resolvedCve && (
+                                                                    <a
+                                                                        href={`https://nvd.nist.gov/vuln/detail/${resolvedCve}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="inline-flex items-center gap-1"
+                                                                        onClick={(e) => e.stopPropagation()}
+                                                                    >
+                                                                        <Badge variant="secondary" className="hover:bg-muted cursor-pointer text-xs">
+                                                                            {resolvedCve}
+                                                                            <ExternalLink className="h-3 w-3 ml-1" />
+                                                                        </Badge>
+                                                                    </a>
+                                                                )}
                                                                 <Badge variant={
                                                                     (vuln.severity || finding.severity) === 'CRITICAL' ? 'destructive' :
                                                                     (vuln.severity || finding.severity) === 'HIGH' ? 'destructive' :
@@ -1442,7 +1487,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                         EPSS: {((vuln.epss_score || finding.details?.epss_score) * 100).toFixed(2)}%
                                                                     </span>
                                                                     {(vuln.epss_percentile || finding.details?.epss_percentile) && (
-                                                                        <span className="text-muted-foreground">(Top {(100 - (vuln.epss_percentile || finding.details?.epss_percentile) * 100).toFixed(0)}%)</span>
+                                                                        <span className="text-muted-foreground">(Top {(100 - (vuln.epss_percentile || finding.details?.epss_percentile)).toFixed(0)}%)</span>
                                                                     )}
                                                                     {(vuln.epss_date || finding.details?.epss_date) && (
                                                                         <span className="text-muted-foreground text-[10px]">as of {new Date(vuln.epss_date || finding.details?.epss_date).toLocaleDateString()}</span>
@@ -1461,6 +1506,54 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                             (since {new Date(vuln.kev_date_added || finding.details?.kev_date_added).toLocaleDateString()})
                                                                         </span>
                                                                     )}
+                                                                </div>
+                                                            )}
+                                                            {/* Reachability Analysis */}
+                                                            {(vuln.reachability || finding.details?.reachability) && (
+                                                                <div className={`flex items-center gap-1 px-2 py-0.5 rounded-md flex-wrap ${
+                                                                    (vuln.reachability?.is_reachable || finding.details?.reachability?.is_reachable)
+                                                                        ? 'bg-red-500/10 text-red-600'
+                                                                        : 'bg-green-500/10 text-green-600'
+                                                                }`}>
+                                                                    {(vuln.reachability?.is_reachable || finding.details?.reachability?.is_reachable) ? (
+                                                                        <>
+                                                                            <AlertTriangle className="h-3 w-3" />
+                                                                            <span className="font-medium">Reachable</span>
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <Shield className="h-3 w-3" />
+                                                                            <span className="font-medium">Not Reachable</span>
+                                                                        </>
+                                                                    )}
+                                                                    {(vuln.reachability?.analysis_level || finding.details?.reachability?.analysis_level) && (
+                                                                        <Badge variant="outline" className="text-[10px] py-0 h-4 ml-1">
+                                                                            {vuln.reachability?.analysis_level || finding.details?.reachability?.analysis_level}
+                                                                        </Badge>
+                                                                    )}
+                                                                    {(vuln.reachability?.confidence_score || finding.details?.reachability?.confidence_score) && (
+                                                                        <span className="text-muted-foreground text-[10px] ml-1">
+                                                                            ({Math.round((vuln.reachability?.confidence_score || finding.details?.reachability?.confidence_score) * 100)}% confidence)
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                            {/* Reachability matched symbols */}
+                                                            {((vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols)?.length ?? 0) > 0 && (
+                                                                <div className="flex items-start gap-2 w-full">
+                                                                    <span className="font-medium text-muted-foreground shrink-0">Affected Symbols:</span>
+                                                                    <div className="flex flex-wrap gap-1">
+                                                                        {(vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols || []).slice(0, 5).map((symbol: string, idx: number) => (
+                                                                            <Badge key={idx} variant="outline" className="font-mono text-xs">
+                                                                                {symbol}
+                                                                            </Badge>
+                                                                        ))}
+                                                                        {(vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols || []).length > 5 && (
+                                                                            <Badge variant="secondary" className="text-[10px]">
+                                                                                +{(vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols || []).length - 5} more
+                                                                            </Badge>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
                                                             )}
                                                             {(vuln.kev_required_action || finding.details?.kev_required_action) && (
@@ -1492,9 +1585,34 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 </div>
                                                             )}
                                                             {((vuln.aliases ?? finding.aliases)?.length ?? 0) > 0 && (
-                                                                <div className="flex items-center gap-2">
+                                                                <div className="flex items-center gap-2 flex-wrap">
                                                                     <span className="font-medium text-muted-foreground">Aliases:</span>
-                                                                    <span className="font-mono">{(vuln.aliases ?? finding.aliases ?? []).join(', ')}</span>
+                                                                    <div className="flex flex-wrap gap-1">
+                                                                        {(vuln.aliases ?? finding.aliases ?? []).map((alias: string, aliasIdx: number) => {
+                                                                            const isCve = alias.startsWith('CVE-');
+                                                                            const isGhsa = alias.startsWith('GHSA-');
+                                                                            const link = isCve 
+                                                                                ? `https://nvd.nist.gov/vuln/detail/${alias}`
+                                                                                : isGhsa 
+                                                                                    ? `https://github.com/advisories/${alias}`
+                                                                                    : null;
+                                                                            
+                                                                            return link ? (
+                                                                                <a
+                                                                                    key={aliasIdx}
+                                                                                    href={link}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    className="font-mono text-primary hover:underline text-xs"
+                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                >
+                                                                                    {alias}
+                                                                                </a>
+                                                                            ) : (
+                                                                                <span key={aliasIdx} className="font-mono text-xs">{alias}</span>
+                                                                            );
+                                                                        })}
+                                                                    </div>
                                                                 </div>
                                                             )}
                                                             {(vuln.scanners || finding.scanners) && (
@@ -1508,7 +1626,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                         <CollapsibleReferences references={vuln.references || finding.details?.references} />
                                                         <CollapsibleReferences references={vuln.details?.urls || finding.details?.urls} title="URLs" />
                                                     </div>
-                                                ))}
+                                                    );
+                                                })}
                                             </div>
                                         );
                                     })()}

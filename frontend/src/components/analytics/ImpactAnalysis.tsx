@@ -277,7 +277,7 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                             <TooltipContent>
                               <p>Probability of exploitation in next 30 days</p>
                               {r.epss_percentile !== undefined && (
-                                <p className="text-xs">Percentile: {(r.epss_percentile * 100).toFixed(1)}%</p>
+                                <p className="text-xs">Percentile: {r.epss_percentile.toFixed(1)}%</p>
                               )}
                             </TooltipContent>
                           </Tooltip>

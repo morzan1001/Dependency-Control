@@ -5,11 +5,122 @@ Data classes for aggregating enrichment data from multiple sources:
 - SBOM (base dependency data)
 - deps.dev (external metadata, scorecard, links)
 - license_compliance scanner (detailed license analysis)
+- EPSS/KEV (vulnerability exploitation data)
+- Reachability analysis (vulnerable code paths)
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
+
+# =============================================================================
+# EPSS/KEV Enrichment Schemas
+# =============================================================================
+
+@dataclass
+class EPSSData:
+    """EPSS (Exploit Prediction Scoring System) data for a CVE."""
+
+    cve: str
+    epss_score: float  # Probability of exploitation in next 30 days (0.0 - 1.0)
+    percentile: float  # Percentile rank among all CVEs
+    date: str  # Date of the EPSS calculation
+
+
+@dataclass
+class KEVEntry:
+    """CISA Known Exploited Vulnerability entry."""
+
+    cve: str
+    vendor_project: str
+    product: str
+    vulnerability_name: str
+    date_added: str
+    short_description: str
+    required_action: str
+    due_date: str
+    known_ransomware_use: bool = False
+
+
+@dataclass
+class GHSAData:
+    """GitHub Security Advisory data."""
+    
+    ghsa_id: str
+    cve_id: Optional[str] = None  # Resolved CVE ID if available
+    summary: Optional[str] = None
+    severity: Optional[str] = None
+    published_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    withdrawn_at: Optional[str] = None
+    github_url: str = ""  # Direct link to GitHub Advisory
+    aliases: List[str] = field(default_factory=list)  # All related IDs (CVEs, etc.)
+    
+    @property
+    def advisory_url(self) -> str:
+        """Get the GitHub Advisory URL."""
+        if self.github_url:
+            return self.github_url
+        return f"https://github.com/advisories/{self.ghsa_id}"
+
+
+@dataclass
+class VulnerabilityEnrichment:
+    """Enriched vulnerability data combining multiple sources."""
+
+    cve: str
+
+    # EPSS Data
+    epss_score: Optional[float] = None  # 0.0 - 1.0, probability of exploitation
+    epss_percentile: Optional[float] = None  # 0.0 - 100.0
+    epss_date: Optional[str] = None
+
+    # CISA KEV Data
+    is_kev: bool = False  # Is in CISA Known Exploited Vulnerabilities catalog
+    kev_date_added: Optional[str] = None
+    kev_due_date: Optional[str] = None
+    kev_required_action: Optional[str] = None
+    kev_ransomware_use: bool = False
+
+    # Computed fields
+    exploit_maturity: str = "unknown"  # unknown, poc, active, weaponized
+    risk_score: Optional[float] = None  # Combined risk score 0-100
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "cve": self.cve,
+            "epss_score": self.epss_score,
+            "epss_percentile": self.epss_percentile,
+            "epss_date": self.epss_date,
+            "is_kev": self.is_kev,
+            "kev_date_added": self.kev_date_added,
+            "kev_due_date": self.kev_due_date,
+            "kev_required_action": self.kev_required_action,
+            "kev_ransomware_use": self.kev_ransomware_use,
+            "exploit_maturity": self.exploit_maturity,
+            "risk_score": self.risk_score,
+        }
+
+
+# =============================================================================
+# Reachability Analysis Schemas
+# =============================================================================
+
+@dataclass
+class ExtractedSymbols:
+    """Result of symbol extraction from a vulnerability."""
+    
+    cve: str
+    package: str
+    symbols: List[str] = field(default_factory=list)
+    confidence: str = "low"  # low, medium, high
+    extraction_method: str = "none"  # none, regex, osv_ecosystem
+    raw_text: Optional[str] = None  # The text we parsed
+
+
+# =============================================================================
+# Dependency Enrichment Schemas
+# =============================================================================
 
 @dataclass
 class DependencyEnrichment:
