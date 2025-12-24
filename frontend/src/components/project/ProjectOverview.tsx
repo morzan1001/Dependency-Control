@@ -101,7 +101,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
   const stats = projectStats?.stats || { critical: 0, high: 0, medium: 0, low: 0, risk_score: 0 }
   const branchStats = projectStats?.branchStats || []
-  const hasEnhancedStats = stats.threat_intel || stats.reachability
+  const hasEnhancedStats = 'threat_intel' in stats || 'reachability' in stats
   
   // Trend Data Processing
   const sortedScans = [...filteredScans].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
