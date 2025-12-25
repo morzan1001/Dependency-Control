@@ -1,3 +1,11 @@
+# Release 0.9.9
+
+## 🚀 Features
+
+- feat: update version to 0.9.9 and enhance malware and vulnerability analysis features (#0)
+
+
+
 # Release 0.9.8
 
 ## 🚀 Features
