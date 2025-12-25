@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.core.cache import cache_service, CacheKeys, CacheTTL
 from .base import Analyzer
 from .purl_utils import is_pypi, is_npm, get_registry_system
 
@@ -156,31 +157,51 @@ class HashVerificationAnalyzer(Analyzer):
         sbom_hashes: Dict[str, str],
     ) -> Optional[Dict[str, Any]]:
         """Verify package hash against PyPI, or fetch hashes if none in SBOM."""
+        
+        # Check cache first - hashes are immutable for released versions
+        cache_key = CacheKeys.package_hash("pypi", name, version)
+        cached_hashes = await cache_service.get(cache_key)
+        
+        if cached_hashes is not None:
+            if not cached_hashes:  # Empty dict = negative cache
+                return None
+            registry_hashes_flat = cached_hashes
+            # Convert flat dict to set-based for comparison
+            registry_hashes = {k: {v} for k, v in cached_hashes.items()}
+        else:
+            # Fetch from PyPI
+            url = self.REGISTRY_APIS["pypi"].format(package=name, version=version)
+            response = await client.get(url)
 
-        url = self.REGISTRY_APIS["pypi"].format(package=name, version=version)
-        response = await client.get(url)
+            if response.status_code != 200:
+                # Cache negative result
+                await cache_service.set(cache_key, {}, CacheTTL.NEGATIVE_RESULT)
+                return None
 
-        if response.status_code != 200:
-            return None
+            data = response.json()
 
-        data = response.json()
+            # PyPI provides hashes in urls[].digests
+            registry_hashes = {}
+            registry_hashes_flat = {}  # For returning fetched hashes
 
-        # PyPI provides hashes in urls[].digests
-        registry_hashes = {}
-        registry_hashes_flat = {}  # For returning fetched hashes
+            for url_info in data.get("urls", []):
+                digests = url_info.get("digests", {})
+                for alg, value in digests.items():
+                    # Normalize algorithm names
+                    alg_lower = alg.lower().replace("-", "")
+                    if alg_lower not in registry_hashes:
+                        registry_hashes[alg_lower] = set()
+                    registry_hashes[alg_lower].add(value.lower())
 
-        for url_info in data.get("urls", []):
-            digests = url_info.get("digests", {})
-            for alg, value in digests.items():
-                # Normalize algorithm names
-                alg_lower = alg.lower().replace("-", "")
-                if alg_lower not in registry_hashes:
-                    registry_hashes[alg_lower] = set()
-                registry_hashes[alg_lower].add(value.lower())
+                    # Store first hash of each type for enrichment
+                    if alg_lower not in registry_hashes_flat:
+                        registry_hashes_flat[alg_lower] = value.lower()
 
-                # Store first hash of each type for enrichment
-                if alg_lower not in registry_hashes_flat:
-                    registry_hashes_flat[alg_lower] = value.lower()
+            # Cache the hashes (immutable, long TTL)
+            if registry_hashes_flat:
+                await cache_service.set(cache_key, registry_hashes_flat, CacheTTL.PACKAGE_HASH)
+            else:
+                await cache_service.set(cache_key, {}, CacheTTL.NEGATIVE_RESULT)
 
         # If no hashes in SBOM, return fetched hashes for enrichment
         if not sbom_hashes:
@@ -226,39 +247,56 @@ class HashVerificationAnalyzer(Analyzer):
     ) -> Optional[Dict[str, Any]]:
         """Verify package hash against npm registry, or fetch hashes if none in SBOM."""
 
-        # Handle scoped packages
-        encoded_name = name.replace("/", "%2F") if "/" in name else name
-        url = self.REGISTRY_APIS["npm"].format(package=encoded_name, version=version)
-        response = await client.get(url)
+        # Check cache first - hashes are immutable for released versions
+        cache_key = CacheKeys.package_hash("npm", name, version)
+        cached_hashes = await cache_service.get(cache_key)
+        
+        if cached_hashes is not None:
+            if not cached_hashes:  # Empty dict = negative cache
+                return None
+            registry_hashes_flat = cached_hashes
+            registry_hashes = {k: {v} for k, v in cached_hashes.items()}
+        else:
+            # Handle scoped packages
+            encoded_name = name.replace("/", "%2F") if "/" in name else name
+            url = self.REGISTRY_APIS["npm"].format(package=encoded_name, version=version)
+            response = await client.get(url)
 
-        if response.status_code != 200:
-            return None
+            if response.status_code != 200:
+                await cache_service.set(cache_key, {}, CacheTTL.NEGATIVE_RESULT)
+                return None
 
-        data = response.json()
+            data = response.json()
 
-        # npm provides shasum (SHA1) and integrity (SHA512)
-        dist = data.get("dist", {})
-        registry_hashes = {}
-        registry_hashes_flat = {}
+            # npm provides shasum (SHA1) and integrity (SHA512)
+            dist = data.get("dist", {})
+            registry_hashes = {}
+            registry_hashes_flat = {}
 
-        if dist.get("shasum"):
-            registry_hashes["sha1"] = {dist["shasum"].lower()}
-            registry_hashes_flat["sha1"] = dist["shasum"].lower()
+            if dist.get("shasum"):
+                registry_hashes["sha1"] = {dist["shasum"].lower()}
+                registry_hashes_flat["sha1"] = dist["shasum"].lower()
 
-        if dist.get("integrity"):
-            # Format: sha512-base64encoded...
-            integrity = dist["integrity"]
-            if integrity.startswith("sha512-"):
-                # Convert base64 to hex for comparison
-                import base64
+            if dist.get("integrity"):
+                # Format: sha512-base64encoded...
+                integrity = dist["integrity"]
+                if integrity.startswith("sha512-"):
+                    # Convert base64 to hex for comparison
+                    import base64
 
-                try:
-                    b64_part = integrity.split("-", 1)[1]
-                    hex_value = base64.b64decode(b64_part).hex()
-                    registry_hashes["sha512"] = {hex_value}
-                    registry_hashes_flat["sha512"] = hex_value
-                except Exception:
-                    pass
+                    try:
+                        b64_part = integrity.split("-", 1)[1]
+                        hex_value = base64.b64decode(b64_part).hex()
+                        registry_hashes["sha512"] = {hex_value}
+                        registry_hashes_flat["sha512"] = hex_value
+                    except Exception:
+                        pass
+
+            # Cache the hashes (immutable, long TTL)
+            if registry_hashes_flat:
+                await cache_service.set(cache_key, registry_hashes_flat, CacheTTL.PACKAGE_HASH)
+            else:
+                await cache_service.set(cache_key, {}, CacheTTL.NEGATIVE_RESULT)
 
         # If no hashes in SBOM, return fetched hashes for enrichment
         if not sbom_hashes:

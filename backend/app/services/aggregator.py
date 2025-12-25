@@ -741,10 +741,17 @@ class ResultAggregator:
                     tv["cvss_score"] = source_entry["cvss_score"]
                     tv["cvss_vector"] = source_entry.get("cvss_vector")
 
-                # References merge
-                tv_refs = tv.get("references", [])
-                sv_refs = source_entry.get("references", [])
-                tv["references"] = list(set(tv_refs + sv_refs))
+                # References merge (combine references and urls, deduplicate)
+                tv_refs = set(tv.get("references", []) or [])
+                sv_refs = set(source_entry.get("references", []) or [])
+                # Also include urls from nested details if present
+                tv_urls = set(tv.get("details", {}).get("urls", []) or [])
+                sv_urls = set(source_entry.get("details", {}).get("urls", []) or [])
+                all_refs = tv_refs | sv_refs | tv_urls | sv_urls
+                tv["references"] = list(all_refs)
+                # Remove urls from nested details as they're now in references
+                if "details" in tv and "urls" in tv["details"]:
+                    del tv["details"]["urls"]
 
                 # Merge other details (selectively)
                 # We check both top-level and nested details for these fields
@@ -840,6 +847,11 @@ class ResultAggregator:
         # Primary key for the AGGREGATED finding (The Package)
         agg_key = f"AGG:VULN:{comp_key}:{version_key}"
 
+        # Combine references and urls (legacy) into single references list, deduplicated
+        refs_from_details = finding.details.get("references", []) or []
+        urls_from_details = finding.details.get("urls", []) or []
+        combined_refs = list(set(refs_from_details) | set(urls_from_details))
+
         # Prepare the vulnerability entry for the details list
         vuln_entry: VulnerabilityEntry = {
             "id": finding.id,
@@ -863,11 +875,11 @@ class ResultAggregator:
                 if finding.details.get("cvss_vector")
                 else None
             ),
-            "references": finding.details.get("references", []) or [],
+            "references": combined_refs,
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
-            "details": finding.details or {},  # nested details
+            "details": {k: v for k, v in (finding.details or {}).items() if k != "urls"},  # nested details without urls
         }
 
         if agg_key in self.findings:
@@ -1318,7 +1330,7 @@ class ResultAggregator:
                             vuln.get("fix", {}).get("versions", [])
                         ),
                         "datasource": vuln.get("dataSource"),
-                        "urls": vuln.get("urls", []),
+                        "references": vuln.get("urls", []),
                         "cvss_score": cvss_score,
                         "cvss_vector": cvss_vector,
                         "namespace": vuln.get("namespace"),

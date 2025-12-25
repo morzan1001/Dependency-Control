@@ -1624,7 +1624,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                         </div>
 
                                                         <CollapsibleReferences references={vuln.references || finding.details?.references} />
-                                                        <CollapsibleReferences references={vuln.details?.urls || finding.details?.urls} title="URLs" />
                                                     </div>
                                                     );
                                                 })}

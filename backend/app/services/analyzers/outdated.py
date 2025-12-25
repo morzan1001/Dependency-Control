@@ -1,9 +1,10 @@
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.core.cache import cache_service, CacheKeys, CacheTTL
 from .base import Analyzer
 from .purl_utils import get_registry_system
 
@@ -11,6 +12,12 @@ logger = logging.getLogger(__name__)
 
 
 class OutdatedAnalyzer(Analyzer):
+    """
+    Analyzer that checks for outdated packages via deps.dev API.
+    
+    Uses Redis cache for latest version info to reduce API calls.
+    """
+    
     name = "outdated_packages"
     base_url = "https://api.deps.dev/v3/systems"
 
@@ -23,28 +30,107 @@ class OutdatedAnalyzer(Analyzer):
         components = self._get_components(sbom, parsed_components)
         results = []
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # Process in batches to avoid overwhelming deps.dev API
-            batch_size = 25
-            for i in range(0, len(components), batch_size):
-                batch = components[i:i + batch_size]
-                tasks = [self._check_component(client, comp) for comp in batch]
-                
-                component_results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                for result in component_results:
-                    if result and not isinstance(result, Exception):
-                        results.append(result)
-                
-                # Small delay between batches to avoid rate limits
-                if i + batch_size < len(components):
-                    await asyncio.sleep(0.1)
+        # Check cache for latest versions first
+        cached_versions, uncached_components = await self._get_cached_latest_versions(components)
+        
+        # Process cached versions
+        for component, latest_version in cached_versions:
+            name = component.get("name", "")
+            version = component.get("version", "")
+            purl = component.get("purl", "")
+            
+            if latest_version and latest_version != version:
+                results.append({
+                    "component": name,
+                    "current_version": version,
+                    "latest_version": latest_version,
+                    "purl": purl,
+                    "severity": "INFO",
+                    "message": f"Update available: {latest_version}",
+                })
+        
+        logger.debug(f"Outdated: {len(cached_versions)} from cache, {len(uncached_components)} to fetch")
+
+        if uncached_components:
+            versions_to_cache = {}  # Collect for batch caching
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                # Process in batches to avoid overwhelming deps.dev API
+                batch_size = 25
+                for i in range(0, len(uncached_components), batch_size):
+                    batch = uncached_components[i:i + batch_size]
+                    tasks = [self._check_component_for_batch(client, comp) for comp in batch]
+                    
+                    component_results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    for comp, result in zip(batch, component_results):
+                        if isinstance(result, Exception):
+                            continue
+                        if result:
+                            # Collect version for batch caching
+                            if result.get("_cache_key") and result.get("_latest_version"):
+                                versions_to_cache[result["_cache_key"]] = result["_latest_version"]
+                            
+                            # Remove internal fields before adding to results
+                            result_clean = {k: v for k, v in result.items() if not k.startswith("_")}
+                            if result_clean:
+                                results.append(result_clean)
+                    
+                    # Small delay between batches to avoid rate limits
+                    if i + batch_size < len(uncached_components):
+                        await asyncio.sleep(0.1)
+            
+            # Batch cache all latest versions at once
+            if versions_to_cache:
+                await cache_service.mset(versions_to_cache, CacheTTL.LATEST_VERSION)
 
         return {"outdated_dependencies": results}
 
-    async def _check_component(
+    async def _get_cached_latest_versions(
+        self, components: List[Dict[str, Any]]
+    ) -> tuple[List[tuple[Dict[str, Any], str]], List[Dict[str, Any]]]:
+        """Check cache for latest versions, return cached and uncached components."""
+        cached_results = []
+        uncached_components = []
+        
+        # Build cache keys
+        cache_keys = []
+        component_map = {}
+        
+        for component in components:
+            purl = component.get("purl", "")
+            name = component.get("name", "")
+            system = get_registry_system(purl)
+            
+            if not system or not name:
+                continue
+            
+            cache_key = CacheKeys.latest_version(system, name)
+            cache_keys.append(cache_key)
+            component_map[cache_key] = component
+        
+        if not cache_keys:
+            return [], components
+        
+        # Batch get from Redis
+        cached_data = await cache_service.mget(cache_keys)
+        
+        for cache_key, latest_version in cached_data.items():
+            component = component_map.get(cache_key)
+            if not component:
+                continue
+                
+            if latest_version:
+                cached_results.append((component, latest_version))
+            else:
+                uncached_components.append(component)
+        
+        return cached_results, uncached_components
+
+    async def _check_component_for_batch(
         self, client: httpx.AsyncClient, component: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
+        """Check component and return result with cache metadata for batch caching."""
         purl = component.get("purl", "")
         name = component.get("name", "")
         version = component.get("version", "")
@@ -59,8 +145,6 @@ class OutdatedAnalyzer(Analyzer):
         encoded_name = name
         if system == "npm" and "/" in name:
             encoded_name = name.replace("/", "%2F")
-
-        # Deps.dev API expects 'pypi' to be lowercase
 
         url = f"{self.base_url}/{system}/packages/{encoded_name}"
 
@@ -79,6 +163,7 @@ class OutdatedAnalyzer(Analyzer):
 
                 # If a default version is found and differs from the current one
                 if default_version and default_version != version:
+                    cache_key = CacheKeys.latest_version(system, name)
                     return {
                         "component": name,
                         "current_version": version,
@@ -86,6 +171,15 @@ class OutdatedAnalyzer(Analyzer):
                         "purl": purl,
                         "severity": "INFO",
                         "message": f"Update available: {default_version}",
+                        "_cache_key": cache_key,
+                        "_latest_version": default_version,
+                    }
+                elif default_version:
+                    # Version is current, but still cache the latest version for future lookups
+                    cache_key = CacheKeys.latest_version(system, name)
+                    return {
+                        "_cache_key": cache_key,
+                        "_latest_version": default_version,
                     }
             return None
         except httpx.TimeoutException:

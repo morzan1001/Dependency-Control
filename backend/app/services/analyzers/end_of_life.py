@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set
 
 import httpx
 
+from app.core.cache import cache_service, CacheKeys, CacheTTL
 from .base import Analyzer
 
 logger = logging.getLogger(__name__)
@@ -173,47 +174,79 @@ class EndOfLifeAnalyzer(Analyzer):
         results = []
         checked_products: Set[str] = set()  # Avoid duplicate API calls
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            for component in components:
-                name = component.get("name", "").lower()
-                version = component.get("version", "")
-                # Support both "cpes" (from sbom_parser) and "_cpes" (legacy)
-                cpes = component.get("cpes") or component.get("_cpes") or []
+        # Collect all unique products to check
+        products_to_check: Dict[str, tuple] = {}  # product -> (component_name, version)
+        
+        for component in components:
+            name = component.get("name", "").lower()
+            version = component.get("version", "")
+            cpes = component.get("cpes") or component.get("_cpes") or []
 
-                # Strategy 1: Try to match via CPE (more accurate)
-                eol_products = self._extract_products_from_cpes(cpes)
+            eol_products = self._extract_products_from_cpes(cpes)
+            if not eol_products:
+                mapped = CPE_TO_EOL_MAPPING.get(name)
+                if mapped:
+                    eol_products.add(mapped)
+                else:
+                    eol_products.add(name)
 
-                # Strategy 2: Fallback to component name matching
-                if not eol_products:
-                    mapped = CPE_TO_EOL_MAPPING.get(name)
-                    if mapped:
-                        eol_products.add(mapped)
-                    else:
-                        # Try direct name match
-                        eol_products.add(name)
+            for product in eol_products:
+                if product not in products_to_check:
+                    products_to_check[product] = (component.get("name"), version)
 
-                for product in eol_products:
-                    if product in checked_products:
-                        continue
-                    checked_products.add(product)
+        # Check cache for all products first
+        cache_keys = [CacheKeys.eol(product) for product in products_to_check.keys()]
+        cached_data = await cache_service.mget(cache_keys) if cache_keys else {}
+        
+        products_to_fetch = []
+        for product, (comp_name, version) in products_to_check.items():
+            cache_key = CacheKeys.eol(product)
+            if cache_key in cached_data and cached_data[cache_key] is not None:
+                cycles = cached_data[cache_key]
+                if cycles:  # Not a negative cache entry
+                    eol_info = self._check_version(version, cycles)
+                    if eol_info:
+                        results.append({
+                            "component": comp_name,
+                            "version": version,
+                            "product": product,
+                            "eol_info": eol_info,
+                        })
+            else:
+                products_to_fetch.append((product, comp_name, version))
 
+        logger.debug(f"EOL: {len(products_to_check) - len(products_to_fetch)} from cache, {len(products_to_fetch)} to fetch")
+
+        # Fetch uncached products
+        if products_to_fetch:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                to_cache = {}
+                for product, comp_name, version in products_to_fetch:
                     try:
                         response = await client.get(f"{self.api_url}/{product}.json")
                         if response.status_code == 200:
                             cycles = response.json()
+                            # Cache the EOL data
+                            to_cache[CacheKeys.eol(product)] = cycles
+                            
                             eol_info = self._check_version(version, cycles)
                             if eol_info:
-                                results.append(
-                                    {
-                                        "component": component.get("name"),
-                                        "version": version,
-                                        "product": product,
-                                        "eol_info": eol_info,
-                                    }
-                                )
+                                results.append({
+                                    "component": comp_name,
+                                    "version": version,
+                                    "product": product,
+                                    "eol_info": eol_info,
+                                })
+                        elif response.status_code == 404:
+                            # Cache negative result
+                            to_cache[CacheKeys.eol(product)] = []
                     except Exception as e:
                         logger.debug(f"EOL check failed for {product}: {e}")
                         continue
+                
+                # Batch cache all fetched results
+                if to_cache:
+                    await cache_service.mset(to_cache, CacheTTL.EOL_STATUS)
 
         return {"eol_issues": results}
 

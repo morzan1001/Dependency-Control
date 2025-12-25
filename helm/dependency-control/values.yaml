@@ -124,9 +124,6 @@ backend:
   # Secrets (should be managed via external-secrets in prod, but here for demo)
   secrets:
     secretKey: "changeme-very-secure-key"
-    openSourceMalwareApiKey: ""
-    smtpPassword: ""
-    slackBotToken: ""
 
 # MongoDB Community Operator Settings
 mongodb-operator:
@@ -153,6 +150,72 @@ mongodb:
     persistence:
       size: 10Gi
       storageClass: "" # Use default
+
+dragonfly:
+  enabled: true
+  replicaCount: 2
+  password: "changeme-dragonfly-password"
+  
+  # Resource limits
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  
+  # Security context - hardened configuration
+  podSecurityContext:
+    fsGroup: 1000
+    runAsUser: 1000
+    runAsGroup: 1000
+    runAsNonRoot: true
+  
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop:
+        - ALL
+  
+  # Extra arguments for DragonflyDB
+  extraArgs:
+    - --maxmemory=384mb
+    - --cache_mode=true
+    - --proactor_threads=2
+    # Must match 'password' above!
+    - --requirepass=changeme-dragonfly-password
+  
+  # Persistence (optional - disabled by default for pure cache)
+  storage:
+    enabled: false
+    requests: 2Gi
+    storageClassName: ""
+  
+  # Pod anti-affinity for spreading across nodes
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: dragonfly
+            topologyKey: kubernetes.io/hostname
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 6379
+  
+  # Monitoring
+  serviceMonitor:
+    enabled: false
+    interval: "30s"
+    scrapeTimeout: "10s"
 
 # Traefik Settings
 traefik:

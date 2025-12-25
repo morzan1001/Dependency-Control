@@ -81,6 +81,11 @@ spec:
           env:
             - name: MONGODB_URL
               value: "mongodb://{{ .Values.mongodb.cluster.auth.username }}:{{ .Values.mongodb.cluster.auth.password }}@{{ .Values.mongodb.cluster.name }}-svc.{{ .Release.Namespace }}.svc.cluster.local:27017/{{ .Values.mongodb.cluster.auth.database }}?replicaSet={{ .Values.mongodb.cluster.name }}"
+            {{- if .Values.dragonfly.enabled }}
+            # DragonflyDB (Redis-compatible) connection
+            - name: REDIS_URL
+              value: "redis://:{{ .Values.dragonfly.password }}@{{ .Release.Name }}-dragonfly:{{ .Values.dragonfly.service.port }}/0"
+            {{- end }}
             - name: SECRET_KEY
               valueFrom:
                 secretKeyRef:

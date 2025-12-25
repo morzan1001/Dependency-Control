@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Set
 
 import httpx
 
+from app.core.cache import cache_service, CacheKeys, CacheTTL
 from .base import Analyzer
 from .purl_utils import is_pypi, is_npm
 
@@ -12,59 +13,82 @@ logger = logging.getLogger(__name__)
 
 
 class TyposquattingAnalyzer(Analyzer):
+    """
+    Analyzer that detects potential typosquatting attacks by comparing
+    package names against a list of popular packages.
+    
+    Uses Redis cache for the popular packages list across all pods.
+    """
+    
     name = "typosquatting"
 
-    # Cache for popular packages
-    _popular_packages_cache: Dict[str, Set[str]] = {"pypi": set(), "npm": set()}
-    _last_update: datetime = None
-    _cache_ttl = timedelta(hours=24)
+    # In-memory fallback cache
+    _popular_packages_fallback: Dict[str, Set[str]] = {"pypi": set(), "npm": set()}
 
-    async def _ensure_popular_packages(self):
-        now = datetime.now(timezone.utc)
-        if self._last_update and (now - self._last_update) < self._cache_ttl:
-            if (
-                self._popular_packages_cache["pypi"]
-                and self._popular_packages_cache["npm"]
-            ):
-                return
+    async def _ensure_popular_packages(self) -> Dict[str, Set[str]]:
+        """Load popular packages from Redis cache or fetch from APIs."""
+        
+        # Try Redis cache first
+        pypi_cache_key = CacheKeys.popular_packages("pypi")
+        npm_cache_key = CacheKeys.popular_packages("npm")
+        
+        cached_data = await cache_service.mget([pypi_cache_key, npm_cache_key])
+        
+        pypi_packages = cached_data.get(pypi_cache_key)
+        npm_packages = cached_data.get(npm_cache_key)
+        
+        result = {"pypi": set(), "npm": set()}
+        
+        # Load PyPI packages
+        if pypi_packages:
+            result["pypi"] = set(pypi_packages)
+            logger.debug(f"Loaded {len(result['pypi'])} PyPI packages from Redis cache")
+        else:
+            result["pypi"] = await self._fetch_pypi_packages()
+        
+        # Load npm packages (we use static list)
+        if npm_packages:
+            result["npm"] = set(npm_packages)
+            logger.debug(f"Loaded {len(result['npm'])} npm packages from Redis cache")
+        else:
+            result["npm"] = self._get_static_npm()
+            # Cache npm packages
+            await cache_service.set(npm_cache_key, list(result["npm"]), CacheTTL.POPULAR_PACKAGES)
+        
+        # Update fallback
+        self._popular_packages_fallback = result
+        return result
 
-        logger.info("Updating popular packages list for Typosquatting detection...")
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # 1. PyPI - Top 5000
-            try:
+    async def _fetch_pypi_packages(self) -> Set[str]:
+        """Fetch top PyPI packages and cache in Redis."""
+        cache_key = CacheKeys.popular_packages("pypi")
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 # Source: https://github.com/hugovk/top-pypi-packages
                 resp = await client.get(
                     "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.json"
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    # data["rows"] is list of {"project": "name", ...}
                     packages = {
                         row["project"].lower() for row in data.get("rows", [])[:5000]
                     }
-                    self._popular_packages_cache["pypi"] = packages
-                    logger.info(f"Loaded {len(packages)} popular PyPI packages.")
-            except httpx.TimeoutException:
-                logger.debug("Timeout fetching PyPI top packages, using fallback")
-                if not self._popular_packages_cache["pypi"]:
-                    self._popular_packages_cache["pypi"] = self._get_static_pypi()
-            except httpx.ConnectError:
-                logger.debug("Connection error fetching PyPI top packages, using fallback")
-                if not self._popular_packages_cache["pypi"]:
-                    self._popular_packages_cache["pypi"] = self._get_static_pypi()
-            except Exception as e:
-                logger.debug(f"Failed to fetch PyPI top packages: {type(e).__name__}")
-                # Fallback to static list if empty
-                if not self._popular_packages_cache["pypi"]:
-                    self._popular_packages_cache["pypi"] = self._get_static_pypi()
-
-            # 2. NPM
-            # Use static list for NPM as no clean top list API is available
-            if not self._popular_packages_cache["npm"]:
-                self._popular_packages_cache["npm"] = self._get_static_npm()
-
-        self._last_update = now
+                    # Cache in Redis
+                    await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
+                    logger.info(f"Loaded {len(packages)} popular PyPI packages (cached in Redis)")
+                    return packages
+        except httpx.TimeoutException:
+            logger.debug("Timeout fetching PyPI top packages, using fallback")
+        except httpx.ConnectError:
+            logger.debug("Connection error fetching PyPI top packages, using fallback")
+        except Exception as e:
+            logger.debug(f"Failed to fetch PyPI top packages: {type(e).__name__}")
+        
+        # Fallback to static list
+        packages = self._get_static_pypi()
+        await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
+        return packages
 
     def _get_static_pypi(self) -> Set[str]:
         return {
@@ -143,7 +167,7 @@ class TyposquattingAnalyzer(Analyzer):
         settings: Dict[str, Any] = None,
         parsed_components: List[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        await self._ensure_popular_packages()
+        popular_packages = await self._ensure_popular_packages()
 
         components = self._get_components(sbom, parsed_components)
         issues = []
@@ -159,10 +183,10 @@ class TyposquattingAnalyzer(Analyzer):
             elif is_npm(purl) or component.get("type") == "npm":
                 ecosystem = "npm"
 
-            if ecosystem not in self._popular_packages_cache:
+            if ecosystem not in popular_packages:
                 continue
 
-            popular_list = self._popular_packages_cache[ecosystem]
+            popular_list = popular_packages[ecosystem]
 
             # If the package itself is in the popular list, it's likely fine
             if name in popular_list:

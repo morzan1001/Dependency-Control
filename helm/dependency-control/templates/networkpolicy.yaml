@@ -186,3 +186,107 @@ spec:
   egress:
   # Allow everything for Operator to ensure it can manage resources and talk to K8s API
   - {}
+
+{{- if .Values.dragonfly.enabled }}
+---
+# ============================================================================
+# DragonflyDB Network Policies (Subchart)
+# ============================================================================
+
+# Allow Backend to talk to DragonflyDB (Subchart)
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-backend-to-dragonfly
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    # DragonflyDB subchart pods use app.kubernetes.io/name: dragonfly
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: dragonfly
+          app.kubernetes.io/instance: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 6379
+
+---
+# Allow DragonflyDB to receive traffic from Backend only
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dragonfly-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dragonfly
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow from Backend pods only
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "dependency-control.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: backend
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow from other DragonflyDB pods (for potential replication)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: dragonfly
+          app.kubernetes.io/instance: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 6379
+  {{- if .Values.dragonfly.serviceMonitor.enabled }}
+  # Allow Prometheus to scrape metrics
+  - from:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - protocol: TCP
+      port: 9999
+  {{- end }}
+
+---
+# Allow DragonflyDB pods minimal egress (DNS only)
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dragonfly-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dragonfly
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+  - Egress
+  egress:
+  # Allow communication between DragonflyDB pods (for potential replication)
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: dragonfly
+          app.kubernetes.io/instance: {{ .Release.Name }}
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow DNS resolution only
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+{{- end }}

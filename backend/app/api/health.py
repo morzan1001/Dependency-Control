@@ -1,6 +1,7 @@
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
+from app.core.cache import cache_service
 from app.core.worker import worker_manager
 from app.db.mongodb import db
 
@@ -22,8 +23,9 @@ async def readiness():
     Checks:
     1. MongoDB connectivity (ping)
     2. Worker status (background tasks execution status)
+    3. Redis cache availability (optional - service can run without it)
     """
-    components = {"database": "unknown", "workers": "unknown"}
+    components = {"database": "unknown", "workers": "unknown", "cache": "unknown"}
     is_ready = True
 
     # 1. Check MongoDB
@@ -60,6 +62,18 @@ async def readiness():
         if worker_manager.num_workers > 0:
             is_ready = False
 
+    # 3. Check Redis Cache (optional - degraded but functional without it)
+    try:
+        cache_health = await cache_service.health_check()
+        if cache_health.get("status") == "healthy":
+            components["cache"] = "connected"
+        else:
+            components["cache"] = "unavailable (degraded mode)"
+            # Cache is optional - don't fail readiness
+    except Exception as e:
+        components["cache"] = f"unavailable: {str(e)}"
+        # Cache is optional - service can run without it
+
     if is_ready:
         return {"status": "ready", "components": components}
 
@@ -67,3 +81,22 @@ async def readiness():
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"status": "not_ready", "components": components},
     )
+
+
+@router.get("/cache", summary="Cache Health & Statistics")
+async def cache_health():
+    """
+    Get detailed cache health status and statistics.
+    
+    Returns:
+        Cache connection status, memory usage, key count, and hit rate.
+    """
+    try:
+        health = await cache_service.health_check()
+        return health
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "available": False,
+        }

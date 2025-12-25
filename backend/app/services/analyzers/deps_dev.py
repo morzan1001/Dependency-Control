@@ -5,6 +5,7 @@ from urllib.parse import quote
 
 import httpx
 
+from app.core.cache import cache_service, CacheKeys, CacheTTL
 from .base import Analyzer
 from .purl_utils import get_registry_system
 
@@ -20,6 +21,8 @@ class DepsDevAnalyzer(Analyzer):
     2. Project info (stars, forks, open issues)
     3. Dependent count (how many packages depend on this)
     4. Supply chain security insights via OpenSSF Scorecard
+    
+    Uses Redis cache to reduce API calls across all pods.
     """
 
     name = "deps_dev"
@@ -49,36 +52,117 @@ class DepsDevAnalyzer(Analyzer):
         if settings and "scorecard_threshold" in settings:
             threshold = float(settings["scorecard_threshold"])
 
-        # Use semaphore to limit concurrent requests
-        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
+        # First, check Redis cache for all components
+        cached_results, uncached_components = await self._get_cached_components(components)
+        
+        # Add cached results to metadata
+        for key, data in cached_results.items():
+            if data:
+                package_metadata[key] = data.get("metadata")
+                if data.get("scorecard_issue"):
+                    # Re-check threshold in case settings changed
+                    score = data["scorecard_issue"].get("scorecard", {}).get("overallScore", 10)
+                    if score < threshold:
+                        scorecard_issues.append(data["scorecard_issue"])
+        
+        logger.debug(f"deps_dev: {len(cached_results)} from cache, {len(uncached_components)} to fetch")
 
-        async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
-            tasks = []
-            for component in components:
-                tasks.append(
-                    self._check_component_with_limit(
-                        semaphore, client, component, threshold
+        # Use semaphore to limit concurrent requests for uncached components
+        if uncached_components:
+            semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
+            results_to_cache = {}  # Collect results for batch caching
+
+            async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
+                tasks = []
+                for component in uncached_components:
+                    tasks.append(
+                        self._check_component_with_limit(
+                            semaphore, client, component, threshold
+                        )
                     )
-                )
 
-            component_results = await asyncio.gather(*tasks, return_exceptions=True)
+                component_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for result in component_results:
-                if isinstance(result, Exception):
-                    logger.warning(f"deps_dev check failed: {result}")
-                    continue
-                if result:
-                    # Separate scorecard issues from package metadata
-                    if result.get("scorecard_issue"):
-                        scorecard_issues.append(result["scorecard_issue"])
-                    if result.get("metadata"):
-                        key = f"{result['metadata']['name']}@{result['metadata']['version']}"
-                        package_metadata[key] = result["metadata"]
+                for component, result in zip(uncached_components, component_results):
+                    if isinstance(result, Exception):
+                        logger.warning(f"deps_dev check failed: {result}")
+                        continue
+                    if result:
+                        # Collect for batch caching
+                        cache_key = self._get_cache_key_for_component(component)
+                        if cache_key:
+                            results_to_cache[cache_key] = result
+                        
+                        # Separate scorecard issues from package metadata
+                        if result.get("scorecard_issue"):
+                            scorecard_issues.append(result["scorecard_issue"])
+                        if result.get("metadata"):
+                            key = f"{result['metadata']['name']}@{result['metadata']['version']}"
+                            package_metadata[key] = result["metadata"]
+            
+            # Batch cache all results at once
+            if results_to_cache:
+                await cache_service.mset(results_to_cache, CacheTTL.DEPS_DEV_METADATA)
 
         return {
             "scorecard_issues": scorecard_issues,
             "package_metadata": package_metadata,
         }
+
+    def _get_cache_key_for_component(self, component: Dict[str, Any]) -> Optional[str]:
+        """Get cache key for a component."""
+        purl = component.get("purl", "")
+        name = component.get("name", "")
+        version = component.get("version", "")
+        system = self._get_system_from_purl(purl)
+        
+        if not system or not name or not version:
+            return None
+        
+        return CacheKeys.deps_dev(system, name, version)
+
+    async def _get_cached_components(
+        self, components: List[Dict[str, Any]]
+    ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """Check cache for components, return cached data and uncached components."""
+        cached_results = {}
+        uncached_components = []
+        
+        # Build cache keys for all components
+        cache_keys = []
+        component_map = {}
+        
+        for component in components:
+            purl = component.get("purl", "")
+            name = component.get("name", "")
+            version = component.get("version", "")
+            system = self._get_system_from_purl(purl)
+            
+            if not system or not name or not version:
+                continue
+            
+            cache_key = CacheKeys.deps_dev(system, name, version)
+            cache_keys.append(cache_key)
+            component_map[cache_key] = component
+        
+        if not cache_keys:
+            return {}, components
+        
+        # Batch get from Redis
+        cached_data = await cache_service.mget(cache_keys)
+        
+        for cache_key, data in cached_data.items():
+            component = component_map.get(cache_key)
+            if not component:
+                continue
+                
+            if data:
+                key = f"{component.get('name')}@{component.get('version')}"
+                cached_results[key] = data
+            else:
+                uncached_components.append(component)
+        
+        return cached_results, uncached_components
 
     async def _check_component_with_limit(
         self,

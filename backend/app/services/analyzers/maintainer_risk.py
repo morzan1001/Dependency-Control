@@ -20,8 +20,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.core.cache import cache_service, CacheKeys, CacheTTL
 from .base import Analyzer
-from .purl_utils import is_pypi, is_npm
+from .purl_utils import is_pypi, is_npm, get_registry_system
 
 logger = logging.getLogger(__name__)
 
@@ -100,17 +101,64 @@ class MaintainerRiskAnalyzer(Analyzer):
         risks = []
         maintainer_info = {}
 
-        # Determine registry and check using centralized utils
+        # Determine registry and get cache key
+        registry = get_registry_system(purl)
+        cache_key = CacheKeys.maintainer(registry, name) if registry else None
+        
+        # Check cache first
+        if cache_key:
+            cached_info = await cache_service.get(cache_key)
+            if cached_info is not None:
+                if cached_info:  # Not a negative cache entry
+                    maintainer_info = cached_info.get("maintainer_info", {})
+                    if registry == "pypi":
+                        risks.extend(self._assess_risks(maintainer_info, "pypi"))
+                    elif registry == "npm":
+                        risks.extend(self._assess_risks(maintainer_info, "npm"))
+                    
+                    # Check GitHub if available
+                    github_info = cached_info.get("github_info")
+                    if github_info:
+                        maintainer_info["github"] = github_info
+                        risks.extend(self._assess_github_risks(github_info))
+                else:
+                    # Negative cache - no info available
+                    return None
+                
+                if not risks:
+                    return None
+                    
+                max_severity = max(r.get("severity_score", 1) for r in risks)
+                overall_severity = (
+                    "CRITICAL" if max_severity >= 4
+                    else "HIGH" if max_severity >= 3
+                    else "MEDIUM" if max_severity >= 2
+                    else "LOW"
+                )
+                return {
+                    "component": name,
+                    "version": version,
+                    "purl": purl,
+                    "risks": risks,
+                    "severity": overall_severity,
+                    "maintainer_info": maintainer_info,
+                }
+
+        # Fetch from APIs if not cached
+        cache_data = {"maintainer_info": {}, "github_info": None}
+        
         if is_pypi(purl):
             info = await self._check_pypi(client, name)
             if info:
                 maintainer_info = info
+                cache_data["maintainer_info"] = info
                 risks.extend(self._assess_risks(info, "pypi"))
 
         elif is_npm(purl):
             info = await self._check_npm(client, name)
             if info:
                 maintainer_info = info
+                cache_data["maintainer_info"] = info
                 risks.extend(self._assess_risks(info, "npm"))
 
         # Check GitHub repository if available
@@ -119,7 +167,16 @@ class MaintainerRiskAnalyzer(Analyzer):
             gh_info = await self._check_github(client, github_repo, github_token)
             if gh_info:
                 maintainer_info["github"] = gh_info
+                cache_data["github_info"] = gh_info
                 risks.extend(self._assess_github_risks(gh_info))
+
+        # Cache the result
+        if cache_key:
+            if cache_data["maintainer_info"] or cache_data["github_info"]:
+                await cache_service.set(cache_key, cache_data, CacheTTL.MAINTAINER_INFO)
+            else:
+                # Cache negative result
+                await cache_service.set(cache_key, {}, CacheTTL.NEGATIVE_RESULT)
 
         if not risks:
             return None
