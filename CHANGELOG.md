@@ -1,3 +1,11 @@
+# Release 1.0.2
+
+## 🐛 Fixes
+
+- fix: Update Dragonfly resource limits and max memory configuration (#0)
+
+
+
 # Release 1.0.1
 
 
