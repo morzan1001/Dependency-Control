@@ -7,7 +7,12 @@ from pydantic import BaseModel, Field
 class WaiverCreate(BaseModel):
     project_id: Optional[str] = None
     finding_id: Optional[str] = Field(
-        None, description="The ID of the finding (e.g. CVE-..., LIC-...)"
+        None,
+        description="The ID of the finding (e.g. aggregated ID like 'lodash:4.17.0')",
+    )
+    vulnerability_id: Optional[str] = Field(
+        None,
+        description="Specific vulnerability ID (e.g. CVE-2021-23337) for granular waivers within aggregated findings",
     )
     package_name: Optional[str] = None
     package_version: Optional[str] = None

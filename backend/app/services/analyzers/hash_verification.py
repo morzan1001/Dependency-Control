@@ -17,9 +17,10 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from app.core.cache import cache_service, CacheKeys, CacheTTL
+from app.core.cache import CacheKeys, CacheTTL, cache_service
+
 from .base import Analyzer
-from .purl_utils import is_pypi, is_npm, get_registry_system
+from .purl_utils import get_registry_system, is_npm, is_pypi
 
 logger = logging.getLogger(__name__)
 
@@ -157,11 +158,11 @@ class HashVerificationAnalyzer(Analyzer):
         sbom_hashes: Dict[str, str],
     ) -> Optional[Dict[str, Any]]:
         """Verify package hash against PyPI, or fetch hashes if none in SBOM."""
-        
+
         # Check cache first - hashes are immutable for released versions
         cache_key = CacheKeys.package_hash("pypi", name, version)
         cached_hashes = await cache_service.get(cache_key)
-        
+
         if cached_hashes is not None:
             if not cached_hashes:  # Empty dict = negative cache
                 return None
@@ -199,7 +200,9 @@ class HashVerificationAnalyzer(Analyzer):
 
             # Cache the hashes (immutable, long TTL)
             if registry_hashes_flat:
-                await cache_service.set(cache_key, registry_hashes_flat, CacheTTL.PACKAGE_HASH)
+                await cache_service.set(
+                    cache_key, registry_hashes_flat, CacheTTL.PACKAGE_HASH
+                )
             else:
                 await cache_service.set(cache_key, {}, CacheTTL.NEGATIVE_RESULT)
 
@@ -231,7 +234,7 @@ class HashVerificationAnalyzer(Analyzer):
                         "sbom_hash": sbom_value,
                         "expected_hashes": list(registry_hashes[sbom_alg_normalized]),
                         "severity": "CRITICAL",
-                        "message": f"Hash mismatch detected! Package may be tampered.",
+                        "message": "Hash mismatch detected! Package may be tampered.",
                     }
                 else:
                     return {"verified": True}
@@ -250,7 +253,7 @@ class HashVerificationAnalyzer(Analyzer):
         # Check cache first - hashes are immutable for released versions
         cache_key = CacheKeys.package_hash("npm", name, version)
         cached_hashes = await cache_service.get(cache_key)
-        
+
         if cached_hashes is not None:
             if not cached_hashes:  # Empty dict = negative cache
                 return None
@@ -259,7 +262,9 @@ class HashVerificationAnalyzer(Analyzer):
         else:
             # Handle scoped packages
             encoded_name = name.replace("/", "%2F") if "/" in name else name
-            url = self.REGISTRY_APIS["npm"].format(package=encoded_name, version=version)
+            url = self.REGISTRY_APIS["npm"].format(
+                package=encoded_name, version=version
+            )
             response = await client.get(url)
 
             if response.status_code != 200:
@@ -294,7 +299,9 @@ class HashVerificationAnalyzer(Analyzer):
 
             # Cache the hashes (immutable, long TTL)
             if registry_hashes_flat:
-                await cache_service.set(cache_key, registry_hashes_flat, CacheTTL.PACKAGE_HASH)
+                await cache_service.set(
+                    cache_key, registry_hashes_flat, CacheTTL.PACKAGE_HASH
+                )
             else:
                 await cache_service.set(cache_key, {}, CacheTTL.NEGATIVE_RESULT)
 
@@ -325,7 +332,7 @@ class HashVerificationAnalyzer(Analyzer):
                         "sbom_hash": sbom_value,
                         "expected_hashes": list(registry_hashes[sbom_alg_normalized]),
                         "severity": "CRITICAL",
-                        "message": f"Hash mismatch detected! Package may be tampered.",
+                        "message": "Hash mismatch detected! Package may be tampered.",
                     }
                 else:
                     return {"verified": True}

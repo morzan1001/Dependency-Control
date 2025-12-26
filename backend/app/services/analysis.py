@@ -8,31 +8,25 @@ from typing import Any, Dict, List, Set
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
+from app.core.constants import sort_by_severity
 from app.models.project import Project
-from app.models.stats import Stats, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts
+from app.models.stats import (PrioritizedCounts, ReachabilityStats, Stats,
+                              ThreatIntelligenceStats)
 from app.models.system import SystemSettings
 from app.services.aggregator import ResultAggregator
-from app.services.analyzers import (
-    Analyzer,
-    DepsDevAnalyzer,
-    EndOfLifeAnalyzer,
-    EPSSKEVAnalyzer,
-    GrypeAnalyzer,
-    HashVerificationAnalyzer,
-    LicenseAnalyzer,
-    MaintainerRiskAnalyzer,
-    OpenSourceMalwareAnalyzer,
-    OSVAnalyzer,
-    OutdatedAnalyzer,
-    ReachabilityAnalyzer,
-    TrivyAnalyzer,
-    TyposquattingAnalyzer,
-)
+from app.services.analyzers import (Analyzer, DepsDevAnalyzer,
+                                    EndOfLifeAnalyzer, EPSSKEVAnalyzer,
+                                    GrypeAnalyzer, HashVerificationAnalyzer,
+                                    LicenseAnalyzer, MaintainerRiskAnalyzer,
+                                    OpenSourceMalwareAnalyzer, OSVAnalyzer,
+                                    OutdatedAnalyzer, ReachabilityAnalyzer,
+                                    TrivyAnalyzer, TyposquattingAnalyzer)
 from app.services.gitlab import GitLabService
 from app.services.notifications import notification_service
+from app.services.reachability_enrichment import \
+    enrich_findings_with_reachability
 from app.services.sbom_parser import parse_sbom
 from app.services.vulnerability_enrichment import enrich_vulnerability_findings
-from app.services.reachability_enrichment import enrich_findings_with_reachability
 
 logger = logging.getLogger(__name__)
 
@@ -337,28 +331,32 @@ async def run_analysis(
     vulnerability_findings = [
         f for f in findings_to_insert if f.get("type") == "vulnerability"
     ]
-    
+
     # Extract GitHub token from system settings for authenticated API access
     github_token = system_settings.get("github_token")
-    
+
     # EPSS/KEV Enrichment (only if epss_kev analyzer is active)
     epss_kev_summary = None
     if "epss_kev" in active_analyzers and vulnerability_findings:
         try:
-            await enrich_vulnerability_findings(vulnerability_findings, github_token=github_token)
-            
+            await enrich_vulnerability_findings(
+                vulnerability_findings, github_token=github_token
+            )
+
             # Build summary for raw data view
             epss_kev_summary = _build_epss_kev_summary(vulnerability_findings)
-            
+
             # Store summary in analysis_results
-            await db.analysis_results.insert_one({
-                "_id": str(uuid.uuid4()),
-                "scan_id": scan_id,
-                "analyzer_name": "epss_kev",
-                "result": epss_kev_summary,
-                "created_at": datetime.now(timezone.utc),
-            })
-            
+            await db.analysis_results.insert_one(
+                {
+                    "_id": str(uuid.uuid4()),
+                    "scan_id": scan_id,
+                    "analyzer_name": "epss_kev",
+                    "result": epss_kev_summary,
+                    "created_at": datetime.now(timezone.utc),
+                }
+            )
+
             logger.info(
                 f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data"
             )
@@ -369,20 +367,18 @@ async def run_analysis(
     if "reachability" in active_analyzers and vulnerability_findings:
         # Check if callgraph exists for this scan
         # Priority: scan_id > pipeline_id (fallback)
-        callgraph = await db.callgraphs.find_one({
-            "project_id": project_id, 
-            "scan_id": scan_id
-        })
-        
+        callgraph = await db.callgraphs.find_one(
+            {"project_id": project_id, "scan_id": scan_id}
+        )
+
         if not callgraph:
             # Fallback: try to find callgraph via pipeline_id
             pipeline_id = scan_doc.get("pipeline_id") if scan_doc else None
             if pipeline_id:
-                callgraph = await db.callgraphs.find_one({
-                    "project_id": project_id,
-                    "pipeline_id": pipeline_id
-                })
-        
+                callgraph = await db.callgraphs.find_one(
+                    {"project_id": project_id, "pipeline_id": pipeline_id}
+                )
+
         if callgraph:
             # Callgraph exists - run reachability analysis now
             try:
@@ -392,19 +388,21 @@ async def run_analysis(
                     db=db,
                     scan_id=scan_id,
                 )
-                
+
                 # Build and store reachability summary
                 reachability_summary = _build_reachability_summary(
                     vulnerability_findings, callgraph, enriched_count
                 )
-                await db.analysis_results.insert_one({
-                    "_id": str(uuid.uuid4()),
-                    "scan_id": scan_id,
-                    "analyzer_name": "reachability",
-                    "result": reachability_summary,
-                    "created_at": datetime.now(timezone.utc),
-                })
-                
+                await db.analysis_results.insert_one(
+                    {
+                        "_id": str(uuid.uuid4()),
+                        "scan_id": scan_id,
+                        "analyzer_name": "reachability",
+                        "result": reachability_summary,
+                        "created_at": datetime.now(timezone.utc),
+                    }
+                )
+
                 if enriched_count > 0:
                     logger.info(
                         f"[reachability] Enriched {enriched_count} findings for scan {scan_id}"
@@ -425,7 +423,7 @@ async def run_analysis(
                         "reachability_pending": True,
                         "reachability_pending_since": datetime.now(timezone.utc),
                     }
-                }
+                },
             )
             logger.info(
                 f"[reachability] No callgraph available for scan {scan_id}. "
@@ -436,6 +434,7 @@ async def run_analysis(
         await db.findings.insert_many(findings_to_insert)
 
     # Apply waivers via DB updates (Optimization: Bulk updates instead of loop)
+    # Waivers can now target specific vulnerabilities within aggregated findings
     for waiver in active_waivers:
         query = {"scan_id": scan_id}
         if waiver.get("finding_id"):
@@ -447,9 +446,32 @@ async def run_analysis(
         if waiver.get("finding_type"):
             query["type"] = waiver["finding_type"]
 
-        await db.findings.update_many(
-            query, {"$set": {"waived": True, "waiver_reason": waiver.get("reason")}}
-        )
+        # Handle vulnerability_id for granular CVE-level waivers
+        vulnerability_id = waiver.get("vulnerability_id")
+        if vulnerability_id:
+            # For vulnerability-specific waivers, we need to update the nested vulnerability
+            # within the details.vulnerabilities array, not waive the entire finding
+            await db.findings.update_many(
+                {
+                    **query,
+                    "type": "vulnerability",
+                    "details.vulnerabilities.id": vulnerability_id,
+                },
+                {
+                    "$set": {
+                        "details.vulnerabilities.$[vuln].waived": True,
+                        "details.vulnerabilities.$[vuln].waiver_reason": waiver.get(
+                            "reason"
+                        ),
+                    }
+                },
+                array_filters=[{"vuln.id": vulnerability_id}],
+            )
+        else:
+            # Standard waiver - waive the entire finding
+            await db.findings.update_many(
+                query, {"$set": {"waived": True, "waiver_reason": waiver.get("reason")}}
+            )
 
     ignored_count = await db.findings.count_documents(
         {"scan_id": scan_id, "waived": True}
@@ -573,13 +595,15 @@ async def run_analysis(
     except Exception as e:
         logger.error(f"Failed to decorate GitLab MR: {e}")
 
-    # Send Notification
+    # Send Notifications
     try:
         scan = await db.scans.find_one({"_id": scan_id})
         if scan:
             project_data = await db.projects.find_one({"_id": scan["project_id"]})
             if project_data:
                 project = Project(**project_data)
+
+                # Always send analysis_completed notification
                 await notification_service.notify_project_members(
                     project=project,
                     event_type="analysis_completed",
@@ -588,6 +612,108 @@ async def run_analysis(
                     + "\n".join(results_summary),
                     db=db,
                 )
+
+                # Check for critical vulnerabilities and send vulnerability_found notification
+                vulnerability_findings = [
+                    f for f in aggregated_findings if f.get("type") == "vulnerability"
+                ]
+
+                if vulnerability_findings:
+                    # Extract KEV and high EPSS vulnerabilities
+                    kev_vulns = []
+                    high_epss_vulns = []
+                    critical_vulns = []
+
+                    for finding in vulnerability_findings:
+                        details = finding.get("details", {})
+                        vulns = details.get("vulnerabilities", [details])
+
+                        for vuln in vulns:
+                            vuln_info = {
+                                "id": vuln.get("id", finding.get("id", "Unknown")),
+                                "severity": vuln.get(
+                                    "severity", finding.get("severity", "UNKNOWN")
+                                ),
+                                "package": finding.get("component", "Unknown"),
+                                "version": finding.get("version", ""),
+                                "in_kev": vuln.get("in_kev", False),
+                                "epss_score": vuln.get("epss_score"),
+                                "kev_due_date": vuln.get("kev_due_date"),
+                                "kev_ransomware_use": vuln.get(
+                                    "kev_ransomware_use", False
+                                ),
+                            }
+
+                            if vuln.get("in_kev"):
+                                kev_vulns.append(vuln_info)
+
+                            if vuln.get("epss_score") and vuln.get("epss_score") >= 0.1:
+                                high_epss_vulns.append(vuln_info)
+
+                            if vuln.get("severity") in ["CRITICAL", "HIGH"] or vuln.get(
+                                "in_kev"
+                            ):
+                                critical_vulns.append(vuln_info)
+
+                    # Send vulnerability_found notification if there are KEV, high EPSS, or critical/high vulns
+                    if kev_vulns or high_epss_vulns or critical_vulns:
+                        # Sort and get top 10 most critical vulnerabilities for email
+                        top_vulns = sorted(
+                            critical_vulns,
+                            key=lambda x: (
+                                not x.get("in_kev", False),  # KEV first
+                                -(x.get("epss_score") or 0),  # Then by EPSS
+                                {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(
+                                    x.get("severity", "LOW"), 4
+                                ),
+                            ),
+                        )[:10]
+
+                        subject = "🔴 Security Alert: "
+                        if kev_vulns:
+                            subject += f"{len(kev_vulns)} KEV Vulnerabilities in {project.name}"
+                        elif high_epss_vulns:
+                            subject += f"High-Risk Vulnerabilities in {project.name}"
+                        else:
+                            subject += f"Critical Vulnerabilities in {project.name}"
+
+                        message = f"Security scan detected critical vulnerabilities in {project.name}.\n\n"
+                        if kev_vulns:
+                            message += f"⚠️ {len(kev_vulns)} Known Exploited Vulnerabilities (CISA KEV)\n"
+                        if high_epss_vulns:
+                            message += f"🎯 {len(high_epss_vulns)} vulnerabilities with high exploitation probability (EPSS > 10%)\n"
+                        message += f"\nTotal critical/high vulnerabilities: {len(critical_vulns)}\n"
+
+                        # Add top vulnerabilities details
+                        if top_vulns:
+                            message += "\n📋 Top Priority Vulnerabilities:\n"
+                            for i, vuln in enumerate(top_vulns, 1):
+                                vuln_line = f"  {i}. {vuln['id']} ({vuln['severity']})"
+                                vuln_line += f" - {vuln['package']}"
+                                if vuln["version"]:
+                                    vuln_line += f"@{vuln['version']}"
+                                if vuln.get("in_kev"):
+                                    vuln_line += " [KEV]"
+                                if vuln.get("epss_score"):
+                                    vuln_line += (
+                                        f" [EPSS: {vuln['epss_score']*100:.1f}%]"
+                                    )
+                                message += vuln_line + "\n"
+
+                        message += f"\nView full report: {scan_id}"
+
+                        await notification_service.notify_project_members(
+                            project=project,
+                            event_type="vulnerability_found",
+                            subject=subject,
+                            message=message,
+                            db=db,
+                        )
+
+                        logger.info(
+                            f"Sent vulnerability_found notification for project {project.name}: "
+                            f"{len(kev_vulns)} KEV, {len(high_epss_vulns)} high EPSS, {len(critical_vulns)} critical/high"
+                        )
     except Exception as e:
         logger.error(f"Failed to send notifications: {e}")
 
@@ -595,10 +721,10 @@ async def run_analysis(
 def _build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Build a summary of EPSS/KEV enrichment for raw data view.
-    
+
     Args:
         findings: List of vulnerability findings that were enriched
-        
+
     Returns:
         Summary dict with statistics and details
     """
@@ -608,9 +734,9 @@ def _build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
         "kev_matches": 0,
         "kev_ransomware": 0,
         "epss_scores": {
-            "high": 0,      # > 0.1 (10%)
-            "medium": 0,    # 0.01 - 0.1 (1-10%)
-            "low": 0,       # < 0.01 (< 1%)
+            "high": 0,  # > 0.1 (10%)
+            "medium": 0,  # 0.01 - 0.1 (1-10%)
+            "low": 0,  # < 0.01 (< 1%)
         },
         "exploit_maturity": {
             "weaponized": 0,
@@ -628,26 +754,26 @@ def _build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
         "high_risk_cves": [],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    
+
     epss_scores = []
     risk_scores = []
-    
+
     for finding in findings:
         details = finding.get("details", {})
-        
+
         # EPSS enrichment
         epss_score = details.get("epss_score")
         if epss_score is not None:
             summary["epss_enriched"] += 1
             epss_scores.append(epss_score)
-            
+
             if epss_score > 0.1:
                 summary["epss_scores"]["high"] += 1
             elif epss_score > 0.01:
                 summary["epss_scores"]["medium"] += 1
             else:
                 summary["epss_scores"]["low"] += 1
-        
+
         # KEV enrichment
         if details.get("in_kev"):
             summary["kev_matches"] += 1
@@ -658,62 +784,62 @@ def _build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "ransomware": details.get("kev_ransomware_use", False),
             }
             summary["kev_details"].append(kev_detail)
-            
+
             if details.get("kev_ransomware_use"):
                 summary["kev_ransomware"] += 1
-        
+
         # Exploit maturity
         maturity = details.get("exploit_maturity", "unknown")
         if maturity in summary["exploit_maturity"]:
             summary["exploit_maturity"][maturity] += 1
-        
+
         # Risk score
         risk_score = details.get("risk_score")
         if risk_score is not None:
             risk_scores.append(risk_score)
-            
+
             # Track high-risk CVEs (risk_score > 70)
             if risk_score > 70:
-                summary["high_risk_cves"].append({
-                    "cve": finding.get("finding_id") or finding.get("id", ""),
-                    "component": finding.get("component", ""),
-                    "version": finding.get("version", ""),
-                    "risk_score": round(risk_score, 1),
-                    "epss_score": round(epss_score, 4) if epss_score else None,
-                    "in_kev": details.get("in_kev", False),
-                    "exploit_maturity": maturity,
-                })
-    
+                summary["high_risk_cves"].append(
+                    {
+                        "cve": finding.get("finding_id") or finding.get("id", ""),
+                        "component": finding.get("component", ""),
+                        "version": finding.get("version", ""),
+                        "risk_score": round(risk_score, 1),
+                        "epss_score": round(epss_score, 4) if epss_score else None,
+                        "in_kev": details.get("in_kev", False),
+                        "exploit_maturity": maturity,
+                    }
+                )
+
     # Calculate averages
     if epss_scores:
         summary["avg_epss_score"] = round(sum(epss_scores) / len(epss_scores), 4)
         summary["max_epss_score"] = round(max(epss_scores), 4)
-    
+
     if risk_scores:
         summary["avg_risk_score"] = round(sum(risk_scores) / len(risk_scores), 1)
         summary["max_risk_score"] = round(max(risk_scores), 1)
-    
+
     # Sort high-risk CVEs by risk score
     summary["high_risk_cves"].sort(key=lambda x: x["risk_score"], reverse=True)
     # Limit to top 20
     summary["high_risk_cves"] = summary["high_risk_cves"][:20]
-    
+
     return summary
 
 
 def _build_reachability_summary(
-    findings: List[Dict[str, Any]],
-    callgraph: Dict[str, Any],
-    enriched_count: int
+    findings: List[Dict[str, Any]], callgraph: Dict[str, Any], enriched_count: int
 ) -> Dict[str, Any]:
     """
     Build a summary of reachability analysis for raw data view.
-    
+
     Args:
         findings: List of vulnerability findings that were analyzed
         callgraph: The callgraph document used for analysis
         enriched_count: Number of findings that were enriched
-        
+
     Returns:
         Summary dict with statistics and details
     """
@@ -721,76 +847,79 @@ def _build_reachability_summary(
         "total_vulnerabilities": len(findings),
         "analyzed": enriched_count,
         "reachability_levels": {
-            "confirmed": 0,    # Symbol-level match
-            "likely": 0,       # Import-level match
-            "unknown": 0,      # Could not determine
+            "confirmed": 0,  # Symbol-level match
+            "likely": 0,  # Import-level match
+            "unknown": 0,  # Could not determine
             "unreachable": 0,  # Confirmed not used
         },
         "callgraph_info": {
             "language": callgraph.get("language", "unknown"),
             "total_modules": len(callgraph.get("module_usage", {})),
             "total_imports": len(callgraph.get("import_map", {})),
-            "generated_at": callgraph.get("created_at", "").isoformat() 
-                if hasattr(callgraph.get("created_at", ""), "isoformat") 
-                else str(callgraph.get("created_at", "")),
+            "generated_at": (
+                callgraph.get("created_at", "").isoformat()
+                if hasattr(callgraph.get("created_at", ""), "isoformat")
+                else str(callgraph.get("created_at", ""))
+            ),
         },
         "reachable_vulnerabilities": [],
         "unreachable_vulnerabilities": [],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    
+
     for finding in findings:
         reachable = finding.get("reachable")
         reachability_level = finding.get("reachability_level", "unknown")
-        
+
         vuln_info = {
             "cve": finding.get("finding_id") or finding.get("id", ""),
             "component": finding.get("component", ""),
             "version": finding.get("version", ""),
             "severity": finding.get("severity", "unknown"),
             "reachability_level": reachability_level,
-            "reachable_functions": finding.get("reachable_functions", [])[:5],  # Limit to 5
+            "reachable_functions": finding.get("reachable_functions", [])[
+                :5
+            ],  # Limit to 5
         }
-        
+
         if reachability_level in summary["reachability_levels"]:
             summary["reachability_levels"][reachability_level] += 1
-        
+
         if reachable is True:
             summary["reachable_vulnerabilities"].append(vuln_info)
         elif reachable is False:
             summary["unreachable_vulnerabilities"].append(vuln_info)
-    
-    # Sort by severity
-    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "unknown": 4}
-    summary["reachable_vulnerabilities"].sort(
-        key=lambda x: severity_order.get(x["severity"], 4)
+
+    # Sort by severity (most severe first)
+    summary["reachable_vulnerabilities"] = sort_by_severity(
+        summary["reachable_vulnerabilities"], key="severity", reverse=True
     )
-    summary["unreachable_vulnerabilities"].sort(
-        key=lambda x: severity_order.get(x["severity"], 4)
+    summary["unreachable_vulnerabilities"] = sort_by_severity(
+        summary["unreachable_vulnerabilities"], key="severity", reverse=True
     )
-    
+
     # Limit lists to top 30
     summary["reachable_vulnerabilities"] = summary["reachable_vulnerabilities"][:30]
     summary["unreachable_vulnerabilities"] = summary["unreachable_vulnerabilities"][:30]
-    
+
     return summary
 
 
 async def _calculate_comprehensive_stats(db, scan_id: str) -> Stats:
     """
     Calculate comprehensive statistics including EPSS/KEV and Reachability data.
-    
+
     This function calculates:
     1. Traditional severity-based counts (critical, high, medium, low, info)
     2. Threat intelligence stats (KEV count, EPSS scores, weaponized vulns)
     3. Reachability stats (reachable/unreachable counts)
     4. Prioritized counts (actionable vulns that are both exploitable AND reachable)
     5. Adjusted risk score incorporating all factors
-    
+
     Args:
         db: Database connection
         scan_id: The scan ID to calculate stats for
-        
+
     Returns:
         Stats object with all fields populated
     """
@@ -836,54 +965,46 @@ async def _calculate_comprehensive_stats(db, scan_id: str) -> Stats:
                     "$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}
                 },
                 "total": {"$sum": 1},
-                
                 # Traditional risk score sum
                 "risk_score_sum": {
-                    "$sum": {
-                        "$ifNull": ["$cvss_score", "$calculated_score"]
-                    }
+                    "$sum": {"$ifNull": ["$cvss_score", "$calculated_score"]}
                 },
-                
                 # Adjusted risk scores (including enrichment data)
                 "adjusted_risk_score_sum": {
                     "$sum": {"$ifNull": ["$risk_score", "$calculated_score"]}
                 },
-                
                 # KEV statistics
-                "kev_count": {
-                    "$sum": {"$cond": [{"$eq": ["$is_kev", True]}, 1, 0]}
-                },
+                "kev_count": {"$sum": {"$cond": [{"$eq": ["$is_kev", True]}, 1, 0]}},
                 "kev_ransomware_count": {
                     "$sum": {"$cond": [{"$eq": ["$kev_ransomware", True]}, 1, 0]}
                 },
-                
                 # EPSS statistics
                 "epss_scores": {
                     "$push": {
                         "$cond": [
                             {"$ne": ["$epss_score", None]},
                             "$epss_score",
-                            "$$REMOVE"
+                            "$$REMOVE",
                         ]
                     }
                 },
                 "high_epss_count": {
-                    "$sum": {
-                        "$cond": [{"$gte": ["$epss_score", 0.1]}, 1, 0]
-                    }
+                    "$sum": {"$cond": [{"$gte": ["$epss_score", 0.1]}, 1, 0]}
                 },
                 "medium_epss_count": {
                     "$sum": {
                         "$cond": [
-                            {"$and": [
-                                {"$gte": ["$epss_score", 0.01]},
-                                {"$lt": ["$epss_score", 0.1]}
-                            ]},
-                            1, 0
+                            {
+                                "$and": [
+                                    {"$gte": ["$epss_score", 0.01]},
+                                    {"$lt": ["$epss_score", 0.1]},
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
-                
                 # Reachability statistics
                 "reachability_analyzed": {
                     "$sum": {"$cond": [{"$ne": ["$reachable", None]}, 1, 0]}
@@ -895,150 +1016,193 @@ async def _calculate_comprehensive_stats(db, scan_id: str) -> Stats:
                     "$sum": {"$cond": [{"$eq": ["$reachable", False]}, 1, 0]}
                 },
                 "confirmed_reachable": {
-                    "$sum": {"$cond": [{"$eq": ["$reachability_level", "confirmed"]}, 1, 0]}
+                    "$sum": {
+                        "$cond": [{"$eq": ["$reachability_level", "confirmed"]}, 1, 0]
+                    }
                 },
                 "likely_reachable": {
-                    "$sum": {"$cond": [{"$eq": ["$reachability_level", "likely"]}, 1, 0]}
+                    "$sum": {
+                        "$cond": [{"$eq": ["$reachability_level", "likely"]}, 1, 0]
+                    }
                 },
-                
                 # Reachable by severity
                 "reachable_critical": {
                     "$sum": {
                         "$cond": [
-                            {"$and": [
-                                {"$eq": ["$reachable", True]},
-                                {"$eq": ["$severity", "CRITICAL"]}
-                            ]},
-                            1, 0
+                            {
+                                "$and": [
+                                    {"$eq": ["$reachable", True]},
+                                    {"$eq": ["$severity", "CRITICAL"]},
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
                 "reachable_high": {
                     "$sum": {
                         "$cond": [
-                            {"$and": [
-                                {"$eq": ["$reachable", True]},
-                                {"$eq": ["$severity", "HIGH"]}
-                            ]},
-                            1, 0
+                            {
+                                "$and": [
+                                    {"$eq": ["$reachable", True]},
+                                    {"$eq": ["$severity", "HIGH"]},
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
-                
                 # Actionable: KEV or high EPSS AND reachable (or reachability unknown)
                 "actionable_critical": {
                     "$sum": {
                         "$cond": [
-                            {"$and": [
-                                {"$eq": ["$severity", "CRITICAL"]},
-                                {"$or": [
-                                    {"$eq": ["$is_kev", True]},
-                                    {"$gte": ["$epss_score", 0.1]}
-                                ]},
-                                {"$or": [
-                                    {"$eq": ["$reachable", True]},
-                                    {"$eq": ["$reachable", None]}  # Unknown = assume reachable
-                                ]}
-                            ]},
-                            1, 0
+                            {
+                                "$and": [
+                                    {"$eq": ["$severity", "CRITICAL"]},
+                                    {
+                                        "$or": [
+                                            {"$eq": ["$is_kev", True]},
+                                            {"$gte": ["$epss_score", 0.1]},
+                                        ]
+                                    },
+                                    {
+                                        "$or": [
+                                            {"$eq": ["$reachable", True]},
+                                            {
+                                                "$eq": ["$reachable", None]
+                                            },  # Unknown = assume reachable
+                                        ]
+                                    },
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
                 "actionable_high": {
                     "$sum": {
                         "$cond": [
-                            {"$and": [
-                                {"$eq": ["$severity", "HIGH"]},
-                                {"$or": [
-                                    {"$eq": ["$is_kev", True]},
-                                    {"$gte": ["$epss_score", 0.1]}
-                                ]},
-                                {"$or": [
-                                    {"$eq": ["$reachable", True]},
-                                    {"$eq": ["$reachable", None]}
-                                ]}
-                            ]},
-                            1, 0
+                            {
+                                "$and": [
+                                    {"$eq": ["$severity", "HIGH"]},
+                                    {
+                                        "$or": [
+                                            {"$eq": ["$is_kev", True]},
+                                            {"$gte": ["$epss_score", 0.1]},
+                                        ]
+                                    },
+                                    {
+                                        "$or": [
+                                            {"$eq": ["$reachable", True]},
+                                            {"$eq": ["$reachable", None]},
+                                        ]
+                                    },
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
                 "actionable_total": {
                     "$sum": {
                         "$cond": [
-                            {"$and": [
-                                {"$or": [
-                                    {"$eq": ["$is_kev", True]},
-                                    {"$gte": ["$epss_score", 0.1]}
-                                ]},
-                                {"$or": [
-                                    {"$eq": ["$reachable", True]},
-                                    {"$eq": ["$reachable", None]}
-                                ]}
-                            ]},
-                            1, 0
+                            {
+                                "$and": [
+                                    {
+                                        "$or": [
+                                            {"$eq": ["$is_kev", True]},
+                                            {"$gte": ["$epss_score", 0.1]},
+                                        ]
+                                    },
+                                    {
+                                        "$or": [
+                                            {"$eq": ["$reachable", True]},
+                                            {"$eq": ["$reachable", None]},
+                                        ]
+                                    },
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
-                
                 # Deprioritized: unreachable OR (low EPSS and not KEV)
                 "deprioritized_count": {
                     "$sum": {
                         "$cond": [
-                            {"$or": [
-                                {"$eq": ["$reachable", False]},
-                                {"$and": [
-                                    {"$ne": ["$is_kev", True]},
-                                    {"$or": [
-                                        {"$eq": ["$epss_score", None]},
-                                        {"$lt": ["$epss_score", 0.01]}
-                                    ]}
-                                ]}
-                            ]},
-                            1, 0
+                            {
+                                "$or": [
+                                    {"$eq": ["$reachable", False]},
+                                    {
+                                        "$and": [
+                                            {"$ne": ["$is_kev", True]},
+                                            {
+                                                "$or": [
+                                                    {"$eq": ["$epss_score", None]},
+                                                    {"$lt": ["$epss_score", 0.01]},
+                                                ]
+                                            },
+                                        ]
+                                    },
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
-                
                 # Weaponized: KEV with ransomware or high EPSS with KEV
                 "weaponized_count": {
                     "$sum": {
                         "$cond": [
-                            {"$or": [
-                                {"$eq": ["$kev_ransomware", True]},
-                                {"$and": [
-                                    {"$eq": ["$is_kev", True]},
-                                    {"$gte": ["$epss_score", 0.5]}
-                                ]}
-                            ]},
-                            1, 0
+                            {
+                                "$or": [
+                                    {"$eq": ["$kev_ransomware", True]},
+                                    {
+                                        "$and": [
+                                            {"$eq": ["$is_kev", True]},
+                                            {"$gte": ["$epss_score", 0.5]},
+                                        ]
+                                    },
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
-                
                 # Active exploitation: KEV or very high EPSS
                 "active_exploitation_count": {
                     "$sum": {
                         "$cond": [
-                            {"$or": [
-                                {"$eq": ["$is_kev", True]},
-                                {"$gte": ["$epss_score", 0.7]}
-                            ]},
-                            1, 0
+                            {
+                                "$or": [
+                                    {"$eq": ["$is_kev", True]},
+                                    {"$gte": ["$epss_score", 0.7]},
+                                ]
+                            },
+                            1,
+                            0,
                         ]
                     }
                 },
             }
         },
     ]
-    
+
     stats_result = await db.findings.aggregate(pipeline).to_list(1)
-    
+
     # Initialize stats with defaults
     stats = Stats()
-    
+
     if stats_result:
         res = stats_result[0]
-        
+
         # Traditional severity counts
         stats.critical = res.get("critical", 0)
         stats.high = res.get("high", 0)
@@ -1048,12 +1212,12 @@ async def _calculate_comprehensive_stats(db, scan_id: str) -> Stats:
         stats.unknown = res.get("unknown", 0)
         stats.risk_score = round(res.get("risk_score_sum", 0.0), 1)
         stats.adjusted_risk_score = round(res.get("adjusted_risk_score_sum", 0.0), 1)
-        
+
         # Calculate EPSS statistics
         epss_scores = [s for s in res.get("epss_scores", []) if s is not None]
         avg_epss = sum(epss_scores) / len(epss_scores) if epss_scores else None
         max_epss = max(epss_scores) if epss_scores else None
-        
+
         # Threat Intelligence Stats
         stats.threat_intel = ThreatIntelligenceStats(
             kev_count=res.get("kev_count", 0),
@@ -1065,7 +1229,7 @@ async def _calculate_comprehensive_stats(db, scan_id: str) -> Stats:
             weaponized_count=res.get("weaponized_count", 0),
             active_exploitation_count=res.get("active_exploitation_count", 0),
         )
-        
+
         # Reachability Stats
         stats.reachability = ReachabilityStats(
             analyzed_count=res.get("reachability_analyzed", 0),
@@ -1076,7 +1240,7 @@ async def _calculate_comprehensive_stats(db, scan_id: str) -> Stats:
             reachable_critical=res.get("reachable_critical", 0),
             reachable_high=res.get("reachable_high", 0),
         )
-        
+
         # Prioritized Counts
         stats.prioritized = PrioritizedCounts(
             total=res.get("total", 0),
@@ -1089,5 +1253,5 @@ async def _calculate_comprehensive_stats(db, scan_id: str) -> Stats:
             actionable_total=res.get("actionable_total", 0),
             deprioritized_count=res.get("deprioritized_count", 0),
         )
-    
+
     return stats

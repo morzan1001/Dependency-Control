@@ -39,14 +39,13 @@ export default function Signup() {
         const data = await apiLogin(username, password)
         login(data.access_token, data.refresh_token)
         // The AuthContext will handle redirection to /setup-2fa if needed
-      } catch (loginErr) {
+      } catch {
         // If auto-login fails, redirect to login page
         navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
       }
 
     } catch (err) {
       const error = err as AxiosError<{ detail: string }>
-      console.error('Signup error:', error);
       
       if (error.response) {
         setError(error.response.data?.detail || `Signup failed with status ${error.response.status}`);

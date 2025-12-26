@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { inviteUser, getSystemSettings } from '@/lib/api';
+import { inviteUser, getSystemSettings, ApiError } from '@/lib/api';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,6 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
-import { AxiosError } from 'axios';
 
 export function InviteUserDialog() {
   const [isOpen, setIsOpen] = useState(false);
@@ -47,7 +46,7 @@ export function InviteUserDialog() {
         });
       }
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Error", {
         description: error.response?.data?.detail || "Failed to send invitation",
       });

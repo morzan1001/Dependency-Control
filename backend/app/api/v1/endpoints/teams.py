@@ -8,13 +8,8 @@ from app.api import deps
 from app.db.mongodb import get_database
 from app.models.team import Team, TeamMember
 from app.models.user import User
-from app.schemas.team import (
-    TeamCreate,
-    TeamMemberAdd,
-    TeamMemberUpdate,
-    TeamResponse,
-    TeamUpdate,
-)
+from app.schemas.team import (TeamCreate, TeamMemberAdd, TeamMemberUpdate,
+                              TeamResponse, TeamUpdate)
 
 router = APIRouter()
 

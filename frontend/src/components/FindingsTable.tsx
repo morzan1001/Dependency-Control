@@ -6,7 +6,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
-import { ArrowUp, ArrowDown, Container, FileCode, HardDrive, Layers, Shield, AlertTriangle, AlertCircle, AlertOctagon, Info, CircleAlert } from 'lucide-react';
+import { ArrowUp, ArrowDown, Shield, AlertTriangle } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants';
 import {
   Tooltip,
@@ -14,22 +14,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-
-// Helper to get source info
-function getSourceInfo(sourceType?: string) {
-  switch (sourceType) {
-    case 'image':
-      return { icon: Container, label: 'Docker Image', color: 'text-blue-500' }
-    case 'file':
-      return { icon: FileCode, label: 'Source File', color: 'text-green-500' }
-    case 'directory':
-      return { icon: HardDrive, label: 'Directory', color: 'text-amber-500' }
-    case 'application':
-      return { icon: Layers, label: 'Application', color: 'text-purple-500' }
-    default:
-      return null
-  }
-}
+import { SeverityBadge } from '@/components/findings/SeverityBadge'
+import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
+import { getSourceInfo } from '@/lib/finding-utils'
 
 interface FindingsTableProps {
     scanId: string;
@@ -285,14 +272,14 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                             </div>
                                         </TableCell>
                                         <TableCell className="p-4 align-middle font-mono text-xs truncate" title={finding.id}>
-                                            {finding.type === 'vulnerability' && finding.details?.vulnerabilities?.length > 1 
+                                            {finding.type === 'vulnerability' && (finding.details?.vulnerabilities?.length ?? 0) > 1 
                                                 ? 'Multiple Vulnerabilities' 
-                                                : (finding.type === 'vulnerability' && finding.details?.vulnerabilities?.length === 1 
-                                                    ? finding.details.vulnerabilities[0].id 
-                                                    : finding.type === 'quality' && finding.details?.quality_issues?.length > 1
+                                                : (finding.type === 'vulnerability' && (finding.details?.vulnerabilities?.length ?? 0) === 1 
+                                                    ? finding.details?.vulnerabilities?.[0]?.id 
+                                                    : finding.type === 'quality' && (finding.details?.quality_issues?.length ?? 0) > 1
                                                         ? 'Multiple Quality Issues'
-                                                        : finding.type === 'quality' && finding.details?.quality_issues?.length === 1
-                                                            ? finding.details.quality_issues[0].id
+                                                        : finding.type === 'quality' && (finding.details?.quality_issues?.length ?? 0) === 1
+                                                            ? finding.details?.quality_issues?.[0]?.id
                                                             : finding.id)}
                                         </TableCell>
                                         <TableCell className="p-4 align-middle">
@@ -330,7 +317,20 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                                             )}
                                         </TableCell>
                                         <TableCell className="p-4 align-middle">
-                                            <Badge variant="outline">{finding.type}</Badge>
+                                            <div className="flex flex-wrap gap-1">
+                                                <Badge variant="outline">{finding.type}</Badge>
+                                                {/* Show additional absorbed finding types */}
+                                                {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }, idx: number) => (
+                                                    <FindingTypeBadge key={idx} type={addType.type} />
+                                                ))}
+                                                {/* Show context indicators */}
+                                                {finding.details?.outdated_info && !finding.details?.additional_finding_types?.some((t: { type: string }) => t.type === 'outdated') && (
+                                                    <FindingTypeBadge type="outdated" />
+                                                )}
+                                                {finding.details?.quality_info && !finding.details?.additional_finding_types?.some((t: { type: string }) => t.type === 'quality') && (
+                                                    <FindingTypeBadge type="quality" />
+                                                )}
+                                            </div>
                                         </TableCell>
                                         <TableCell className="p-4 align-middle text-sm text-muted-foreground">
                                             {finding.scanners?.join(', ') || 'Unknown'}
@@ -441,25 +441,5 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                 />
             )}
         </div>
-    )
-}
-
-function SeverityBadge({ severity }: { severity: string }) {
-    const config = {
-        CRITICAL: { color: "bg-red-500", icon: AlertOctagon },
-        HIGH: { color: "bg-orange-500", icon: AlertTriangle },
-        MEDIUM: { color: "bg-yellow-500", icon: AlertCircle },
-        LOW: { color: "bg-blue-500", icon: Info },
-        INFO: { color: "bg-gray-500", icon: Info },
-        UNKNOWN: { color: "bg-gray-400", icon: CircleAlert }
-    }[severity] || { color: "bg-gray-400", icon: CircleAlert }
-
-    const Icon = config.icon
-
-    return (
-        <Badge className={`${config.color} hover:${config.color} text-white flex items-center gap-1`}>
-            <Icon className="h-3 w-3" />
-            {severity}
-        </Badge>
     )
 }

@@ -20,9 +20,10 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from app.core.cache import cache_service, CacheKeys, CacheTTL
+from app.core.cache import CacheKeys, CacheTTL, cache_service
+
 from .base import Analyzer
-from .purl_utils import is_pypi, is_npm, get_registry_system
+from .purl_utils import get_registry_system, is_npm, is_pypi
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,9 @@ class MaintainerRiskAnalyzer(Analyzer):
 
             for i in range(0, len(components), batch_size):
                 batch = components[i : i + batch_size]
-                tasks = [self._check_component(client, comp, github_token) for comp in batch]
+                tasks = [
+                    self._check_component(client, comp, github_token) for comp in batch
+                ]
                 results = await asyncio.gather(*tasks)
 
                 for result in results:
@@ -87,7 +90,10 @@ class MaintainerRiskAnalyzer(Analyzer):
         }
 
     async def _check_component(
-        self, client: httpx.AsyncClient, component: Dict[str, Any], github_token: Optional[str] = None
+        self,
+        client: httpx.AsyncClient,
+        component: Dict[str, Any],
+        github_token: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Check maintainer health for a single component."""
 
@@ -104,7 +110,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         # Determine registry and get cache key
         registry = get_registry_system(purl)
         cache_key = CacheKeys.maintainer(registry, name) if registry else None
-        
+
         # Check cache first
         if cache_key:
             cached_info = await cache_service.get(cache_key)
@@ -115,7 +121,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                         risks.extend(self._assess_risks(maintainer_info, "pypi"))
                     elif registry == "npm":
                         risks.extend(self._assess_risks(maintainer_info, "npm"))
-                    
+
                     # Check GitHub if available
                     github_info = cached_info.get("github_info")
                     if github_info:
@@ -124,16 +130,19 @@ class MaintainerRiskAnalyzer(Analyzer):
                 else:
                     # Negative cache - no info available
                     return None
-                
+
                 if not risks:
                     return None
-                    
+
                 max_severity = max(r.get("severity_score", 1) for r in risks)
                 overall_severity = (
-                    "CRITICAL" if max_severity >= 4
-                    else "HIGH" if max_severity >= 3
-                    else "MEDIUM" if max_severity >= 2
-                    else "LOW"
+                    "CRITICAL"
+                    if max_severity >= 4
+                    else (
+                        "HIGH"
+                        if max_severity >= 3
+                        else "MEDIUM" if max_severity >= 2 else "LOW"
+                    )
                 )
                 return {
                     "component": name,
@@ -146,7 +155,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         # Fetch from APIs if not cached
         cache_data = {"maintainer_info": {}, "github_info": None}
-        
+
         if is_pypi(purl):
             info = await self._check_pypi(client, name)
             if info:
@@ -227,7 +236,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                             )
                             if latest_release_date is None or dt > latest_release_date:
                                 latest_release_date = dt
-                        except:
+                        except (ValueError, TypeError):
                             pass
 
             return {
@@ -274,7 +283,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                     latest_release_date = datetime.fromisoformat(
                         time_info["modified"].replace("Z", "+00:00")
                     )
-                except:
+                except (ValueError, TypeError):
                     pass
 
             return {
@@ -300,7 +309,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         self, client: httpx.AsyncClient, repo: str, github_token: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """Fetch repository health from GitHub API.
-        
+
         If a GitHub token is provided, uses authenticated requests for higher rate limits.
         """
         try:
@@ -310,7 +319,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             }
             if github_token:
                 headers["Authorization"] = f"Bearer {github_token}"
-                
+
             response = await client.get(
                 f"https://api.github.com/repos/{repo}",
                 headers=headers,
@@ -327,7 +336,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                     pushed_at = datetime.fromisoformat(
                         data["pushed_at"].replace("Z", "+00:00")
                     )
-                except:
+                except (ValueError, TypeError):
                     pass
 
             return {
@@ -382,7 +391,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                         "type": "free_email_maintainer",
                         "severity_score": 1,
                         "message": "Maintainer uses free email provider",
-                        "detail": f"Lower accountability compared to organizational emails",
+                        "detail": "Lower accountability compared to organizational emails",
                     }
                 )
 

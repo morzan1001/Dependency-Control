@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { inviteProjectMember, updateProjectMember, removeProjectMember, Project } from '@/lib/api'
+import { inviteProjectMember, updateProjectMember, removeProjectMember, Project, ApiError } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { UserPlus, UserMinus } from 'lucide-react'
 import { toast } from "sonner"
-import { AxiosError } from 'axios'
 import {
   Dialog,
   DialogContent,
@@ -55,7 +54,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
       setInviteRole("viewer")
       toast.success("Member invited successfully")
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Failed to invite member", {
         description: error.response?.data?.detail || "An error occurred"
       })
@@ -68,7 +67,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Member role updated")
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Failed to update member role", {
         description: error.response?.data?.detail || "An error occurred"
       })
@@ -81,7 +80,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Member removed")
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Failed to remove member", {
         description: error.response?.data?.detail || "An error occurred"
       })

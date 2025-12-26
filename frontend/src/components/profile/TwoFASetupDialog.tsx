@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { enable2FA, TwoFASetup } from '@/lib/api';
+import { enable2FA, TwoFASetup, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
-import { AxiosError } from 'axios';
 
 interface TwoFASetupDialogProps {
   setupData: TwoFASetup | null;
@@ -38,7 +37,7 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: TwoFASetupDialo
         description: "Two-factor authentication has been enabled.",
       });
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Error", {
         description: getErrorMessage(error),
       });

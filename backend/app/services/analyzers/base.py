@@ -9,8 +9,8 @@ class Analyzer(ABC):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Analyze an SBOM for security issues.
@@ -25,7 +25,9 @@ class Analyzer(ABC):
         pass
 
     def _get_components(
-        self, sbom: Dict[str, Any], parsed_components: List[Dict[str, Any]] = None
+        self,
+        sbom: Dict[str, Any],
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get normalized components for analysis.
@@ -119,7 +121,7 @@ class Analyzer(ABC):
         Extracts source information from SBOM (image name, directory path, etc.)
         Returns dict with 'type' and 'target' keys.
         """
-        result = {"type": None, "target": None}
+        result: Dict[str, Optional[str]] = {"type": None, "target": None}
 
         # CycloneDX metadata
         metadata = sbom.get("metadata", {})

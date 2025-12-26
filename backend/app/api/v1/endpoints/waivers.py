@@ -9,7 +9,8 @@ from app.db.mongodb import get_database
 from app.models.user import User
 from app.models.waiver import Waiver
 from app.schemas.waiver import WaiverCreate, WaiverResponse
-from app.services.stats import recalculate_all_projects, recalculate_project_stats
+from app.services.stats import (recalculate_all_projects,
+                                recalculate_project_stats)
 
 router = APIRouter()
 

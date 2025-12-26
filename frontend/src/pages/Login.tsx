@@ -54,12 +54,8 @@ export default function Login() {
       login(data.access_token, data.refresh_token)
     } catch (err) {
       const error = err as AxiosError<{ detail: string }>
-      console.error('Login error:', error);
       
       if (error.response) {
-        console.log('Error status:', error.response.status);
-        console.log('Error data:', error.response.data);
-        
         if (error.response.status === 401 && error.response.data?.detail === '2FA required') {
           setShowOTP(true)
           setError('Please enter your 2FA code')

@@ -1,7 +1,7 @@
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect, useRef } from 'react'
-import { getScan, getProject, getScanResults, getScanStats, getScanHistory, triggerRescan, getScanSboms, SbomResponse } from '@/lib/api'
+import { getScan, getProject, getScanResults, getScanStats, getScanHistory, triggerRescan, getScanSboms, SbomResponse, SbomTool, SbomToolComponent } from '@/lib/api'
 import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,6 +12,13 @@ import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
 import { isPostProcessorResult, PostProcessorResultCard } from '@/components/PostProcessorResults'
+
+// Type for scan history items
+interface ScanHistoryItem {
+  _id: string;
+  is_rescan?: boolean;
+  created_at: string;
+}
 
 function CodeBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)
@@ -218,7 +225,7 @@ export default function ScanDetails() {
                         <SelectValue placeholder="Select version" />
                     </SelectTrigger>
                     <SelectContent>
-                        {scanHistory.map((h: any) => (
+                        {scanHistory.map((h: ScanHistoryItem) => (
                             <SelectItem key={h._id} value={h._id}>
                                 {h.is_rescan ? 'Re-scan' : 'Original'} - {new Date(h.created_at).toLocaleString()}
                             </SelectItem>
@@ -576,10 +583,10 @@ export default function ScanDetails() {
                                         if (sbom.metadata?.tools) {
                                             if (Array.isArray(sbom.metadata.tools)) {
                                                 // CycloneDX 1.4
-                                                toolName = sbom.metadata.tools.map((t: any) => t.name || t.vendor).join(', ');
+                                                toolName = sbom.metadata.tools.map((t: SbomTool) => t.name || t.vendor).join(', ');
                                             } else if (sbom.metadata.tools.components) {
                                                 // CycloneDX 1.5
-                                                toolName = sbom.metadata.tools.components.map((c: any) => c.name).join(', ');
+                                                toolName = sbom.metadata.tools.components.map((c: SbomToolComponent) => c.name).join(', ');
                                             }
                                         }
                                     } catch (e) {

@@ -165,3 +165,52 @@ class DependencyMetadata(BaseModel):
 
     # Enrichment sources
     enrichment_sources: List[str] = []
+
+
+class VulnerabilitySearchResult(BaseModel):
+    """Result of a vulnerability/CVE search."""
+
+    # Vulnerability identification
+    vulnerability_id: str  # CVE-2021-44228, GHSA-xxx, etc.
+    aliases: List[str] = []  # Alternative IDs (CVE <-> GHSA)
+
+    # Severity & scoring
+    severity: str
+    cvss_score: Optional[float] = None
+    epss_score: Optional[float] = None
+    epss_percentile: Optional[float] = None
+
+    # KEV information
+    in_kev: bool = False
+    kev_ransomware: bool = False
+    kev_due_date: Optional[str] = None
+
+    # Affected component
+    component: str
+    version: str
+    component_type: Optional[str] = None
+    purl: Optional[str] = None
+
+    # Project information
+    project_id: str
+    project_name: str
+    scan_id: Optional[str] = None
+
+    # Finding details
+    finding_id: str
+    finding_type: str
+    description: Optional[str] = None
+    fixed_version: Optional[str] = None
+
+    # Status
+    waived: bool = False
+    waiver_reason: Optional[str] = None
+
+
+class VulnerabilitySearchResponse(BaseModel):
+    """Paginated response for vulnerability search."""
+
+    items: List[VulnerabilitySearchResult]
+    total: int
+    page: int
+    size: int

@@ -26,19 +26,25 @@ import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getPublicConfig } from '@/lib/api'
 import { useState, useEffect } from 'react'
+import { AxiosError } from 'axios'
+
+interface ApiErrorResponse {
+  detail?: string;
+  message?: string;
+}
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
-    onError: (error: any) => {
-      console.error("Global query error:", error)
-      if (error.response?.status >= 500) {
+    onError: (error: Error) => {
+      const axiosError = error as AxiosError<ApiErrorResponse>
+      if (axiosError.response?.status && axiosError.response.status >= 500) {
         toast.error("Server Error", { description: "Something went wrong on the server." })
       }
     }
   }),
   mutationCache: new MutationCache({
-    onError: (error: any) => {
-      console.error("Global mutation error:", error)
+    onError: (_error: Error) => {
+      // Mutations handle their own error display
     }
   }),
   defaultOptions: {

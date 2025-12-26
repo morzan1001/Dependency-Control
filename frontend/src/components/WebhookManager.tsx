@@ -52,7 +52,7 @@ export function WebhookManager({
       setIsCreateOpen(false)
       setNewWebhook({ url: "", events: [], secret: "" })
       toast.success("Webhook created")
-    } catch (error) {
+    } catch {
       toast.error("Failed to create webhook")
     }
   }
@@ -61,7 +61,7 @@ export function WebhookManager({
     try {
       await onDelete(id)
       toast.success("Webhook deleted")
-    } catch (error) {
+    } catch {
       toast.error("Failed to delete webhook")
     }
   }

@@ -6,45 +6,22 @@ used across the application.
 """
 
 # Analytics schemas (Pydantic)
-from app.schemas.analytics import (
-    SeverityBreakdown,
-    DependencyUsage,
-    DependencyTreeNode,
-    ImpactAnalysisResult,
-    VulnerabilityHotspot,
-    DependencyTypeStats,
-    AnalyticsSummary,
-    DependencyMetadata,
-)
-
-# Finding schemas (TypedDicts)
-from app.schemas.finding import (
-    VulnerabilityEntry,
-    SecretDetails,
-    VulnerabilityAggregatedDetails,
-    QualityEntry,
-    QualityAggregatedDetails,
-)
-
+from app.schemas.analytics import (AnalyticsSummary, DependencyMetadata,
+                                   DependencyTreeNode, DependencyTypeStats,
+                                   DependencyUsage, ImpactAnalysisResult,
+                                   SeverityBreakdown, VulnerabilityHotspot)
 # Enrichment schemas (dataclasses)
 from app.schemas.enrichment import DependencyEnrichment
-
+# Finding schemas (TypedDicts)
+from app.schemas.finding import (QualityAggregatedDetails, QualityEntry,
+                                 SecretDetails, VulnerabilityAggregatedDetails,
+                                 VulnerabilityEntry)
 # Recommendation schemas (dataclasses + enums)
-from app.schemas.recommendation import (
-    RecommendationType,
-    Priority,
-    FindingInfo,
-    VulnerabilityInfo,
-    Recommendation,
-)
-
+from app.schemas.recommendation import (FindingInfo, Priority, Recommendation,
+                                        RecommendationType, VulnerabilityInfo)
 # SBOM schemas (dataclasses + enums)
-from app.schemas.sbom import (
-    SBOMFormat,
-    SourceType,
-    ParsedDependency,
-    ParsedSBOM,
-)
+from app.schemas.sbom import (ParsedDependency, ParsedSBOM, SBOMFormat,
+                              SourceType)
 
 __all__ = [
     # Analytics

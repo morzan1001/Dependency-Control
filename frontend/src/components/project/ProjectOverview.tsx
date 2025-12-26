@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getProjectScans, getWaivers, Scan } from '@/lib/api'
+import { getProjectScans, getWaivers, Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Activity, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
@@ -58,10 +58,14 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       }));
 
       // 2. Calculate Global Stats (Use the absolute latest scan across all selected branches)
-      let globalStats = { 
+      let globalStats: {
+          critical: number; high: number; medium: number; low: number; info: number; unknown: number;
+          risk_score: number; adjusted_risk_score: number;
+          threat_intel: ThreatIntelligenceStats | null; reachability: ReachabilityStats | null; prioritized: PrioritizedCounts | null;
+      } = { 
           critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0,
           risk_score: 0, adjusted_risk_score: 0,
-          threat_intel: null as any, reachability: null as any, prioritized: null as any
+          threat_intel: null, reachability: null, prioritized: null
       };
       
       // Find the most recent scan overall
@@ -105,24 +109,28 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   // Check if we have actual threat intelligence data (not just empty objects)
   const threatIntel = 'threat_intel' in stats ? stats.threat_intel : null
   const hasThreatIntelData = threatIntel && (
-    threatIntel.kev_count > 0 || 
-    threatIntel.high_epss_count > 0 || 
-    threatIntel.exploitable_count > 0 ||
-    threatIntel.total_enriched > 0
+    (threatIntel.kev_count ?? 0) > 0 || 
+    (threatIntel.high_epss_count ?? 0) > 0 || 
+    (threatIntel.exploitable_count ?? 0) > 0 ||
+    (threatIntel.total_enriched ?? 0) > 0
   )
   const reachability = 'reachability' in stats ? stats.reachability : null
   const hasReachabilityData = reachability && (
-    reachability.reachable > 0 || 
-    reachability.potentially_reachable > 0 ||
-    reachability.total_analyzed > 0
+    (reachability.reachable ?? 0) > 0 || 
+    (reachability.potentially_reachable ?? 0) > 0 ||
+    (reachability.total_analyzed ?? 0) > 0
   )
   const hasEnhancedStats = hasThreatIntelData || hasReachabilityData
   
   // Trend Data Processing
   const sortedScans = [...filteredScans].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
   
-  // Group by date
-  const trendMap = new Map<string, any>()
+  // Group by date - TrendEntry allows dynamic branch keys
+  interface TrendEntry {
+    date: string;
+    [branch: string]: string | number;
+  }
+  const trendMap = new Map<string, TrendEntry>()
   
   sortedScans.forEach(scan => {
       const date = new Date(scan.created_at).toLocaleDateString()
@@ -132,7 +140,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           trendMap.set(date, { date })
       }
       
-      const entry = trendMap.get(date)
+      const entry = trendMap.get(date)!
       // If multiple scans for same branch on same day, this will take the last one (due to sort order)
       entry[scan.branch] = risk
   })

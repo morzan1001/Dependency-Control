@@ -14,7 +14,8 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from app.schemas.sbom import SBOMFormat, SourceType, ParsedDependency, ParsedSBOM
+from app.schemas.sbom import (ParsedDependency, ParsedSBOM, SBOMFormat,
+                              SourceType)
 
 logger = logging.getLogger(__name__)
 
@@ -204,13 +205,13 @@ class SBOMParser:
         # Parse the dependencies array to build dependency graph
         # CycloneDX dependencies: [{ref: "pkg:...", dependsOn: ["pkg:...", ...]}, ...]
         dependencies_map = sbom.get("dependencies", [])
-        direct_refs = set()  # Components that are direct dependencies
-        all_transitive_refs = set()  # All refs that appear in any dependsOn array
+        direct_refs: set = set()  # Components that are direct dependencies
+        all_transitive_refs: set = set()  # All refs that appear in any dependsOn array
 
         # Build a map of ref -> dependsOn for easier lookup
-        deps_graph = {}
+        deps_graph: Dict[str, list] = {}
         # Build reverse map: child -> list of parents (for parent_components)
-        reverse_deps_graph = {}
+        reverse_deps_graph: Dict[str, list] = {}
 
         for dep_entry in dependencies_map:
             ref = dep_entry.get("ref", "")
@@ -417,9 +418,9 @@ class SBOMParser:
         comp: Dict[str, Any],
         global_source_type: Optional[str],
         source_target: Optional[str],
-        direct_refs: set = None,
-        all_transitive_refs: set = None,
-        reverse_deps_graph: dict = None,
+        direct_refs: Optional[set] = None,
+        all_transitive_refs: Optional[set] = None,
+        reverse_deps_graph: Optional[dict] = None,
     ) -> Optional[ParsedDependency]:
         """Parse a single CycloneDX component with all available fields."""
 
@@ -683,9 +684,8 @@ class SBOMParser:
             result.source_type = "file-system"
             result.source_target = source.get("target", "")
 
-        # Build artifact ID -> artifact mapping for quick lookup
+        # Get artifacts list for relationship analysis
         artifacts = sbom.get("artifacts", [])
-        artifact_by_id = {a.get("id"): a for a in artifacts if a.get("id")}
 
         # Analyze artifactRelationships to determine direct vs transitive
         # Direct dependencies are those directly referenced by the source (root)
@@ -697,7 +697,7 @@ class SBOMParser:
         all_child_ids = set()  # All artifacts that are children of something
 
         # Build reverse dependency graph: child -> list of parents
-        reverse_deps_graph = {}
+        reverse_deps_graph: Dict[str, list] = {}
 
         for rel in relationships:
             parent = rel.get("parent", "")
@@ -772,7 +772,7 @@ class SBOMParser:
         source_type: Optional[str],
         source_target: Optional[str],
         is_direct: bool = False,
-        parent_components: List[str] = None,
+        parent_components: Optional[List[str]] = None,
     ) -> Optional[ParsedDependency]:
         """Parse a single Syft artifact with all available fields."""
 
@@ -961,10 +961,10 @@ class SBOMParser:
         # Deduplicate while preserving order
         seen = set()
         unique = []
-        for l in license_names:
-            if l not in seen:
-                seen.add(l)
-                unique.append(l)
+        for lic in license_names:
+            if lic not in seen:
+                seen.add(lic)
+                unique.append(lic)
 
         return ", ".join(unique), license_url
 
@@ -996,7 +996,7 @@ class SBOMParser:
         )  # All packages that are dependencies of something
 
         # Build reverse dependency graph: child -> list of parents
-        reverse_deps_graph = {}
+        reverse_deps_graph: Dict[str, list] = {}
 
         for rel in relationships:
             rel_type = rel.get("relationshipType", "")
@@ -1052,7 +1052,7 @@ class SBOMParser:
         self,
         pkg: Dict[str, Any],
         is_direct: bool = False,
-        parent_components: List[str] = None,
+        parent_components: Optional[List[str]] = None,
     ) -> Optional[ParsedDependency]:
         """Parse a single SPDX package with all available fields."""
 

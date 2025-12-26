@@ -1,5 +1,14 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { logger } from './logger';
+
+// Standard API error response shape
+export interface ApiErrorData {
+  detail?: string;
+  message?: string;
+}
+
+// Type-safe API error
+export type ApiError = AxiosError<ApiErrorData>;
 
 // Define the shape of the runtime config
 interface RuntimeConfig {
@@ -99,11 +108,13 @@ export interface User {
   email: string;
   username: string;
   is_active: boolean;
+  is_verified?: boolean;
   auth_provider?: string;
   permissions: string[];
   totp_enabled: boolean;
   slack_username?: string;
   mattermost_username?: string;
+  notification_preferences?: Record<string, string[]>;
   status?: 'active' | 'invited';
 }
 
@@ -145,6 +156,8 @@ export interface ThreatIntelligenceStats {
   max_epss_score: number | null;
   weaponized_count: number;
   active_exploitation_count: number;
+  exploitable_count?: number;
+  total_enriched?: number;
 }
 
 export interface ReachabilityStats {
@@ -155,6 +168,9 @@ export interface ReachabilityStats {
   unknown_count: number;
   reachable_critical: number;
   reachable_high: number;
+  reachable?: number;
+  potentially_reachable?: number;
+  total_analyzed?: number;
 }
 
 export interface PrioritizedCounts {
@@ -235,6 +251,212 @@ export type FindingType =
   | "quality"
   | "other";
 
+// Nested vulnerability within a Finding's details
+export interface NestedVulnerability {
+  id?: string;
+  severity?: Severity;
+  cvss_score?: number;
+  cvss_vector?: string;
+  epss_score?: number;
+  epss_percentile?: number;
+  epss_date?: string;
+  description?: string;
+  fixed_version?: string;
+  resolved_cve?: string;
+  github_advisory_url?: string;
+  kev?: boolean;
+  kev_ransomware?: boolean;
+  kev_due_date?: string;
+  waived?: boolean;
+  waiver_reason?: string;
+  urls?: string[];
+  references?: string[];
+  aliases?: string[];
+  scanners?: string[];
+  exploit_maturity?: string;
+  details?: {
+    published_date?: string;
+    last_modified_date?: string;
+    cwe_ids?: string[];
+    [key: string]: unknown;
+  };
+  // Additional KEV fields
+  in_kev?: boolean;
+  kev_ransomware_use?: string;
+  kev_date_added?: string;
+  kev_required_action?: string;
+  // Reachability
+  reachability?: ReachabilityInfo;
+}
+
+// Reachability information within finding details
+export interface ReachabilityInfo {
+  is_reachable?: boolean;
+  analysis_level?: string;
+  confidence_score?: number;
+  call_path?: string[];
+  matched_symbols?: string[];
+}
+
+// Quality issue within finding details
+export interface QualityIssue {
+  id: string;
+  type?: string;
+  severity?: string;
+  description?: string;
+  scanners?: string[];
+  source?: string;
+  details?: Record<string, unknown>;
+}
+
+// Vulnerability info summary (when primary finding is not vulnerability)
+export interface VulnerabilityInfoSummary {
+  has_vulnerabilities?: boolean;
+  vuln_count?: number;
+  critical_count?: number;
+  high_count?: number;
+  vulnerability_finding_id?: string;
+  vulnerabilities?: NestedVulnerability[];
+}
+
+// Outdated info summary
+export interface OutdatedInfoSummary {
+  is_outdated?: boolean;
+  current_version?: string;
+  latest_version?: string;
+  message?: string;
+  outdated_finding_id?: string;
+}
+
+// Quality info summary
+export interface QualityInfoSummary {
+  has_quality_issues?: boolean;
+  issue_count?: number;
+  overall_score?: number;
+  has_maintenance_issues?: boolean;
+  quality_finding_id?: string;
+  quality_issues?: QualityIssue[];
+}
+
+// License info summary
+export interface LicenseInfoSummary {
+  has_license_issue?: boolean;
+  license?: string;
+  category?: string;
+  license_finding_id?: string;
+}
+
+// EOL info summary
+export interface EolInfoSummary {
+  is_eol?: boolean;
+  eol_date?: string;
+  cycle?: string;
+  latest_version?: string;
+  eol_finding_id?: string;
+}
+
+// Scorecard context
+export interface ScorecardContext {
+  overall_score?: number;
+  maintenance_risk?: boolean;
+  has_vulnerabilities_issue?: boolean;
+  critical_issues?: string[];
+  project_url?: string;
+}
+
+// Secret details
+export interface SecretDetails {
+  detector?: string;
+  decoder?: string;
+  verified?: boolean;
+  redacted?: string;
+  line?: number;
+}
+
+// Type-safe Finding details
+export interface FindingDetails {
+  vulnerabilities?: NestedVulnerability[];
+  quality_issues?: QualityIssue[];
+  reachability?: ReachabilityInfo;
+  vulnerability_info?: VulnerabilityInfoSummary;
+  outdated_info?: OutdatedInfoSummary;
+  quality_info?: QualityInfoSummary;
+  license_info?: LicenseInfoSummary;
+  eol_info?: EolInfoSummary;
+  scorecard_context?: ScorecardContext;
+  additional_finding_types?: Array<{ type: string; severity: string }>;
+  cvss_score?: number;
+  cvss_vector?: string;
+  epss_score?: number;
+  epss_percentile?: number;
+  epss_date?: string;
+  fixed_version?: string;
+  github_advisory_url?: string;
+  kev?: boolean;
+  kev_ransomware?: boolean;
+  kev_due_date?: string;
+  urls?: string[];
+  references?: string[];
+  // Additional KEV fields at finding level
+  in_kev?: boolean;
+  kev_ransomware_use?: string;
+  kev_date_added?: string;
+  kev_required_action?: string;
+  // Exploit maturity
+  exploit_maturity?: string;
+  // Secret fields
+  detector?: string;
+  decoder?: string;
+  verified?: boolean;
+  redacted?: string;
+  line?: number;
+  // SAST/IaC fields
+  file?: string;
+  rule_id?: string;
+  check_id?: string;
+  start?: { line?: number; column?: number };
+  end?: { line?: number; column?: number };
+  metadata?: Record<string, unknown>;
+  cwe_ids?: string[];
+  published_date?: string;
+  last_modified_date?: string;
+  // License fields
+  license?: string;
+  license_url?: string;
+  category?: string;
+  explanation?: string;
+  recommendation?: string;
+  obligations?: string[];
+  license_risks?: string[];  // string array for license-specific risks
+  // Quality fields
+  overall_score?: number;
+  has_maintenance_issues?: boolean;
+  issue_count?: number;
+  failed_checks?: Array<{ name: string; score: number }>;
+  critical_issues?: string[];
+  repository?: string;
+  checks_summary?: Record<string, number>;
+  // Maintainer risk fields
+  risks?: Array<{
+    type: string;
+    severity: string;
+    description: string;
+    severity_score?: number;
+    message?: string;
+    detail?: string;
+  }>;
+  maintainer_info?: {
+    name?: string;
+    email?: string;
+    packages_maintained?: number;
+  };
+  // Legacy quality/scorecard fields
+  maintenance_warning?: boolean;
+  maintenance_warning_text?: string;
+  scorecard?: Record<string, unknown>;
+  maintainer_risk?: Record<string, unknown>;
+}
+
 export interface Finding {
   id: string;
   type: FindingType;
@@ -243,7 +465,7 @@ export interface Finding {
   version?: string;
   description: string;
   scanners: string[];
-  details: Record<string, any>;
+  details: FindingDetails;
   found_in: string[];
   aliases: string[];
   related_findings?: string[];
@@ -263,7 +485,7 @@ export interface AnalysisResult {
   _id: string;
   scan_id: string;
   analyzer_name: string;
-  result: any;
+  result: Record<string, unknown>;
   created_at: string;
 }
 
@@ -293,9 +515,9 @@ export interface Scan {
   ignored_count?: number;
   stats?: EnhancedStats | null;
   completed_at?: string;
-  sbom?: any;
-  sboms?: any[];
-  sbom_refs?: any[];
+  sbom?: Record<string, unknown>;
+  sboms?: Record<string, unknown>[];
+  sbom_refs?: string[];
   is_rescan?: boolean;
   original_scan_id?: string;
   latest_rescan_id?: string;
@@ -355,6 +577,7 @@ export interface ProjectUpdate {
   rescan_enabled?: boolean;
   rescan_interval?: number;
   gitlab_mr_comments_enabled?: boolean;
+  owner_notification_preferences?: Record<string, string[]>;
 }
 
 export interface ProjectApiKeyResponse {
@@ -424,11 +647,36 @@ export const getScan = async (scanId: string) => {
   return response.data;
 };
 
+// SBOM Metadata types
+export interface SbomToolComponent {
+  name: string;
+}
+
+export interface SbomTool {
+  name?: string;
+  vendor?: string;
+}
+
+export interface SbomMetadata {
+  component?: {
+    name?: string;
+  };
+  tools?: SbomTool[] | {
+    components?: SbomToolComponent[];
+  };
+}
+
+export interface SbomData {
+  metadata?: SbomMetadata;
+  serialNumber?: string;
+  [key: string]: unknown;
+}
+
 export interface SbomResponse {
   index: number;
   filename: string | null;
   storage: 'gridfs' | 'inline';
-  sbom: any | null;
+  sbom: SbomData | null;
   error?: string;
 }
 
@@ -575,9 +823,14 @@ export const disable2FA = async (password: string) => {
 
 // Interceptor logic
 let isRefreshing = false;
-let failedQueue: any[] = [];
 
-const processQueue = (error: any, token: string | null = null) => {
+interface QueueItem {
+  resolve: (value: string | null) => void;
+  reject: (error: Error) => void;
+}
+let failedQueue: QueueItem[] = [];
+
+const processQueue = (error: Error | null, token: string | null = null) => {
   failedQueue.forEach(prom => {
     if (error) {
       prom.reject(error);
@@ -653,7 +906,7 @@ api.interceptors.response.use(
 
         return api(originalRequest);
       } catch (err) {
-        processQueue(err, null);
+        processQueue(err instanceof Error ? err : new Error(String(err)), null);
         isRefreshing = false;
         onLogout();
         return Promise.reject(err);
@@ -665,9 +918,10 @@ api.interceptors.response.use(
 );
 
 export interface Waiver {
-  _id: string;
+  id: string;
   project_id?: string;
   finding_id?: string;
+  vulnerability_id?: string;
   package_name?: string;
   package_version?: string;
   finding_type?: string;
@@ -681,6 +935,7 @@ export interface Waiver {
 export interface WaiverCreate {
   project_id?: string;
   finding_id?: string;
+  vulnerability_id?: string;  // For granular CVE-level waivers within aggregated findings
   package_name?: string;
   package_version?: string;
   finding_type?: string;
@@ -1190,6 +1445,77 @@ export const searchDependenciesAdvanced = async (
   return response.data;
 };
 
+// ============ Vulnerability Search API ============
+
+export interface VulnerabilitySearchResult {
+  vulnerability_id: string;
+  aliases: string[];
+  severity: Severity;
+  cvss_score?: number;
+  epss_score?: number;
+  epss_percentile?: number;
+  in_kev: boolean;
+  kev_ransomware: boolean;
+  kev_due_date?: string;
+  component: string;
+  version: string;
+  component_type?: string;
+  purl?: string;
+  project_id: string;
+  project_name: string;
+  scan_id?: string;
+  finding_id: string;
+  finding_type: string;
+  description?: string;
+  fixed_version?: string;
+  waived: boolean;
+  waiver_reason?: string;
+}
+
+export interface VulnerabilitySearchResponse {
+  items: VulnerabilitySearchResult[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+export interface VulnerabilitySearchOptions {
+  severity?: string;
+  in_kev?: boolean;
+  has_fix?: boolean;
+  finding_type?: string;
+  project_ids?: string[];
+  include_waived?: boolean;
+  sort_by?: 'severity' | 'cvss' | 'epss' | 'component' | 'project_name';
+  sort_order?: 'asc' | 'desc';
+  skip?: number;
+  limit?: number;
+}
+
+export const searchVulnerabilities = async (
+  query: string,
+  options?: VulnerabilitySearchOptions
+): Promise<VulnerabilitySearchResponse> => {
+  const params = new URLSearchParams();
+  params.append('q', query);
+  if (options?.severity) params.append('severity', options.severity);
+  if (options?.in_kev !== undefined) params.append('in_kev', options.in_kev.toString());
+  if (options?.has_fix !== undefined) params.append('has_fix', options.has_fix.toString());
+  if (options?.finding_type) params.append('finding_type', options.finding_type);
+  if (options?.project_ids?.length) {
+    params.append('project_ids', options.project_ids.join(','));
+  }
+  if (options?.include_waived !== undefined) {
+    params.append('include_waived', options.include_waived.toString());
+  }
+  if (options?.sort_by) params.append('sort_by', options.sort_by);
+  if (options?.sort_order) params.append('sort_order', options.sort_order);
+  if (options?.skip !== undefined) params.append('skip', options.skip.toString());
+  if (options?.limit) params.append('limit', options.limit.toString());
+  const response = await api.get<VulnerabilitySearchResponse>('/analytics/vulnerability-search', { params });
+  return response.data;
+};
+
 export type ComponentFinding = Finding & { project_id: string; project_name: string; scan_id?: string };
 
 export const getComponentFindings = async (component: string, version?: string) => {
@@ -1308,6 +1634,13 @@ export interface RecommendationImpact {
   total: number;
 }
 
+// Cross-project CVE entry
+export interface CrossProjectCve {
+  cve: string;
+  total_affected: number;
+  affected_projects?: string[];
+}
+
 export interface RecommendationAction {
   type: string;
   package?: string;
@@ -1316,7 +1649,7 @@ export interface RecommendationAction {
   current_image?: string;
   suggestion?: string;
   commands?: string[];
-  cves?: string[];
+  cves?: Array<string | CrossProjectCve>;
   options?: string[];
   suggestions?: string[];
   // New fields for non-vulnerability recommendations

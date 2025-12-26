@@ -2,7 +2,6 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop
 from app.db.mongodb import get_database

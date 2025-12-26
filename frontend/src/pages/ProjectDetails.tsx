@@ -59,6 +59,8 @@ export default function ProjectDetails() {
         setSelectedBranches(allBranches)
       }
     }
+    // Only run when branches data changes, not when selectedBranches changes (to avoid infinite loop)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allBranches, project])
 
   const toggleBranch = (branch: string) => {
@@ -88,7 +90,7 @@ export default function ProjectDetails() {
       a.click()
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
-    } catch (error) {
+    } catch {
       toast.error("Failed to export CSV")
     }
   }
@@ -104,7 +106,7 @@ export default function ProjectDetails() {
       a.click()
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
-    } catch (error) {
+    } catch {
       toast.error("Failed to export SBOM")
     }
   }

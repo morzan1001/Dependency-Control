@@ -6,16 +6,8 @@ from urllib.parse import urlencode
 
 import httpx
 import pyotp
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Body,
-    Depends,
-    Form,
-    HTTPException,
-    Request,
-    status,
-)
+from fastapi import (APIRouter, BackgroundTasks, Body, Depends, Form,
+                     HTTPException, Request, status)
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -32,7 +24,8 @@ from app.schemas.token import Token, TokenPayload
 from app.schemas.user import User as UserSchema
 from app.schemas.user import UserCreate, UserPasswordReset, UserSignup
 from app.services.notifications.email_provider import EmailProvider
-from app.services.notifications.templates import get_verification_email_template
+from app.services.notifications.templates import \
+    get_verification_email_template
 
 router = APIRouter()
 

@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { updatePassword, migrateToLocal, User } from '@/lib/api';
+import { updatePassword, migrateToLocal, User, ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
-import { AxiosError } from 'axios';
 
 interface PasswordUpdateCardProps {
   user?: User;
@@ -40,7 +39,7 @@ export function PasswordUpdateCard({ user }: PasswordUpdateCardProps) {
       setNewPassword('');
       setConfirmPassword('');
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Error", {
         description: getErrorMessage(error),
       });
@@ -57,7 +56,7 @@ export function PasswordUpdateCard({ user }: PasswordUpdateCardProps) {
       setConfirmPassword('');
       queryClient.invalidateQueries({ queryKey: ['me'] });
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Error", {
         description: getErrorMessage(error),
       });

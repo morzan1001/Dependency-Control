@@ -9,16 +9,16 @@ Data classes for aggregating enrichment data from multiple sources:
 - Reachability analysis (vulnerable code paths)
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field, computed_field
 
 # =============================================================================
 # EPSS/KEV Enrichment Schemas
 # =============================================================================
 
-@dataclass
-class EPSSData:
+
+class EPSSData(BaseModel):
     """EPSS (Exploit Prediction Scoring System) data for a CVE."""
 
     cve: str
@@ -27,8 +27,7 @@ class EPSSData:
     date: str  # Date of the EPSS calculation
 
 
-@dataclass
-class KEVEntry:
+class KEVEntry(BaseModel):
     """CISA Known Exploited Vulnerability entry."""
 
     cve: str
@@ -42,10 +41,9 @@ class KEVEntry:
     known_ransomware_use: bool = False
 
 
-@dataclass
-class GHSAData:
+class GHSAData(BaseModel):
     """GitHub Security Advisory data."""
-    
+
     ghsa_id: str
     cve_id: Optional[str] = None  # Resolved CVE ID if available
     summary: Optional[str] = None
@@ -54,8 +52,9 @@ class GHSAData:
     updated_at: Optional[str] = None
     withdrawn_at: Optional[str] = None
     github_url: str = ""  # Direct link to GitHub Advisory
-    aliases: List[str] = field(default_factory=list)  # All related IDs (CVEs, etc.)
-    
+    aliases: List[str] = Field(default_factory=list)  # All related IDs (CVEs, etc.)
+
+    @computed_field
     @property
     def advisory_url(self) -> str:
         """Get the GitHub Advisory URL."""
@@ -64,8 +63,7 @@ class GHSAData:
         return f"https://github.com/advisories/{self.ghsa_id}"
 
 
-@dataclass
-class VulnerabilityEnrichment:
+class VulnerabilityEnrichment(BaseModel):
     """Enriched vulnerability data combining multiple sources."""
 
     cve: str
@@ -86,33 +84,18 @@ class VulnerabilityEnrichment:
     exploit_maturity: str = "unknown"  # unknown, poc, active, weaponized
     risk_score: Optional[float] = None  # Combined risk score 0-100
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "cve": self.cve,
-            "epss_score": self.epss_score,
-            "epss_percentile": self.epss_percentile,
-            "epss_date": self.epss_date,
-            "is_kev": self.is_kev,
-            "kev_date_added": self.kev_date_added,
-            "kev_due_date": self.kev_due_date,
-            "kev_required_action": self.kev_required_action,
-            "kev_ransomware_use": self.kev_ransomware_use,
-            "exploit_maturity": self.exploit_maturity,
-            "risk_score": self.risk_score,
-        }
-
 
 # =============================================================================
 # Reachability Analysis Schemas
 # =============================================================================
 
-@dataclass
-class ExtractedSymbols:
+
+class ExtractedSymbols(BaseModel):
     """Result of symbol extraction from a vulnerability."""
-    
+
     cve: str
     package: str
-    symbols: List[str] = field(default_factory=list)
+    symbols: List[str] = Field(default_factory=list)
     confidence: str = "low"  # low, medium, high
     extraction_method: str = "none"  # none, regex, osv_ecosystem
     raw_text: Optional[str] = None  # The text we parsed
@@ -122,8 +105,8 @@ class ExtractedSymbols:
 # Dependency Enrichment Schemas
 # =============================================================================
 
-@dataclass
-class DependencyEnrichment:
+
+class DependencyEnrichment(BaseModel):
     """
     Aggregated enrichment data for a dependency from multiple sources.
     This creates a single source of truth by merging data from:
@@ -136,13 +119,13 @@ class DependencyEnrichment:
     version: str
 
     # License info (aggregated from multiple sources)
-    licenses: List[Dict[str, Any]] = field(
+    licenses: List[Dict[str, Any]] = Field(
         default_factory=list
     )  # [{spdx_id, source, category, ...}]
     primary_license: Optional[str] = None  # Best determined license
     license_category: Optional[str] = None  # permissive, copyleft, etc.
-    license_risks: List[str] = field(default_factory=list)
-    license_obligations: List[str] = field(default_factory=list)
+    license_risks: List[str] = Field(default_factory=list)
+    license_obligations: List[str] = Field(default_factory=list)
 
     # Links (aggregated from SBOM + deps.dev)
     homepage: Optional[str] = None
@@ -151,7 +134,7 @@ class DependencyEnrichment:
     issues_url: Optional[str] = None
     changelog_url: Optional[str] = None
     download_url: Optional[str] = None
-    additional_links: Dict[str, str] = field(default_factory=dict)
+    additional_links: Dict[str, str] = Field(default_factory=dict)
 
     # Project metrics (from deps.dev)
     stars: Optional[int] = None
@@ -164,8 +147,8 @@ class DependencyEnrichment:
     scorecard_score: Optional[float] = None
     scorecard_date: Optional[str] = None
     scorecard_checks_count: Optional[int] = None
-    scorecard_checks: List[Dict[str, Any]] = field(default_factory=list)
-    scorecard_critical_issues: List[str] = field(default_factory=list)
+    scorecard_checks: List[Dict[str, Any]] = Field(default_factory=list)
+    scorecard_critical_issues: List[str] = Field(default_factory=list)
 
     # Version/Publication info
     published_at: Optional[str] = None
@@ -173,7 +156,7 @@ class DependencyEnrichment:
     is_default_version: bool = False
 
     # Security indicators
-    known_advisories: List[str] = field(default_factory=list)
+    known_advisories: List[str] = Field(default_factory=list)
     has_attestations: bool = False
     has_slsa_provenance: bool = False
 
@@ -181,11 +164,11 @@ class DependencyEnrichment:
     description: Optional[str] = None
 
     # Source tracking
-    sources: Set[str] = field(default_factory=set)  # Which scanners contributed
+    sources: List[str] = Field(default_factory=list)  # Which scanners contributed
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for MongoDB storage."""
-        result = {}
+    def to_mongo_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary optimized for MongoDB storage (sparse, no None values)."""
+        result: Dict[str, Any] = {}
 
         # License aggregation
         if self.primary_license:
@@ -208,7 +191,7 @@ class DependencyEnrichment:
             result["download_url"] = self.download_url
 
         # deps.dev specific enrichment
-        deps_dev = {}
+        deps_dev: Dict[str, Any] = {}
         if self.stars is not None:
             deps_dev["stars"] = self.stars
         if self.forks is not None:
@@ -266,6 +249,6 @@ class DependencyEnrichment:
 
         # Metadata
         if self.sources:
-            result["enrichment_sources"] = list(self.sources)
+            result["enrichment_sources"] = self.sources
 
         return result

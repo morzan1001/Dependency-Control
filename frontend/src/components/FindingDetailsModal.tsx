@@ -5,31 +5,177 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { createWaiver, Finding } from "@/lib/api"
+import { createWaiver, Finding, NestedVulnerability, FindingDetails } from "@/lib/api"
 import { toast } from "sonner"
-import { ShieldAlert, Shield, Container, FileCode, HardDrive, Layers, ExternalLink, FileText, Calendar, AlertTriangle, User, Building, ChevronDown, ChevronRight, Copy, Check, Clock, GitBranch, Mail, Package, Activity, Scale, BookOpen, Lightbulb, CheckCircle2, XCircle, Info } from "lucide-react"
+import { ShieldAlert, Shield, ExternalLink, FileText, Calendar, AlertTriangle, User, Building, ChevronDown, ChevronRight, Clock, GitBranch, Mail, Package, Activity, Scale, BookOpen, Lightbulb, CheckCircle2, XCircle, Info, Wrench } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { AxiosError } from "axios"
 import { useNavigate } from "react-router-dom"
+import { ContextBanner } from '@/components/findings/ContextBanner'
+import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
+import { CopyableCode } from '@/components/findings/CopyableCode'
+import { CollapsibleReferences } from '@/components/findings/CollapsibleReferences'
+import { getSourceInfo, getScoreColor, getScoreBgColor, getSeverityBadgeVariant, getSeverityBgColor } from '@/lib/finding-utils'
 
-// Helper to get source info
-function getSourceInfo(sourceType?: string) {
-  switch (sourceType) {
-    case 'image':
-      return { icon: Container, label: 'Docker Image', color: 'text-blue-500', bgColor: 'bg-blue-50 border-blue-200' }
-    case 'file':
-      return { icon: FileCode, label: 'Source File', color: 'text-green-500', bgColor: 'bg-green-50 border-green-200' }
-    case 'directory':
-      return { icon: HardDrive, label: 'Directory', color: 'text-amber-500', bgColor: 'bg-amber-50 border-amber-200' }
-    case 'application':
-      return { icon: Layers, label: 'Application', color: 'text-purple-500', bgColor: 'bg-purple-50 border-purple-200' }
-    default:
-      return null
-  }
+// Unified context banners section - displays all relevant context info
+interface ContextBannersSectionProps {
+  finding: Finding;
 }
 
+function ContextBannersSection({ finding }: ContextBannersSectionProps) {
+  const banners: React.ReactNode[] = []
+  
+  // 1. Outdated Package Info
+  if (finding.details?.outdated_info?.is_outdated) {
+    const info = finding.details.outdated_info
+    banners.push(
+      <ContextBanner key="outdated" icon={Clock} title="Outdated Package" variant="warning">
+        <span>
+          Current version <span className="font-mono font-medium">{info.current_version}</span>
+          {info.latest_version && (
+            <> → Latest <span className="font-mono font-medium">{info.latest_version}</span></>
+          )}
+        </span>
+      </ContextBanner>
+    )
+  }
+  
+  // 2. Quality Issues
+  if (finding.details?.quality_info?.has_quality_issues) {
+    const info = finding.details.quality_info
+    banners.push(
+      <ContextBanner key="quality" icon={Activity} title="Quality Concerns" variant="warning">
+        <span>
+          {info.issue_count ? `${info.issue_count} quality issue(s) detected. ` : ''}
+          {info.overall_score !== undefined && (
+            <span>OpenSSF Score: <span className="font-medium">{info.overall_score.toFixed(1)}/10</span></span>
+          )}
+          {info.has_maintenance_issues && <span className="ml-2 text-amber-600 font-medium">• Maintenance concerns</span>}
+        </span>
+      </ContextBanner>
+    )
+  }
+  
+  // 3. License Issues
+  if (finding.details?.license_info?.has_license_issue) {
+    const info = finding.details.license_info
+    banners.push(
+      <ContextBanner key="license" icon={Scale} title="License Issue" variant="info">
+        <span>
+          License: <span className="font-medium">{info.license || 'Unknown'}</span>
+          {info.category && <span className="ml-2">({info.category})</span>}
+        </span>
+      </ContextBanner>
+    )
+  }
+  
+  // 4. End of Life
+  if (finding.details?.eol_info?.is_eol) {
+    const info = finding.details.eol_info
+    banners.push(
+      <ContextBanner key="eol" icon={Calendar} title="End of Life" variant="danger">
+        <span>
+          {info.cycle && <span>Version cycle <span className="font-mono font-medium">{info.cycle}</span> </span>}
+          {info.eol_date && <span>reached EOL on {new Date(info.eol_date).toLocaleDateString()}</span>}
+          {info.latest_version && <span>. Consider upgrading to <span className="font-mono font-medium">{info.latest_version}</span></span>}
+        </span>
+      </ContextBanner>
+    )
+  }
+  
+  // 5. Vulnerability Info (when primary finding is NOT vulnerability)
+  if (finding.type !== 'vulnerability' && finding.details?.vulnerability_info?.has_vulnerabilities) {
+    const info = finding.details.vulnerability_info
+    const criticalCount = info.critical_count ?? 0
+    const highCount = info.high_count ?? 0
+    banners.push(
+      <ContextBanner key="vuln" icon={ShieldAlert} title="Has Vulnerabilities" variant="danger">
+        <span>
+          {info.vuln_count} known vulnerabilit{info.vuln_count === 1 ? 'y' : 'ies'}
+          {(criticalCount > 0 || highCount > 0) && (
+            <span className="ml-2">
+              ({criticalCount > 0 && <span className="text-red-600 font-medium">{criticalCount} Critical</span>}
+              {criticalCount > 0 && highCount > 0 && ', '}
+              {highCount > 0 && <span className="text-orange-600 font-medium">{highCount} High</span>})
+            </span>
+          )}
+        </span>
+      </ContextBanner>
+    )
+  }
+  
+  // 6. OpenSSF Scorecard Context (for vulnerabilities)
+  if (finding.details?.scorecard_context) {
+    const ctx = finding.details.scorecard_context as { overall_score?: number; maintenance_risk?: boolean; has_vulnerabilities_issue?: boolean; critical_issues?: string[]; project_url?: string }
+    const hasValidScore = ctx.overall_score !== undefined && ctx.overall_score !== null && !isNaN(ctx.overall_score)
+    const isLowScore = hasValidScore && ctx.overall_score! < 5.0
+    const isVeryLowScore = hasValidScore && ctx.overall_score! < 3.0
+    
+    if (hasValidScore || ctx.maintenance_risk || (ctx.critical_issues && ctx.critical_issues.length > 0)) {
+      const variant = isVeryLowScore || ctx.maintenance_risk ? 'danger' : isLowScore ? 'warning' : 'info'
+      banners.push(
+        <ContextBanner 
+          key="scorecard" 
+          icon={Activity} 
+          title="OpenSSF Scorecard" 
+          variant={variant}
+          action={ctx.project_url && (
+            <a 
+              href={ctx.project_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs hover:underline flex items-center gap-1"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Details
+            </a>
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            {hasValidScore && (
+              <span className={`font-bold ${isVeryLowScore ? 'text-red-600' : isLowScore ? 'text-amber-600' : 'text-green-600'}`}>
+                {ctx.overall_score!.toFixed(1)}/10
+              </span>
+            )}
+            {ctx.maintenance_risk && (
+              <Badge variant="outline" className="text-xs border-current">Potentially Unmaintained</Badge>
+            )}
+            {ctx.has_vulnerabilities_issue && (
+              <Badge variant="outline" className="text-xs border-current">Has Open Vulnerabilities</Badge>
+            )}
+            {ctx.critical_issues && ctx.critical_issues.length > 0 && ctx.critical_issues.slice(0, 3).map((issue, idx) => (
+              <Badge key={idx} variant="outline" className="text-xs border-current">{issue}</Badge>
+            ))}
+          </div>
+        </ContextBanner>
+      )
+    }
+  }
+  
+  // 7. Maintenance Warning (legacy)
+  if (finding.details?.maintenance_warning && !finding.details?.scorecard_context) {
+    banners.push(
+      <ContextBanner key="maintenance" icon={Wrench} title="Maintenance Warning" variant="warning">
+        <span>{finding.details.maintenance_warning_text || "This package may have maintenance concerns."}</span>
+      </ContextBanner>
+    )
+  }
+  
+  if (banners.length === 0) return null
+  
+  return (
+    <div className="space-y-2">
+      {banners}
+    </div>
+  )
+}
+
+// ============================================================================
+// END CONTEXT BANNERS
+// ============================================================================
+
 // Component for rendering additional details based on finding type
-function AdditionalDetailsView({ details }: { details: Record<string, unknown> }) {
+function AdditionalDetailsView({ details }: { details: FindingDetails }) {
   // Skip rendering for these redundant fields that are shown elsewhere
   const skipFields = ['license', 'severity', 'type', 'message', 'id', 'component', 'version', 'fixed_version']
   
@@ -37,7 +183,7 @@ function AdditionalDetailsView({ details }: { details: Record<string, unknown> }
   const rowGroupFields = ['cycle', 'lts']
   
   // Filter out empty values and redundant fields
-  const filteredEntries = Object.entries(details).filter(([key, value]) => {
+  const filteredEntries = Object.entries(details as Record<string, unknown>).filter(([key, value]) => {
     if (skipFields.includes(key)) return false
     if (value === null || value === undefined || value === '') return false
     if (Array.isArray(value) && value.length === 0) return false
@@ -215,9 +361,11 @@ function AdditionalDetailsView({ details }: { details: Record<string, unknown> }
 // Types for maintainer risk details
 interface MaintainerRisk {
   type: string;
-  severity_score: number;
-  message: string;
-  detail: string;
+  severity?: string;
+  severity_score?: number;
+  message?: string;
+  description?: string;
+  detail?: string;
 }
 
 interface MaintainerInfo {
@@ -232,127 +380,14 @@ interface MaintainerInfo {
   project_urls?: Record<string, string> | null;
 }
 
-interface ScorecardContext {
-  overall_score?: number;
-  project_url?: string;
-  critical_issues?: string[];
-  maintenance_risk?: boolean;
-  has_vulnerabilities_issue?: boolean;
-}
-
-// Component for rendering OpenSSF Scorecard context on vulnerabilities
-function ScorecardContextBanner({ context }: { context: ScorecardContext }) {
-  // Don't show if no context, no valid score, and no critical issues
-  const hasValidScore = context?.overall_score !== undefined && 
-                        context.overall_score !== null && 
-                        !isNaN(context.overall_score);
-  const hasCriticalIssues = context?.critical_issues && context.critical_issues.length > 0;
-  
-  if (!context || (!hasValidScore && !hasCriticalIssues)) {
-    return null
-  }
-
-  const score = context.overall_score ?? 0
-  const isLowScore = score < 5.0
-  const isVeryLowScore = score < 3.0
-  
-  // Determine banner color based on risk level
-  const getBannerStyle = () => {
-    if (isVeryLowScore || context.maintenance_risk) {
-      return "bg-red-50 border-red-200 text-red-800"
-    }
-    if (isLowScore) {
-      return "bg-amber-50 border-amber-200 text-amber-800"
-    }
-    return "bg-blue-50 border-blue-200 text-blue-700"
-  }
-  
-  const getScoreColor = () => {
-    if (isVeryLowScore) return "text-red-600"
-    if (isLowScore) return "text-amber-600"
-    return "text-green-600"
-  }
-
-  return (
-    <div className={`rounded-lg border p-3 space-y-2 ${getBannerStyle()}`}>
-      <div className="flex items-start gap-2">
-        <Activity className="h-4 w-4 mt-0.5 flex-shrink-0" />
-        <div className="flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium">OpenSSF Scorecard</span>
-            <span className={`text-sm font-bold ${getScoreColor()}`}>
-              {score.toFixed(1)}/10
-            </span>
-            {context.maintenance_risk && (
-              <Badge variant="destructive" className="text-xs">
-                Potentially Unmaintained
-              </Badge>
-            )}
-            {context.has_vulnerabilities_issue && (
-              <Badge variant="destructive" className="text-xs">
-                Has Open Vulnerabilities
-              </Badge>
-            )}
-          </div>
-          
-          {(isLowScore || context.maintenance_risk) && (
-            <p className="text-xs mt-1 opacity-90">
-              {context.maintenance_risk 
-                ? "This package may not receive security updates. Consider finding an actively maintained alternative."
-                : "This package has a low security score. Exercise caution and monitor closely."
-              }
-            </p>
-          )}
-          
-          {context.critical_issues && context.critical_issues.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-2">
-              {context.critical_issues.map((issue, idx) => (
-                <Badge key={idx} variant="outline" className="text-xs bg-white/50">
-                  {issue}
-                </Badge>
-              ))}
-            </div>
-          )}
-          
-          {context.project_url && (
-            <a 
-              href={context.project_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs mt-2 hover:underline"
-            >
-              <ExternalLink className="h-3 w-3" />
-              View on OpenSSF Scorecard
-            </a>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // Component for rendering quality findings (OpenSSF Scorecard details)
-function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
+function QualityDetailsView({ details }: { details: FindingDetails }) {
   const overallScore = details.overall_score as number
   const failedChecks = (details.failed_checks as Array<{ name: string; score: number }>) || []
   const criticalIssues = (details.critical_issues as string[]) || []
   const repository = details.repository as string
   const recommendation = details.recommendation as string
   const checksSummary = details.checks_summary as Record<string, number>
-  
-  const getScoreColor = (score: number) => {
-    if (score < 3) return "text-red-600"
-    if (score < 5) return "text-amber-600"
-    if (score < 7) return "text-yellow-600"
-    return "text-green-600"
-  }
-  
-  const getScoreBg = (score: number) => {
-    if (score < 3) return "bg-red-100"
-    if (score < 5) return "bg-amber-100"
-    if (score < 7) return "bg-yellow-100"
-    return "bg-green-100"
-  }
 
   // Only show scorecard section if we have a valid score
   const hasValidScore = overallScore !== undefined && overallScore !== null && !isNaN(overallScore);
@@ -362,7 +397,7 @@ function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
       {/* Score Overview - only show if we have a valid score */}
       {hasValidScore && (
         <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
-          <div className={`flex items-center justify-center w-16 h-16 rounded-full ${getScoreBg(overallScore)}`}>
+          <div className={`flex items-center justify-center w-16 h-16 rounded-full ${getScoreBgColor(overallScore)}`}>
             <span className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>
               {overallScore.toFixed(1)}
             </span>
@@ -482,7 +517,7 @@ function QualityDetailsView({ details }: { details: Record<string, unknown> }) {
 }
 
 // Component for rendering maintainer risk details
-function MaintainerRiskDetailsView({ details }: { details: Record<string, unknown> }) {
+function MaintainerRiskDetailsView({ details }: { details: FindingDetails }) {
   const risks = (details.risks as MaintainerRisk[]) || []
   const maintainerInfo = (details.maintainer_info as MaintainerInfo) || {}
   
@@ -519,17 +554,19 @@ function MaintainerRiskDetailsView({ details }: { details: Record<string, unknow
           <div className="space-y-2">
             {risks.map((risk, idx) => {
               const Icon = getRiskIcon(risk.type)
+              const severityScore = risk.severity_score ?? 1
+              const riskMessage = risk.message || risk.description || ''
               return (
                 <div key={idx} className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg border">
                   <Icon className="h-4 w-4 mt-0.5 text-muted-foreground flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-medium text-sm">{formatRiskType(risk.type)}</span>
-                      <Badge variant={getRiskBadgeVariant(risk.severity_score)} className="text-xs">
-                        Score: {risk.severity_score}
+                      <Badge variant={getRiskBadgeVariant(severityScore)} className="text-xs">
+                        Score: {severityScore}
                       </Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground">{risk.message}</p>
+                    <p className="text-sm text-muted-foreground">{riskMessage}</p>
                     {risk.detail && (
                       <p className="text-xs text-muted-foreground mt-1 italic">{risk.detail}</p>
                     )}
@@ -659,7 +696,7 @@ interface QualityIssueEntry {
 }
 
 // Component for rendering aggregated quality findings (similar to vulnerabilities)
-function AggregatedQualityView({ details }: { details: Record<string, unknown> }) {
+function AggregatedQualityView({ details }: { details: FindingDetails }) {
   const qualityIssues = (details.quality_issues as QualityIssueEntry[]) || []
   const overallScore = details.overall_score as number | undefined
   const hasMaintenanceIssues = details.has_maintenance_issues as boolean
@@ -712,16 +749,6 @@ function AggregatedQualityView({ details }: { details: Record<string, unknown> }
       case 'scorecard': return 'OpenSSF Scorecard'
       case 'maintainer_risk': return 'Maintainer Risk'
       default: return 'Quality Issue'
-    }
-  }
-  
-  const getSeverityColor = (severity: string) => {
-    switch (severity?.toUpperCase()) {
-      case 'CRITICAL': return 'destructive'
-      case 'HIGH': return 'bg-orange-500 hover:bg-orange-600'
-      case 'MEDIUM': return 'bg-yellow-500 hover:bg-yellow-600 text-black'
-      case 'LOW': return 'bg-blue-500 hover:bg-blue-600'
-      default: return 'secondary'
     }
   }
 
@@ -781,7 +808,7 @@ function AggregatedQualityView({ details }: { details: Record<string, unknown> }
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{getIssueLabel(issue.type)}</span>
-                    <Badge className={getSeverityColor(issue.severity)}>
+                    <Badge className={getSeverityBgColor(issue.severity)}>
                       {issue.severity}
                     </Badge>
                     {issue.scanners && issue.scanners.length > 0 && (
@@ -873,14 +900,14 @@ const LICENSE_CATEGORY_CONFIG: Record<string, { label: string; color: string; bg
 }
 
 // Component for rendering license compliance details
-function LicenseDetailsView({ details }: { details: Record<string, unknown> }) {
+function LicenseDetailsView({ details }: { details: FindingDetails }) {
   const license = (details.license as string) || 'Unknown'
   const licenseUrl = details.license_url as string | undefined
   const category = (details.category as string) || 'unknown'
   const explanation = details.explanation as string | undefined
   const recommendation = details.recommendation as string | undefined
   const obligations = (details.obligations as string[]) || []
-  const risks = (details.risks as string[]) || []
+  const risks = (details.license_risks as string[]) || []
   
   const categoryConfig = LICENSE_CATEGORY_CONFIG[category] || LICENSE_CATEGORY_CONFIG.unknown
   const CategoryIcon = categoryConfig.icon
@@ -986,34 +1013,6 @@ const getFindingPackage = (f: Finding) => f.component || "Unknown";
 const getFindingVersion = (f: Finding) => f.version || "Unknown";
 const getFindingId = (f: Finding) => f.id;
 
-// Copyable code block component
-function CopyableCode({ value, className = "" }: { value: string, className?: string }) {
-  const [copied, setCopied] = useState(false)
-  
-  const handleCopy = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    await navigator.clipboard.writeText(value)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-  
-  return (
-    <div className={`flex items-start gap-2 ${className}`}>
-      <code className="flex-1 px-2 py-1 bg-background rounded text-xs font-mono break-all">
-        {value}
-      </code>
-      <Button 
-        variant="ghost" 
-        size="icon" 
-        className="h-6 w-6 flex-shrink-0"
-        onClick={handleCopy}
-      >
-        {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
-      </Button>
-    </div>
-  )
-}
-
 // Origin badge with expandable details
 function OriginBadge({ finding }: { finding: Finding }) {
   const [isExpanded, setIsExpanded] = useState(false)
@@ -1023,7 +1022,7 @@ function OriginBadge({ finding }: { finding: Finding }) {
     return null
   }
   
-  const IconComponent = sourceInfo?.icon || Container
+  const IconComponent = sourceInfo?.icon || Package
   const label = sourceInfo?.label || "Package"
   const color = sourceInfo?.color || "text-muted-foreground"
   const bgColor = sourceInfo?.bgColor || "bg-muted"
@@ -1148,20 +1147,21 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                 <DialogHeader className="pb-2">
                     <DialogTitle className="flex items-center gap-2 leading-normal">
                         {finding.severity && (
-                            <Badge variant={
-                                finding.severity === 'CRITICAL' ? 'destructive' :
-                                finding.severity === 'HIGH' ? 'destructive' :
-                                finding.severity === 'MEDIUM' ? 'default' : 
-                                finding.severity === 'LOW' ? 'secondary' :
-                                'outline'
-                            }>
+                            <Badge variant={getSeverityBadgeVariant(finding.severity)}>
                                 {finding.severity}
                             </Badge>
                         )}
                         <span className="truncate leading-normal">{getFindingTitle(finding)}</span>
                     </DialogTitle>
-                    <DialogDescription>
-                        {finding.type} detected in {getFindingPackage(finding)}
+                    <DialogDescription className="flex flex-wrap items-center gap-2">
+                        <span className="flex items-center gap-1">
+                            <Badge variant="outline">{finding.type}</Badge>
+                            {/* Show additional absorbed finding types */}
+                            {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }, idx: number) => (
+                                <FindingTypeBadge key={idx} type={addType.type} />
+                            ))}
+                        </span>
+                        <span className="text-muted-foreground">detected in {getFindingPackage(finding)}</span>
                     </DialogDescription>
                 </DialogHeader>
 
@@ -1370,9 +1370,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 <div className="space-y-4">
                                     {(() => {
                                         // Normalize to a list of vulnerabilities
-                                        const vulns = finding.details?.vulnerabilities && finding.details.vulnerabilities.length > 0 
+                                        const vulns: NestedVulnerability[] = finding.details?.vulnerabilities && finding.details.vulnerabilities.length > 0 
                                             ? finding.details.vulnerabilities 
-                                            : [finding.details || {}]; // Fallback for legacy or single vuln structure
+                                            : [(finding.details || {}) as NestedVulnerability]; // Fallback for legacy or single vuln structure
 
                                         return (
                                             <div className="space-y-4">
@@ -1382,23 +1382,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                         : "Vulnerability Details"}
                                                 </h4>
                                                 
-                                                {/* Show outdated info if this package is also flagged as outdated */}
-                                                {finding.details?.outdated_info?.is_outdated && (
-                                                    <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-                                                        <Clock className="h-4 w-4 text-amber-500 flex-shrink-0" />
-                                                        <div className="text-sm">
-                                                            <span className="font-medium text-amber-600 dark:text-amber-400">Outdated Package: </span>
-                                                            <span className="text-muted-foreground">
-                                                                Current version <span className="font-mono font-medium text-foreground">{finding.details.outdated_info.current_version}</span>
-                                                                {finding.details.outdated_info.latest_version && (
-                                                                    <> → Latest <span className="font-mono font-medium text-foreground">{finding.details.outdated_info.latest_version}</span></>
-                                                                )}
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                )}
+                                                {/* Unified context banners section */}
+                                                <ContextBannersSection finding={finding} />
                                                 
-                                                {vulns.map((vuln: any, idx: number) => {
+                                                {vulns.map((vuln: NestedVulnerability, idx: number) => {
                                                     const vulnId = vuln.id || getFindingId(finding);
                                                     const isCve = vulnId?.startsWith('CVE-');
                                                     const isGhsa = vulnId?.startsWith('GHSA-');
@@ -1478,44 +1465,55 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                     {(vuln.cvss_vector || finding.details?.cvss_vector) && <span className="font-mono text-muted-foreground">{vuln.cvss_vector || finding.details?.cvss_vector}</span>}
                                                                 </div>
                                                             )}
-                                                            {(vuln.epss_score !== undefined || finding.details?.epss_score !== undefined) && (
+                                                            {(vuln.epss_score !== undefined || finding.details?.epss_score !== undefined) && (() => {
+                                                                const epssScore = vuln.epss_score ?? finding.details?.epss_score ?? 0
+                                                                const epssPercentile = vuln.epss_percentile ?? finding.details?.epss_percentile
+                                                                const epssDate = vuln.epss_date ?? finding.details?.epss_date
+                                                                return (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className={`font-medium ${
-                                                                        (vuln.epss_score || finding.details?.epss_score) >= 0.1 ? 'text-red-500' :
-                                                                        (vuln.epss_score || finding.details?.epss_score) >= 0.01 ? 'text-orange-500' : ''
+                                                                        epssScore >= 0.1 ? 'text-red-500' :
+                                                                        epssScore >= 0.01 ? 'text-orange-500' : ''
                                                                     }`}>
-                                                                        EPSS: {((vuln.epss_score || finding.details?.epss_score) * 100).toFixed(2)}%
+                                                                        EPSS: {(epssScore * 100).toFixed(2)}%
                                                                     </span>
-                                                                    {(vuln.epss_percentile || finding.details?.epss_percentile) && (
-                                                                        <span className="text-muted-foreground">(Top {(100 - (vuln.epss_percentile || finding.details?.epss_percentile)).toFixed(0)}%)</span>
+                                                                    {epssPercentile !== undefined && (
+                                                                        <span className="text-muted-foreground">(Top {(100 - epssPercentile).toFixed(0)}%)</span>
                                                                     )}
-                                                                    {(vuln.epss_date || finding.details?.epss_date) && (
-                                                                        <span className="text-muted-foreground text-[10px]">as of {new Date(vuln.epss_date || finding.details?.epss_date).toLocaleDateString()}</span>
+                                                                    {epssDate && (
+                                                                        <span className="text-muted-foreground text-[10px]">as of {new Date(epssDate).toLocaleDateString()}</span>
                                                                     )}
                                                                 </div>
-                                                            )}
-                                                            {(vuln.in_kev || finding.details?.in_kev) && (
+                                                                )
+                                                            })()}
+                                                            {(vuln.in_kev || finding.details?.in_kev) && (() => {
+                                                                const kevDateAdded = vuln.kev_date_added ?? finding.details?.kev_date_added
+                                                                return (
                                                                 <div className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 text-red-600 rounded-md flex-wrap">
                                                                     <AlertTriangle className="h-3 w-3" />
                                                                     <span className="font-medium">Known Exploited</span>
                                                                     {(vuln.kev_ransomware_use || finding.details?.kev_ransomware_use) && (
                                                                         <Badge variant="destructive" className="text-[10px] py-0 h-4">Ransomware</Badge>
                                                                     )}
-                                                                    {(vuln.kev_date_added || finding.details?.kev_date_added) && (
+                                                                    {kevDateAdded && (
                                                                         <span className="text-muted-foreground text-[10px] ml-1">
-                                                                            (since {new Date(vuln.kev_date_added || finding.details?.kev_date_added).toLocaleDateString()})
+                                                                            (since {new Date(kevDateAdded).toLocaleDateString()})
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                            )}
+                                                                )
+                                                            })()}
                                                             {/* Reachability Analysis */}
-                                                            {(vuln.reachability || finding.details?.reachability) && (
+                                                            {(vuln.reachability || finding.details?.reachability) && (() => {
+                                                                const reachability = vuln.reachability ?? finding.details?.reachability
+                                                                const confidenceScore = reachability?.confidence_score
+                                                                return (
                                                                 <div className={`flex items-center gap-1 px-2 py-0.5 rounded-md flex-wrap ${
-                                                                    (vuln.reachability?.is_reachable || finding.details?.reachability?.is_reachable)
+                                                                    reachability?.is_reachable
                                                                         ? 'bg-red-500/10 text-red-600'
                                                                         : 'bg-green-500/10 text-green-600'
                                                                 }`}>
-                                                                    {(vuln.reachability?.is_reachable || finding.details?.reachability?.is_reachable) ? (
+                                                                    {reachability?.is_reachable ? (
                                                                         <>
                                                                             <AlertTriangle className="h-3 w-3" />
                                                                             <span className="font-medium">Reachable</span>
@@ -1526,36 +1524,40 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                             <span className="font-medium">Not Reachable</span>
                                                                         </>
                                                                     )}
-                                                                    {(vuln.reachability?.analysis_level || finding.details?.reachability?.analysis_level) && (
+                                                                    {reachability?.analysis_level && (
                                                                         <Badge variant="outline" className="text-[10px] py-0 h-4 ml-1">
-                                                                            {vuln.reachability?.analysis_level || finding.details?.reachability?.analysis_level}
+                                                                            {reachability.analysis_level}
                                                                         </Badge>
                                                                     )}
-                                                                    {(vuln.reachability?.confidence_score || finding.details?.reachability?.confidence_score) && (
+                                                                    {confidenceScore !== undefined && (
                                                                         <span className="text-muted-foreground text-[10px] ml-1">
-                                                                            ({Math.round((vuln.reachability?.confidence_score || finding.details?.reachability?.confidence_score) * 100)}% confidence)
+                                                                            ({Math.round(confidenceScore * 100)}% confidence)
                                                                         </span>
                                                                     )}
                                                                 </div>
-                                                            )}
+                                                                )
+                                                            })()}
                                                             {/* Reachability matched symbols */}
-                                                            {((vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols)?.length ?? 0) > 0 && (
+                                                            {((vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols)?.length ?? 0) > 0 && (() => {
+                                                                const matchedSymbols = vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []
+                                                                return (
                                                                 <div className="flex items-start gap-2 w-full">
                                                                     <span className="font-medium text-muted-foreground shrink-0">Affected Symbols:</span>
                                                                     <div className="flex flex-wrap gap-1">
-                                                                        {(vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols || []).slice(0, 5).map((symbol: string, idx: number) => (
+                                                                        {matchedSymbols.slice(0, 5).map((symbol: string, idx: number) => (
                                                                             <Badge key={idx} variant="outline" className="font-mono text-xs">
                                                                                 {symbol}
                                                                             </Badge>
                                                                         ))}
-                                                                        {(vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols || []).length > 5 && (
+                                                                        {matchedSymbols.length > 5 && (
                                                                             <Badge variant="secondary" className="text-[10px]">
-                                                                                +{(vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols || []).length - 5} more
+                                                                                +{matchedSymbols.length - 5} more
                                                                             </Badge>
                                                                         )}
                                                                     </div>
                                                                 </div>
-                                                            )}
+                                                                )
+                                                            })()}
                                                             {(vuln.kev_required_action || finding.details?.kev_required_action) && (
                                                                 <div className="flex items-center gap-2 w-full">
                                                                     <span className="font-medium text-muted-foreground">Required Action:</span>
@@ -1630,32 +1632,33 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                             </div>
                                         );
                                     })()}
-                                    
-                                    {/* Show Scorecard context if available */}
-                                    {finding.details?.scorecard_context && (
-                                        <ScorecardContextBanner context={finding.details.scorecard_context as ScorecardContext} />
-                                    )}
-                                    
-                                    {/* Show maintenance warning */}
-                                    {finding.details?.maintenance_warning && (
-                                        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800">
-                                            <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                                            <p className="text-sm">
-                                                {finding.details.maintenance_warning_text || "This package may have maintenance concerns."}
-                                            </p>
-                                        </div>
-                                    )}
                                 </div>
                             )}
 
                             {/* License Compliance findings */}
                             {finding.type === 'license' && finding.details && (
-                                <LicenseDetailsView details={finding.details} />
+                                <>
+                                    <ContextBannersSection finding={finding} />
+                                    <LicenseDetailsView details={finding.details} />
+                                </>
                             )}
 
                             {/* Quality findings (aggregated: quality_issues list) */}
                             {finding.type === 'quality' && finding.details && (
-                                <AggregatedQualityView details={finding.details} />
+                                <>
+                                    <ContextBannersSection finding={finding} />
+                                    <AggregatedQualityView details={finding.details} />
+                                </>
+                            )}
+
+                            {/* Outdated findings */}
+                            {finding.type === 'outdated' && (
+                                <ContextBannersSection finding={finding} />
+                            )}
+
+                            {/* EOL findings */}
+                            {finding.type === 'eol' && (
+                                <ContextBannersSection finding={finding} />
                             )}
 
                             {/* Legacy 'other' type with maintainer_risk data */}
@@ -1701,7 +1704,7 @@ function WaiverForm({ finding, vulnId, projectId, onCancel, onSuccess }: { findi
             queryClient.invalidateQueries({ queryKey: ['waivers', projectId] })
             onSuccess()
         },
-        onError: (error: AxiosError<any>) => {
+        onError: (error: AxiosError<{ detail?: string }>) => {
             toast.error("Failed to create waiver", {
                 description: error.response?.data?.detail || "An error occurred"
             })
@@ -1712,33 +1715,16 @@ function WaiverForm({ finding, vulnId, projectId, onCancel, onSuccess }: { findi
         e.preventDefault()
         if (!reason) return
 
-        // If waiving a specific vulnerability, we might need to adjust the finding_id or pass extra data
-        // For now, we assume the backend can handle the specific ID if we pass it, 
-        // OR we are waiving the whole package but noting the specific vuln in the reason.
-        // Ideally, the backend API should support a 'vulnerability_id' field.
-        // Since we can't change the backend right now, we'll append it to the reason or use it as ID if appropriate.
-        
-        // Strategy: If vulnId is present, we use it as the finding_id for the waiver? 
-        // No, finding_id links to the finding record. 
-        // If the backend matches waivers by finding_id string, and we want to waive just one CVE,
-        // we might need to change the backend. 
-        // BUT, if we assume the user wants to waive THIS specific CVE, and the system uses CVEs as IDs usually...
-        // Let's try passing the vulnId as finding_id if present, assuming the backend might check against it.
-        // If not, we fall back to finding.id.
-        
-        // Actually, better approach for now without backend changes:
-        // We waive the whole finding (Package) but auto-fill the reason with the specific CVE.
-        
-        const targetId = vulnId || getFindingId(finding)
-        const finalReason = vulnId ? `[${vulnId}] ${reason}` : reason
-
+        // Use the new vulnerability_id field for granular CVE-level waivers
+        // The backend now supports waiving specific vulnerabilities within aggregated findings
         createWaiverMutation.mutate({
             project_id: projectId,
-            finding_id: targetId, 
+            finding_id: getFindingId(finding),
+            vulnerability_id: vulnId || undefined,  // Pass specific CVE if waiving single vuln
             package_name: getFindingPackage(finding),
             package_version: getFindingVersion(finding),
             finding_type: finding.type || "unknown",
-            reason: finalReason,
+            reason: reason,
             expiration_date: date ? new Date(date).toISOString() : undefined
         })
     }
@@ -1783,34 +1769,5 @@ function WaiverForm({ finding, vulnId, projectId, onCancel, onSuccess }: { findi
                 </Button>
             </div>
         </form>
-    )
-}
-
-function CollapsibleReferences({ references, title = "References" }: { references: string[], title?: string }) {
-    const [isOpen, setIsOpen] = useState(false)
-
-    if (!references || references.length === 0) return null
-
-    return (
-        <div className="pt-2">
-            <Button 
-                variant="ghost" 
-                size="sm" 
-                className="h-auto py-1 px-0 text-xs font-medium hover:bg-transparent hover:underline justify-start text-muted-foreground"
-                onClick={() => setIsOpen(!isOpen)}
-            >
-                {isOpen ? "▼" : "▶"} {title} ({references.length})
-            </Button>
-            
-            {isOpen && (
-                <div className="flex flex-col gap-1 mt-1 pl-2 border-l-2 border-muted ml-1">
-                    {references.map((ref, i) => (
-                        <a key={i} href={ref} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline truncate block">
-                            {ref}
-                        </a>
-                    ))}
-                </div>
-            )}
-        </div>
     )
 }

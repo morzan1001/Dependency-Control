@@ -1,4 +1,4 @@
-import { User, updateUser, UserUpdate } from '@/lib/api';
+import { User, updateUser, UserUpdate, ApiError } from '@/lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/dialog"
 import { PERMISSION_GROUPS } from '@/lib/constants';
 import { toast } from "sonner"
-import { AxiosError } from 'axios';
 
 interface UserPermissionsDialogProps {
   user: User | null;
@@ -41,7 +40,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
       });
       onOpenChange(false);
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Error", {
         description: error.response?.data?.detail || "Failed to update user permissions.",
       });

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getWaivers, deleteWaiver, Waiver } from '@/lib/api'
+import { getWaivers, deleteWaiver, Waiver, ApiError } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ArrowUp, ArrowDown, Trash2 } from 'lucide-react'
 import { toast } from "sonner"
-import { AxiosError } from 'axios'
 
 interface ProjectWaiversProps {
   projectId: string
@@ -31,7 +30,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
             toast.success("Waiver deleted successfully")
             queryClient.invalidateQueries({ queryKey: ['waivers', projectId] })
         },
-        onError: (error: AxiosError<any>) => {
+        onError: (error: ApiError) => {
             toast.error("Failed to delete waiver", {
                 description: error.response?.data?.detail || "An error occurred"
             })
@@ -53,16 +52,16 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
 
         if (sortConfig) {
             result.sort((a: Waiver, b: Waiver) => {
-                let aValue: any = a[sortConfig.key as keyof Waiver]
-                let bValue: any = b[sortConfig.key as keyof Waiver]
+                let aValue: string | number | null | undefined = a[sortConfig.key as keyof Waiver] as string | undefined
+                let bValue: string | number | null | undefined = b[sortConfig.key as keyof Waiver] as string | undefined
                 
                 if (sortConfig.key === 'expires') {
                     aValue = a.expiration_date ? new Date(a.expiration_date).getTime() : 9999999999999
                     bValue = b.expiration_date ? new Date(b.expiration_date).getTime() : 9999999999999
                 }
 
-                if (aValue! < bValue!) return sortConfig.direction === 'asc' ? -1 : 1
-                if (aValue! > bValue!) return sortConfig.direction === 'asc' ? 1 : -1
+                if ((aValue ?? '') < (bValue ?? '')) return sortConfig.direction === 'asc' ? -1 : 1
+                if ((aValue ?? '') > (bValue ?? '')) return sortConfig.direction === 'asc' ? 1 : -1
                 return 0
             })
         }
@@ -131,7 +130,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                         </thead>
                         <tbody className="[&_tr:last-child]:border-0">
                             {filteredWaivers.map((waiver: Waiver) => (
-                                <tr key={waiver._id} className="border-b transition-colors hover:bg-muted/50">
+                                <tr key={waiver.id} className="border-b transition-colors hover:bg-muted/50">
                                     <td className="p-4 align-middle font-mono">{waiver.finding_id || "Any"}</td>
                                     <td className="p-4 align-middle">
                                         {waiver.package_name} 
@@ -149,7 +148,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                                 className="text-destructive hover:text-destructive hover:bg-destructive/10"
                                                 onClick={() => {
                                                     if (confirm("Are you sure you want to delete this waiver?")) {
-                                                        deleteWaiverMutation.mutate(waiver._id)
+                                                        deleteWaiverMutation.mutate(waiver.id)
                                                     }
                                                 }}
                                                 disabled={deleteWaiverMutation.isPending}

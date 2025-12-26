@@ -63,7 +63,7 @@ export default function AcceptInvite() {
       try {
         const data = await apiLogin(username, password)
         login(data.access_token, data.refresh_token)
-      } catch (loginErr) {
+      } catch {
         navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
       }
 

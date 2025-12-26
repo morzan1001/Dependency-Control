@@ -69,7 +69,7 @@ export default function SystemSettings() {
     }
   })
 
-  const handleInputChange = (field: keyof SystemSettingsType, value: any) => {
+  const handleInputChange = (field: keyof SystemSettingsType, value: string | number | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 

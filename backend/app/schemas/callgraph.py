@@ -19,7 +19,7 @@ class MadgeImport(BaseModel):
 class MadgeCallgraph(BaseModel):
     """
     Madge JSON output format.
-    
+
     Example:
     {
         "src/index.js": ["./utils", "lodash"],
@@ -50,7 +50,7 @@ class PyanEdge(BaseModel):
 class PyanCallgraph(BaseModel):
     """
     Pyan JSON output format.
-    
+
     Generated with: pyan3 --json src/**/*.py
     """
 
@@ -106,7 +106,7 @@ class GenericCall(BaseModel):
 class GenericCallgraph(BaseModel):
     """
     Generic callgraph format that can be used for any language.
-    
+
     This is the recommended format for custom integrations.
     """
 

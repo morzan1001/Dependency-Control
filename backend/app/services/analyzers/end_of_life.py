@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional, Set
 
 import httpx
 
-from app.core.cache import cache_service, CacheKeys, CacheTTL
+from app.core.cache import CacheKeys, CacheTTL, cache_service
+
 from .base import Analyzer
 
 logger = logging.getLogger(__name__)
@@ -172,11 +173,10 @@ class EndOfLifeAnalyzer(Analyzer):
     ) -> Dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
         results = []
-        checked_products: Set[str] = set()  # Avoid duplicate API calls
 
         # Collect all unique products to check
         products_to_check: Dict[str, tuple] = {}  # product -> (component_name, version)
-        
+
         for component in components:
             name = component.get("name", "").lower()
             version = component.get("version", "")
@@ -197,7 +197,7 @@ class EndOfLifeAnalyzer(Analyzer):
         # Check cache for all products first
         cache_keys = [CacheKeys.eol(product) for product in products_to_check.keys()]
         cached_data = await cache_service.mget(cache_keys) if cache_keys else {}
-        
+
         products_to_fetch = []
         for product, (comp_name, version) in products_to_check.items():
             cache_key = CacheKeys.eol(product)
@@ -206,16 +206,20 @@ class EndOfLifeAnalyzer(Analyzer):
                 if cycles:  # Not a negative cache entry
                     eol_info = self._check_version(version, cycles)
                     if eol_info:
-                        results.append({
-                            "component": comp_name,
-                            "version": version,
-                            "product": product,
-                            "eol_info": eol_info,
-                        })
+                        results.append(
+                            {
+                                "component": comp_name,
+                                "version": version,
+                                "product": product,
+                                "eol_info": eol_info,
+                            }
+                        )
             else:
                 products_to_fetch.append((product, comp_name, version))
 
-        logger.debug(f"EOL: {len(products_to_check) - len(products_to_fetch)} from cache, {len(products_to_fetch)} to fetch")
+        logger.debug(
+            f"EOL: {len(products_to_check) - len(products_to_fetch)} from cache, {len(products_to_fetch)} to fetch"
+        )
 
         # Fetch uncached products
         if products_to_fetch:
@@ -228,22 +232,24 @@ class EndOfLifeAnalyzer(Analyzer):
                             cycles = response.json()
                             # Cache the EOL data
                             to_cache[CacheKeys.eol(product)] = cycles
-                            
+
                             eol_info = self._check_version(version, cycles)
                             if eol_info:
-                                results.append({
-                                    "component": comp_name,
-                                    "version": version,
-                                    "product": product,
-                                    "eol_info": eol_info,
-                                })
+                                results.append(
+                                    {
+                                        "component": comp_name,
+                                        "version": version,
+                                        "product": product,
+                                        "eol_info": eol_info,
+                                    }
+                                )
                         elif response.status_code == 404:
                             # Cache negative result
                             to_cache[CacheKeys.eol(product)] = []
                     except Exception as e:
                         logger.debug(f"EOL check failed for {product}: {e}")
                         continue
-                
+
                 # Batch cache all fetched results
                 if to_cache:
                     await cache_service.mset(to_cache, CacheTTL.EOL_STATUS)

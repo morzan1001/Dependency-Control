@@ -18,20 +18,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from app.api import health
-from app.api.v1.endpoints import (
-    analytics,
-    auth,
-    callgraph,
-    ingest,
-    integrations,
-    invitations,
-    projects,
-    system,
-    teams,
-    users,
-    waivers,
-    webhooks,
-)
+from app.api.v1.endpoints import (analytics, auth, callgraph, ingest,
+                                  integrations, invitations, projects, system,
+                                  teams, users, waivers, webhooks)
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
 

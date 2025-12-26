@@ -1,13 +1,14 @@
 """
 SBOM Schema Definitions
 
-Data classes for normalized SBOM representations.
+Pydantic models for normalized SBOM representations.
 Supports CycloneDX, SPDX, and Syft formats.
 """
 
-from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class SBOMFormat(Enum):
@@ -30,8 +31,7 @@ class SourceType(Enum):
     UNKNOWN = "unknown"
 
 
-@dataclass
-class ParsedDependency:
+class ParsedDependency(BaseModel):
     """Normalized dependency representation with all available SBOM fields."""
 
     # Core Identity
@@ -47,17 +47,17 @@ class ParsedDependency:
     # Scope and relationships
     scope: Optional[str] = None
     direct: bool = False
-    parent_components: List[str] = field(default_factory=list)
+    parent_components: List[str] = Field(default_factory=list)
 
     # Source/Origin information
     source_type: Optional[str] = None
     source_target: Optional[str] = None
     layer_digest: Optional[str] = None
     found_by: Optional[str] = None
-    locations: List[str] = field(default_factory=list)
+    locations: List[str] = Field(default_factory=list)
 
     # Security identifiers
-    cpes: List[str] = field(default_factory=list)
+    cpes: List[str] = Field(default_factory=list)
 
     # Package metadata
     description: Optional[str] = None
@@ -71,42 +71,17 @@ class ParsedDependency:
     download_url: Optional[str] = None
 
     # Checksums
-    hashes: Dict[str, str] = field(default_factory=dict)
+    hashes: Dict[str, str] = Field(default_factory=dict)
 
     # Additional properties from SBOM
-    properties: Dict[str, str] = field(default_factory=dict)
+    properties: Dict[str, str] = Field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "name": self.name,
-            "version": self.version,
-            "purl": self.purl,
-            "type": self.type,
-            "license": self.license,
-            "license_url": self.license_url,
-            "scope": self.scope,
-            "direct": self.direct,
-            "parent_components": self.parent_components,
-            "source_type": self.source_type,
-            "source_target": self.source_target,
-            "layer_digest": self.layer_digest,
-            "found_by": self.found_by,
-            "locations": self.locations,
-            "cpes": self.cpes,
-            "description": self.description,
-            "author": self.author,
-            "publisher": self.publisher,
-            "group": self.group,
-            "homepage": self.homepage,
-            "repository_url": self.repository_url,
-            "download_url": self.download_url,
-            "hashes": self.hashes,
-            "properties": self.properties,
-        }
+        """Convert to dictionary. Alias for model_dump() for backward compatibility."""
+        return self.model_dump()
 
 
-@dataclass
-class ParsedSBOM:
+class ParsedSBOM(BaseModel):
     """Normalized SBOM representation."""
 
     format: SBOMFormat
@@ -117,7 +92,7 @@ class ParsedSBOM:
     source_target: Optional[str] = None
 
     # Components/Dependencies
-    dependencies: List[ParsedDependency] = field(default_factory=list)
+    dependencies: List[ParsedDependency] = Field(default_factory=list)
 
     # Metadata
     tool_name: Optional[str] = None

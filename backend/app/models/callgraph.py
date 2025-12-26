@@ -46,13 +46,13 @@ class Callgraph(BaseModel):
     """Complete call graph data for a project."""
 
     project_id: str
-    
+
     # Pipeline context - crucial for matching callgraph to correct scans
     # pipeline_id is the PRIMARY key for matching (unique per CI/CD run)
     pipeline_id: Optional[int] = None  # GitLab CI pipeline ID (unique)
     branch: Optional[str] = None  # Git branch (for reference/fallback)
     commit_hash: Optional[str] = None  # Specific commit
-    
+
     # Link to specific scan if applicable
     scan_id: Optional[str] = None
 

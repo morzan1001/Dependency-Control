@@ -53,6 +53,7 @@ import {
   Copy,
   Check,
 } from "lucide-react"
+import { getSeverityBgColor } from '@/lib/finding-utils'
 
 // Severity order for sorting
 const severityOrder: Record<string, number> = {
@@ -514,13 +515,14 @@ export function AnalyticsDependencyModal({
         case 'type':
           comparison = (a.type || '').localeCompare(b.type || '')
           break
-        case 'severity':
+        case 'severity': {
           const sevA = severityOrder[a.severity?.toUpperCase() || 'UNKNOWN'] || 0
           const sevB = severityOrder[b.severity?.toUpperCase() || 'UNKNOWN'] || 0
           comparison = sevA - sevB
           break
+        }
         case 'project_name':
-          comparison = ((a as any).project_name || '').localeCompare((b as any).project_name || '')
+          comparison = (a.project_name || '').localeCompare(b.project_name || '')
           break
       }
       
@@ -542,16 +544,6 @@ export function AnalyticsDependencyModal({
     return sortOrder === 'asc' 
       ? <ArrowUp className="h-4 w-4 inline-block ml-1" />
       : <ArrowDown className="h-4 w-4 inline-block ml-1" />
-  }
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity?.toUpperCase()) {
-      case 'CRITICAL': return 'destructive'
-      case 'HIGH': return 'bg-orange-500 hover:bg-orange-600'
-      case 'MEDIUM': return 'bg-yellow-500 hover:bg-yellow-600 text-black'
-      case 'LOW': return 'bg-blue-500 hover:bg-blue-600'
-      default: return 'secondary'
-    }
   }
 
   return (
@@ -632,7 +624,7 @@ export function AnalyticsDependencyModal({
                 <TableBody>
                   {sortedFindings.map((finding, idx) => (
                     <TableRow 
-                      key={`${finding.id}-${(finding as any).project_id}-${idx}`}
+                      key={`${finding.id}-${finding.project_id}-${idx}`}
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => {
                         setSelectedFinding(finding)
@@ -654,17 +646,17 @@ export function AnalyticsDependencyModal({
                         <Badge variant="outline">{finding.type}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge className={getSeverityColor(finding.severity || 'UNKNOWN')}>
+                        <Badge className={getSeverityBgColor(finding.severity || 'UNKNOWN')}>
                           {finding.severity || 'UNKNOWN'}
                         </Badge>
                       </TableCell>
                       <TableCell className="truncate">
                         <Link
-                          to={`/projects/${(finding as any).project_id}`}
+                          to={`/projects/${finding.project_id}`}
                           className="text-primary hover:underline"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {(finding as any).project_name || 'Unknown'}
+                          {finding.project_name || 'Unknown'}
                         </Link>
                       </TableCell>
                     </TableRow>
@@ -689,8 +681,8 @@ export function AnalyticsDependencyModal({
               setFindingModalOpen(false)
               setSelectedFinding(null)
             }}
-            projectId={(selectedFinding as any).project_id}
-            scanId={(selectedFinding as any).scan_id}
+            projectId={selectedFinding.project_id}
+            scanId={selectedFinding.scan_id}
             onSelectFinding={(id) => {
               // First try exact match by ID
               let found = sortedFindings.find(f => f.id === id);

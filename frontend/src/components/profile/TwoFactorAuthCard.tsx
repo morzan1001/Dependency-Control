@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { setup2FA, TwoFASetup, User } from '@/lib/api';
+import { setup2FA, TwoFASetup, User, ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Shield, ShieldAlert } from 'lucide-react';
@@ -8,7 +8,6 @@ import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 import { TwoFASetupDialog } from './TwoFASetupDialog';
 import { TwoFADisableDialog } from './TwoFADisableDialog';
-import { AxiosError } from 'axios';
 
 interface TwoFactorAuthCardProps {
   user: User | undefined;
@@ -25,7 +24,7 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
       setSetupData(data);
       setIsSetupOpen(true);
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Error", {
         description: getErrorMessage(error),
       });

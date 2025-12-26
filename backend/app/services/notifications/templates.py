@@ -68,6 +68,11 @@ def get_vulnerability_found_template(
     project_name: str,
     project_name_scanned: str,
     vulnerabilities: list,
+    has_kev: bool = False,
+    kev_count: int = 0,
+    kev_vulnerabilities: list = None,
+    has_high_epss: bool = False,
+    high_epss_count: int = 0,
 ) -> str:
     return render_template(
         "vulnerability_found.html",
@@ -76,6 +81,11 @@ def get_vulnerability_found_template(
             "project_name": project_name,
             "project_name_scanned": project_name_scanned,
             "vulnerabilities": vulnerabilities,
+            "has_kev": has_kev,
+            "kev_count": kev_count,
+            "kev_vulnerabilities": kev_vulnerabilities or [],
+            "has_high_epss": has_high_epss,
+            "high_epss_count": high_epss_count,
         },
     )
 

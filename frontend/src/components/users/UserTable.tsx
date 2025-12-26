@@ -1,4 +1,4 @@
-import { User, deleteUser, inviteUser } from '@/lib/api';
+import { User, deleteUser, inviteUser, ApiError } from '@/lib/api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Check, X, Trash2, ChevronLeft, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react';
@@ -13,7 +13,6 @@ import {
 import { toast } from "sonner"
 import { useAuth } from '@/context/AuthContext';
 import { useState } from 'react';
-import { AxiosError } from 'axios';
 
 interface UserTableProps {
   users: User[] | undefined;
@@ -41,7 +40,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
       setUserToDelete(null);
       toast.success("User deleted successfully");
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Failed to delete user", {
         description: error.response?.data?.detail || "An error occurred"
       })
@@ -53,7 +52,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
     onSuccess: () => {
       toast.success("Invitation resent successfully");
     },
-    onError: (error: AxiosError<any>) => {
+    onError: (error: ApiError) => {
       toast.error("Failed to resend invitation", {
         description: error.response?.data?.detail || "An error occurred"
       })

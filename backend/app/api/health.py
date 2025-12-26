@@ -87,7 +87,7 @@ async def readiness():
 async def cache_health():
     """
     Get detailed cache health status and statistics.
-    
+
     Returns:
         Cache connection status, memory usage, key count, and hit rate.
     """

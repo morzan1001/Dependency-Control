@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { getProjects, createProject, getTeams, Project, getSystemSettings } from '@/lib/api';
+import { getProjects, createProject, getTeams, Project, getSystemSettings, ApiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -80,7 +80,7 @@ export default function ProjectsPage() {
       setCreatedProjectData(data);
       toast.success("Project created successfully");
     },
-    onError: (error: any) => {
+    onError: (error: ApiError) => {
         toast.error("Failed to create project", {
             description: error.response?.data?.detail || "An error occurred"
         });

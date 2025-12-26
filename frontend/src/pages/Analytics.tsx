@@ -6,9 +6,10 @@ import { DependencyTree } from '@/components/analytics/DependencyTree'
 import { ImpactAnalysis } from '@/components/analytics/ImpactAnalysis'
 import { VulnerabilityHotspots } from '@/components/analytics/VulnerabilityHotspots'
 import { CrossProjectSearch } from '@/components/analytics/CrossProjectSearch'
+import { VulnerabilitySearch } from '@/components/analytics/VulnerabilitySearch'
 import { Recommendations } from '@/components/analytics/Recommendations'
 import { AnalyticsDependencyModal } from '@/components/analytics/AnalyticsDependencyModal'
-import { BarChart3, GitBranch, Zap, Flame, Search, Lightbulb } from 'lucide-react'
+import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 
 export default function AnalyticsPage() {
@@ -32,7 +33,8 @@ export default function AnalyticsPage() {
     if (canViewImpact) tabs.push({ id: 'impact', label: 'Impact', icon: Zap })
     if (canViewHotspots) tabs.push({ id: 'hotspots', label: 'Hotspots', icon: Flame })
     if (canViewRecommendations) tabs.push({ id: 'recommendations', label: 'Recommendations', icon: Lightbulb })
-    if (canViewSearch) tabs.push({ id: 'search', label: 'Search', icon: Search })
+    if (canViewSearch) tabs.push({ id: 'search-deps', label: 'Dependencies', icon: Package })
+    if (canViewSearch) tabs.push({ id: 'search-vulns', label: 'Vulnerabilities', icon: ShieldAlert })
     return tabs
   }, [canViewSummary, canViewTree, canViewImpact, canViewHotspots, canViewRecommendations, canViewSearch])
 
@@ -116,12 +118,19 @@ export default function AnalyticsPage() {
           </TabsContent>
         )}
 
-        {/* Cross-Project Search Tab */}
+        {/* Cross-Project Dependency Search Tab */}
         {canViewSearch && (
-          <TabsContent value="search">
+          <TabsContent value="search-deps">
             <CrossProjectSearch 
               onSelectResult={(result) => handleComponentSelect(result.package, result.version)}
             />
+          </TabsContent>
+        )}
+
+        {/* Vulnerability Search Tab */}
+        {canViewSearch && (
+          <TabsContent value="search-vulns">
+            <VulnerabilitySearch />
           </TabsContent>
         )}
       </Tabs>

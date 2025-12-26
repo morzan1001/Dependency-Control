@@ -6,18 +6,13 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from app.api import deps
+from app.core.constants import SEVERITY_ORDER
 from app.db.mongodb import get_database
 from app.models.user import User
-from app.schemas.analytics import (
-    SeverityBreakdown,
-    DependencyUsage,
-    DependencyTreeNode,
-    ImpactAnalysisResult,
-    VulnerabilityHotspot,
-    DependencyTypeStats,
-    AnalyticsSummary,
-    DependencyMetadata,
-)
+from app.schemas.analytics import (AnalyticsSummary, DependencyMetadata,
+                                   DependencyTreeNode, DependencyTypeStats,
+                                   DependencyUsage, ImpactAnalysisResult,
+                                   SeverityBreakdown, VulnerabilityHotspot)
 
 router = APIRouter()
 
@@ -433,7 +428,8 @@ async def get_impact_analysis(
     enrichments = {}
     if all_cves:
         try:
-            from app.services.vulnerability_enrichment import get_cve_enrichment
+            from app.services.vulnerability_enrichment import \
+                get_cve_enrichment
 
             enrichments = await get_cve_enrichment(all_cves)
         except Exception as e:
@@ -599,7 +595,9 @@ async def get_impact_analysis(
         # Build priority reasons (human-readable explanations)
         priority_reasons = []
         if kev_ransomware_use:
-            priority_reasons.append("ransomware:Used in ransomware campaigns - fix immediately")
+            priority_reasons.append(
+                "ransomware:Used in ransomware campaigns - fix immediately"
+            )
         if days_until_due is not None and days_until_due < 0:
             priority_reasons.append(
                 f"deadline_overdue:CISA deadline overdue by {abs(days_until_due)} days"
@@ -738,7 +736,8 @@ async def get_vulnerability_hotspots(
     enrichments = {}
     if all_cves:
         try:
-            from app.services.vulnerability_enrichment import get_cve_enrichment
+            from app.services.vulnerability_enrichment import \
+                get_cve_enrichment
 
             enrichments = await get_cve_enrichment(list(set(all_cves)))
         except Exception as e:
@@ -854,7 +853,9 @@ async def get_vulnerability_hotspots(
         if max_epss and max_epss >= 0.1:
             priority_reasons.append(f"epss:High EPSS ({max_epss*100:.1f}%)")
         if severity_counts["critical"] > 0:
-            priority_reasons.append(f"critical:{severity_counts['critical']} critical vulns")
+            priority_reasons.append(
+                f"critical:{severity_counts['critical']} critical vulns"
+            )
         has_fix = len(fix_versions) > 0
         if has_fix:
             priority_reasons.append("fix_available:Fix available")
@@ -1036,6 +1037,276 @@ async def search_dependencies_advanced(
         "items": results,
         "total": total_count,
         "page": skip // limit,
+        "size": limit,
+    }
+
+
+@router.get("/vulnerability-search")
+async def search_vulnerabilities(
+    q: str = Query(
+        ...,
+        min_length=2,
+        description="Search query for CVE, GHSA, or other vulnerability identifiers",
+    ),
+    severity: Optional[str] = Query(
+        None, description="Filter by severity: CRITICAL, HIGH, MEDIUM, LOW"
+    ),
+    in_kev: Optional[bool] = Query(None, description="Filter by CISA KEV inclusion"),
+    has_fix: Optional[bool] = Query(None, description="Filter by fix availability"),
+    finding_type: Optional[str] = Query(
+        None, description="Filter by finding type: vulnerability, license, secret, etc."
+    ),
+    project_ids: Optional[str] = Query(
+        None, description="Comma-separated list of project IDs"
+    ),
+    include_waived: bool = Query(False, description="Include waived findings"),
+    sort_by: str = Query(
+        "severity",
+        description="Sort field: severity, cvss, epss, component, project_name",
+    ),
+    sort_order: str = Query("desc", description="Sort order: asc or desc"),
+    skip: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(50, ge=1, le=500),
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    Search for vulnerabilities, CVEs, and other security identifiers across all accessible projects.
+
+    Searches in:
+    - Finding ID (e.g., CVE-2021-44228)
+    - Aliases (e.g., GHSA-xxx)
+    - Nested vulnerability IDs in details
+    - Description text
+    """
+    require_analytics_permission(current_user, "analytics:search")
+
+    accessible_project_ids = await get_user_project_ids(current_user, db)
+
+    # Filter by requested project IDs if provided
+    if project_ids:
+        requested_ids = [pid.strip() for pid in project_ids.split(",")]
+        accessible_project_ids = [
+            pid for pid in accessible_project_ids if pid in requested_ids
+        ]
+
+    if not accessible_project_ids:
+        return {"items": [], "total": 0, "page": 0, "size": limit}
+
+    # Get project info
+    projects = await db.projects.find(
+        {"_id": {"$in": accessible_project_ids}},
+        {"_id": 1, "name": 1, "latest_scan_id": 1},
+    ).to_list(None)
+
+    project_name_map = {p["_id"]: p["name"] for p in projects}
+    scan_ids = [p["latest_scan_id"] for p in projects if p.get("latest_scan_id")]
+
+    if not scan_ids:
+        return {"items": [], "total": 0, "page": 0, "size": limit}
+
+    # Build query for findings
+    # Search in: id, aliases, details.vulnerabilities[].id, description
+    search_regex = {"$regex": q, "$options": "i"}
+
+    query = {
+        "scan_id": {"$in": scan_ids},
+        "$or": [
+            {"id": search_regex},
+            {"aliases": search_regex},
+            {"description": search_regex},
+            {"details.vulnerabilities.id": search_regex},
+            {"details.vulnerabilities.resolved_cve": search_regex},
+        ],
+    }
+
+    # Apply filters
+    if severity:
+        query["severity"] = severity.upper()
+
+    if finding_type:
+        query["type"] = finding_type
+
+    if not include_waived:
+        query["waived"] = {"$ne": True}
+
+    # Get total count
+    total_count = await db.findings.count_documents(query)
+
+    # Sort mapping - uses SEVERITY_ORDER from constants for consistency
+    sort_field_map = {
+        "severity": "severity",
+        "cvss": "details.cvss_score",
+        "epss": "details.epss_score",
+        "component": "component",
+        "project_name": "project_id",
+    }
+    mongo_sort_field = sort_field_map.get(sort_by, "severity")
+    sort_direction = -1 if sort_order == "desc" else 1
+
+    # Fetch findings
+    findings = (
+        await db.findings.find(query)
+        .sort(mongo_sort_field, sort_direction)
+        .skip(skip)
+        .limit(limit)
+        .to_list(limit)
+    )
+
+    results = []
+    for finding in findings:
+        details = finding.get("details", {})
+
+        # Extract vulnerability info from nested vulnerabilities if present
+        nested_vulns = details.get("vulnerabilities", [])
+
+        # Check KEV status
+        in_kev_status = details.get("kev", False)
+        kev_ransomware = details.get("kev_ransomware", False)
+        kev_due_date = details.get("kev_due_date")
+
+        # Check nested vulns for KEV
+        for vuln in nested_vulns:
+            if vuln.get("kev"):
+                in_kev_status = True
+            if vuln.get("kev_ransomware"):
+                kev_ransomware = True
+            if vuln.get("kev_due_date") and (
+                not kev_due_date or vuln["kev_due_date"] < kev_due_date
+            ):
+                kev_due_date = vuln["kev_due_date"]
+
+        # Apply KEV filter
+        if in_kev is not None:
+            if in_kev and not in_kev_status:
+                continue
+            if not in_kev and in_kev_status:
+                continue
+
+        # Check fix availability
+        has_fix_status = bool(details.get("fixed_version"))
+        for vuln in nested_vulns:
+            if vuln.get("fixed_version"):
+                has_fix_status = True
+                break
+
+        # Apply fix filter
+        if has_fix is not None:
+            if has_fix and not has_fix_status:
+                continue
+            if not has_fix and has_fix_status:
+                continue
+
+        # Build result - if there are nested vulnerabilities matching the query, include each
+        matched_vulns = []
+        query_lower = q.lower()
+
+        # Check if any nested vulnerability matches
+        for vuln in nested_vulns:
+            vuln_id = vuln.get("id", "")
+            resolved_cve = vuln.get("resolved_cve", "")
+            if query_lower in vuln_id.lower() or query_lower in resolved_cve.lower():
+                matched_vulns.append(vuln)
+
+        # If no nested vulns match, this is a direct match on the finding
+        if not matched_vulns:
+            results.append(
+                {
+                    "vulnerability_id": finding["id"],
+                    "aliases": finding.get("aliases", []),
+                    "severity": finding.get("severity", "UNKNOWN"),
+                    "cvss_score": details.get("cvss_score"),
+                    "epss_score": details.get("epss_score"),
+                    "epss_percentile": details.get("epss_percentile"),
+                    "in_kev": in_kev_status,
+                    "kev_ransomware": kev_ransomware,
+                    "kev_due_date": kev_due_date,
+                    "component": finding.get("component", ""),
+                    "version": finding.get("version", ""),
+                    "component_type": details.get("type"),
+                    "purl": details.get("purl"),
+                    "project_id": finding.get("project_id", ""),
+                    "project_name": project_name_map.get(
+                        finding.get("project_id", ""), "Unknown"
+                    ),
+                    "scan_id": finding.get("scan_id"),
+                    "finding_id": finding["id"],
+                    "finding_type": finding.get("type", "vulnerability"),
+                    "description": (
+                        finding.get("description", "")[:200]
+                        if finding.get("description")
+                        else None
+                    ),
+                    "fixed_version": details.get("fixed_version"),
+                    "waived": finding.get("waived", False),
+                    "waiver_reason": finding.get("waiver_reason"),
+                }
+            )
+        else:
+            # Add each matched nested vulnerability as a separate result
+            for vuln in matched_vulns:
+                results.append(
+                    {
+                        "vulnerability_id": vuln.get("id")
+                        or vuln.get("resolved_cve")
+                        or finding["id"],
+                        "aliases": (
+                            [finding["id"]]
+                            if vuln.get("id") != finding["id"]
+                            else finding.get("aliases", [])
+                        ),
+                        "severity": vuln.get("severity")
+                        or finding.get("severity", "UNKNOWN"),
+                        "cvss_score": vuln.get("cvss_score")
+                        or details.get("cvss_score"),
+                        "epss_score": vuln.get("epss_score")
+                        or details.get("epss_score"),
+                        "epss_percentile": vuln.get("epss_percentile")
+                        or details.get("epss_percentile"),
+                        "in_kev": vuln.get("kev", False) or in_kev_status,
+                        "kev_ransomware": vuln.get("kev_ransomware", False)
+                        or kev_ransomware,
+                        "kev_due_date": vuln.get("kev_due_date") or kev_due_date,
+                        "component": finding.get("component", ""),
+                        "version": finding.get("version", ""),
+                        "component_type": details.get("type"),
+                        "purl": details.get("purl"),
+                        "project_id": finding.get("project_id", ""),
+                        "project_name": project_name_map.get(
+                            finding.get("project_id", ""), "Unknown"
+                        ),
+                        "scan_id": finding.get("scan_id"),
+                        "finding_id": finding["id"],
+                        "finding_type": finding.get("type", "vulnerability"),
+                        "description": (
+                            vuln.get("description", "")[:200]
+                            if vuln.get("description")
+                            else (
+                                finding.get("description", "")[:200]
+                                if finding.get("description")
+                                else None
+                            )
+                        ),
+                        "fixed_version": vuln.get("fixed_version")
+                        or details.get("fixed_version"),
+                        "waived": vuln.get("waived", False)
+                        or finding.get("waived", False),
+                        "waiver_reason": vuln.get("waiver_reason")
+                        or finding.get("waiver_reason"),
+                    }
+                )
+
+    # Sort by severity if needed (since MongoDB can't sort by severity order)
+    if sort_by == "severity":
+        results.sort(
+            key=lambda x: SEVERITY_ORDER.get(x["severity"], 0),
+            reverse=(sort_order == "desc"),
+        )
+
+    return {
+        "items": results,
+        "total": total_count,
+        "page": skip // limit if limit > 0 else 0,
         "size": limit,
     }
 
@@ -1326,8 +1597,8 @@ async def get_project_recommendations(
 
     # Get source target (e.g., Docker image name) from scan
     source_target = None
-    sbom_refs = scan.get("sbom_refs", [])
-    # Could extract from SBOM metadata if available
+    # Note: sbom_refs could be used to extract from SBOM metadata if available
+    # sbom_refs = scan.get("sbom_refs", [])
 
     # Fetch ALL findings for this scan (all types: vulnerability, secret, sast, iac, license, quality)
     findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
@@ -1466,6 +1737,15 @@ async def get_project_recommendations(
         "fragmentation_issues": 0,
         "trend_alerts": 0,
         "cross_project_issues": 0,
+        # Finding type counts
+        "finding_counts": {
+            "vulnerabilities": vuln_count,
+            "secrets": secret_count,
+            "sast": sast_count,
+            "iac": iac_count,
+            "license": license_count,
+            "quality": quality_count,
+        },
     }
 
     for rec in recommendations:

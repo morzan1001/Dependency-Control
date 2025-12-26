@@ -17,15 +17,10 @@ from app.db.mongodb import get_database
 from app.models.invitation import ProjectInvitation
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.user import User
-from app.schemas.project import (
-    ProjectApiKeyResponse,
-    ProjectCreate,
-    ProjectList,
-    ProjectMemberInvite,
-    ProjectMemberUpdate,
-    ProjectNotificationSettings,
-    ProjectUpdate,
-)
+from app.schemas.project import (ProjectApiKeyResponse, ProjectCreate,
+                                 ProjectList, ProjectMemberInvite,
+                                 ProjectMemberUpdate,
+                                 ProjectNotificationSettings, ProjectUpdate)
 
 router = APIRouter()
 
@@ -910,9 +905,6 @@ async def update_notification_settings(
                 raise HTTPException(
                     status_code=400,
                     detail="You must be a member or owner to set notification preferences",
-                )
-                raise HTTPException(
-                    status_code=403, detail="Not a member of this project"
                 )
 
     # Return updated project

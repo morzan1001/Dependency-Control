@@ -12,22 +12,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { ChevronRight, ChevronDown, Package, AlertTriangle, Shield, Layers, Container, FileCode, HardDrive } from 'lucide-react'
+import { ChevronRight, ChevronDown, Package, AlertTriangle, Shield, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
-
-// Helper to get source icon and label
-function getSourceInfo(sourceType?: string) {
-  switch (sourceType) {
-    case 'image':
-      return { icon: Container, label: 'Docker Image', color: 'text-blue-500' }
-    case 'file':
-      return { icon: FileCode, label: 'Source File', color: 'text-green-500' }
-    case 'directory':
-      return { icon: HardDrive, label: 'Directory', color: 'text-amber-500' }
-    default:
-      return null
-  }
-}
+import { getSourceInfo } from '@/lib/finding-utils'
 
 interface DependencyNodeProps {
   node: DependencyTreeNode;
@@ -40,7 +27,7 @@ function DependencyNode({ node, level, onSelect }: DependencyNodeProps) {
   const hasChildren = node.children && node.children.length > 0
   const sourceInfo = getSourceInfo(node.source_type)
 
-  const getSeverityColor = () => {
+  const getSeverityBorder = () => {
     if (!node.findings_severity) return ''
     if (node.findings_severity.critical > 0) return 'border-l-red-500'
     if (node.findings_severity.high > 0) return 'border-l-orange-500'
@@ -55,7 +42,7 @@ function DependencyNode({ node, level, onSelect }: DependencyNodeProps) {
         <div
           className={cn(
             "flex items-center gap-2 py-2 px-3 hover:bg-muted rounded-lg cursor-pointer border-l-4",
-            node.has_findings ? getSeverityColor() : "border-l-transparent",
+            node.has_findings ? getSeverityBorder() : "border-l-transparent",
           )}
           style={{ paddingLeft: `${level * 24 + 12}px` }}
           onClick={() => onSelect?.(node)}

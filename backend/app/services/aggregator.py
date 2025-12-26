@@ -2,24 +2,12 @@ import hashlib
 import re
 from typing import Any, Dict, List
 
+from app.core.constants import SEVERITY_ORDER
 from app.models.finding import Finding, FindingType, Severity
-from app.schemas.finding import (
-    SecretDetails,
-    VulnerabilityAggregatedDetails,
-    VulnerabilityEntry,
-    QualityAggregatedDetails,
-    QualityEntry,
-)
 from app.schemas.enrichment import DependencyEnrichment
-
-SEVERITY_ORDER = {
-    "CRITICAL": 5,
-    "HIGH": 4,
-    "MEDIUM": 3,
-    "LOW": 2,
-    "INFO": 1,
-    "UNKNOWN": 0,
-}
+from app.schemas.finding import (QualityAggregatedDetails, QualityEntry,
+                                 SecretDetails, VulnerabilityAggregatedDetails,
+                                 VulnerabilityEntry)
 
 
 class ResultAggregator:
@@ -50,7 +38,8 @@ class ResultAggregator:
     def _enrich_from_deps_dev(self, name: str, version: str, metadata: Dict[str, Any]):
         """Enrich dependency with data from deps.dev."""
         enrichment = self._get_or_create_enrichment(name, version)
-        enrichment.sources.add("deps_dev")
+        if "deps_dev" not in enrichment.sources:
+            enrichment.sources.append("deps_dev")
 
         # Project info (stars, forks, etc.)
         project = metadata.get("project", {})
@@ -135,7 +124,8 @@ class ResultAggregator:
     ):
         """Enrich dependency with data from license compliance scanner."""
         enrichment = self._get_or_create_enrichment(name, version)
-        enrichment.sources.add("license_compliance")
+        if "license_compliance" not in enrichment.sources:
+            enrichment.sources.append("license_compliance")
 
         spdx_id = license_info.get("license")
         if spdx_id:
@@ -320,7 +310,8 @@ class ResultAggregator:
                     final_findings.append(p)
                     merged_ids.add(p.id)
 
-        # Link all findings for the same component together
+        # Link all findings for the same component together (without merging)
+        # Each finding type remains separate, only linked via related_findings
         self._link_related_findings_by_component(final_findings)
 
         # Enrich findings with scorecard data
@@ -333,13 +324,13 @@ class ResultAggregator:
         Links ALL findings for the same component together, regardless of type.
         This creates a web of related findings where:
         - Vulnerability ↔ Outdated ↔ Quality ↔ License ↔ EOL
-        
+
         Also adds contextual info from other finding types to vulnerability findings.
         """
         # Build a map of all findings by component (normalized lowercase)
         # Key: component_lower -> List[Finding]
         component_map: Dict[str, List[Finding]] = {}
-        
+
         for f in findings:
             if not f.component:
                 continue
@@ -349,34 +340,36 @@ class ResultAggregator:
             component_map[key].append(f)
 
         # Process each component group
-        for component_key, component_findings in component_map.items():
+        for _, component_findings in component_map.items():
             if len(component_findings) <= 1:
                 continue  # Nothing to link
-            
+
             # Link all findings in this component group to each other
             for i, f1 in enumerate(component_findings):
-                for f2 in component_findings[i + 1:]:
+                for f2 in component_findings[i + 1 :]:
                     # Skip if same finding
                     if f1.id == f2.id:
                         continue
-                    
+
                     # Add cross-references
                     if f2.id not in f1.related_findings:
                         f1.related_findings.append(f2.id)
                     if f1.id not in f2.related_findings:
                         f2.related_findings.append(f1.id)
-                    
+
                     # Add contextual info to vulnerability findings
                     self._add_context_to_vulnerability(f1, f2)
                     self._add_context_to_vulnerability(f2, f1)
 
-    def _add_context_to_vulnerability(self, vuln_finding: Finding, other_finding: Finding):
+    def _add_context_to_vulnerability(
+        self, vuln_finding: Finding, other_finding: Finding
+    ):
         """
         Adds contextual information from other finding types to a vulnerability finding.
         """
         if vuln_finding.type != FindingType.VULNERABILITY:
             return
-        
+
         if other_finding.type == FindingType.OUTDATED:
             if "outdated_info" not in vuln_finding.details:
                 vuln_finding.details["outdated_info"] = {
@@ -385,7 +378,7 @@ class ResultAggregator:
                     "latest_version": other_finding.details.get("fixed_version"),
                     "message": other_finding.description,
                 }
-        
+
         elif other_finding.type == FindingType.QUALITY:
             if "quality_info" not in vuln_finding.details:
                 quality_issues = other_finding.details.get("quality_issues", [])
@@ -398,7 +391,7 @@ class ResultAggregator:
                     ),
                     "quality_finding_id": other_finding.id,
                 }
-        
+
         elif other_finding.type == FindingType.LICENSE:
             if "license_info" not in vuln_finding.details:
                 vuln_finding.details["license_info"] = {
@@ -407,7 +400,7 @@ class ResultAggregator:
                     "category": other_finding.details.get("category"),
                     "license_finding_id": other_finding.id,
                 }
-        
+
         elif other_finding.type == FindingType.EOL:
             if "eol_info" not in vuln_finding.details:
                 vuln_finding.details["eol_info"] = {
@@ -431,7 +424,7 @@ class ResultAggregator:
         """
         result = {}
         for key, enrichment in self._dependency_enrichments.items():
-            result[key] = enrichment.to_dict()
+            result[key] = enrichment.to_mongo_dict()
         return result
 
     def get_license_data(self) -> Dict[str, Dict[str, Any]]:
@@ -617,7 +610,7 @@ class ResultAggregator:
                 max_ver_tuple = None
                 max_ver_str = None
 
-                for vuln_idx, fixes in vulns_map.items():
+                for _, fixes in vulns_map.items():
                     # Sort fixes for this vuln by version tuple (ascending)
                     # We pick the lowest version that fixes the vuln (conservative approach)
                     fixes.sort(key=lambda x: x[0])
@@ -879,7 +872,9 @@ class ResultAggregator:
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
-            "details": {k: v for k, v in (finding.details or {}).items() if k != "urls"},  # nested details without urls
+            "details": {
+                k: v for k, v in (finding.details or {}).items() if k != "urls"
+            },  # nested details without urls
         }
 
         if agg_key in self.findings:
@@ -903,9 +898,6 @@ class ResultAggregator:
 
             existing.details["vulnerabilities"] = vuln_list
 
-            # Update description
-            count = len(vuln_list)
-            # existing.description = f"Found {count} vulnerabilities in {finding.component}"
             # We don't set a description for aggregated findings anymore, as it's just a container.
             # The frontend will handle the display.
             existing.description = ""
@@ -1348,12 +1340,12 @@ class ResultAggregator:
 
             for vuln in item.get("vulnerabilities", []):
                 vuln_id = vuln.get("id", "")
-                
+
                 # Check if this is a malware entry from OpenSSF (MAL- prefix)
                 if vuln_id.startswith("MAL-"):
                     self._normalize_osv_malware(vuln, comp_name, comp_version, source)
                     continue
-                
+
                 # 1. Determine Severity
                 severity = "UNKNOWN"
 
@@ -1428,28 +1420,34 @@ class ResultAggregator:
                 )
 
     def _normalize_osv_malware(
-        self, vuln: Dict[str, Any], comp_name: str, comp_version: str, source: str = None
+        self,
+        vuln: Dict[str, Any],
+        comp_name: str,
+        comp_version: str,
+        source: str = None,
     ):
         """
         Handle OpenSSF malicious-packages entries (MAL- prefix) from OSV.dev.
         These are not vulnerabilities but confirmed malware.
         """
         vuln_id = vuln.get("id", "")
-        
+
         # Extract affected versions
         affected_versions = []
         for affected in vuln.get("affected", []):
             versions = affected.get("versions", [])
             affected_versions.extend(versions)
-        
+
         # Build references list
         references = []
         for ref in vuln.get("references", []):
             if ref.get("url"):
                 references.append(ref["url"])
-        
-        description = vuln.get("summary") or vuln.get("details", "Malicious package detected")
-        
+
+        description = vuln.get("summary") or vuln.get(
+            "details", "Malicious package detected"
+        )
+
         self._add_finding(
             Finding(
                 id=f"MALWARE-{comp_name}",
@@ -1813,7 +1811,7 @@ class ResultAggregator:
         elif isinstance(findings_data, dict):
             # If it's a dict, it might be grouped by severity or rule
             # We'll flatten it
-            for key, val in findings_data.items():
+            for _, val in findings_data.items():
                 if isinstance(val, list):
                     all_findings.extend(val)
 

@@ -10,6 +10,35 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Automatic chunking based on module paths for better caching
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            // Core React dependencies
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
+              return 'vendor-react'
+            }
+            // UI framework (Radix)
+            if (id.includes('@radix-ui')) {
+              return 'vendor-ui'
+            }
+            // Data fetching & state
+            if (id.includes('@tanstack')) {
+              return 'vendor-query'
+            }
+            // Charts
+            if (id.includes('recharts') || id.includes('d3-')) {
+              return 'vendor-charts'
+            }
+          }
+        },
+      },
+    },
+    // Increase chunk size warning limit slightly
+    chunkSizeWarningLimit: 600,
+  },
   server: {
     proxy: {
       '/api/v1': {

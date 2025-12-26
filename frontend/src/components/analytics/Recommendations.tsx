@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { getProjectRecommendations, Recommendation, RecommendationsResponse } from '@/lib/api'
+import { getProjectRecommendations, Recommendation, RecommendationsResponse, CrossProjectCve } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -721,9 +721,10 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                     <div>
                       <span className="text-muted-foreground">Recurring CVEs: </span>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {recommendation.action.cves.map((cve, i) => (
-                          <Badge key={i} variant="outline">{cve}</Badge>
-                        ))}
+                        {recommendation.action.cves.map((cve, i) => {
+                          const cveStr = typeof cve === 'string' ? cve : cve.cve
+                          return <Badge key={i} variant="outline">{cveStr}</Badge>
+                        })}
                       </div>
                     </div>
                   )}
@@ -801,7 +802,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                   Cross-Project Vulnerabilities
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.cves.map((cve: any, i: number) => (
+                  {(recommendation.action.cves as CrossProjectCve[]).map((cve, i) => (
                     <div key={i} className="border-b last:border-0 pb-2 last:pb-0">
                       <div className="flex items-center gap-2">
                         <Badge variant="destructive">{cve.cve}</Badge>
@@ -809,7 +810,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                       </div>
                       <div className="text-xs text-muted-foreground mt-1">
                         Projects: {cve.affected_projects?.slice(0, 3).join(', ')}
-                        {cve.affected_projects?.length > 3 && '...'}
+                        {(cve.affected_projects?.length ?? 0) > 3 && '...'}
                       </div>
                     </div>
                   ))}
@@ -888,7 +889,8 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
               <div className="space-y-2">
                 <h5 className="text-sm font-medium">Related Vulnerabilities</h5>
                 <div className="flex flex-wrap gap-1">
-                  {recommendation.action.cves.map((cve) => {
+                  {recommendation.action.cves.map((cveItem, idx) => {
+                    const cve = typeof cveItem === 'string' ? cveItem : cveItem.cve
                     const isCve = cve.startsWith('CVE-');
                     const isGhsa = cve.startsWith('GHSA-');
                     const link = isCve 
@@ -899,7 +901,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                     
                     return link ? (
                       <a
-                        key={cve}
+                        key={`${cve}-${idx}`}
                         href={link}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -912,7 +914,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                         </Badge>
                       </a>
                     ) : (
-                      <Badge key={cve} variant="outline">{cve}</Badge>
+                      <Badge key={`${cve}-${idx}`} variant="outline">{cve}</Badge>
                     );
                   })}
                 </div>

@@ -51,6 +51,11 @@ class SystemSettingsBase(BaseModel):
     retention_mode: str = "project"
     global_retention_days: int = 90
 
+    # Periodic Scanning
+    rescan_mode: str = "project"  # "project" or "global"
+    global_rescan_enabled: bool = False
+    global_rescan_interval: int = 24  # Hours
+
 
 class SystemSettingsUpdate(SystemSettingsBase):
     pass
