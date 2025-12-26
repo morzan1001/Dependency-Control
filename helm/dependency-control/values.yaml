@@ -160,10 +160,10 @@ dragonfly:
   resources:
     limits:
       cpu: 500m
-      memory: 512Mi
+      memory: 768Mi
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 512Mi
   
   # Security context - hardened configuration
   podSecurityContext:
@@ -183,7 +183,7 @@ dragonfly:
   
   # Extra arguments for DragonflyDB
   extraArgs:
-    - --maxmemory=384mb
+    - --maxmemory=512mb
     - --cache_mode=true
     - --proactor_threads=2
     # Must match 'password' above!
