@@ -4,7 +4,6 @@
  */
 
 import { Badge } from '@/components/ui/badge'
-import { getFindingTypeBadgeStyle } from '@/lib/finding-utils'
 
 interface FindingTypeBadgeProps {
   type: string
@@ -12,12 +11,10 @@ interface FindingTypeBadgeProps {
 }
 
 export function FindingTypeBadge({ type, className = '' }: FindingTypeBadgeProps) {
-  const style = getFindingTypeBadgeStyle(type)
-  
   return (
     <Badge 
       variant="outline"
-      className={`${style.borderColor} ${style.bgColor} ${style.textColor} ${className}`}
+      className={className}
     >
       {type}
     </Badge>

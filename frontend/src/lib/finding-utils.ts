@@ -2,11 +2,6 @@
  * Shared utilities for findings, severity, and scores
  * Eliminates duplication across FindingsTable, FindingDetailsModal, analytics components
  */
-
-// ============================================================================
-// SEVERITY UTILITIES
-// ============================================================================
-
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO' | 'UNKNOWN'
 
 /**
@@ -82,17 +77,17 @@ export function getSeverityColor(severity: string): string {
 export function getSeverityBgColor(severity: string): string {
   switch (severity?.toUpperCase()) {
     case 'CRITICAL':
-      return 'bg-red-500 hover:bg-red-600'
+      return 'bg-red-500 hover:bg-red-500'
     case 'HIGH':
-      return 'bg-orange-500 hover:bg-orange-600'
+      return 'bg-orange-500 hover:bg-orange-500'
     case 'MEDIUM':
-      return 'bg-yellow-500 hover:bg-yellow-600 text-black'
+      return 'bg-yellow-500 hover:bg-yellow-500'
     case 'LOW':
-      return 'bg-blue-500 hover:bg-blue-600'
+      return 'bg-blue-500 hover:bg-blue-500'
     case 'INFO':
-      return 'bg-gray-500 hover:bg-gray-600'
+      return 'bg-gray-500 hover:bg-gray-500'
     default:
-      return 'bg-gray-400 hover:bg-gray-500'
+      return 'bg-gray-400 hover:bg-gray-400'
   }
 }
 
@@ -130,10 +125,6 @@ export function getSeverityBorderColor(severity: string): string {
       return 'border-l-transparent'
   }
 }
-
-// ============================================================================
-// SCORE UTILITIES (OpenSSF Scorecard, etc.)
-// ============================================================================
 
 /**
  * Get color class for a score (0-10 scale)
@@ -218,76 +209,6 @@ export function formatDateTime(date: string | Date | undefined | null): string {
     minute: '2-digit'
   })
 }
-
-// ============================================================================
-// FINDING TYPE UTILITIES
-// ============================================================================
-
-export interface FindingTypeBadgeStyle {
-  borderColor: string
-  bgColor: string
-  textColor: string
-}
-
-/**
- * Get styling for finding type badges
- */
-export function getFindingTypeBadgeStyle(type: string): FindingTypeBadgeStyle {
-  switch (type?.toLowerCase()) {
-    case 'outdated':
-      return {
-        borderColor: 'border-blue-200 dark:border-blue-800',
-        bgColor: 'bg-blue-50 dark:bg-blue-950/50',
-        textColor: 'text-blue-700 dark:text-blue-300'
-      }
-    case 'quality':
-      return {
-        borderColor: 'border-yellow-200 dark:border-yellow-800',
-        bgColor: 'bg-yellow-50 dark:bg-yellow-950/50',
-        textColor: 'text-yellow-700 dark:text-yellow-300'
-      }
-    case 'license':
-      return {
-        borderColor: 'border-purple-200 dark:border-purple-800',
-        bgColor: 'bg-purple-50 dark:bg-purple-950/50',
-        textColor: 'text-purple-700 dark:text-purple-300'
-      }
-    case 'eol':
-      return {
-        borderColor: 'border-orange-200 dark:border-orange-800',
-        bgColor: 'bg-orange-50 dark:bg-orange-950/50',
-        textColor: 'text-orange-700 dark:text-orange-300'
-      }
-    case 'vulnerability':
-      return {
-        borderColor: 'border-red-200 dark:border-red-800',
-        bgColor: 'bg-red-50 dark:bg-red-950/50',
-        textColor: 'text-red-700 dark:text-red-300'
-      }
-    case 'secret':
-      return {
-        borderColor: 'border-pink-200 dark:border-pink-800',
-        bgColor: 'bg-pink-50 dark:bg-pink-950/50',
-        textColor: 'text-pink-700 dark:text-pink-300'
-      }
-    case 'sast':
-      return {
-        borderColor: 'border-indigo-200 dark:border-indigo-800',
-        bgColor: 'bg-indigo-50 dark:bg-indigo-950/50',
-        textColor: 'text-indigo-700 dark:text-indigo-300'
-      }
-    default:
-      return {
-        borderColor: 'border-gray-200 dark:border-gray-700',
-        bgColor: 'bg-gray-50 dark:bg-gray-800/50',
-        textColor: 'text-gray-700 dark:text-gray-300'
-      }
-  }
-}
-
-// ============================================================================
-// SOURCE INFO UTILITIES
-// ============================================================================
 
 import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-react'
 
