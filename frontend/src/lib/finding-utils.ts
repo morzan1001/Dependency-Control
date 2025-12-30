@@ -174,10 +174,6 @@ export function formatScorecardCriticalIssue(issue: string): string {
   }
 }
 
-// ============================================================================
-// EPSS UTILITIES
-// ============================================================================
-
 /**
  * Format EPSS score as percentage
  */
@@ -203,10 +199,6 @@ export function getEpssColor(epss: number | undefined | null): string {
 export function isHighEpss(epss: number | undefined | null): boolean {
   return epss !== undefined && epss !== null && epss >= 0.1
 }
-
-// ============================================================================
-// DATE UTILITIES
-// ============================================================================
 
 /**
  * Format date consistently across the application
