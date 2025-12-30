@@ -2,7 +2,12 @@ import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { AdditionalDetailsView } from '@/components/findings/details/AdditionalDetailsView'
 import type { FindingDetails } from '@/lib/api'
-import { getScoreBgColor, getScoreColor, getSeverityBgColor } from '@/lib/finding-utils'
+import {
+  formatScorecardCriticalIssue,
+  getScoreBorderColor,
+  getScoreColor,
+  getSeverityBgColor,
+} from '@/lib/finding-utils'
 import {
   Activity,
   AlertTriangle,
@@ -59,8 +64,12 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
       {/* Score Overview - only show if we have a valid score */}
       {hasValidScore && (
         <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
-          <div className={`flex items-center justify-center w-16 h-16 rounded-full ${getScoreBgColor(overallScore)}`}>
-            <span className={`text-2xl font-bold ${getScoreColor(overallScore)}`}>{overallScore.toFixed(1)}</span>
+          <div
+            className={`flex items-center justify-center w-16 h-16 rounded-full bg-muted/50 border-2 ${getScoreBorderColor(overallScore)}`}
+          >
+            <span className={`text-2xl font-bold tabular-nums ${getScoreColor(overallScore)}`}>
+              {overallScore.toFixed(1)}
+            </span>
           </div>
           <div className="flex-1">
             <h4 className="font-medium">OpenSSF Scorecard</h4>
@@ -104,7 +113,7 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
           <div className="flex flex-wrap gap-2">
             {criticalIssues.map((issue, idx) => (
               <Badge key={idx} variant="destructive" className="text-xs">
-                {issue}
+                {formatScorecardCriticalIssue(issue)}
               </Badge>
             ))}
           </div>

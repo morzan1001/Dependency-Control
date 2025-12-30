@@ -16,10 +16,10 @@ export interface ContextBannerProps {
 }
 
 const variantStyles: Record<BannerVariant, string> = {
-  info: 'bg-muted/30 border-blue-200 text-blue-800 dark:bg-muted/20 dark:border-blue-800 dark:text-blue-300',
-  warning: 'bg-muted/30 border-amber-200 text-amber-800 dark:bg-muted/20 dark:border-amber-800 dark:text-amber-300',
-  danger: 'bg-muted/30 border-red-200 text-red-800 dark:bg-muted/20 dark:border-red-800 dark:text-red-300',
-  success: 'bg-muted/30 border-green-200 text-green-800 dark:bg-muted/20 dark:border-green-800 dark:text-green-300',
+  info: 'bg-muted/30 border-blue-200 text-foreground dark:bg-muted/20 dark:border-blue-800',
+  warning: 'bg-muted/30 border-amber-200 text-foreground dark:bg-muted/20 dark:border-amber-800',
+  danger: 'bg-muted/30 border-red-200 text-foreground dark:bg-muted/20 dark:border-red-800',
+  success: 'bg-muted/30 border-green-200 text-foreground dark:bg-muted/20 dark:border-green-800',
 }
 
 const iconStyles: Record<BannerVariant, string> = {

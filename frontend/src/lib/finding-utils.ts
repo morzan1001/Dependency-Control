@@ -146,6 +146,34 @@ export function getScoreBgColor(score: number): string {
   return 'bg-green-100 dark:bg-green-900/30'
 }
 
+/**
+ * Get border color class for a score (0-10 scale)
+ * Useful when we want a neutral background but still convey score meaning.
+ */
+export function getScoreBorderColor(score: number): string {
+  if (score < 3) return 'border-red-200 dark:border-red-800'
+  if (score < 5) return 'border-amber-200 dark:border-amber-800'
+  if (score < 7) return 'border-yellow-200 dark:border-yellow-800'
+  return 'border-green-200 dark:border-green-800'
+}
+
+/**
+ * Format OpenSSF Scorecard check names used as "critical issues".
+ * These are failed-check identifiers (e.g. "Maintained" means the Maintained check failed).
+ */
+export function formatScorecardCriticalIssue(issue: string): string {
+  switch (issue) {
+    case 'Maintained':
+      return 'Not Maintained'
+    case 'Vulnerabilities':
+      return 'Has Vulnerabilities'
+    case 'Dangerous-Workflow':
+      return 'Dangerous Workflow'
+    default:
+      return issue
+  }
+}
+
 // ============================================================================
 // EPSS UTILITIES
 // ============================================================================

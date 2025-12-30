@@ -2,6 +2,7 @@ import React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { ContextBanner } from '@/components/findings/ContextBanner'
 import type { Finding } from '@/lib/api'
+import { formatScorecardCriticalIssue } from '@/lib/finding-utils'
 import {
   Activity,
   Calendar,
@@ -18,6 +19,11 @@ interface ContextBannersSectionProps {
 
 export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
   const banners: React.ReactNode[] = []
+
+  const hasAggregatedQualityIssues =
+    finding.type === 'quality' &&
+    Array.isArray((finding.details as Record<string, unknown> | undefined)?.quality_issues) &&
+    ((finding.details as Record<string, unknown>).quality_issues as unknown[]).length > 0
 
   // 1. Outdated Package Info
   if (finding.details?.outdated_info?.is_outdated) {
@@ -38,7 +44,7 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
   }
 
   // 2. Quality Issues
-  if (finding.details?.quality_info?.has_quality_issues) {
+  if (finding.details?.quality_info?.has_quality_issues && !hasAggregatedQualityIssues) {
     const info = finding.details.quality_info
     banners.push(
       <ContextBanner key="quality" icon={Activity} title="Quality Concerns" variant="warning">
@@ -50,7 +56,7 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
             </span>
           )}
           {info.has_maintenance_issues && (
-            <span className="ml-2 text-amber-600 font-medium">• Maintenance concerns</span>
+            <span className="ml-2 text-muted-foreground font-medium">• Maintenance concerns</span>
           )}
         </span>
       </ContextBanner>
@@ -153,9 +159,7 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
         >
           <div className="flex flex-wrap items-center gap-2">
             {hasValidScore && (
-              <span
-                className={`font-bold ${isVeryLowScore ? 'text-red-600' : isLowScore ? 'text-amber-600' : 'text-green-600'}`}
-              >
+              <span className="font-bold tabular-nums">
                 {ctx.overall_score!.toFixed(1)}/10
               </span>
             )}
@@ -171,11 +175,15 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
             )}
             {ctx.critical_issues &&
               ctx.critical_issues.length > 0 &&
-              ctx.critical_issues.slice(0, 3).map((issue, idx) => (
-                <Badge key={idx} variant="outline" className="text-xs border-current">
-                  {issue}
-                </Badge>
-              ))}
+              ctx.critical_issues
+                .filter((issue) => !(ctx.maintenance_risk && issue === 'Maintained'))
+                .filter((issue) => !(ctx.has_vulnerabilities_issue && issue === 'Vulnerabilities'))
+                .slice(0, 3)
+                .map((issue, idx) => (
+                  <Badge key={idx} variant="outline" className="text-xs border-current">
+                    {formatScorecardCriticalIssue(issue)}
+                  </Badge>
+                ))}
           </div>
         </ContextBanner>
       )
