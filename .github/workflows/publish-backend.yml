@@ -7,11 +7,13 @@ on:
     tags: [ 'v*.*.*' ]
     paths:
       - 'backend/**'
+      - 'ci-cd/scripts/**'
       - '.github/workflows/publish-backend.yml'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'backend/**'
+      - 'ci-cd/scripts/**'
 
 env:
   REGISTRY: ghcr.io
@@ -63,7 +65,8 @@ jobs:
         id: build-and-push
         uses: docker/build-push-action@v6
         with:
-          context: "./backend"
+          context: "."
+          file: "./backend/Dockerfile"
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
