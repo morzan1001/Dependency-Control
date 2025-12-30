@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y curl \
 RUN pip install poetry
 
 # Copy poetry files
-COPY pyproject.toml poetry.lock* ./
+COPY backend/pyproject.toml backend/poetry.lock* ./
 
 # Configure poetry to not create a virtual environment
 RUN poetry config virtualenvs.create false
@@ -30,7 +30,10 @@ RUN poetry config virtualenvs.create false
 RUN poetry install --no-interaction --no-ansi --no-root
 
 # Copy application code
-COPY . .
+COPY backend/app ./app
+
+# Copy CI/CD scripts (for serving via API)
+COPY ci-cd/scripts ./ci-cd/scripts
 
 # Install the project itself
 RUN poetry install --no-interaction --no-ansi

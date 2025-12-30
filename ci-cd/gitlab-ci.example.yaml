@@ -1,584 +1,101 @@
 stages:
-  - dependency-scan
+  - security-scan
 
-# ---------------------------------------------------------------------------
-# Dependency Control GitLab CI/CD Example
-# ---------------------------------------------------------------------------
-# This pipeline demonstrates how to integrate with Dependency Control.
-#
-# Authentication Methods:
-# 1. GitLab Integration (Recommended):
-#    - Uses GitLab Identity Tokens (OIDC) for secure authentication.
-#    - Requires "GitLab Integration" to be enabled in Dependency Control System Settings.
-#    - Can automatically create projects and sync teams.
-#
-# 2. API Key (Legacy/Manual):
-#    - Uses a static API Key generated in the Dependency Control Project Settings.
-#    - Requires the DEP_CONTROL_API_KEY variable to be set in GitLab CI/CD Settings.
-# ---------------------------------------------------------------------------
-
-.check_scanner: &check_scanner |
-  echo "Checking if scanner is enabled..."
-  if [ -z "$DEP_CONTROL_API_KEY" ]; then
-    # Use OIDC Token
-    AUTH_HEADER="Job-Token: $DEP_CONTROL_TOKEN"
-  else
-    AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
-  fi
+variables:
+  # Configure this in GitLab CI/CD Variables
+  # DEP_CONTROL_URL: "https://your-dependency-control-instance.com"
+  # DEP_CONTROL_API_KEY: "your-api-key"  # Optional if using GitLab Integration
   
-  CONFIG=$(curl -s -H "$AUTH_HEADER" "$DEP_CONTROL_URL/api/v1/ingest/config")
-  
-  if echo "$CONFIG" | jq -e ".active_analyzers | index(\"$SCANNER_NAME\")" > /dev/null; then
-    echo "$SCANNER_NAME is enabled."
-  else
-    echo "$SCANNER_NAME is disabled for this project. Skipping."
-    exit 0
-  fi
+  # Scanner script version and hash for integrity verification
+  # Get new hash: curl -s "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh/hash"
+  SCANNER_VERSION: "1.0.0"
+  SCANNER_SHA256: "76ba0437bb4acab57f2d227ddb6985e05816c4e80552b511086cd1c7339ce933"
 
-dependency-scan:
-  stage: dependency-scan
+.download_and_verify: &download_and_verify |
+  echo "Downloading scanner script v${SCANNER_VERSION}..."
+  curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
+  echo "Verifying script integrity..."
+  echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
+  chmod +x scanner.sh
+  echo "Script verified successfully!"
+
+sbom-scan:
+  stage: security-scan
   image: alpine:latest
   id_tokens:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
-  variables:
-    # Configure these in your GitLab CI/CD Variables
-    # DEP_CONTROL_URL: "https://your-dependency-control-instance.com"
-    
-    # Optional: Set if using API Key method
-    # DEP_CONTROL_API_KEY: "your-project-api-key"
   before_script:
-    - apk add --no-cache curl jq bash
-    - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+    - apk add --no-cache curl jq bash coreutils
   script:
-    - echo "Generating SBOM..."
-    - syft . -o json > sbom.json
-    
-    - echo "Preparing payload..."
-    # We use CI_PROJECT_PATH (e.g. "group/project") as the project name
-    - |
-      jq -n \
-        --arg pn "$CI_PROJECT_PATH" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --arg pipeline_id "$CI_PIPELINE_ID" \
-        --arg pipeline_iid "$CI_PIPELINE_IID" \
-        --arg project_url "$CI_PROJECT_URL" \
-        --arg pipeline_url "$CI_PIPELINE_URL" \
-        --arg job_id "$CI_JOB_ID" \
-        --arg job_started_at "$CI_JOB_STARTED_AT" \
-        --arg commit_message "$CI_COMMIT_MESSAGE" \
-        --arg commit_tag "$CI_COMMIT_TAG" \
-        --slurpfile sbom sbom.json \
-        '{
-          project_name: $pn, 
-          branch: $br, 
-          commit_hash: $ch, 
-          pipeline_id: ($pipeline_id | tonumber),
-          pipeline_iid: ($pipeline_iid | tonumber),
-          project_url: $project_url,
-          pipeline_url: $pipeline_url,
-          job_id: ($job_id | tonumber),
-          job_started_at: $job_started_at,
-          commit_message: $commit_message,
-          commit_tag: $commit_tag,
-          sboms: $sbom
-        }' > payload.json
-
-    - echo "Sending to Dependency Control..."
-    - |
-      # Method 1: GitLab Integration (Recommended)
-      if [ -z "$DEP_CONTROL_API_KEY" ]; then
-        echo "Using GitLab Identity Token (OIDC)..."
-        AUTH_HEADER="Job-Token: $DEP_CONTROL_TOKEN"
-      else
-        # Method 2: API Key
-        echo "Using API Key..."
-        AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
-      fi
-      
-      response=$(curl -sS --max-time 60 -X POST \
-        -H "Content-Type: application/json" \
-        -H "$AUTH_HEADER" \
-        -d @payload.json \
-        -w "\n%{http_code}" \
-        "$DEP_CONTROL_URL/api/v1/ingest")
-      
-      http_code=$(echo "$response" | tail -n1)
-      body=$(echo "$response" | sed '$d')
-      
-      echo "Response: $body"
-      
-      if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-        echo "Error: HTTP $http_code"
-        exit 1
-      fi
+    - *download_and_verify
+    - ./scanner.sh sbom
 
 secret-scan:
-  stage: dependency-scan
+  stage: security-scan
   image: alpine:latest
   id_tokens:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
-  variables:
-    SCANNER_NAME: "trufflehog"
   before_script:
-    - apk add --no-cache curl jq bash git
-    - curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+    - apk add --no-cache curl jq bash git coreutils
   script:
-    - *check_scanner
-    
-    - echo "Running TruffleHog..."
-    # TruffleHog needs git history
     - git fetch --unshallow || true
-    - trufflehog git file://. --json > trufflehog.json || true
-    
-    - echo "Preparing payload..."
-    - |
-      jq -n \
-        --arg pn "$CI_PROJECT_PATH" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --arg pipeline_id "$CI_PIPELINE_ID" \
-        --arg pipeline_iid "$CI_PIPELINE_IID" \
-        --arg project_url "$CI_PROJECT_URL" \
-        --arg pipeline_url "$CI_PIPELINE_URL" \
-        --arg job_id "$CI_JOB_ID" \
-        --arg job_started_at "$CI_JOB_STARTED_AT" \
-        --arg commit_message "$CI_COMMIT_MESSAGE" \
-        --arg commit_tag "$CI_COMMIT_TAG" \
-        --slurpfile findings trufflehog.json \
-        '{
-          project_name: $pn, 
-          branch: $br, 
-          commit_hash: $ch, 
-          pipeline_id: ($pipeline_id | tonumber),
-          pipeline_iid: ($pipeline_iid | tonumber),
-          project_url: $project_url,
-          pipeline_url: $pipeline_url,
-          job_id: ($job_id | tonumber),
-          job_started_at: $job_started_at,
-          commit_message: $commit_message,
-          commit_tag: $commit_tag,
-          findings: $findings
-        }' > payload.json
-      
-    - echo "Uploading results..."
-    - |
-      if [ -z "$DEP_CONTROL_API_KEY" ]; then
-        # Method 1: GitLab Integration
-        response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog" \
-          -H "Content-Type: application/json" \
-          -H "Job-Token: $DEP_CONTROL_TOKEN" \
-          -d @payload.json)
-      else
-        # Method 2: API Key
-        response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/ingest/trufflehog" \
-          -H "Content-Type: application/json" \
-          -H "x-api-key: $DEP_CONTROL_API_KEY" \
-          -d @payload.json)
-      fi
-      
-      echo "Response: $response"
-      
-      status=$(echo $response | jq -r '.status')
-      if [ "$status" == "failed" ]; then
-        echo "CRITICAL: Unwaived secrets found!"
-        exit 1
-      fi
+    - *download_and_verify
+    - ./scanner.sh secrets
 
-opengrep-scan:
-  stage: dependency-scan
+sast-scan:
+  stage: security-scan
   image: returntocorp/semgrep
   id_tokens:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
-  variables:
-    SCANNER_NAME: "opengrep"
   script:
-    # Install dependencies for check and upload
-    - if [ -f /etc/alpine-release ]; then apk add --no-cache jq curl; else apt-get update && apt-get install -y jq curl; fi
-    
-    - *check_scanner
-
-    - echo "Running OpenGrep..."
-    - semgrep scan --config=auto --json --output opengrep.json . || true
-    
-    - echo "Preparing payload..."
     - |
-      jq -n \
-        --arg pn "$CI_PROJECT_PATH" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --arg pipeline_id "$CI_PIPELINE_ID" \
-        --arg pipeline_iid "$CI_PIPELINE_IID" \
-        --arg project_url "$CI_PROJECT_URL" \
-        --arg pipeline_url "$CI_PIPELINE_URL" \
-        --arg job_id "$CI_JOB_ID" \
-        --arg job_started_at "$CI_JOB_STARTED_AT" \
-        --arg commit_message "$CI_COMMIT_MESSAGE" \
-        --arg commit_tag "$CI_COMMIT_TAG" \
-        --slurpfile findings opengrep.json \
-        '{
-          project_name: $pn, 
-          branch: $br, 
-          commit_hash: $ch, 
-          pipeline_id: ($pipeline_id | tonumber),
-          pipeline_iid: ($pipeline_iid | tonumber),
-          project_url: $project_url,
-          pipeline_url: $pipeline_url,
-          job_id: ($job_id | tonumber),
-          job_started_at: $job_started_at,
-          commit_message: $commit_message,
-          commit_tag: $commit_tag,
-          findings: $findings[0].results
-        }' > payload.json
-
-    - echo "Uploading results..."
-    - |
-      if [ -z "$DEP_CONTROL_API_KEY" ]; then
-        curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/opengrep" \
-          -H "Content-Type: application/json" \
-          -H "Job-Token: $DEP_CONTROL_TOKEN" \
-          -d @payload.json
+      if [ -f /etc/alpine-release ]; then
+        apk add --no-cache curl jq bash coreutils
       else
-        curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/opengrep" \
-          -H "Content-Type: application/json" \
-          -H "x-api-key: $DEP_CONTROL_API_KEY" \
-          -d @payload.json
+        apt-get update && apt-get install -y curl jq coreutils
       fi
+    - *download_and_verify
+    - ./scanner.sh sast
 
-kics-scan:
-  stage: dependency-scan
-  image: 
+iac-scan:
+  stage: security-scan
+  image:
     name: checkmarx/kics:latest
     entrypoint: [""]
   id_tokens:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
-  variables:
-    SCANNER_NAME: "kics"
   script:
-    - echo "Installing dependencies..."
-    - apk add --no-cache jq curl
-    
-    - *check_scanner
-
-    - echo "Running KICS..."
-    - kics scan -p . -o . --output-name kics-results.json --report-formats json --ignore-on-exit all || true
-    
-    - echo "Preparing payload..."
-    - |
-      jq -n \
-        --arg pn "$CI_PROJECT_PATH" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --arg pipeline_id "$CI_PIPELINE_ID" \
-        --arg pipeline_iid "$CI_PIPELINE_IID" \
-        --arg project_url "$CI_PROJECT_URL" \
-        --arg pipeline_url "$CI_PIPELINE_URL" \
-        --arg job_id "$CI_JOB_ID" \
-        --arg job_started_at "$CI_JOB_STARTED_AT" \
-        --arg commit_message "$CI_COMMIT_MESSAGE" \
-        --arg commit_tag "$CI_COMMIT_TAG" \
-        --slurpfile findings kics-results.json \
-        '{
-          project_name: $pn, 
-          branch: $br, 
-          commit_hash: $ch, 
-          pipeline_id: ($pipeline_id | tonumber),
-          pipeline_iid: ($pipeline_iid | tonumber),
-          project_url: $project_url,
-          pipeline_url: $pipeline_url,
-          job_id: ($job_id | tonumber),
-          job_started_at: $job_started_at,
-          commit_message: $commit_message,
-          commit_tag: $commit_tag,
-          queries: $findings[0].queries, 
-          files: $findings[0].files
-        }' > payload.json
-
-    - echo "Uploading results..."
-    - |
-      if [ -z "$DEP_CONTROL_API_KEY" ]; then
-        curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/kics" \
-          -H "Content-Type: application/json" \
-          -H "Job-Token: $DEP_CONTROL_TOKEN" \
-          -d @payload.json
-      else
-        curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/kics" \
-          -H "Content-Type: application/json" \
-          -H "x-api-key: $DEP_CONTROL_API_KEY" \
-          -d @payload.json
-      fi
+    - apk add --no-cache curl jq bash coreutils
+    - *download_and_verify
+    - ./scanner.sh iac
 
 bearer-scan:
-  stage: dependency-scan
+  stage: security-scan
   image: alpine:latest
   id_tokens:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
-  variables:
-    SCANNER_NAME: "bearer"
   before_script:
-    - apk add --no-cache curl jq bash
-    - curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+    - apk add --no-cache curl jq bash coreutils
   script:
-    - *check_scanner
+    - *download_and_verify
+    - ./scanner.sh bearer
 
-    - echo "Running Bearer..."
-    - bearer scan . --format json --output bearer.json || true
-    
-    - echo "Preparing payload..."
-    - |
-      jq -n \
-        --arg pn "$CI_PROJECT_PATH" \
-        --arg br "$CI_COMMIT_REF_NAME" \
-        --arg ch "$CI_COMMIT_SHA" \
-        --arg pipeline_id "$CI_PIPELINE_ID" \
-        --arg pipeline_iid "$CI_PIPELINE_IID" \
-        --arg project_url "$CI_PROJECT_URL" \
-        --arg pipeline_url "$CI_PIPELINE_URL" \
-        --arg job_id "$CI_JOB_ID" \
-        --arg job_started_at "$CI_JOB_STARTED_AT" \
-        --arg commit_message "$CI_COMMIT_MESSAGE" \
-        --arg commit_tag "$CI_COMMIT_TAG" \
-        --slurpfile findings bearer.json \
-        '{
-          project_name: $pn, 
-          branch: $br, 
-          commit_hash: $ch, 
-          pipeline_id: ($pipeline_id | tonumber),
-          pipeline_iid: ($pipeline_iid | tonumber),
-          project_url: $project_url,
-          pipeline_url: $pipeline_url,
-          job_id: ($job_id | tonumber),
-          job_started_at: $job_started_at,
-          commit_message: $commit_message,
-          commit_tag: $commit_tag,
-          findings: $findings[0]
-        }' > payload.json
-
-    - echo "Uploading results..."
-    - |
-      if [ -z "$DEP_CONTROL_API_KEY" ]; then
-        curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/bearer" \
-          -H "Content-Type: application/json" \
-          -H "Job-Token: $DEP_CONTROL_TOKEN" \
-          -d @payload.json
-      else
-        curl -X POST "$DEP_CONTROL_URL/api/v1/ingest/bearer" \
-          -H "Content-Type: application/json" \
-          -H "x-api-key: $DEP_CONTROL_API_KEY" \
-          -d @payload.json
-      fi
-
-# ---------------------------------------------------------------------------
-# Callgraph Upload for Reachability Analysis
-# ---------------------------------------------------------------------------
-# This job generates and uploads a callgraph for reachability analysis.
-# It automatically detects the project language and uses the appropriate tool.
-# Supported: JavaScript/TypeScript (madge), Python (pyan3), Go (go-callvis)
-# ---------------------------------------------------------------------------
 callgraph-upload:
-  stage: dependency-scan
+  stage: security-scan
   image: node:20-alpine
   id_tokens:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
-  variables:
-    # Optionally specify the language: auto, javascript, typescript, python, go
-    CALLGRAPH_LANGUAGE: "auto"
-    SCANNER_NAME: "reachability"
   before_script:
-    - apk add --no-cache curl jq bash git python3 py3-pip graphviz go
+    - apk add --no-cache curl jq bash git python3 py3-pip coreutils
   script:
-    - *check_scanner
-    
-    - echo "Detecting project language..."
-    - |
-      DETECTED_LANG=""
-      
-      # Auto-detect language
-      if [ "$CALLGRAPH_LANGUAGE" = "auto" ]; then
-        if [ -f "package.json" ]; then
-          if [ -f "tsconfig.json" ]; then
-            DETECTED_LANG="typescript"
-          else
-            DETECTED_LANG="javascript"
-          fi
-        elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
-          DETECTED_LANG="python"
-        elif [ -f "go.mod" ]; then
-          DETECTED_LANG="go"
-        else
-          echo "Could not detect project language. Skipping callgraph generation."
-          exit 0
-        fi
-      else
-        DETECTED_LANG="$CALLGRAPH_LANGUAGE"
-      fi
-      
-      echo "Detected language: $DETECTED_LANG"
-
-    - echo "Generating callgraph..."
-    - |
-      case "$DETECTED_LANG" in
-        javascript|typescript)
-          echo "Using madge for $DETECTED_LANG..."
-          npm install -g madge
-          
-          # Find the source directory
-          SRC_DIR="."
-          [ -d "src" ] && SRC_DIR="src"
-          [ -d "lib" ] && SRC_DIR="lib"
-          
-          # Generate callgraph in JSON format
-          if [ "$DETECTED_LANG" = "typescript" ]; then
-            madge --json --ts-config tsconfig.json "$SRC_DIR" > callgraph.json 2>/dev/null || \
-            madge --json "$SRC_DIR" > callgraph.json
-          else
-            madge --json "$SRC_DIR" > callgraph.json
-          fi
-          
-          CALLGRAPH_FORMAT="madge"
-          ;;
-          
-        python)
-          echo "Using pyan3 for Python..."
-          pip3 install pyan3 --quiet
-          
-          # Find all Python files
-          find . -name "*.py" -not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/node_modules/*" > python_files.txt
-          
-          # Generate callgraph
-          if [ -s python_files.txt ]; then
-            cat python_files.txt | xargs pyan3 --dot --grouped > callgraph.dot 2>/dev/null || true
-            
-            # Convert to JSON format
-            python3 -c "
-import re
-import json
-
-with open('callgraph.dot', 'r') as f:
-    content = f.read()
-
-edges = []
-nodes = set()
-
-# Parse DOT format
-for match in re.finditer(r'\"([^\"]+)\"\s*->\s*\"([^\"]+)\"', content):
-    source, target = match.groups()
-    edges.append({'source': source, 'target': target})
-    nodes.add(source)
-    nodes.add(target)
-
-result = {
-    'nodes': list(nodes),
-    'edges': edges
-}
-
-with open('callgraph.json', 'w') as f:
-    json.dump(result, f)
-" || true
-          fi
-          
-          CALLGRAPH_FORMAT="pyan"
-          ;;
-          
-        go)
-          echo "Using go-callvis for Go..."
-          go install github.com/ondrajz/go-callvis@latest
-          
-          # Get module name
-          MODULE_NAME=$(head -1 go.mod | awk '{print $2}')
-          
-          # Generate callgraph
-          $(go env GOPATH)/bin/go-callvis -nostd -format=dot "$MODULE_NAME" > callgraph.dot 2>/dev/null || true
-          
-          # Convert to JSON format
-          python3 -c "
-import re
-import json
-
-with open('callgraph.dot', 'r') as f:
-    content = f.read()
-
-edges = []
-nodes = set()
-
-for match in re.finditer(r'\"([^\"]+)\"\s*->\s*\"([^\"]+)\"', content):
-    source, target = match.groups()
-    edges.append({'source': source, 'target': target})
-    nodes.add(source)
-    nodes.add(target)
-
-result = {
-    'nodes': list(nodes),
-    'edges': edges
-}
-
-with open('callgraph.json', 'w') as f:
-    json.dump(result, f)
-" || true
-          
-          CALLGRAPH_FORMAT="generic"
-          ;;
-          
-        *)
-          echo "Unsupported language: $DETECTED_LANG"
-          exit 0
-          ;;
-      esac
-
-    - echo "Uploading callgraph..."
-    - |
-      if [ ! -f "callgraph.json" ] || [ ! -s "callgraph.json" ]; then
-        echo "No callgraph generated. Skipping upload."
-        exit 0
-      fi
-      
-      # Prepare payload
-      jq -n \
-        --arg format "$CALLGRAPH_FORMAT" \
-        --arg lang "$DETECTED_LANG" \
-        --arg pipeline_id "$CI_PIPELINE_ID" \
-        --arg branch "$CI_COMMIT_REF_NAME" \
-        --arg commit "$CI_COMMIT_SHA" \
-        --slurpfile graph callgraph.json \
-        '{
-          format: $format,
-          language: $lang,
-          pipeline_id: ($pipeline_id | tonumber),
-          branch: $branch,
-          commit_hash: $commit,
-          data: $graph[0]
-        }' > callgraph_payload.json
-      
-      # Get project ID from Dependency Control
-      if [ -z "$DEP_CONTROL_API_KEY" ]; then
-        AUTH_HEADER="Job-Token: $DEP_CONTROL_TOKEN"
-      else
-        AUTH_HEADER="x-api-key: $DEP_CONTROL_API_KEY"
-      fi
-      
-      # Get project info
-      PROJECT_INFO=$(curl -s -H "$AUTH_HEADER" "$DEP_CONTROL_URL/api/v1/projects?name=$CI_PROJECT_PATH")
-      PROJECT_ID=$(echo "$PROJECT_INFO" | jq -r '.[0]._id // empty')
-      
-      if [ -z "$PROJECT_ID" ]; then
-        echo "Project not found in Dependency Control. Skipping callgraph upload."
-        exit 0
-      fi
-      
-      echo "Uploading callgraph to project: $PROJECT_ID"
-      
-      response=$(curl -s -X POST "$DEP_CONTROL_URL/api/v1/projects/$PROJECT_ID/callgraph" \
-        -H "Content-Type: application/json" \
-        -H "$AUTH_HEADER" \
-        -d @callgraph_payload.json)
-      
-      echo "Response: $response"
+    - *download_and_verify
+    - ./scanner.sh callgraph
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: always
