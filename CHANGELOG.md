@@ -1,3 +1,11 @@
+# Release 1.0.4
+
+## 📦 Build & CI
+
+- chore: update publish-backend workflow and bump version to 1.0.4 (#0)
+
+
+
 # Release 1.0.3
 
 
