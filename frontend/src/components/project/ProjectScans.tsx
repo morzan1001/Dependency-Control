@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Loader2 } from 'lucide-react'
+import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 
 interface ProjectScansProps {
   projectId: string
@@ -163,7 +164,30 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs">
-                        {scan.pipeline_iid ? `#${scan.pipeline_iid}` : 'N/A'}
+                        {(() => {
+                          const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                          const pipelineId = scan.pipeline_id
+                          const href = buildPipelineUrl({
+                            projectUrl,
+                            pipelineUrl: scan.pipeline_url,
+                            pipelineId,
+                          })
+
+                          if (!scan.pipeline_iid) return 'N/A'
+                          if (!href) return `#${scan.pipeline_iid}`
+
+                          return (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-primary hover:underline"
+                            >
+                              #{scan.pipeline_iid}
+                            </a>
+                          )
+                        })()}
                       </span>
                       {scan.metadata?.CI_PROJECT_URL && (
                         <a 
@@ -181,13 +205,59 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <GitBranch className="h-4 w-4 text-muted-foreground" />
-                      <span className="font-mono text-xs">{scan.branch}</span>
+                      {(() => {
+                        const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                        const href = buildBranchUrl({
+                          projectUrl,
+                          pipelineUrl: scan.pipeline_url,
+                          branch: scan.branch,
+                        })
+
+                        return href ? (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-mono text-xs text-primary hover:underline"
+                          >
+                            {scan.branch}
+                          </a>
+                        ) : (
+                          <span className="font-mono text-xs">{scan.branch}</span>
+                        )
+                      })()}
                     </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <GitCommit className="h-4 w-4 text-muted-foreground" />
-                      <span className="font-mono text-xs">{scan.commit_hash?.substring(0, 7) || 'N/A'}</span>
+                      {(() => {
+                        const shortSha = scan.commit_hash?.substring(0, 7)
+                        if (!shortSha) return <span className="font-mono text-xs">N/A</span>
+
+                        const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                        const href = buildCommitUrl({
+                          projectUrl,
+                          pipelineUrl: scan.pipeline_url,
+                          commitHash: scan.commit_hash,
+                        })
+
+                        return href ? (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-mono text-xs text-primary hover:underline"
+                            title={scan.commit_hash}
+                          >
+                            {shortSha}
+                          </a>
+                        ) : (
+                          <span className="font-mono text-xs">{shortSha}</span>
+                        )
+                      })()}
                     </div>
                   </TableCell>
                   <TableCell>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { getTeams, Team } from '@/lib/api';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth } from '@/context/useAuth';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';

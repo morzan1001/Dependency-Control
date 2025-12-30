@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { getProjects, createProject, getTeams, Project, getSystemSettings, ApiError } from '@/lib/api';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth } from '@/context/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

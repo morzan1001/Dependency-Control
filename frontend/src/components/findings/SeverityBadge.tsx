@@ -4,13 +4,13 @@
  */
 
 import { Badge } from '@/components/ui/badge'
-import { 
-  AlertOctagon, 
-  AlertTriangle, 
-  AlertCircle, 
-  Info, 
+import {
+  AlertOctagon,
+  AlertTriangle,
+  AlertCircle,
+  Info,
   CircleAlert,
-  type LucideIcon 
+  type LucideIcon,
 } from 'lucide-react'
 import { getSeverityBgColor } from '@/lib/finding-utils'
 
@@ -32,7 +32,7 @@ function getSeverityConfig(severity: string): SeverityConfig {
     MEDIUM: { color: 'bg-yellow-500 text-black', icon: AlertCircle },
     LOW: { color: 'bg-blue-500', icon: Info },
     INFO: { color: 'bg-gray-500', icon: Info },
-    UNKNOWN: { color: 'bg-gray-400', icon: CircleAlert }
+    UNKNOWN: { color: 'bg-gray-400', icon: CircleAlert },
   }
   return configs[severity?.toUpperCase()] || { color: 'bg-gray-400', icon: CircleAlert }
 }
@@ -54,7 +54,7 @@ export function SeverityBadge({ severity, showIcon = true, className = '' }: Sev
  */
 export function SeverityBadgeCompact({ severity, className = '' }: { severity: string; className?: string }) {
   const bgColor = getSeverityBgColor(severity)
-  
+
   return (
     <Badge className={`${bgColor} text-white text-xs px-1.5 py-0 ${className}`}>
       {severity}
@@ -74,9 +74,5 @@ export function SeverityText({ severity, className = '' }: { severity: string; c
     INFO: 'text-gray-600 dark:text-gray-400',
   }[severity?.toUpperCase()] || 'text-gray-500'
 
-  return (
-    <span className={`font-medium ${colorClass} ${className}`}>
-      {severity}
-    </span>
-  )
+  return <span className={`font-medium ${colorClass} ${className}`}>{severity}</span>
 }

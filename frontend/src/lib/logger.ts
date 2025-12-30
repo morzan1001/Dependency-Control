@@ -26,14 +26,12 @@ class Logger {
 
   warn(message: string, ...args: unknown[]) {
     if (this.shouldLog('warn')) {
-      // eslint-disable-next-line no-console
       console.warn(`[WARN] ${message}`, ...args);
     }
   }
 
   error(message: string, ...args: unknown[]) {
     if (this.shouldLog('error')) {
-      // eslint-disable-next-line no-console
       console.error(`[ERROR] ${message}`, ...args);
     }
   }

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog"
 import { useNavigate } from 'react-router-dom';
 import { toast } from "sonner"
-import { useAuth } from '@/context/AuthContext';
+import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
 

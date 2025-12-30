@@ -1,5 +1,5 @@
 import { Team } from '@/lib/api';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth } from '@/context/useAuth';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Users as UsersIcon, UserPlus, Trash2, Edit } from 'lucide-react';

@@ -11,7 +11,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
-import { useAuth } from '@/context/AuthContext';
+import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
 
 interface UserTableProps {

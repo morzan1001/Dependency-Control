@@ -19,7 +19,8 @@ import SystemSettings from './pages/SystemSettings'
 import SearchPage from './pages/Search'
 import AnalyticsPage from './pages/Analytics'
 import DashboardLayout from './layouts/DashboardLayout'
-import { AuthProvider, useAuth, RequirePermission } from './context/AuthContext'
+import { AuthProvider, RequirePermission } from './context/AuthContext'
+import { useAuth } from './context/useAuth'
 import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"

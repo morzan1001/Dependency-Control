@@ -7,11 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, Copy, Check, RefreshCw, Loader2, Tag, Folder } from 'lucide-react'
+import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
-import { isPostProcessorResult, PostProcessorResultCard } from '@/components/PostProcessorResults'
+import { PostProcessorResultCard } from '@/components/PostProcessorResults'
+import { isPostProcessorResult } from '@/lib/post-processors'
 
 // Type for scan history items
 interface ScanHistoryItem {
@@ -263,7 +265,28 @@ export default function ScanDetails() {
                             <span className="text-sm text-muted-foreground">Branch</span>
                             <div className="flex items-center gap-2">
                                 <GitBranch className="h-4 w-4" />
-                                <span className="font-medium">{scan.branch}</span>
+                                                                {(() => {
+                                                                    const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                                                                    const href = buildBranchUrl({
+                                                                        projectUrl,
+                                                                        pipelineUrl: scan.pipeline_url,
+                                                                        branch: scan.branch,
+                                                                    })
+
+                                                                    return href ? (
+                                                                        <a
+                                                                            href={href}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                            className="flex items-center gap-2 text-primary hover:underline"
+                                                                        >
+                                                                            <span className="font-medium">{scan.branch}</span>
+                                                                            <ExternalLink className="h-3 w-3" />
+                                                                        </a>
+                                                                    ) : (
+                                                                        <span className="font-medium">{scan.branch}</span>
+                                                                    )
+                                                                })()}
                             </div>
                         </div>
                         {scan.commit_hash && (
@@ -271,7 +294,28 @@ export default function ScanDetails() {
                                 <span className="text-sm text-muted-foreground">Commit</span>
                                 <div className="flex items-center gap-2">
                                     <GitCommit className="h-4 w-4" />
-                                    <span className="font-medium font-mono text-xs">{scan.commit_hash.substring(0, 7)}</span>
+                                                                        {(() => {
+                                                                            const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                                                                            const href = buildCommitUrl({
+                                                                                projectUrl,
+                                                                                pipelineUrl: scan.pipeline_url,
+                                                                                commitHash: scan.commit_hash,
+                                                                            })
+
+                                                                            return href ? (
+                                                                                <a
+                                                                                    href={href}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    className="flex items-center gap-2 text-primary hover:underline"
+                                                                                >
+                                                                                    <span className="font-medium font-mono text-xs">{scan.commit_hash.substring(0, 7)}</span>
+                                                                                    <ExternalLink className="h-3 w-3" />
+                                                                                </a>
+                                                                            ) : (
+                                                                                <span className="font-medium font-mono text-xs">{scan.commit_hash.substring(0, 7)}</span>
+                                                                            )
+                                                                        })()}
                                 </div>
                             </div>
                         )}
@@ -307,21 +351,33 @@ export default function ScanDetails() {
                                 </div>
                             </div>
                         )}
-                        {scan.metadata?.CI_PIPELINE_ID && scan.metadata?.CI_PROJECT_URL && (
+                                                {(() => {
+                                                    const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                                                    const pipelineId = scan.pipeline_id ?? scan.metadata?.CI_PIPELINE_ID
+                                                    const href = buildPipelineUrl({
+                                                        projectUrl,
+                                                        pipelineUrl: scan.pipeline_url,
+                                                        pipelineId,
+                                                    })
+
+                                                    if (!href || !pipelineId) return null
+
+                                                    return (
                             <div className="flex flex-col space-y-1">
                                 <span className="text-sm text-muted-foreground">Pipeline</span>
                                 <a 
-                                    href={`${scan.metadata.CI_PROJECT_URL}/-/pipelines/${scan.metadata.CI_PIPELINE_ID}`}
+                                                                        href={href}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="flex items-center gap-2 text-primary hover:underline"
                                 >
                                     <PlayCircle className="h-4 w-4" />
-                                    <span className="font-medium">#{scan.metadata.CI_PIPELINE_ID}</span>
+                                                                        <span className="font-medium">#{pipelineId}</span>
                                     <ExternalLink className="h-3 w-3" />
                                 </a>
                             </div>
-                        )}
+                                                    )
+                                                })()}
                         {scan.metadata?.CI_JOB_ID && scan.metadata?.CI_PROJECT_URL && (
                             <div className="flex flex-col space-y-1">
                                 <span className="text-sm text-muted-foreground">Job</span>

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { getWaivers, deleteWaiver, Waiver, ApiError } from '@/lib/api'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth } from '@/context/useAuth'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

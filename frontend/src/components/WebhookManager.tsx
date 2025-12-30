@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Trash2, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useAuth } from "@/context/AuthContext"
+import { useAuth } from "@/context/useAuth"
 
 interface WebhookManagerProps {
   webhooks: Webhook[]

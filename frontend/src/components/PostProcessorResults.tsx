@@ -699,11 +699,6 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
   );
 }
 
-// Check if a result is from a post-processor
-export function isPostProcessorResult(analyzerName: string): boolean {
-  return analyzerName === "epss_kev" || analyzerName === "reachability";
-}
-
 // Render the appropriate component for post-processor results
 export function PostProcessorResultCard({ analyzerName, result }: { analyzerName: string; result: unknown }) {
   const getIcon = () => {

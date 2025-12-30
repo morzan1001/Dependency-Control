@@ -10,7 +10,7 @@ import { VulnerabilitySearch } from '@/components/analytics/VulnerabilitySearch'
 import { Recommendations } from '@/components/analytics/Recommendations'
 import { AnalyticsDependencyModal } from '@/components/analytics/AnalyticsDependencyModal'
 import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert } from 'lucide-react'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth } from '@/context/useAuth'
 
 export default function AnalyticsPage() {
   const [selectedComponent, setSelectedComponent] = useState<{ name: string; version?: string } | null>(null)
