@@ -1,3 +1,12 @@
+# Release 1.0.6
+
+## 🚀 Features
+
+- feat: enhance ContextBanner and QualityDetails components with improved styling and critical issue formatting (#0)
+- feat: add QEMU setup for multi-platform builds in frontend and backend workflows; enable CRD installation for MongoDB operator (#0)
+
+
+
 # Release 1.0.5
 
 
