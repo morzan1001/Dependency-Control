@@ -259,6 +259,11 @@ ingress:
   # If using cert-manager
   # annotations:
   #   cert-manager.io/cluster-issuer: letsencrypt-prod
+  
+  # Enable creation of Traefik Middlewares (RateLimit, SecureHeaders)
+  # Useful if using an external Traefik instance
+  traefikMiddlewares:
+    enabled: false
 
 networkPolicy:
   enabled: true

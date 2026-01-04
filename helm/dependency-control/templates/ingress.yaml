@@ -11,7 +11,9 @@ metadata:
     {{- else }}
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+    {{- if or .Values.traefik.enabled .Values.ingress.traefikMiddlewares.enabled }}
     traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "dependency-control.fullname" . }}-rate-limit@kubernetescrd,{{ .Release.Namespace }}-{{ include "dependency-control.fullname" . }}-secure-headers-backend@kubernetescrd
+    {{- end }}
     {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.className | default "traefik" }}
