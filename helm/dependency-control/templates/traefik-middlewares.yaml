@@ -1,5 +1,5 @@
 {{- if or .Values.traefik.enabled .Values.ingress.traefikMiddlewares.enabled -}}
-apiVersion: traefik.containo.us/v1alpha1
+apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: {{ include "dependency-control.fullname" . }}-rate-limit
@@ -11,7 +11,7 @@ spec:
     burst: 50
 
 ---
-apiVersion: traefik.containo.us/v1alpha1
+apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: {{ include "dependency-control.fullname" . }}-secure-headers-backend
