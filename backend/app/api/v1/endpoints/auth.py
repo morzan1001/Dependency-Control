@@ -1,4 +1,5 @@
 import os
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -26,6 +27,8 @@ from app.schemas.user import UserCreate, UserPasswordReset, UserSignup
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.templates import \
     get_verification_email_template
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -437,6 +440,10 @@ async def login_oidc_authorize(
 
     # Construct redirect URI (callback to backend)
     redirect_uri = str(request.url_for("login_oidc_callback"))
+    
+    # Ensure HTTPS if behind proxy (e.g. Traefik)
+    if redirect_uri.startswith("http://") and "localhost" not in redirect_uri and "127.0.0.1" not in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://", 1)
 
     # Generate state to prevent CSRF
     state = secrets.token_urlsafe(32)
@@ -465,6 +472,10 @@ async def login_oidc_callback(
         raise HTTPException(status_code=400, detail="OIDC is not enabled")
 
     redirect_uri = str(request.url_for("login_oidc_callback"))
+    
+    # Ensure HTTPS if behind proxy (e.g. Traefik)
+    if redirect_uri.startswith("http://") and "localhost" not in redirect_uri and "127.0.0.1" not in redirect_uri:
+        redirect_uri = redirect_uri.replace("http://", "https://", 1)
 
     token_data = {
         "client_id": system_config.oidc_client_id,
@@ -476,8 +487,17 @@ async def login_oidc_callback(
 
     async with httpx.AsyncClient() as client:
         # Exchange code for token
-        response = await client.post(system_config.oidc_token_endpoint, data=token_data)
+        try:
+            response = await client.post(system_config.oidc_token_endpoint, data=token_data)
+        except httpx.RequestError as exc:
+            logger.error(f"An error occurred while requesting {exc.request.url!r}: {exc}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. Please check your system configuration.",
+            )
+
         if response.status_code != 200:
+            logger.error(f"OIDC Token Error: {response.text}")
             raise HTTPException(
                 status_code=400, detail="Failed to retrieve token from provider"
             )
@@ -486,11 +506,20 @@ async def login_oidc_callback(
         access_token = tokens.get("access_token")
 
         # Get user info
-        user_info_response = await client.get(
-            system_config.oidc_userinfo_endpoint,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+        try:
+            user_info_response = await client.get(
+                system_config.oidc_userinfo_endpoint,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+        except httpx.RequestError as exc:
+            logger.error(f"An error occurred while requesting user info {exc.request.url!r}: {exc}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}.",
+            )
+
         if user_info_response.status_code != 200:
+            logger.error(f"OIDC User Info Error: {user_info_response.text}")
             raise HTTPException(status_code=400, detail="Failed to retrieve user info")
 
         user_info = user_info_response.json()

@@ -145,7 +145,7 @@ mongodb:
   cluster:
     name: mongodb-replica-set
     members: 3
-    version: "6.0.5"
+    version: "8.2.3"
     auth:
       username: dependencyuser
       password: changeme-db-password
