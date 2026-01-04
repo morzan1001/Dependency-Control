@@ -1,3 +1,11 @@
+# Release 1.0.8
+
+## 🐛 Fixes
+
+- fix: update Traefik API version in middlewares configuration from 'containo.us' to 'io' (#0)
+
+
+
 # Release 1.0.7
 
 ## 🚀 Features
