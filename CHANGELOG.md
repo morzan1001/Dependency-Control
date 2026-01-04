@@ -1,3 +1,11 @@
+# Release 1.0.9
+
+## 📦 Build & CI
+
+- chore: update version to 1.0.9; upgrade MongoDB version to 8.2.3; enhance logging in auth endpoints (#0)
+
+
+
 # Release 1.0.8
 
 ## 🐛 Fixes
