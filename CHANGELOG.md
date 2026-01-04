@@ -1,3 +1,11 @@
+# Release 1.0.7
+
+## 🚀 Features
+
+- feat: add support for Traefik middlewares in ingress configuration; enable toggling via values.yaml (#0)
+
+
+
 # Release 1.0.6
 
 ## 🚀 Features
