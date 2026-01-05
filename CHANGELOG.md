@@ -1,3 +1,11 @@
+# Release 1.1.4
+
+## 📦 Build & CI
+
+- chore: update version to 1.1.4; refactor user creation and validation logic (#0)
+
+
+
 # Release 1.1.3
 
 ## 📦 Build & CI
