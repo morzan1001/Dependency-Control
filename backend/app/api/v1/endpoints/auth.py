@@ -440,10 +440,6 @@ async def login_oidc_authorize(
 
     # Construct redirect URI (callback to backend)
     redirect_uri = str(request.url_for("login_oidc_callback"))
-    
-    # Ensure HTTPS if behind proxy (e.g. Traefik)
-    if redirect_uri.startswith("http://") and "localhost" not in redirect_uri and "127.0.0.1" not in redirect_uri:
-        redirect_uri = redirect_uri.replace("http://", "https://", 1)
 
     # Generate state to prevent CSRF
     state = secrets.token_urlsafe(32)
@@ -472,10 +468,6 @@ async def login_oidc_callback(
         raise HTTPException(status_code=400, detail="OIDC is not enabled")
 
     redirect_uri = str(request.url_for("login_oidc_callback"))
-    
-    # Ensure HTTPS if behind proxy (e.g. Traefik)
-    if redirect_uri.startswith("http://") and "localhost" not in redirect_uri and "127.0.0.1" not in redirect_uri:
-        redirect_uri = redirect_uri.replace("http://", "https://", 1)
 
     token_data = {
         "client_id": system_config.oidc_client_id,
