@@ -427,6 +427,19 @@ export interface FindingDetails {
   cwe_ids?: string[];
   published_date?: string;
   last_modified_date?: string;
+  // Bearer-specific SAST fields
+  title?: string;
+  documentation_url?: string;
+  category_groups?: string[];
+  code_extract?: string;
+  fingerprint?: string;
+  parent_line?: number;
+  sink_content?: string;
+  // KICS-specific IaC fields
+  platform?: string;
+  issue_type?: string;
+  expected_value?: string;
+  actual_value?: string;
   // License fields
   license?: string;
   license_url?: string;

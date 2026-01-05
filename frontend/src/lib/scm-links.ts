@@ -75,3 +75,57 @@ export function buildPipelineUrl(params: {
 
   return null
 }
+
+/**
+ * Build a URL to a specific file and line in the repository.
+ * For SAST/secret findings, this links directly to the problematic code.
+ */
+export function buildFileUrl(params: {
+  projectUrl?: string | null
+  pipelineUrl?: string | null
+  commitHash?: string | null
+  branch?: string | null
+  filePath?: string | null
+  startLine?: number | null
+  endLine?: number | null
+}): string | null {
+  const base = normalizeBaseUrl(params.projectUrl)
+  const filePath = params.filePath?.trim()
+  if (!base || !filePath) return null
+
+  // Prefer commit hash for precise linking, fall back to branch
+  const ref = params.commitHash?.trim() || params.branch?.trim()
+  if (!ref) return null
+
+  const provider = detectScmProvider({ projectUrl: base, pipelineUrl: params.pipelineUrl })
+  
+  // Clean up file path (remove leading ./ or /)
+  const cleanPath = filePath.replace(/^\.?\//, '')
+  
+  // Build line fragment
+  let lineFragment = ''
+  if (params.startLine) {
+    if (provider === 'github') {
+      // GitHub format: #L10 or #L10-L20
+      lineFragment = `#L${params.startLine}`
+      if (params.endLine && params.endLine !== params.startLine) {
+        lineFragment += `-L${params.endLine}`
+      }
+    } else if (provider === 'gitlab') {
+      // GitLab format: #L10 or #L10-20
+      lineFragment = `#L${params.startLine}`
+      if (params.endLine && params.endLine !== params.startLine) {
+        lineFragment += `-${params.endLine}`
+      }
+    }
+  }
+
+  if (provider === 'github') {
+    return `${base}/blob/${encodeRef(ref)}/${cleanPath}${lineFragment}`
+  }
+  if (provider === 'gitlab') {
+    return `${base}/-/blob/${encodeRef(ref)}/${cleanPath}${lineFragment}`
+  }
+
+  return null
+}

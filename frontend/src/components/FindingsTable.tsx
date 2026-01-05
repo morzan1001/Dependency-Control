@@ -17,15 +17,17 @@ import {
 import { SeverityBadge } from '@/components/findings/SeverityBadge'
 import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
 import { getSourceInfo } from '@/lib/finding-utils'
+import { ScanContext } from '@/components/findings/details/SastDetailsView'
 
 interface FindingsTableProps {
     scanId: string;
     projectId: string;
     category?: string;
     search?: string;
+    scanContext?: ScanContext;
 }
 
-export function FindingsTable({ scanId, projectId, category, search }: FindingsTableProps) {
+export function FindingsTable({ scanId, projectId, category, search, scanContext }: FindingsTableProps) {
     const parentRef = useRef<HTMLDivElement>(null)
     const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
     const [tableOffset, setTableOffset] = useState(0)
@@ -352,6 +354,7 @@ export function FindingsTable({ scanId, projectId, category, search }: FindingsT
                     finding={selectedFinding} 
                     projectId={projectId}
                     scanId={scanId}
+                    scanContext={scanContext}
                     isOpen={!!selectedFinding} 
                     onClose={() => setSelectedFinding(null)} 
                     onSelectFinding={async (id) => {

@@ -1803,31 +1803,138 @@ class ResultAggregator:
                 )
 
     def _normalize_bearer(self, result: Dict[str, Any], source: str = None):
+        """
+        Normalize Bearer SAST/Data Security findings.
+
+        Bearer structure:
+        {
+            "findings": {
+                "critical": [...],
+                "high": [...],
+                "medium": [...],
+                "low": [...],
+                "warning": [...]
+            }
+        }
+
+        Each finding contains:
+        - id: Rule ID (e.g., 'go_lang_logger_leak')
+        - title: Human-readable title
+        - description: Detailed description with remediation
+        - cwe_ids: List of CWE identifiers
+        - documentation_url: Link to Bearer docs
+        - line_number: Line where finding occurs
+        - filename/full_filename: File path
+        - category_groups: Categories like 'PII', 'Personal Data'
+        - code_extract: The code snippet
+        - fingerprint: For deduplication
+        - source/sink: Location details with columns
+        """
         findings_data = result.get("findings", {})
 
         all_findings = []
+        severity_map = {}
+
         if isinstance(findings_data, list):
+            # Flat list of findings - assume medium severity
             all_findings = findings_data
+            for f in all_findings:
+                severity_map[id(f)] = "MEDIUM"
         elif isinstance(findings_data, dict):
-            # If it's a dict, it might be grouped by severity or rule
-            # We'll flatten it
-            for _, val in findings_data.items():
-                if isinstance(val, list):
-                    all_findings.extend(val)
+            # Grouped by severity: {"critical": [...], "high": [...], ...}
+            bearer_severity_mapping = {
+                "critical": "CRITICAL",
+                "high": "HIGH",
+                "medium": "MEDIUM",
+                "low": "LOW",
+                "warning": "INFO",
+            }
+            for severity_key, findings_list in findings_data.items():
+                if isinstance(findings_list, list):
+                    mapped_severity = bearer_severity_mapping.get(
+                        severity_key.lower(), "MEDIUM"
+                    )
+                    for f in findings_list:
+                        all_findings.append(f)
+                        severity_map[id(f)] = mapped_severity
 
         for f in all_findings:
-            # Extract fields
-            severity = f.get("severity", "UNKNOWN").upper()
-            file_path = f.get("filename") or f.get("file") or "unknown"
-            line = f.get("line_number") or f.get("line")
-            rule_id = f.get("rule_id") or f.get("rule")
-            message = f.get("message") or f.get("description") or "Security issue found"
+            # Extract core fields
+            rule_id = f.get("id") or f.get("rule_id") or f.get("rule") or "unknown"
+            title = f.get("title") or "Security issue found"
+            description = f.get("description") or f.get("message") or title
+            cwe_ids = f.get("cwe_ids", [])
+            documentation_url = f.get("documentation_url")
 
-            # Create ID
-            finding_hash = hashlib.md5(
-                f"{rule_id}:{file_path}:{line}".encode()
-            ).hexdigest()
-            finding_id = f"BEARER-{finding_hash[:8]}"
+            # Extract location information
+            file_path = (
+                f.get("full_filename")
+                or f.get("filename")
+                or f.get("file")
+                or "unknown"
+            )
+            line_number = f.get("line_number") or f.get("line")
+            parent_line_number = f.get("parent_line_number")
+
+            # Extract source/sink location details
+            source_loc = f.get("source", {})
+            sink_loc = f.get("sink", {})
+
+            # Build column info
+            start_col = None
+            end_col = None
+            if source_loc and "column" in source_loc:
+                col = source_loc["column"]
+                start_col = col.get("start")
+                end_col = col.get("end")
+
+            # Extract categorization
+            category_groups = f.get("category_groups", [])
+
+            # Extract code context
+            code_extract = f.get("code_extract")
+            sink_content = sink_loc.get("content") if sink_loc else None
+
+            # Extract fingerprint for deduplication
+            fingerprint = f.get("fingerprint") or f.get("old_fingerprint")
+
+            # Determine severity from the grouped structure or field
+            severity = severity_map.get(id(f), f.get("severity", "MEDIUM").upper())
+
+            # Create unique ID based on fingerprint or computed hash
+            if fingerprint:
+                finding_id = f"BEARER-{fingerprint[:12]}"
+            else:
+                finding_hash = hashlib.md5(
+                    f"{rule_id}:{file_path}:{line_number}".encode()
+                ).hexdigest()
+                finding_id = f"BEARER-{finding_hash[:8]}"
+
+            # Build comprehensive details
+            details = {
+                "rule_id": rule_id,
+                "title": title,
+                "line": line_number,
+                "parent_line": parent_line_number,
+                "cwe_ids": cwe_ids,
+                "documentation_url": documentation_url,
+                "category_groups": category_groups,
+                "code_extract": code_extract,
+                "fingerprint": fingerprint,
+                # Location details
+                "start": {
+                    "line": source_loc.get("start") if source_loc else line_number,
+                    "column": start_col,
+                },
+                "end": {
+                    "line": source_loc.get("end") if source_loc else line_number,
+                    "column": end_col,
+                },
+            }
+
+            # Add sink content if available and non-empty
+            if sink_content:
+                details["sink_content"] = sink_content
 
             self._add_finding(
                 Finding(
@@ -1836,14 +1943,9 @@ class ResultAggregator:
                     severity=Severity(severity),
                     component=file_path,
                     version="",
-                    description=message,
+                    description=description,
                     scanners=["bearer"],
-                    details={
-                        "rule_id": rule_id,
-                        "line": line,
-                        "cwe_ids": f.get("cwe_ids", []),
-                        "documentation": f.get("documentation_url"),
-                    },
+                    details=details,
                 ),
                 source=source,
             )

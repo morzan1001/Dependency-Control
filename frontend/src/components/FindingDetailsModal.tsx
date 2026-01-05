@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
 import { Finding, NestedVulnerability } from "@/lib/api"
-import { AlertTriangle, ExternalLink, Shield, ShieldAlert } from "lucide-react"
+import { AlertTriangle, ExternalLink, Shield, ShieldAlert, FileCode, GitBranch } from "lucide-react"
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
 import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
@@ -15,6 +15,8 @@ import { LicenseDetailsView } from '@/components/findings/details/LicenseDetails
 import { AggregatedQualityView, MaintainerRiskDetailsView } from '@/components/findings/details/QualityDetails'
 import { AdditionalDetailsView } from '@/components/findings/details/AdditionalDetailsView'
 import { WaiverForm } from '@/components/findings/details/WaiverForm'
+import { SastDetailsView, ScanContext } from '@/components/findings/details/SastDetailsView'
+import { buildFileUrl } from '@/lib/scm-links'
 import {
   getFindingId,
   getFindingPackage,
@@ -22,18 +24,18 @@ import {
   getFindingVersion,
 } from '@/components/findings/details/finding-details-helpers'
 
-
 interface FindingDetailsModalProps {
     finding: Finding | null
     isOpen: boolean
     onClose: () => void
     projectId: string
     scanId?: string
+    scanContext?: ScanContext
     onSelectFinding?: (id: string) => void
     onNavigate?: () => void  // Called before navigation to allow parent cleanup
 }
 
-export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, onSelectFinding, onNavigate }: FindingDetailsModalProps) {
+export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, scanContext, onSelectFinding, onNavigate }: FindingDetailsModalProps) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
     const [selectedVulnId, setSelectedVulnId] = useState<string | null>(null)
     const { hasPermission } = useAuth()
@@ -235,51 +237,82 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                             )}
 
                             {finding.type === 'secret' && (
-                                <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
-                                    <div>
-                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Detector</h4>
-                                        <p className="font-medium">{finding.details?.detector || "Unknown"}</p>
-                                    </div>
-                                    <div>
-                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Verified</h4>
-                                        <Badge variant={finding.details?.verified ? "destructive" : "secondary"}>
-                                            {finding.details?.verified ? "Verified Live" : "Unverified"}
-                                        </Badge>
-                                    </div>
-                                    {finding.details?.redacted && (
-                                        <div className="col-span-2">
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Redacted Secret</h4>
-                                            <code className="bg-background p-2 rounded border block w-full font-mono text-sm break-all">
-                                                {finding.details.redacted}
-                                            </code>
-                                        </div>
+                                <div className="space-y-4">
+                                    {/* File location with link */}
+                                    {scanContext && finding.component && (
+                                        (() => {
+                                            const fileUrl = buildFileUrl({
+                                                projectUrl: scanContext.projectUrl,
+                                                pipelineUrl: scanContext.pipelineUrl,
+                                                commitHash: scanContext.commitHash,
+                                                branch: scanContext.branch,
+                                                filePath: finding.component,
+                                                startLine: finding.details?.line,
+                                            })
+                                            return fileUrl ? (
+                                                <div className="p-4 bg-muted/50 rounded-lg border">
+                                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">File Location</h4>
+                                                    <div className="flex items-center gap-2">
+                                                        <FileCode className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                                                        <a 
+                                                            href={fileUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="font-mono text-sm text-primary hover:underline truncate"
+                                                            title={finding.component}
+                                                        >
+                                                            {finding.component}
+                                                            {finding.details?.line && <span className="text-muted-foreground">:{finding.details.line}</span>}
+                                                            <ExternalLink className="h-3 w-3 ml-1 inline" />
+                                                        </a>
+                                                    </div>
+                                                    <div className="mt-3 pt-3 border-t">
+                                                        <Button variant="outline" size="sm" asChild>
+                                                            <a 
+                                                                href={fileUrl}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-2"
+                                                            >
+                                                                <GitBranch className="h-4 w-4" />
+                                                                View in Repository
+                                                                <ExternalLink className="h-3 w-3" />
+                                                            </a>
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ) : null
+                                        })()
                                     )}
+                                    <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Detector</h4>
+                                            <p className="font-medium">{finding.details?.detector || "Unknown"}</p>
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Verified</h4>
+                                            <Badge variant={finding.details?.verified ? "destructive" : "secondary"}>
+                                                {finding.details?.verified ? "Verified Live" : "Unverified"}
+                                            </Badge>
+                                        </div>
+                                        {finding.details?.redacted && (
+                                            <div className="col-span-2">
+                                                <h4 className="text-sm font-medium text-muted-foreground mb-1">Redacted Secret</h4>
+                                                <code className="bg-background p-2 rounded border block w-full font-mono text-sm break-all">
+                                                    {finding.details.redacted}
+                                                </code>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
                             {finding.type === 'sast' && (
-                                <div className="space-y-4">
-                                    <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Rule ID</h4>
-                                            <p className="font-mono text-sm">{finding.details?.check_id || "Unknown"}</p>
-                                        </div>
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Location</h4>
-                                            <p className="text-sm">
-                                                Line {finding.details?.start?.line || "?"} - {finding.details?.end?.line || "?"}
-                                            </p>
-                                        </div>
-                                    </div>
-                                    {finding.details?.metadata && (
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-2">Rule Metadata</h4>
-                                            <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">
-                                                {JSON.stringify(finding.details.metadata, null, 2)}
-                                            </pre>
-                                        </div>
-                                    )}
-                                </div>
+                                <SastDetailsView finding={finding} scanContext={scanContext} />
+                            )}
+
+                            {finding.type === 'iac' && (
+                                <SastDetailsView finding={finding} scanContext={scanContext} />
                             )}
 
                             {finding.type === 'vulnerability' && (

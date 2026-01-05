@@ -14,6 +14,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recha
 import { toast } from "sonner"
 import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
+import { ScanContext } from '@/components/findings/details/SastDetailsView'
 
 // Type for scan history items
 interface ScanHistoryItem {
@@ -170,6 +171,14 @@ export default function ScanDetails() {
 
   if (!scan || !project) {
     return <div>No results found</div>
+  }
+
+  // Build scan context for source code links in SAST/secret findings
+  const scanContext: ScanContext = {
+    projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
+    pipelineUrl: scan.pipeline_url,
+    commitHash: scan.commit_hash,
+    branch: scan.branch || scan.metadata?.CI_COMMIT_BRANCH,
   }
 
   const activeAnalyzers = project.active_analyzers || [];
@@ -504,36 +513,36 @@ export default function ScanDetails() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-            <FindingsTable scanId={scanId!} projectId={projectId!} />
+            <FindingsTable scanId={scanId!} projectId={projectId!} scanContext={scanContext} />
         </TabsContent>
 
         {showSecurity && (
             <TabsContent value="security" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showSecrets && (
             <TabsContent value="secrets" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showSast && (
             <TabsContent value="sast" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showCompliance && (
             <TabsContent value="compliance" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="compliance" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="compliance" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showQuality && (
             <TabsContent value="quality" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} />
             </TabsContent>
         )}
 
