@@ -1,3 +1,15 @@
+# Release 1.2.0
+
+## 🚀 Features
+
+- feat: improve vulnerability filtering and clean up SAST details view (#0)
+
+## 📦 Build & CI
+
+- chore: update version to v1.2.0 (#0)
+
+
+
 # Release 1.1.9
 
 ## 🚀 Features
