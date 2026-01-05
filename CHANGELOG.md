@@ -1,3 +1,11 @@
+# Release 1.1.0
+
+## 🐛 Fixes
+
+- fix: update Dockerfile CMD to support proxy headers; remove HTTPS enforcement in auth endpoints (#0)
+
+
+
 # Release 1.0.9
 
 ## 📦 Build & CI
