@@ -563,7 +563,8 @@ async def login_oidc_callback(
 
     # Redirect to frontend with tokens
     # We'll use a hash fragment to pass the tokens securely
-    frontend_url = f"{settings.FRONTEND_BASE_URL}/login/callback#access_token={access_token}&refresh_token={refresh_token}"
+    base_url = settings.FRONTEND_BASE_URL.rstrip("/")
+    frontend_url = f"{base_url}/login/callback#access_token={access_token}&refresh_token={refresh_token}"
 
     return RedirectResponse(frontend_url)
 
