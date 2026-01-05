@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.ingest import BaseIngest
 
@@ -20,4 +20,9 @@ class TruffleHogFinding(BaseModel):
 
 
 class TruffleHogIngest(BaseIngest):
-    findings: List[TruffleHogFinding]
+    """Schema for TruffleHog secret scan results."""
+
+    findings: List[TruffleHogFinding] = Field(
+        default_factory=list,
+        description="List of secrets found by TruffleHog.",
+    )

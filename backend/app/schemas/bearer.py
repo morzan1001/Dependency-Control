@@ -1,11 +1,14 @@
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
+
+from pydantic import Field
 
 from app.schemas.ingest import BaseIngest
 
 
 class BearerIngest(BaseIngest):
-    findings: Dict[
-        str, Any
-    ]  # Bearer JSON output usually has a root key like "findings" or "vulnerabilities", or it IS the dictionary.
-    # Based on "feat(report): add new jsonv2 format", it might be complex.
-    # Let's accept the whole JSON report as a dict and parse it in the aggregator.
+    """Schema for Bearer SAST/Data Security scan results."""
+
+    findings: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Bearer JSON output. Can be the full report or just the findings section.",
+    )

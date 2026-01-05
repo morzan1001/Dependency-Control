@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.ingest import BaseIngest
 
@@ -27,4 +27,9 @@ class OpenGrepFinding(BaseModel):
 
 
 class OpenGrepIngest(BaseIngest):
-    findings: List[OpenGrepFinding]
+    """Schema for OpenGrep SAST scan results."""
+
+    findings: List[OpenGrepFinding] = Field(
+        default_factory=list,
+        description="List of SAST findings from OpenGrep.",
+    )
