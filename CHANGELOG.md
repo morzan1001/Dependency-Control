@@ -1,3 +1,11 @@
+# Release 1.1.9
+
+## 🚀 Features
+
+- feat: update scanner script to URL-encode project names for API requests (#0)
+
+
+
 # Release 1.1.8
 
 ## 🚀 Features
