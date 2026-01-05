@@ -614,8 +614,11 @@ async def run_analysis(
                 )
 
                 # Check for critical vulnerabilities and send vulnerability_found notification
+                # Convert Finding objects to dicts for attribute access
                 vulnerability_findings = [
-                    f for f in aggregated_findings if f.get("type") == "vulnerability"
+                    f.model_dump() if hasattr(f, 'model_dump') else f
+                    for f in aggregated_findings
+                    if (f.type if hasattr(f, 'type') else f.get("type")) == "vulnerability"
                 ]
 
                 if vulnerability_findings:

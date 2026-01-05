@@ -229,7 +229,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 )}
                             </div>
 
-                            {finding.description && finding.type !== 'vulnerability' && (
+                            {finding.description && finding.type !== 'vulnerability' && finding.type !== 'sast' && finding.type !== 'iac' && (
                                 <div>
                                     <h4 className="text-sm font-medium text-muted-foreground mb-2">Description</h4>
                                     <p className="text-sm leading-relaxed">{finding.description}</p>

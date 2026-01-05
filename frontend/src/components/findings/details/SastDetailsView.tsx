@@ -1,6 +1,6 @@
 import { Finding } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
-import { ExternalLink, FileCode, AlertTriangle, Info, BookOpen, GitBranch } from "lucide-react"
+import { ExternalLink, FileCode, AlertTriangle, Info, BookOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import ReactMarkdown, { Components } from 'react-markdown'
 import { buildFileUrl } from "@/lib/scm-links"
@@ -120,22 +120,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                         <p className="text-sm">{locationStr}</p>
                     </div>
                 </div>
-                {fileUrl && (
-                    <div className="mt-3 pt-3 border-t">
-                        <Button variant="outline" size="sm" asChild>
-                            <a 
-                                href={fileUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-2"
-                            >
-                                <GitBranch className="h-4 w-4" />
-                                View in Repository
-                                <ExternalLink className="h-3 w-3" />
-                            </a>
-                        </Button>
-                    </div>
-                )}
             </div>
 
             {/* Rule Info */}
@@ -144,16 +128,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                     <h4 className="text-sm font-medium text-muted-foreground mb-1">Rule ID</h4>
                     <div className="flex items-center gap-2">
                         <code className="font-mono text-sm bg-background px-2 py-0.5 rounded">{ruleId}</code>
-                        {details.documentation_url && (
-                            <a 
-                                href={details.documentation_url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="text-muted-foreground hover:text-foreground"
-                            >
-                                <ExternalLink className="h-4 w-4" />
-                            </a>
-                        )}
                     </div>
                 </div>
                 <div>
