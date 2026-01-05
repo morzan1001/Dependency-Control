@@ -1,3 +1,11 @@
+# Release 1.1.8
+
+## 🚀 Features
+
+- feat: enhance schemas for Bearer, OpenGrep, and TruffleHog with detailed findings descriptions (#0)
+
+
+
 # Release 1.1.7
 
 ## 🚀 Features
