@@ -1,3 +1,11 @@
+# Release 1.1.7
+
+## 🚀 Features
+
+- feat: refactor ingest endpoints and add ScanManager for improved scan lifecycle management (#0)
+
+
+
 # Release 1.1.6
 
 
