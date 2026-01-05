@@ -1004,6 +1004,7 @@ export interface SystemSettings {
   gitlab_url: string;
   gitlab_auto_create_projects: boolean;
   gitlab_sync_teams: boolean;
+  gitlab_oidc_audience?: string;
 
   // Retention
   retention_mode: 'project' | 'global';

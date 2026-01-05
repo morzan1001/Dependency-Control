@@ -46,6 +46,7 @@ class SystemSettingsBase(BaseModel):
     gitlab_access_token: Optional[str] = None
     gitlab_auto_create_projects: bool = False
     gitlab_sync_teams: bool = False
+    gitlab_oidc_audience: Optional[str] = None
 
     # Retention
     retention_mode: str = "project"

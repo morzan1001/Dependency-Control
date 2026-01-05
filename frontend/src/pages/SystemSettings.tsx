@@ -704,6 +704,18 @@ export default function SystemSettings() {
                                     onChange={(e) => handleInputChange('gitlab_url', e.target.value)}
                                 />
                             </div>
+                            <div className="grid gap-2">
+                                <Label htmlFor="gitlab-oidc-audience">OIDC Audience</Label>
+                                <Input
+                                    id="gitlab-oidc-audience"
+                                    placeholder="dependency-control"
+                                    value={formData.gitlab_oidc_audience || ''}
+                                    onChange={(e) => handleInputChange('gitlab_oidc_audience', e.target.value)}
+                                />
+                                <p className="text-sm text-muted-foreground">
+                                    The expected <code>aud</code> claim in GitLab OIDC tokens. Must match the <code>aud</code> value configured in your CI/CD pipeline's <code>id_tokens</code> section.
+                                </p>
+                            </div>
                             <div className="flex items-center justify-between space-x-2">
                                 <Label htmlFor="gitlab-auto-create">Auto-Create Projects</Label>
                                 <Switch
