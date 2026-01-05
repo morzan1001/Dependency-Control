@@ -1,3 +1,11 @@
+# Release 1.1.2
+
+## 📦 Build & CI
+
+- chore: update version to 1.1.2; enhance password handling in user registration and login (#0)
+
+
+
 # Release 1.1.1
 
 ## 📦 Build & CI
