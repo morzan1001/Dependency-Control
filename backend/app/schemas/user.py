@@ -31,11 +31,13 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
+    password: Optional[str] = None
 
     @field_validator("password")
     @classmethod
-    def validate_password(cls, v: str) -> str:
+    def validate_password(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
         return validate_password_strength(v)
 
 

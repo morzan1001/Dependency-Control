@@ -57,7 +57,7 @@ async def login_access_token(
     """
     user = await db.users.find_one({"username": form_data.username})
     if not user or not security.verify_password(
-        form_data.password, user["hashed_password"]
+        form_data.password, user.get("hashed_password")
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -246,6 +246,12 @@ async def create_user(
         raise HTTPException(
             status_code=403,
             detail="Signup is currently disabled.",
+        )
+
+    if not user_in.password:
+        raise HTTPException(
+            status_code=400,
+            detail="Password is required for registration",
         )
 
     user = await db.users.find_one({"username": user_in.username})
@@ -529,15 +535,14 @@ async def login_oidc_callback(
         user_in = UserCreate(
             email=email,
             username=user_info.get("preferred_username", email.split("@")[0]),
-            password=secrets.token_urlsafe(32) + "A1!",  # Random password satisfying complexity
             full_name=user_info.get("name"),
             is_active=True,
             is_verified=True,  # Trusted provider
             auth_provider=system_config.oidc_provider_name,
         )
         user_data = user_in.dict()
-        user_data["hashed_password"] = security.get_password_hash(user_data["password"])
-        del user_data["password"]
+        if "password" in user_data:
+            del user_data["password"]
         user_data["created_at"] = datetime.now(timezone.utc)
         user_data["permissions"] = []  # Default permissions
 
