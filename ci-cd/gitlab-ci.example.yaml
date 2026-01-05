@@ -2,102 +2,76 @@ stages:
   - security-scan
 
 variables:
-  # Configure this in GitLab CI/CD Variables
+  # Configure these in GitLab CI/CD Variables:
   # DEP_CONTROL_URL: "https://your-dependency-control-instance.com"
-  # DEP_CONTROL_API_KEY: "your-api-key"  # Optional if using GitLab Integration
-  
-  # Scanner script version and hash for integrity verification
-  # Get new hash: curl -s "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh/hash"
+  # SCANNER_SHA256: Get hash from $DEP_CONTROL_URL/api/v1/scripts/scanner.sh/hash
   SCANNER_VERSION: "1.0.0"
-  SCANNER_SHA256: "76ba0437bb4acab57f2d227ddb6985e05816c4e80552b511086cd1c7339ce933"
 
-.download_and_verify: &download_and_verify |
-  echo "Downloading scanner script v${SCANNER_VERSION}..."
-  curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
-  echo "Verifying script integrity..."
-  echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
-  chmod +x scanner.sh
-  echo "Script verified successfully!"
-
-sbom-scan:
+.dep-control-base:
   stage: security-scan
-  image: alpine:latest
+  variables:
+    GIT_DEPTH: 0
   id_tokens:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
-  before_script:
-    - apk add --no-cache curl jq bash coreutils
+  before_script: &install-deps
+    - apt-get update -qq && apt-get install -y -qq curl jq coreutils
+
+.download-scanner: &download-scanner |
+  curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
+  echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
+  chmod +x scanner.sh
+
+sbom-scan:
+  extends: .dep-control-base
+  image: debian:bookworm-slim
   script:
-    - *download_and_verify
+    - *download-scanner
     - ./scanner.sh sbom
 
 secret-scan:
-  stage: security-scan
-  image: alpine:latest
-  id_tokens:
-    DEP_CONTROL_TOKEN:
-      aud: dependency-control
+  extends: .dep-control-base
+  image: debian:bookworm-slim
   before_script:
-    - apk add --no-cache curl jq bash git coreutils
+    - apt-get update -qq && apt-get install -y -qq curl jq coreutils git
   script:
-    - git fetch --unshallow || true
-    - *download_and_verify
+    - *download-scanner
     - ./scanner.sh secrets
 
 sast-scan:
-  stage: security-scan
+  extends: .dep-control-base
   image: returntocorp/semgrep
-  id_tokens:
-    DEP_CONTROL_TOKEN:
-      aud: dependency-control
   script:
-    - |
-      if [ -f /etc/alpine-release ]; then
-        apk add --no-cache curl jq bash coreutils
-      else
-        apt-get update && apt-get install -y curl jq coreutils
-      fi
-    - *download_and_verify
+    - *download-scanner
     - ./scanner.sh sast
 
 iac-scan:
-  stage: security-scan
+  extends: .dep-control-base
   image:
-    name: checkmarx/kics:alpine
+    name: checkmarx/kics:debian
     entrypoint: [""]
-  id_tokens:
-    DEP_CONTROL_TOKEN:
-      aud: dependency-control
   script:
-    - apk add --no-cache curl jq bash coreutils
-    - *download_and_verify
+    - *download-scanner
     - ./scanner.sh iac
 
 bearer-scan:
-  stage: security-scan
-  image: alpine:latest
-  id_tokens:
-    DEP_CONTROL_TOKEN:
-      aud: dependency-control
+  extends: .dep-control-base
+  image: debian:bookworm-slim
   before_script:
-    - apk add --no-cache curl jq bash coreutils git
+    - apt-get update -qq && apt-get install -y -qq curl jq coreutils git
   script:
-    - *download_and_verify
+    - *download-scanner
     - ./scanner.sh bearer
 
 callgraph-upload:
-  stage: security-scan
-  image: golang:1.23-alpine
-  id_tokens:
-    DEP_CONTROL_TOKEN:
-      aud: dependency-control
+  extends: .dep-control-base
+  image: node:20-bookworm
   before_script:
-    - apk add --no-cache curl jq bash git python3 py3-pip coreutils nodejs npm
+    - apt-get update -qq && apt-get install -y -qq curl jq coreutils python3 python3-pip
   script:
-    - *download_and_verify
+    - *download-scanner
     - ./scanner.sh callgraph
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-      when: always
     - when: manual
   allow_failure: true

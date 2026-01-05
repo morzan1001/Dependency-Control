@@ -11,25 +11,21 @@ concurrency:
 env:
   DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
   DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
-  # Scanner script version and hash for integrity verification
-  # Get new hash: curl -s "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh/hash"
   SCANNER_VERSION: "1.0.0"
-  SCANNER_SHA256: "76ba0437bb4acab57f2d227ddb6985e05816c4e80552b511086cd1c7339ce933"
+  # Required: Get hash from $DEP_CONTROL_URL/api/v1/scripts/scanner.sh/hash
+  SCANNER_SHA256: ${{ vars.SCANNER_SHA256 }}
 
 jobs:
   sbom-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download and Verify Scanner
+      - name: Run SBOM Scan
         run: |
           curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
           echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
           chmod +x scanner.sh
-
-      - name: Run SBOM Scan
-        run: ./scanner.sh sbom
+          ./scanner.sh sbom
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -37,94 +33,62 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Download and Verify Scanner
+      - name: Run Secret Scan
         run: |
           curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
           echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
           chmod +x scanner.sh
-
-      - name: Run Secret Scan
-        run: ./scanner.sh secrets
+          ./scanner.sh secrets
 
   sast-scan:
     runs-on: ubuntu-latest
-    container:
-      image: returntocorp/semgrep
+    container: returntocorp/semgrep
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Dependencies
+      - name: Run SAST Scan
         run: |
-          if [ -f /etc/alpine-release ]; then
-            apk add --no-cache curl jq bash coreutils
-          else
-            apt-get update && apt-get install -y curl jq coreutils
-          fi
-
-      - name: Download and Verify Scanner
-        run: |
+          apt-get update -qq && apt-get install -y -qq curl jq coreutils
           curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
           echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
           chmod +x scanner.sh
-
-      - name: Run SAST Scan
-        run: ./scanner.sh sast
+          ./scanner.sh sast
 
   iac-scan:
     runs-on: ubuntu-latest
     container:
-      image: checkmarx/kics:latest
+      image: checkmarx/kics:debian
+      options: --entrypoint ""
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Dependencies
-        run: apk add --no-cache curl jq bash coreutils
-
-      - name: Download and Verify Scanner
+      - name: Run IaC Scan
         run: |
           curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
           echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
           chmod +x scanner.sh
-
-      - name: Run IaC Scan
-        run: ./scanner.sh iac
+          ./scanner.sh iac
 
   bearer-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download and Verify Scanner
+      - name: Run Bearer Scan
         run: |
           curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
           echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
           chmod +x scanner.sh
-
-      - name: Run Bearer Scan
-        run: ./scanner.sh bearer
+          ./scanner.sh bearer
 
   callgraph-upload:
     runs-on: ubuntu-latest
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Download and Verify Scanner
+      - name: Generate and Upload Callgraph
         run: |
           curl -sSL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
           echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
           chmod +x scanner.sh
-
-      - name: Generate and Upload Callgraph
-        run: ./scanner.sh callgraph
+          ./scanner.sh callgraph

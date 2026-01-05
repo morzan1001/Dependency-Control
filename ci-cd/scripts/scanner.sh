@@ -514,8 +514,9 @@ PYTHON_EOF
     local auth_header
     auth_header="$(get_auth_header)"
     
-    local project_info project_id
-    project_info=$(curl -sS -H "$auth_header" "${DEP_CONTROL_URL}/api/v1/projects?name=${PROJECT_NAME}" 2>/dev/null)
+    local project_info project_id encoded_name
+    encoded_name=$(printf '%s' "$PROJECT_NAME" | jq -sRr @uri)
+    project_info=$(curl -sS -H "$auth_header" "${DEP_CONTROL_URL}/api/v1/projects?name=${encoded_name}" 2>/dev/null)
     project_id=$(echo "$project_info" | jq -r '.[0]._id // empty')
     
     if [ -z "$project_id" ]; then
