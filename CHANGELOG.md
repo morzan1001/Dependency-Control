@@ -1,3 +1,11 @@
+# Release 1.1.1
+
+## 📦 Build & CI
+
+- chore: update version to 1.1.1; enhance password complexity in OIDC login; add network policies and values configuration (#0)
+
+
+
 # Release 1.1.0
 
 ## 🐛 Fixes
