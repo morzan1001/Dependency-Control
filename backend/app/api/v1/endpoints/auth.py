@@ -529,7 +529,7 @@ async def login_oidc_callback(
         user_in = UserCreate(
             email=email,
             username=user_info.get("preferred_username", email.split("@")[0]),
-            password=secrets.token_urlsafe(32),  # Random password
+            password=secrets.token_urlsafe(32) + "A1!",  # Random password satisfying complexity
             full_name=user_info.get("name"),
             is_active=True,
             is_verified=True,  # Trusted provider

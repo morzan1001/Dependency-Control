@@ -110,6 +110,7 @@ spec:
   {{- end }}
 {{- end }}
 
+{{- if .Values.networkPolicy.enabled }}
 ---
 # Allow MongoDB to receive traffic from Backend, Operator, and other Mongo nodes
 kind: NetworkPolicy
@@ -186,8 +187,9 @@ spec:
   egress:
   # Allow everything for Operator to ensure it can manage resources and talk to K8s API
   - {}
+{{- end }}
 
-{{- if .Values.dragonfly.enabled }}
+{{- if and .Values.dragonfly.enabled .Values.networkPolicy.enabled }}
 ---
 # ============================================================================
 # DragonflyDB Network Policies (Subchart)

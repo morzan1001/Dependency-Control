@@ -1,0 +1,250 @@
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
+# Frontend Application Settings
+frontend:
+  image:
+    repository: ghcr.io/morzan1001/dependency-control-frontend
+    pullPolicy: Always
+    tag: "1.1.0"
+  
+  replicaCount: 2
+  
+  service:
+    type: ClusterIP
+    port: 80
+  
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+  securityContext:
+    runAsUser: 101
+    runAsGroup: 101
+    runAsNonRoot: true
+    readOnlyRootFilesystem: false # Nginx needs to write to /var/cache/nginx and /var/run
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+  env:
+    apiUrl: "/api/v1"
+        
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 3
+
+# Backend Application Settings
+backend:
+  image:
+    repository: ghcr.io/morzan1001/dependency-control
+    pullPolicy: Always
+    tag: "1.1.0"
+  
+  replicaCount: 2
+  
+  service:
+    type: ClusterIP
+    port: 8000
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+  env:
+    workerCount: 2
+    logLevel: "INFO"
+    algorithm: "HS256"
+    accessTokenExpireMinutes: 30
+    refreshTokenExpireDays: 7
+    frontendBaseUrl: "dependency-control.runforest.run"
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    # targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # Probes for High Availability
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 3
+
+  secrets:
+    secretKey: "Hdod6b5m98UwxTKf58p73Qaj3SB5AsFF"
+
+# MongoDB Community Operator Settings
+mongodb-operator:
+  enabled: true
+  community-operator-crds:
+    enabled: false
+  serviceAccount:
+    create: true
+    automountServiceAccountToken: true
+  operator:
+    watchNamespace: "dependency-control"
+    podLabels:
+      app.kubernetes.io/name: mongodb-kubernetes-operator
+
+# MongoDB Cluster Configuration (Custom Resource)
+mongodb:
+  enabled: true
+  cluster:
+    name: mongodb-replica-set
+    members: 1
+    version: "8.2.3"
+    statefulSet:
+      spec:
+        template:
+          spec:
+            nodeSelector:
+              kubernetes.io/arch: amd64
+    auth:
+      username: dependencyuser
+      password: nGWGX2zKxVuCCZ8bMj8xAmUyu4j8WiNN
+      database: dependency_control
+    persistence:
+      size: 10Gi
+      storageClass: "longhorn"
+
+dragonfly:
+  enabled: true
+  replicaCount: 2
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  password: "a9iVrttqwpNkM7szPJ4yzbEixeMC39wQ"
+  
+  # Resource limits
+  resources:
+    limits:
+      cpu: 500m
+      memory: 768Mi
+    requests:
+      cpu: 100m
+      memory: 512Mi
+  
+  # Security context - hardened configuration
+  podSecurityContext:
+    fsGroup: 1000
+    runAsUser: 1000
+    runAsGroup: 1000
+    runAsNonRoot: true
+  
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop:
+        - ALL
+  
+  # Extra arguments for DragonflyDB
+  extraArgs:
+    - --maxmemory=512mb
+    - --cache_mode=true
+    - --proactor_threads=2
+    # Must match 'password' above!
+    - --requirepass=a9iVrttqwpNkM7szPJ4yzbEixeMC39wQ
+  
+  # Persistence (optional - disabled by default for pure cache)
+  storage:
+    enabled: false
+    requests: 2Gi
+    storageClassName: ""
+
+  # Pod anti-affinity for spreading across nodes
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: dragonfly
+            topologyKey: kubernetes.io/hostname
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 6379
+  
+  # Monitoring
+  serviceMonitor:
+    enabled: false
+    interval: "30s"
+    scrapeTimeout: "10s"
+
+# Traefik Settings
+traefik:
+  enabled: false
+
+ingress:
+  enabled: true
+  hostname: "dependency-control.runforest.run"
+  ingressClassName: traefik
+  tls: true
+  traefikMiddlewares:
+    enabled: true
+
+networkPolicy:
+  enabled: false
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
