@@ -33,7 +33,7 @@ class User(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def convert_objectid(cls, v):
-        if hasattr(v, "__str__"):
+        if not isinstance(v, str):
             return str(v)
         return v
 

@@ -23,7 +23,7 @@ from app.models.system import SystemSettings
 from app.models.user import User
 from app.schemas.token import Token, TokenPayload
 from app.schemas.user import User as UserSchema
-from app.schemas.user import UserCreate, UserPasswordReset, UserSignup
+from app.schemas.user import UserCreate, UserPasswordReset
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.templates import \
     get_verification_email_template
@@ -117,45 +117,6 @@ async def login_access_token(
         "refresh_token": refresh_token,
         "token_type": "bearer",
     }
-
-
-@router.post("/signup", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
-async def signup(user_in: UserSignup, db: AsyncIOMotorDatabase = Depends(get_database)):
-    """
-    Signup a new user.
-    """
-    system_config = await get_system_settings(db)
-    signup_enabled = system_config.allow_public_registration
-
-    if not signup_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Open registration is forbidden on this server",
-        )
-
-    user = await db.users.find_one({"username": user_in.username})
-    if user:
-        raise HTTPException(
-            status_code=400,
-            detail="The user with this username already exists in the system.",
-        )
-
-    user_email = await db.users.find_one({"email": user_in.email})
-    if user_email:
-        raise HTTPException(
-            status_code=400,
-            detail="The user with this email already exists in the system.",
-        )
-
-    user_dict = user_in.dict()
-    hashed_password = security.get_password_hash(user_dict.pop("password"))
-    user_dict["hashed_password"] = hashed_password
-    user_dict["is_active"] = True
-    user_dict["permissions"] = []  # No permissions by default
-
-    new_user = User(**user_dict)
-    await db.users.insert_one(new_user.dict(by_alias=True))
-    return new_user
 
 
 @router.post(
@@ -531,23 +492,18 @@ async def login_oidc_callback(
     # Find or create user
     user = await db.users.find_one({"email": email})
     if not user:
-        # Create new user
-        user_in = UserCreate(
+        # Create new user using the User model
+        new_user = User(
             email=email,
             username=user_info.get("preferred_username", email.split("@")[0]),
-            full_name=user_info.get("name"),
             is_active=True,
             is_verified=True,  # Trusted provider
             auth_provider=system_config.oidc_provider_name,
+            permissions=[],
         )
-        user_data = user_in.dict()
-        if "password" in user_data:
-            del user_data["password"]
-        user_data["created_at"] = datetime.now(timezone.utc)
-        user_data["permissions"] = []  # Default permissions
 
-        result = await db.users.insert_one(user_data)
-        user = await db.users.find_one({"_id": result.inserted_id})
+        await db.users.insert_one(new_user.model_dump(by_alias=True))
+        user = await db.users.find_one({"_id": new_user.id})
 
     # Check 2FA enforcement (same logic as login)
     permissions = user.get("permissions", [])

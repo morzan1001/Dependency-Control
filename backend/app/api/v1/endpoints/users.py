@@ -35,6 +35,12 @@ async def create_user(
     """
     Create a new user. Requires 'user:manage' or 'user:create' permissions.
     """
+    if not user_in.password:
+        raise HTTPException(
+            status_code=400,
+            detail="Password is required when creating a user",
+        )
+
     user = await db.users.find_one({"username": user_in.username})
     if user:
         raise HTTPException(

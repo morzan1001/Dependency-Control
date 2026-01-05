@@ -41,17 +41,6 @@ class UserCreate(UserBase):
         return validate_password_strength(v)
 
 
-class UserSignup(BaseModel):
-    email: EmailStr
-    username: str
-    password: str
-
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, v: str) -> str:
-        return validate_password_strength(v)
-
-
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     username: Optional[str] = None
@@ -95,6 +84,13 @@ class UserInDBBase(UserBase):
     totp_enabled: bool = False
     is_verified: bool = False
 
+    @field_validator("id", mode="before")
+    @classmethod
+    def convert_objectid(cls, v):
+        if not isinstance(v, str):
+            return str(v)
+        return v
+
     class Config:
         from_attributes = True
         populate_by_name = True
@@ -102,10 +98,6 @@ class UserInDBBase(UserBase):
 
 class User(UserInDBBase):
     pass
-
-
-class UserInDB(UserInDBBase):
-    hashed_password: str
 
 
 class User2FASetup(BaseModel):
