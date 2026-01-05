@@ -21,6 +21,30 @@ class GitLabService:
         self.api_url = f"{self.base_url}/api/v4"
         self._jwks_cache = None
         self._jwks_cache_time = 0
+        self._jwks_uri_cache = None
+
+    async def _get_jwks_uri(self) -> Optional[str]:
+        """
+        Fetches the JWKS URI from the OpenID Connect discovery document.
+        """
+        if self._jwks_uri_cache:
+            return self._jwks_uri_cache
+
+        async with httpx.AsyncClient() as client:
+            try:
+                # Try OpenID Connect discovery endpoint first
+                response = await client.get(
+                    f"{self.base_url}/.well-known/openid-configuration",
+                    timeout=10.0
+                )
+                if response.status_code == 200:
+                    config = response.json()
+                    self._jwks_uri_cache = config.get("jwks_uri")
+                    return self._jwks_uri_cache
+            except Exception as e:
+                logger.warning(f"Error fetching OIDC discovery: {e}")
+
+        return None
 
     async def get_jwks(self) -> dict:
         """
@@ -33,12 +57,26 @@ class GitLabService:
 
         async with httpx.AsyncClient() as client:
             try:
-                # GitLab JWKS endpoint
-                response = await client.get(f"{self.base_url}/-/jwks", timeout=10.0)
-                if response.status_code == 200:
-                    self._jwks_cache = response.json()
-                    self._jwks_cache_time = now
-                    return self._jwks_cache
+                # Try to get JWKS URI from discovery document
+                jwks_uri = await self._get_jwks_uri()
+
+                if jwks_uri:
+                    response = await client.get(jwks_uri, timeout=10.0)
+                    if response.status_code == 200:
+                        self._jwks_cache = response.json()
+                        self._jwks_cache_time = now
+                        return self._jwks_cache
+
+                # Fallback: Try common JWKS endpoints
+                for path in ["/-/jwks", "/oauth/discovery/keys"]:
+                    response = await client.get(f"{self.base_url}{path}", timeout=10.0)
+                    if response.status_code == 200:
+                        self._jwks_cache = response.json()
+                        self._jwks_cache_time = now
+                        logger.info(f"JWKS fetched from fallback path: {path}")
+                        return self._jwks_cache
+
+                logger.error("Failed to fetch JWKS from any known endpoint")
             except Exception as e:
                 logger.error(f"Error fetching JWKS: {e}")
         return {}
