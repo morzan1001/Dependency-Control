@@ -1,3 +1,11 @@
+# Release 1.1.3
+
+## 📦 Build & CI
+
+- chore: update version to 1.1.3; enhance frontend URL handling and update user model for optional hashed_password and notification_preferences (#0)
+
+
+
 # Release 1.1.2
 
 ## 📦 Build & CI
