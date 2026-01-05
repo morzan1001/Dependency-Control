@@ -1,3 +1,12 @@
+# Release 1.1.5
+
+## 🚀 Features
+
+- feat: update UserDetailsCard to use notification channels and refactor API calls for public config (#0)
+- feat: add gitlab_oidc_audience field to system settings and update UI for OIDC audience input (#0)
+
+
+
 # Release 1.1.4
 
 ## 📦 Build & CI
