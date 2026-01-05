@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { updateMe, User, SystemSettings, ApiError } from '@/lib/api';
+import { updateMe, User, ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,10 +10,10 @@ import { getErrorMessage } from "@/lib/utils"
 
 interface UserDetailsCardProps {
   user: User | undefined;
-  systemSettings: SystemSettings | undefined;
+  notificationChannels: string[] | undefined;
 }
 
-export function UserDetailsCard({ user, systemSettings }: UserDetailsCardProps) {
+export function UserDetailsCard({ user, notificationChannels }: UserDetailsCardProps) {
   const queryClient = useQueryClient();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -89,7 +89,7 @@ export function UserDetailsCard({ user, systemSettings }: UserDetailsCardProps) 
             />
           </div>
           
-          {systemSettings?.slack_bot_token && (
+          {notificationChannels?.includes('slack') && (
             <div className="grid gap-2">
               <Label htmlFor="slack-username">Slack Member ID</Label>
               <Input 
@@ -104,7 +104,7 @@ export function UserDetailsCard({ user, systemSettings }: UserDetailsCardProps) 
             </div>
           )}
 
-          {systemSettings?.mattermost_url && (
+          {notificationChannels?.includes('mattermost') && (
             <div className="grid gap-2">
               <Label htmlFor="mattermost-username">Mattermost Username</Label>
               <Input 

@@ -76,14 +76,21 @@ export const refreshToken = async (token: string) => {
     return response.data;
 }
 
+export interface PublicConfig {
+  allow_public_registration: boolean;
+  enforce_2fa: boolean;
+  enforce_email_verification: boolean;
+  oidc_enabled?: boolean;
+  oidc_provider_name?: string;
+}
+
 export const getPublicConfig = async () => {
-  const response = await api.get<{ 
-    allow_public_registration: boolean, 
-    enforce_2fa: boolean, 
-    enforce_email_verification: boolean,
-    oidc_enabled?: boolean,
-    oidc_provider_name?: string
-  }>('/system/public-config');
+  const response = await api.get<PublicConfig>('/system/public-config');
+  return response.data;
+};
+
+export const getNotificationChannels = async () => {
+  const response = await api.get<string[]>('/system/notifications/channels');
   return response.data;
 };
 

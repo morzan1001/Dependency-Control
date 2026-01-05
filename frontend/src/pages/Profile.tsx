@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { getMe, getSystemSettings } from '@/lib/api';
+import { getMe, getNotificationChannels } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserDetailsCard } from '@/components/profile/UserDetailsCard';
 import { PasswordUpdateCard } from '@/components/profile/PasswordUpdateCard';
@@ -11,9 +11,9 @@ export default function ProfilePage() {
     queryFn: getMe,
   });
 
-  const { data: systemSettings } = useQuery({
-    queryKey: ['systemSettings'],
-    queryFn: getSystemSettings,
+  const { data: notificationChannels } = useQuery({
+    queryKey: ['notificationChannels'],
+    queryFn: getNotificationChannels,
   });
 
   if (isLoading) {
@@ -34,7 +34,7 @@ export default function ProfilePage() {
       <h1 className="text-3xl font-bold tracking-tight">Profile</h1>
 
       <div className="grid gap-6 md:grid-cols-2">
-        <UserDetailsCard user={user} systemSettings={systemSettings} />
+        <UserDetailsCard user={user} notificationChannels={notificationChannels} />
         <div className="space-y-6">
           <PasswordUpdateCard user={user} />
           <TwoFactorAuthCard user={user} />
