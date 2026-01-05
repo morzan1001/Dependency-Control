@@ -63,7 +63,7 @@ sast-scan:
 iac-scan:
   stage: security-scan
   image:
-    name: checkmarx/kics:latest
+    name: checkmarx/kics:alpine
     entrypoint: [""]
   id_tokens:
     DEP_CONTROL_TOKEN:
@@ -80,19 +80,19 @@ bearer-scan:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
   before_script:
-    - apk add --no-cache curl jq bash coreutils
+    - apk add --no-cache curl jq bash coreutils git
   script:
     - *download_and_verify
     - ./scanner.sh bearer
 
 callgraph-upload:
   stage: security-scan
-  image: node:20-alpine
+  image: golang:1.23-alpine
   id_tokens:
     DEP_CONTROL_TOKEN:
       aud: dependency-control
   before_script:
-    - apk add --no-cache curl jq bash git python3 py3-pip coreutils
+    - apk add --no-cache curl jq bash git python3 py3-pip coreutils nodejs npm
   script:
     - *download_and_verify
     - ./scanner.sh callgraph

@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 
 
 class BaseIngest(BaseModel):
+    """Base schema for all ingest payloads."""
+
     pipeline_id: int = Field(..., description="Unique ID of the pipeline run")
     commit_hash: str = Field(..., description="Git commit hash")
     branch: str = Field(..., description="Git branch name")
@@ -21,6 +23,17 @@ class BaseIngest(BaseModel):
     pipeline_user: Optional[str] = Field(
         None, description="User who triggered the pipeline"
     )
+
+
+class ScanContext(BaseModel):
+    """Context returned after finding or creating a scan."""
+
+    scan_id: str = Field(..., description="Unique identifier of the scan")
+    is_new: bool = Field(..., description="Whether this is a newly created scan")
+    pipeline_url: Optional[str] = Field(None, description="URL to the pipeline")
+
+    class Config:
+        frozen = True
 
 
 class SBOMIngest(BaseIngest):
