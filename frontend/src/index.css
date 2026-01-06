@@ -1,7 +1,9 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
- 
+@import "tailwindcss";
+
+@config "../tailwind.config.cjs";
+@source "../src/**/*.{ts,tsx}";
+
+
 @layer base {
   :root {
     --background: 0 0% 100%;
