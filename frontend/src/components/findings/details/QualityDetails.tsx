@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { AdditionalDetailsView } from '@/components/findings/details/AdditionalDetailsView'
+import { DetailSection } from '@/components/findings/details/shared'
 import type { FindingDetails } from '@/lib/api'
 import {
   formatScorecardCriticalIssue,
@@ -105,11 +106,10 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
 
       {/* Critical Issues */}
       {criticalIssues.length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-red-500" />
-            Critical Issues
-          </h4>
+        <DetailSection
+          label="Critical Issues"
+          icon={<AlertTriangle className="h-4 w-4 text-red-500" />}
+        >
           <div className="flex flex-wrap gap-2">
             {criticalIssues.map((issue, idx) => (
               <Badge key={idx} variant="destructive" className="text-xs">
@@ -117,13 +117,12 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
               </Badge>
             ))}
           </div>
-        </div>
+        </DetailSection>
       )}
 
       {/* Failed Checks */}
       {failedChecks.length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">Failed Checks ({failedChecks.length})</h4>
+        <DetailSection label={`Failed Checks (${failedChecks.length})`}>
           <div className="grid grid-cols-2 gap-2">
             {failedChecks.map((check, idx) => (
               <div key={idx} className="flex items-center justify-between p-2 bg-muted/50 rounded border">
@@ -134,13 +133,12 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
               </div>
             ))}
           </div>
-        </div>
+        </DetailSection>
       )}
 
       {/* All Checks Summary */}
       {checksSummary && Object.keys(checksSummary).length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">All Checks</h4>
+        <DetailSection label="All Checks">
           <div className="grid grid-cols-3 gap-1 text-xs">
             {Object.entries(checksSummary)
               .sort((a, b) => a[1] - b[1])
@@ -151,7 +149,7 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
                 </div>
               ))}
           </div>
-        </div>
+        </DetailSection>
       )}
 
       {/* Recommendation */}
@@ -226,8 +224,7 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
     <div className="space-y-4">
       {/* Risk Factors */}
       {risks.length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">Risk Factors ({risks.length})</h4>
+        <DetailSection label={`Risk Factors (${risks.length})`}>
           <div className="space-y-2">
             {risks.map((risk, idx) => {
               const Icon = getRiskIcon(risk.type)
@@ -250,13 +247,12 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
               )
             })}
           </div>
-        </div>
+        </DetailSection>
       )}
 
       {/* Maintainer Info */}
       {Object.keys(maintainerInfo).length > 0 && (
-        <div>
-          <h4 className="text-sm font-medium text-muted-foreground mb-2">Maintainer Information</h4>
+        <DetailSection label="Maintainer Information">
           <div className="bg-muted/50 rounded-lg p-4 border space-y-3">
             <div className="grid grid-cols-2 gap-4">
               {/* Author */}
@@ -346,7 +342,7 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
               </div>
             )}
           </div>
-        </div>
+        </DetailSection>
       )}
     </div>
   )

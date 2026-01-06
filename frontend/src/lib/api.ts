@@ -435,6 +435,15 @@ export interface FindingDetails {
   fingerprint?: string;
   parent_line?: number;
   sink_content?: string;
+  // OpenGrep-specific SAST fields
+  owasp?: string[];
+  source_rule_url?: string;
+  confidence?: string;
+  likelihood?: string;
+  impact?: string;
+  technology?: string[];
+  subcategory?: string[];
+  vulnerability_class?: string[];
   // KICS-specific IaC fields
   platform?: string;
   issue_type?: string;

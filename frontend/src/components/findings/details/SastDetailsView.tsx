@@ -1,13 +1,18 @@
 import { Finding } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
-import { ExternalLink, FileCode, AlertTriangle, Info, BookOpen } from "lucide-react"
+import { ExternalLink, AlertTriangle, Info, BookOpen, Shield, Target, Gauge } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import ReactMarkdown, { Components } from 'react-markdown'
-import { buildFileUrl } from "@/lib/scm-links"
+import { 
+    DetailSection, 
+    BadgeList, 
+    ReferencesList, 
+    RiskBadge, 
+    FileLocation 
+} from "./shared"
 
 // Markdown component overrides - defined outside component to avoid re-creation
 const markdownComponents: Partial<Components> = {
-    // Style code blocks
     code: ({ className, children, ...props }) => {
         const isInline = !className
         if (isInline) {
@@ -25,14 +30,12 @@ const markdownComponents: Partial<Components> = {
             </pre>
         )
     },
-    // Style headings
     h2: ({ children }) => (
         <h5 className="text-sm font-semibold mt-4 mb-2 flex items-center gap-2">
             <Info className="h-4 w-4" />
             {children}
         </h5>
     ),
-    // Style lists
     ul: ({ children }) => (
         <ul className="list-disc list-inside space-y-1 text-sm">{children}</ul>
     ),
@@ -59,79 +62,28 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     const isOpenGrep = finding.scanners?.includes('opengrep')
     const isKics = finding.scanners?.includes('kics')
 
-    // Determine rule ID based on scanner
     const ruleId = details.rule_id || details.check_id || "Unknown"
-    
-    // Location info
     const startLine = details.start?.line || details.line
     const endLine = details.end?.line || details.line || startLine
-    const startCol = details.start?.column
-    const endCol = details.end?.column
-
-    // Build location string
-    let locationStr = startLine ? `Line ${startLine}` : "Unknown"
-    if (startLine && endLine && endLine !== startLine) {
-        locationStr += ` - ${endLine}`
-    }
-    if (startCol && endCol) {
-        locationStr += ` (Col ${startCol}-${endCol})`
-    }
-
-    // Build file URL for source code link
-    const fileUrl = scanContext ? buildFileUrl({
-        projectUrl: scanContext.projectUrl,
-        pipelineUrl: scanContext.pipelineUrl,
-        commitHash: scanContext.commitHash,
-        branch: scanContext.branch,
-        filePath: finding.component,
-        startLine: typeof startLine === 'number' ? startLine : null,
-        endLine: typeof endLine === 'number' ? endLine : null,
-    }) : null
 
     return (
         <div className="space-y-4">
             {/* File and Location with Source Link */}
-            <div className="p-4 bg-muted/50 rounded-lg border">
-                <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                        <h4 className="text-sm font-medium text-muted-foreground mb-1">File</h4>
-                        <div className="flex items-center gap-2">
-                            <FileCode className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                            {fileUrl ? (
-                                <a 
-                                    href={fileUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="font-mono text-sm text-primary hover:underline truncate"
-                                    title={finding.component}
-                                >
-                                    {finding.component}
-                                    <ExternalLink className="h-3 w-3 ml-1 inline" />
-                                </a>
-                            ) : (
-                                <code className="font-mono text-sm truncate" title={finding.component}>
-                                    {finding.component}
-                                </code>
-                            )}
-                        </div>
-                    </div>
-                    <div className="flex-shrink-0">
-                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Location</h4>
-                        <p className="text-sm">{locationStr}</p>
-                    </div>
-                </div>
-            </div>
+            <FileLocation
+                filePath={finding.component || "Unknown"}
+                startLine={startLine}
+                endLine={endLine}
+                startCol={details.start?.column}
+                endCol={details.end?.column}
+                scmContext={scanContext}
+            />
 
             {/* Rule Info */}
             <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
-                <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Rule ID</h4>
-                    <div className="flex items-center gap-2">
-                        <code className="font-mono text-sm bg-background px-2 py-0.5 rounded">{ruleId}</code>
-                    </div>
-                </div>
-                <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Scanner</h4>
+                <DetailSection label="Rule ID" compact>
+                    <code className="font-mono text-sm bg-background px-2 py-0.5 rounded">{ruleId}</code>
+                </DetailSection>
+                <DetailSection label="Scanner" compact>
                     <div className="flex flex-wrap gap-1">
                         {finding.scanners?.map(scanner => (
                             <Badge key={scanner} variant="secondary" className="text-xs">
@@ -139,78 +91,141 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                             </Badge>
                         ))}
                     </div>
-                </div>
+                </DetailSection>
             </div>
 
             {/* Bearer-specific: Title */}
             {isBearer && details.title && details.title !== finding.description && (
-                <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Issue</h4>
+                <DetailSection label="Issue" compact>
                     <p className="text-sm font-medium">{details.title}</p>
-                </div>
+                </DetailSection>
             )}
 
-            {/* CWE IDs (Bearer) */}
+            {/* CWE IDs (shared between Bearer and OpenGrep) */}
             {details.cwe_ids && details.cwe_ids.length > 0 && (
-                <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-2">CWE References</h4>
-                    <div className="flex flex-wrap gap-2">
-                        {details.cwe_ids.map((cwe: string) => (
-                            <a
-                                key={cwe}
-                                href={`https://cwe.mitre.org/data/definitions/${cwe}.html`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center"
-                            >
-                                <Badge variant="outline" className="hover:bg-muted cursor-pointer">
-                                    <AlertTriangle className="h-3 w-3 mr-1" />
-                                    CWE-{cwe}
-                                    <ExternalLink className="h-3 w-3 ml-1" />
-                                </Badge>
-                            </a>
-                        ))}
-                    </div>
-                </div>
+                <DetailSection label="CWE References">
+                    <BadgeList
+                        items={details.cwe_ids}
+                        variant="outline"
+                        icon={AlertTriangle}
+                        formatLabel={(cwe) => `CWE-${cwe}`}
+                        buildUrl={(cwe) => `https://cwe.mitre.org/data/definitions/${cwe}.html`}
+                    />
+                </DetailSection>
+            )}
+
+            {/* OWASP References (OpenGrep) */}
+            {details.owasp && details.owasp.length > 0 && (
+                <DetailSection label="OWASP References">
+                    <BadgeList
+                        items={details.owasp}
+                        variant="outline"
+                        icon={Shield}
+                        badgeClassName="text-orange-600 border-orange-300"
+                    />
+                </DetailSection>
             )}
 
             {/* Category Groups (Bearer) */}
             {details.category_groups && details.category_groups.length > 0 && (
-                <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Categories</h4>
-                    <div className="flex flex-wrap gap-2">
-                        {details.category_groups.map((cat: string) => (
-                            <Badge key={cat} variant="secondary">
-                                {cat}
-                            </Badge>
-                        ))}
-                    </div>
+                <DetailSection label="Categories">
+                    <BadgeList items={details.category_groups} variant="secondary" />
+                </DetailSection>
+            )}
+
+            {/* Risk Assessment (OpenGrep) */}
+            {isOpenGrep && (details.confidence || details.likelihood || details.impact) && (
+                <div className="grid grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg border">
+                    {details.confidence && (
+                        <DetailSection label="Confidence" icon={Target} compact>
+                            <RiskBadge level={details.confidence} />
+                        </DetailSection>
+                    )}
+                    {details.likelihood && (
+                        <DetailSection label="Likelihood" icon={Gauge} compact>
+                            <RiskBadge level={details.likelihood} />
+                        </DetailSection>
+                    )}
+                    {details.impact && (
+                        <DetailSection label="Impact" icon={AlertTriangle} compact>
+                            <RiskBadge level={details.impact} />
+                        </DetailSection>
+                    )}
+                </div>
+            )}
+
+            {/* Vulnerability Class, Technology, Subcategory (OpenGrep) */}
+            {isOpenGrep && (
+                ((details.vulnerability_class?.length ?? 0) > 0) ||
+                ((details.technology?.length ?? 0) > 0) ||
+                ((details.subcategory?.length ?? 0) > 0)
+            ) && (
+                <div className="flex flex-wrap gap-4">
+                    {details.vulnerability_class && details.vulnerability_class.length > 0 && (
+                        <DetailSection label="Vulnerability Class">
+                            <BadgeList 
+                                items={details.vulnerability_class} 
+                                variant="outline"
+                                badgeClassName="text-red-600 border-red-300"
+                            />
+                        </DetailSection>
+                    )}
+                    {details.technology && details.technology.length > 0 && (
+                        <DetailSection label="Technology">
+                            <BadgeList items={details.technology} variant="secondary" />
+                        </DetailSection>
+                    )}
+                    {details.subcategory && details.subcategory.length > 0 && (
+                        <DetailSection label="Subcategory">
+                            <BadgeList items={details.subcategory} variant="outline" />
+                        </DetailSection>
+                    )}
                 </div>
             )}
 
             {/* Code Extract (Bearer) */}
             {details.code_extract && (
-                <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Code</h4>
+                <DetailSection label="Code">
                     <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs font-mono border">
                         <code>{details.code_extract}</code>
                     </pre>
-                </div>
+                </DetailSection>
             )}
 
-            {/* Description with Markdown support (Bearer descriptions are often markdown) */}
+            {/* Description with Markdown support */}
             {finding.description && (
-                <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Description & Remediation</h4>
+                <DetailSection label="Description & Remediation">
                     <div className="prose prose-sm dark:prose-invert max-w-none bg-muted/30 p-4 rounded-lg border">
                         <ReactMarkdown components={markdownComponents}>
                             {finding.description}
                         </ReactMarkdown>
                     </div>
-                </div>
+                </DetailSection>
             )}
 
-            {/* Documentation Link (Bearer) */}
+            {/* References (OpenGrep) */}
+            {details.references && details.references.length > 0 && (
+                <DetailSection label="References">
+                    <ReferencesList urls={details.references} />
+                </DetailSection>
+            )}
+
+            {/* Source Rule URL (OpenGrep) */}
+            {isOpenGrep && details.source_rule_url && (
+                <DetailSection label="Rule Source">
+                    <a
+                        href={details.source_rule_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+                    >
+                        <ExternalLink className="h-3 w-3" />
+                        {details.source_rule_url}
+                    </a>
+                </DetailSection>
+            )}
+
+            {/* Documentation Link (shared) */}
             {details.documentation_url && (
                 <div className="pt-2">
                     <Button variant="outline" size="sm" asChild>
@@ -228,42 +243,28 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </div>
             )}
 
-            {/* OpenGrep-specific metadata */}
-            {isOpenGrep && details.metadata && (
-                <div>
-                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Rule Metadata</h4>
-                    <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs">
-                        {JSON.stringify(details.metadata, null, 2)}
-                    </pre>
-                </div>
-            )}
-
             {/* KICS-specific fields */}
             {isKics && (
                 <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
                     {details.category && (
-                        <div>
-                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Category</h4>
+                        <DetailSection label="Category" compact>
                             <p className="text-sm">{details.category}</p>
-                        </div>
+                        </DetailSection>
                     )}
                     {details.platform && (
-                        <div>
-                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Platform</h4>
+                        <DetailSection label="Platform" compact>
                             <p className="text-sm">{details.platform}</p>
-                        </div>
+                        </DetailSection>
                     )}
                     {details.expected_value && (
-                        <div>
-                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Expected</h4>
+                        <DetailSection label="Expected" compact>
                             <p className="text-sm font-mono text-green-600">{details.expected_value}</p>
-                        </div>
+                        </DetailSection>
                     )}
                     {details.actual_value && (
-                        <div>
-                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Actual</h4>
+                        <DetailSection label="Actual" compact>
                             <p className="text-sm font-mono text-red-600">{details.actual_value}</p>
-                        </div>
+                        </DetailSection>
                     )}
                 </div>
             )}

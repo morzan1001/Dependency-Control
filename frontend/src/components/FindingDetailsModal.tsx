@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
 import { Finding, NestedVulnerability } from "@/lib/api"
-import { AlertTriangle, ExternalLink, Shield, ShieldAlert, FileCode, GitBranch } from "lucide-react"
+import { AlertTriangle, ExternalLink, Shield, ShieldAlert } from "lucide-react"
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
 import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
@@ -16,7 +16,7 @@ import { AggregatedQualityView, MaintainerRiskDetailsView } from '@/components/f
 import { AdditionalDetailsView } from '@/components/findings/details/AdditionalDetailsView'
 import { WaiverForm } from '@/components/findings/details/WaiverForm'
 import { SastDetailsView, ScanContext } from '@/components/findings/details/SastDetailsView'
-import { buildFileUrl } from '@/lib/scm-links'
+import { DetailSection, FileLocation, BadgeList } from '@/components/findings/details/shared'
 import {
   getFindingId,
   getFindingPackage,
@@ -98,38 +98,33 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                     ) : (
                       <div className="space-y-6 pt-2 pb-4">
                             <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Component</h4>
+                                <DetailSection label="Component" compact>
                                     <p className="font-medium">{getFindingPackage(finding)}</p>
-                                </div>
-                                <div>
-                                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Version</h4>
+                                </DetailSection>
+                                <DetailSection label="Version" compact>
                                     <p className="font-medium">{getFindingVersion(finding)}</p>
-                                </div>
-                                <div>
-                                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Fixed Version</h4>
+                                </DetailSection>
+                                <DetailSection label="Fixed Version" compact>
                                     <p className="font-medium text-green-600">{finding.details?.fixed_version || "None"}</p>
-                                </div>
-                                <div>
-                                    <h4 className="text-sm font-medium text-muted-foreground mb-1">ID</h4>
+                                </DetailSection>
+                                <DetailSection label="ID" compact>
                                     <p className="font-mono text-sm">{getFindingId(finding)}</p>
-                                </div>
+                                </DetailSection>
                                 {finding.scanners && finding.scanners.length > 0 && (
                                     <div className="col-span-2">
-                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Detected By</h4>
-                                        <div className="flex flex-wrap gap-2">
-                                            {finding.scanners.map((scanner) => (
-                                                <Badge key={scanner} variant="outline" className="font-mono text-xs">
-                                                    {scanner}
-                                                </Badge>
-                                            ))}
-                                        </div>
+                                        <DetailSection label="Detected By" compact>
+                                            <BadgeList 
+                                                items={finding.scanners} 
+                                                variant="outline" 
+                                                badgeClassName="font-mono text-xs"
+                                            />
+                                        </DetailSection>
                                     </div>
                                 )}
                                 {finding.found_in && finding.found_in.length > 0 && (
                                     <div className="col-span-2">
-                                        <h4 className="text-sm font-medium text-muted-foreground mb-2">Found In Sources</h4>
-                                        <div className="flex flex-wrap gap-2 items-start">
+                                        <DetailSection label="Found In Sources">
+                                            <div className="flex flex-wrap gap-2 items-start">
                                             {finding.found_in.map((source) => {
                                                 // Check if this looks like an SBOM reference
                                                 const isSbomRef = source.match(/SBOM #\d+/i) || !source.includes('/')
@@ -149,11 +144,11 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     </Badge>
                                                 )
                                             })}
-                                            {/* Origin Badge inline with SBOM badges */}
                                             {finding.source_type && (
                                                 <OriginBadge finding={finding} />
                                             )}
                                         </div>
+                                        </DetailSection>
                                     </div>
                                 )}
                                 {/* Origin Badge for findings without found_in */}
@@ -164,8 +159,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 )}
                                 {finding.related_findings && finding.related_findings.length > 0 && (
                                     <div className="col-span-2">
-                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Related Findings</h4>
-                                        <div className="flex flex-wrap gap-2">
+                                        <DetailSection label="Related Findings" compact>
+                                            <div className="flex flex-wrap gap-2">
                                             {finding.related_findings.map((relatedId) => {
                                                 // Format the label and determine badge color based on type
                                                 let label = relatedId;
@@ -222,85 +217,46 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                 );
                                             })}
                                         </div>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            Click to view related findings for this component.
-                                        </p>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                Click to view related findings for this component.
+                                            </p>
+                                        </DetailSection>
                                     </div>
                                 )}
                             </div>
 
                             {finding.description && finding.type !== 'vulnerability' && finding.type !== 'sast' && finding.type !== 'iac' && (
-                                <div>
-                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Description</h4>
+                                <DetailSection label="Description">
                                     <p className="text-sm leading-relaxed">{finding.description}</p>
-                                </div>
+                                </DetailSection>
                             )}
 
                             {finding.type === 'secret' && (
                                 <div className="space-y-4">
                                     {/* File location with link */}
                                     {scanContext && finding.component && (
-                                        (() => {
-                                            const fileUrl = buildFileUrl({
-                                                projectUrl: scanContext.projectUrl,
-                                                pipelineUrl: scanContext.pipelineUrl,
-                                                commitHash: scanContext.commitHash,
-                                                branch: scanContext.branch,
-                                                filePath: finding.component,
-                                                startLine: finding.details?.line,
-                                            })
-                                            return fileUrl ? (
-                                                <div className="p-4 bg-muted/50 rounded-lg border">
-                                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">File Location</h4>
-                                                    <div className="flex items-center gap-2">
-                                                        <FileCode className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                                                        <a 
-                                                            href={fileUrl}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="font-mono text-sm text-primary hover:underline truncate"
-                                                            title={finding.component}
-                                                        >
-                                                            {finding.component}
-                                                            {finding.details?.line && <span className="text-muted-foreground">:{finding.details.line}</span>}
-                                                            <ExternalLink className="h-3 w-3 ml-1 inline" />
-                                                        </a>
-                                                    </div>
-                                                    <div className="mt-3 pt-3 border-t">
-                                                        <Button variant="outline" size="sm" asChild>
-                                                            <a 
-                                                                href={fileUrl}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="inline-flex items-center gap-2"
-                                                            >
-                                                                <GitBranch className="h-4 w-4" />
-                                                                View in Repository
-                                                                <ExternalLink className="h-3 w-3" />
-                                                            </a>
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            ) : null
-                                        })()
+                                        <FileLocation
+                                            filePath={finding.component}
+                                            startLine={finding.details?.line}
+                                            scmContext={scanContext}
+                                        />
                                     )}
                                     <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Detector</h4>
+                                        <DetailSection label="Detector" compact>
                                             <p className="font-medium">{finding.details?.detector || "Unknown"}</p>
-                                        </div>
-                                        <div>
-                                            <h4 className="text-sm font-medium text-muted-foreground mb-1">Verified</h4>
+                                        </DetailSection>
+                                        <DetailSection label="Verified" compact>
                                             <Badge variant={finding.details?.verified ? "destructive" : "secondary"}>
                                                 {finding.details?.verified ? "Verified Live" : "Unverified"}
                                             </Badge>
-                                        </div>
+                                        </DetailSection>
                                         {finding.details?.redacted && (
                                             <div className="col-span-2">
-                                                <h4 className="text-sm font-medium text-muted-foreground mb-1">Redacted Secret</h4>
-                                                <code className="bg-background p-2 rounded border block w-full font-mono text-sm break-all">
-                                                    {finding.details.redacted}
-                                                </code>
+                                                <DetailSection label="Redacted Secret" compact>
+                                                    <code className="bg-background p-2 rounded border block w-full font-mono text-sm break-all">
+                                                        {finding.details.redacted}
+                                                    </code>
+                                                </DetailSection>
                                             </div>
                                         )}
                                     </div>
@@ -325,11 +281,11 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
 
                                         return (
                                             <div className="space-y-4">
-                                                <h4 className="text-sm font-medium text-muted-foreground">
-                                                    {vulns.length > 1 
-                                                        ? `Found ${vulns.length} vulnerabilities in ${getFindingPackage(finding)}` 
-                                                        : "Vulnerability Details"}
-                                                </h4>
+                                                {vulns.length > 1 && (
+                                                    <p className="text-sm text-muted-foreground mb-2">
+                                                        Found {vulns.length} vulnerabilities in {getFindingPackage(finding)}
+                                                    </p>
+                                                )}
                                                 
                                                 {/* Unified context banners section */}
                                                 <ContextBannersSection finding={finding} />
@@ -616,10 +572,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                             )}
 
                             {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && finding.type !== 'outdated' && finding.type !== 'quality' && finding.type !== 'license' && !(finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info) && (
-                                <div>
-                                    <h4 className="text-sm font-medium text-muted-foreground mb-2">Additional Details</h4>
+                                <DetailSection label="Additional Details">
                                     <AdditionalDetailsView details={finding.details} />
-                                </div>
+                                </DetailSection>
                             )}
                         </div>
                     )}

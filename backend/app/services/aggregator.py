@@ -1736,6 +1736,7 @@ class ResultAggregator:
             check_id = finding.get("check_id", "unknown-check")
             path = finding.get("path", "unknown")
             extra = finding.get("extra", {})
+            metadata = extra.get("metadata", {})
 
             severity_map = {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}
 
@@ -1748,6 +1749,21 @@ class ResultAggregator:
             ).hexdigest()
             finding_id = f"SAST-{finding_hash[:8]}"
 
+            # Extract CWE IDs from metadata (format: "CWE-327: Description")
+            cwe_ids = []
+            for cwe_entry in metadata.get("cwe", []):
+                if isinstance(cwe_entry, str) and cwe_entry.startswith("CWE-"):
+                    # Extract just the number: "CWE-327: Description" -> "327"
+                    cwe_match = cwe_entry.split(":")[0].replace("CWE-", "")
+                    if cwe_match:
+                        cwe_ids.append(cwe_match)
+
+            # Extract references from metadata
+            references = metadata.get("references", [])
+            
+            # Build documentation URL from source or shortlink
+            documentation_url = metadata.get("shortlink") or metadata.get("source")
+
             self._add_finding(
                 Finding(
                     id=finding_id,
@@ -1758,10 +1774,26 @@ class ResultAggregator:
                     description=message,
                     scanners=["opengrep"],
                     details={
-                        "check_id": check_id,
+                        "rule_id": check_id,
                         "start": finding.get("start"),
                         "end": finding.get("end"),
-                        "metadata": extra.get("metadata"),
+                        # Extracted and normalized fields
+                        "cwe_ids": cwe_ids,
+                        "owasp": metadata.get("owasp", []),
+                        "references": references,
+                        "documentation_url": documentation_url,
+                        "source_rule_url": metadata.get("source-rule-url"),
+                        # Confidence and risk assessment
+                        "confidence": metadata.get("confidence"),
+                        "likelihood": metadata.get("likelihood"),
+                        "impact": metadata.get("impact"),
+                        # Categorization
+                        "category": metadata.get("category"),
+                        "subcategory": metadata.get("subcategory", []),
+                        "technology": metadata.get("technology", []),
+                        "vulnerability_class": metadata.get("vulnerability_class", []),
+                        # License info (for rule attribution)
+                        "license": metadata.get("license"),
                     },
                 ),
                 source=source,
