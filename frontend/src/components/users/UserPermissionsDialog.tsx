@@ -1,5 +1,6 @@
-import { User, updateUser, UserUpdate, ApiError } from '@/lib/api';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { ApiError } from '@/api/client';
+import { User } from '@/types/user'; 
+import { useUpdateUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
@@ -22,7 +23,6 @@ interface UserPermissionsDialogProps {
 }
 
 export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissionsDialogProps) {
-  const queryClient = useQueryClient();
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
 
   useEffect(() => {
@@ -31,21 +31,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
     }
   }, [user, open]);
 
-  const updateUserMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UserUpdate }) => updateUser(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success("Success", {
-        description: "User permissions updated successfully.",
-      });
-      onOpenChange(false);
-    },
-    onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: error.response?.data?.detail || "Failed to update user permissions.",
-      });
-    },
-  });
+  const updateUserMutation = useUpdateUser();
 
   const handlePermissionChange = (permission: string, checked: boolean) => {
     if (checked) {
@@ -60,6 +46,18 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
     updateUserMutation.mutate({
       id: user._id || user.id,
       data: { permissions: selectedPermissions }
+    }, {
+      onSuccess: () => {
+        toast.success("Success", {
+          description: "User permissions updated successfully.",
+        });
+        onOpenChange(false);
+      },
+      onError: (error: any) => {
+        toast.error("Error", {
+          description: (error as ApiError).response?.data?.detail || "Failed to update user permissions.",
+        });
+      },
     });
   };
 

@@ -6,10 +6,8 @@
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { 
-  getMe, 
-  getSystemSettings, 
-} from '@/lib/api'
+import { authApi } from '@/api/auth'
+import { systemApi } from '@/api/system'
 
 /**
  * Centralized query keys for consistency and easy invalidation
@@ -50,7 +48,7 @@ export const queryKeys = {
 export function useCurrentUser() {
   return useQuery({
     queryKey: queryKeys.me,
-    queryFn: getMe,
+    queryFn: authApi.getMe,
     staleTime: 5 * 60 * 1000, // 5 minutes
   })
 }
@@ -69,7 +67,7 @@ export function useInvalidateCurrentUser() {
 export function useSystemSettings() {
   return useQuery({
     queryKey: queryKeys.systemSettings,
-    queryFn: getSystemSettings,
+    queryFn: systemApi.getSettings,
     staleTime: 10 * 60 * 1000, // 10 minutes - settings don't change often
   })
 }

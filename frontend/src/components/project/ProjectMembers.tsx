@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { inviteProjectMember, updateProjectMember, removeProjectMember, Project, ApiError } from '@/lib/api'
+import { projectApi } from '@/api/projects'
+import { ApiError } from '@/api/client'
+import { Project } from '@/types/project'
 import { useAuth } from '@/context/useAuth'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -46,7 +48,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
   const [inviteRole, setInviteRole] = useState("viewer")
 
   const inviteMemberMutation = useMutation({
-    mutationFn: (data: { email: string, role: string }) => inviteProjectMember(projectId, data.email, data.role),
+    mutationFn: (data: { email: string, role: string }) => projectApi.inviteMember(projectId, data.email, data.role),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       setIsInviteMemberOpen(false)
@@ -62,7 +64,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
   })
 
   const updateMemberMutation = useMutation({
-    mutationFn: (data: { userId: string, role: string }) => updateProjectMember(projectId, data.userId, data.role),
+    mutationFn: (data: { userId: string, role: string }) => projectApi.updateMember(projectId, data.userId, data.role),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Member role updated")
@@ -75,7 +77,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
   })
 
   const removeMemberMutation = useMutation({
-    mutationFn: (userId: string) => removeProjectMember(projectId, userId),
+    mutationFn: (userId: string) => projectApi.removeMember(projectId, userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Member removed")

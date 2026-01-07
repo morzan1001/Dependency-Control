@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { getProjectScans, getProjectBranches, Scan } from '@/lib/api'
+import { scanApi } from '@/api/scans'
+import { projectApi } from '@/api/projects'
+import { Scan } from '@/types/scan'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -35,12 +37,12 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
 
   const { data: branches } = useQuery({
     queryKey: ['project-branches', projectId],
-    queryFn: () => getProjectBranches(projectId),
+    queryFn: () => projectApi.getBranches(projectId),
   })
 
   const { data: scans, isLoading, isPlaceholderData } = useQuery({
     queryKey: ['project-scans', projectId, page, selectedBranch, sortBy, sortOrder],
-    queryFn: () => getProjectScans(projectId, page * limit, limit, selectedBranch, sortBy, sortOrder, true),
+    queryFn: () => scanApi.getProjectScans(projectId, page * limit, limit, selectedBranch, sortBy, sortOrder, true),
     placeholderData: (previousData) => previousData,
   })
 

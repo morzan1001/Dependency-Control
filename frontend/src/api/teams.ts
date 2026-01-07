@@ -1,0 +1,48 @@
+import { api } from '@/api/client';
+import { Team, TeamCreate, TeamMemberCreate } from '@/types/team';
+
+export const teamApi = {
+  getAll: async (search?: string, sortBy = 'name', sortOrder = 'asc') => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    params.append('sort_by', sortBy);
+    params.append('sort_order', sortOrder);
+    const response = await api.get<Team[]>('/teams/', { params });
+    // Map _id to id if needed, or stick to backend structure
+    return response.data; 
+  },
+
+  getOne: async (id: string) => {
+    const response = await api.get<Team>(`/teams/${id}`);
+    return response.data;
+  },
+
+  create: async (data: TeamCreate) => {
+    const response = await api.post<Team>('/teams/', data);
+    return response.data;
+  },
+
+  update: async (id: string, data: Partial<TeamCreate>) => {
+    const response = await api.put<Team>(`/teams/${id}`, data);
+    return response.data;
+  },
+
+  delete: async (id: string) => {
+    await api.delete(`/teams/${id}`);
+  },
+
+  addMember: async (teamId: string, data: TeamMemberCreate) => {
+    const response = await api.post<Team>(`/teams/${teamId}/members`, data);
+    return response.data;
+  },
+
+  removeMember: async (teamId: string, userId: string) => {
+    const response = await api.delete<Team>(`/teams/${teamId}/members/${userId}`);
+    return response.data;
+  },
+
+  updateMember: async (teamId: string, userId: string, role: string) => {
+    const response = await api.put<Team>(`/teams/${teamId}/members/${userId}`, { role });
+    return response.data;
+  }
+};

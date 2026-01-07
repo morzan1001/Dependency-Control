@@ -1,26 +1,17 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { getProjects, createProject, getTeams, Project, getSystemSettings, ApiError } from '@/lib/api';
+import { useProjects } from '@/hooks/queries/use-projects';
+import { useSystemSettings } from '@/hooks/queries/use-system';
 import { useAuth } from '@/context/useAuth';
+import { useDebounce } from '@/hooks/use-debounce';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, Copy, Check, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, ArrowUp, ArrowDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { Project } from '@/types/project';
 import { Skeleton } from '@/components/ui/skeleton';
-import { toast } from "sonner";
-import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from '@/lib/constants';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { AVAILABLE_ANALYZERS } from '@/lib/constants';
+import { CreateProjectDialog } from '@/components/project/CreateProjectDialog';
 import {
   Select,
   SelectContent,
@@ -30,99 +21,42 @@ import {
 } from "@/components/ui/select";
 
 export default function ProjectsPage() {
-  const queryClient = useQueryClient();
   const { hasPermission } = useAuth();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [teamId, setTeamId] = useState<string | undefined>(undefined);
-  const [retentionDays, setRetentionDays] = useState(90);
-  const [analyzers, setAnalyzers] = useState<string[]>(['trivy', 'osv', 'license_compliance', 'end_of_life']);
-  const [createdProjectData, setCreatedProjectData] = useState<{ project_id: string, api_key: string, note: string } | null>(null);
-  const [hasCopied, setHasCopied] = useState(false);
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const limit = 12;
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-      setPage(1); // Reset page on search
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
+  const debouncedSearch = useDebounce(search, 300);
 
-  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
-    queryKey: ['projects', debouncedSearch, page, sortBy, sortOrder],
-    queryFn: () => getProjects(debouncedSearch, (page - 1) * limit, limit, sortBy, sortOrder),
-    placeholderData: keepPreviousData,
-  });
+  // Reset page when search changes
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjects(
+    debouncedSearch,
+    page,
+    limit,
+    sortBy,
+    sortOrder
+  );
 
   const projects = projectsData?.items || [];
   const totalPages = projectsData?.pages || 0;
 
-  const { data: teams } = useQuery({
-    queryKey: ['teams'],
-    queryFn: () => getTeams(),
-  });
+  const { data: systemSettings } = useSystemSettings();
 
-  const { data: systemSettings } = useQuery({
-    queryKey: ['systemSettings'],
-    queryFn: getSystemSettings,
-  });
-
-  const createProjectMutation = useMutation({
-    mutationFn: (data: { name: string; team_id?: string; active_analyzers: string[]; retention_days: number }) => createProject(data),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['projects'] });
-      setCreatedProjectData(data);
-      toast.success("Project created successfully");
-    },
-    onError: (error: ApiError) => {
-        toast.error("Failed to create project", {
-            description: error.response?.data?.detail || "An error occurred"
-        });
-    }
-  });
-
-  const handleCreateProject = (e: React.FormEvent) => {
-    e.preventDefault();
-    createProjectMutation.mutate({
-        name,
-        team_id: teamId === "none" ? undefined : teamId,
-        active_analyzers: analyzers,
-        retention_days: retentionDays
-    });
+  const isLimitReached = () => {
+      if (hasPermission('sysadmin')) return false;
+      if (!systemSettings?.project_limit_per_user) return false;
+      if (projectsData?.total !== undefined) {
+         return projectsData.total >= systemSettings.project_limit_per_user;
+      }
+      return false;
   };
-
-  const handleCloseCreate = () => {
-    setIsCreateOpen(false);
-    setCreatedProjectData(null);
-    setName('');
-    setTeamId(undefined);
-    setRetentionDays(90);
-    setAnalyzers(['trivy', 'osv', 'license_compliance', 'end_of_life']);
-    setHasCopied(false);
-  }
-
-  const copyToClipboard = () => {
-    if (createdProjectData?.api_key) {
-      navigator.clipboard.writeText(createdProjectData.api_key);
-      setHasCopied(true);
-      toast.success("API Key copied to clipboard");
-      setTimeout(() => setHasCopied(false), 2000);
-    }
-  }
-
-  const toggleAnalyzer = (analyzer: string) => {
-      setAnalyzers(prev => 
-          prev.includes(analyzer) 
-              ? prev.filter(a => a !== analyzer)
-              : [...prev, analyzer]
-      );
-  }
 
   if (isLoadingProjects) {
     return (
@@ -132,12 +66,9 @@ export default function ProjectsPage() {
           <Skeleton className="h-10 w-32" />
         </div>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
+          {[1, 2, 3, 4, 5, 6].map(i => (
+             <Skeleton key={i} className="h-48 rounded-xl" />
+          ))}
         </div>
       </div>
     );
@@ -180,183 +111,11 @@ export default function ProjectsPage() {
             {sortOrder === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
           </Button>
           {hasPermission('project:create') && (
-            <Dialog open={isCreateOpen} onOpenChange={(open) => {
-            if (!open && createdProjectData) {
-              handleCloseCreate();
-            } else if (!open) {
-              setIsCreateOpen(false);
-            } else {
-              setIsCreateOpen(true);
-            }
-          }}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                Create Project
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[500px]">
-              <DialogHeader>
-                <DialogTitle>{createdProjectData ? 'Project Created' : 'Create Project'}</DialogTitle>
-                <DialogDescription>
-                  {createdProjectData 
-                    ? 'Your project has been created. Please save this API Key securely as it will not be shown again.' 
-                    : 'Create a new project to start scanning for vulnerabilities.'}
-                </DialogDescription>
-              </DialogHeader>
-              
-              {createdProjectData ? (
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label>Project ID</Label>
-                    <div className="p-2 bg-muted rounded-md font-mono text-sm select-all">
-                      {createdProjectData.project_id}
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>API Key</Label>
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 bg-muted rounded-md font-mono text-sm flex-1 break-all">
-                        {createdProjectData.api_key}
-                      </div>
-                      <Button size="icon" variant="outline" onClick={copyToClipboard}>
-                        {hasCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground text-red-500 font-medium">
-                      {createdProjectData.note}
-                    </p>
-                  </div>
-                  <DialogFooter>
-                    <Button onClick={handleCloseCreate} className="w-full">
-                      I have saved the key
-                    </Button>
-                  </DialogFooter>
-                </div>
-              ) : (
-                <form onSubmit={handleCreateProject}>
-                  <div className="grid gap-4 py-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="name">Project Name</Label>
-                      <Input
-                        id="name"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder="My Awesome App"
-                        required
-                      />
-                    </div>
-                    
-                    <div className="grid gap-2">
-                      <Label htmlFor="team">Team (Optional)</Label>
-                      <Select value={teamId} onValueChange={setTeamId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a team" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">No Team</SelectItem>
-                          {teams?.map((team) => (
-                            <SelectItem key={team._id} value={team._id}>
-                              {team.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label htmlFor="retention">Retention Period (Days)</Label>
-                      {systemSettings?.retention_mode === 'global' ? (
-                          <div className="p-3 bg-muted rounded-md text-sm border">
-                              <p className="font-medium">Managed Globally</p>
-                              <p className="text-muted-foreground mt-1">
-                                  {systemSettings.global_retention_days && systemSettings.global_retention_days > 0 
-                                      ? `Data is retained for ${systemSettings.global_retention_days} days.` 
-                                      : "Data retention is disabled (data is kept forever)."}
-                              </p>
-                          </div>
-                      ) : (
-                          <Input
-                            id="retention"
-                            type="number"
-                            min="1"
-                            value={retentionDays}
-                            onChange={(e) => setRetentionDays(parseInt(e.target.value))}
-                            required
-                          />
-                      )}
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label>Active Analyzers</Label>
-                      <div className="flex flex-col gap-2 border rounded-md p-4 max-h-[300px] overflow-y-auto">
-                        {Object.entries(ANALYZER_CATEGORIES).map(([categoryId, categoryInfo]) => {
-                          const categoryAnalyzers = AVAILABLE_ANALYZERS.filter(a => a.category === categoryId);
-                          if (categoryAnalyzers.length === 0) return null;
-                          
-                          return (
-                            <div key={categoryId} className="mb-3 last:mb-0">
-                              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 pb-1 border-b">
-                                {categoryInfo.label}
-                              </div>
-                              {categoryAnalyzers.map((analyzer) => {
-                                const hasRequiredDeps = !analyzer.dependsOn || analyzer.dependsOn.some(dep => analyzers.includes(dep));
-                                return (
-                                  <div key={analyzer.id} className="flex items-start space-x-2 py-2">
-                                    <Checkbox 
-                                      id={`analyzer-${analyzer.id}`}
-                                      checked={analyzers.includes(analyzer.id)}
-                                      onCheckedChange={() => toggleAnalyzer(analyzer.id)}
-                                      className="mt-1"
-                                    />
-                                    <div className="flex flex-col gap-1">
-                                      <div className="flex items-center gap-2">
-                                        <Label htmlFor={`analyzer-${analyzer.id}`} className="font-medium cursor-pointer">
-                                          {analyzer.label}
-                                        </Label>
-                                        {analyzer.isPostProcessor && (
-                                          <span className="text-[10px] px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 rounded">
-                                            Post-Processor
-                                          </span>
-                                        )}
-                                        {analyzer.requiresCallgraph && (
-                                          <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 rounded">
-                                            Callgraph Required
-                                          </span>
-                                        )}
-                                      </div>
-                                      <p className="text-xs text-muted-foreground">
-                                        {analyzer.description}
-                                      </p>
-                                      {analyzer.isPostProcessor && !hasRequiredDeps && analyzers.includes(analyzer.id) && (
-                                        <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                                          <AlertTriangle className="h-3 w-3" />
-                                          Requires at least one vulnerability scanner to be enabled
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={createProjectMutation.isPending}>
-                      {createProjectMutation.isPending ? "Creating..." : "Create Project"}
-                    </Button>
-                  </DialogFooter>
-                </form>
-              )}
-            </DialogContent>
-          </Dialog>
-        )}
+            <Button onClick={() => setIsCreateOpen(true)} disabled={isLimitReached()}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Project
+            </Button>
+          )}
         </div>
       </div>
 
@@ -443,6 +202,12 @@ export default function ProjectsPage() {
           Next
         </Button>
       </div>
+
+      <CreateProjectDialog 
+        open={isCreateOpen} 
+        onOpenChange={setIsCreateOpen} 
+      />
     </div>
   );
 }
+    

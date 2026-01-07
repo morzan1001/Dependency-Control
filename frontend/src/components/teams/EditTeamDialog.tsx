@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { updateTeam, Team } from '@/lib/api';
+import { useUpdateTeam } from '@/hooks/queries/use-teams';
+import { Team } from '@/types/team';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,7 +23,7 @@ interface EditTeamDialogProps {
 export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const queryClient = useQueryClient();
+  const updateTeamMutation = useUpdateTeam();
 
   useEffect(() => {
     if (team) {
@@ -32,19 +32,18 @@ export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
     }
   }, [team]);
 
-  const updateTeamMutation = useMutation({
-    mutationFn: (data: { teamId: string; name: string; description: string }) => updateTeam(data.teamId, data.name, data.description),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['teams'] });
-      onClose();
-      toast.success("Team updated successfully");
-    },
-  });
-
   const handleUpdateTeam = (e: React.FormEvent) => {
     e.preventDefault();
     if (team) {
-      updateTeamMutation.mutate({ teamId: team._id, name, description });
+      updateTeamMutation.mutate(
+        { id: team._id, data: { name, description } },
+        { 
+          onSuccess: () => {
+             onClose();
+             toast.success("Team updated successfully");
+          }
+        }
+      );
     }
   };
 

@@ -1,4 +1,4 @@
-import { Team } from '@/lib/api';
+import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

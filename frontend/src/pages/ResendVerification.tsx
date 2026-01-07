@@ -3,33 +3,29 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { resendVerificationEmail } from '@/lib/api'
+import { useResendVerificationEmail } from '@/hooks/queries/use-auth'
 import { Link } from 'react-router-dom'
-import { AxiosError } from 'axios'
+import { getErrorMessage } from "@/lib/utils"
 
 export default function ResendVerification() {
-  const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  
+  const resendMutation = useResendVerificationEmail()
+  const isLoading = resendMutation.isPending
+  const error = resendMutation.error ? getErrorMessage(resendMutation.error) : null
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setIsLoading(true)
-    setError(null)
     setMessage(null)
 
     const formData = new FormData(event.currentTarget)
     const email = formData.get('email') as string
-
-    try {
-      const res = await resendVerificationEmail(email)
-      setMessage(res.message)
-    } catch (err) {
-      const error = err as AxiosError<{ detail: string }>
-      setError(error.response?.data?.detail || 'Failed to send verification email.')
-    } finally {
-      setIsLoading(false)
-    }
+    
+    resendMutation.mutate(email, {
+        onSuccess: (data) => {
+            setMessage(data.message)
+        }
+    })
   }
 
   return (

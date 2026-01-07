@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { getComponentFindings, getDependencyMetadata, DependencyMetadata, ComponentFinding } from '@/lib/api'
+import { analyticsApi } from '@/api/analytics'
+import { analyticsKeys } from '@/hooks/queries/use-analytics'
+import { DependencyMetadata, ComponentFinding } from '@/types/analytics'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
 import {
   Dialog,
@@ -490,15 +492,15 @@ export function AnalyticsDependencyModal({
 
   // Fetch dependency metadata
   const { data: metadata, isLoading: isLoadingMetadata } = useQuery({
-    queryKey: ['dependency-metadata', component, version, type],
-    queryFn: () => getDependencyMetadata(component, version, type),
+    queryKey: analyticsKeys.dependencyMetadata(component, version, type),
+    queryFn: () => analyticsApi.getDependencyMetadata(component, version, type),
     enabled: open && !!component,
   })
 
   // Fetch findings
   const { data: findings, isLoading: isLoadingFindings } = useQuery({
-    queryKey: ['component-findings', component, version],
-    queryFn: () => getComponentFindings(component, version),
+    queryKey: analyticsKeys.componentFindings(component, version),
+    queryFn: () => analyticsApi.getComponentFindings(component, version),
     enabled: open && !!component,
   })
 

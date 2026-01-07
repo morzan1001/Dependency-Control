@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { getTeams, Team } from '@/lib/api';
+import { useTeams } from '@/hooks/queries/use-teams';
+import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
@@ -45,11 +45,7 @@ export default function TeamsPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  const { data: teams, isLoading, error } = useQuery({
-    queryKey: ['teams', debouncedSearch, sortBy, sortOrder],
-    queryFn: () => getTeams(debouncedSearch, sortBy, sortOrder),
-    placeholderData: keepPreviousData,
-  });
+  const { data: teams, isLoading, error } = useTeams(debouncedSearch, sortBy, sortOrder);
 
   const openEditDialog = (team: Team) => {
     setSelectedTeam(team);

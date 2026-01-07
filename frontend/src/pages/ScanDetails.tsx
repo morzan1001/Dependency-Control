@@ -1,7 +1,8 @@
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect, useRef } from 'react'
-import { getScan, getProject, getScanResults, getScanStats, getScanHistory, triggerRescan, getScanSboms, SbomResponse, SbomTool, SbomToolComponent } from '@/lib/api'
+import { SbomResponse, SbomTool, SbomToolComponent } from '@/api/scans'
+import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
+import { useProject } from '@/hooks/queries/use-projects'
 import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -15,6 +16,7 @@ import { toast } from "sonner"
 import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 // Type for scan history items
 interface ScanHistoryItem {
@@ -49,88 +51,24 @@ function CodeBlock({ code }: { code: string }) {
   )
 }
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
 export default function ScanDetails() {
   const { projectId, scanId } = useParams<{ projectId: string, scanId: string }>()
-  const queryClient = useQueryClient()
   const navigate = useNavigate()
-    const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const sbomRefs = useRef<(HTMLDivElement | null)[]>([])
+  const { data: scan, isLoading: isScanLoading } = useScan(scanId!)
+  const { data: scanHistory } = useScanHistory(projectId!, scanId!)
+
+  const [activeTab, setActiveTab] = useState('findings');
+  const sbomParam = searchParams.get('sbom');
+  const handleTabChange = (val: string) => setActiveTab(val);
+
+  const { data: project, isLoading: isProjectLoading } = useProject(projectId!)
+  const { data: scanResults, isLoading: isResultsLoading } = useScanResults(scanId!)
+  const { data: scanSboms, isLoading: isSbomsLoading } = useScanSboms(scanId!)
+  const { data: categoryStats } = useScanStats(scanId!)
   
-  // Get tab and sbom from URL params
-  const tabParam = searchParams.get('tab')
-  const sbomParam = searchParams.get('sbom')
-  const [activeTab, setActiveTab] = useState(tabParam || 'overview')
-
-    // Keep active tab in sync with URL params (important when navigating within the same route)
-    useEffect(() => {
-        setActiveTab(tabParam || 'overview')
-    }, [tabParam])
-
-    const handleTabChange = (value: string) => {
-        setActiveTab(value)
-        const next = new URLSearchParams(searchParams)
-        next.set('tab', value)
-        if (value !== 'raw') {
-            next.delete('sbom')
-        }
-        setSearchParams(next, { replace: true })
-    }
-
-  const { data: scan, isLoading: isScanLoading } = useQuery({
-    queryKey: ['scan', scanId],
-    queryFn: () => getScan(scanId!),
-    enabled: !!scanId
-  })
-
-  const { data: scanHistory } = useQuery({
-    queryKey: ['scan-history', scanId],
-    queryFn: () => getScanHistory(projectId!, scanId!),
-    enabled: !!scanId && !!projectId
-  })
-
-  const rescanMutation = useMutation({
-    mutationFn: () => triggerRescan(projectId!, scanId!),
-    onSuccess: () => {
-      toast.success("Re-scan triggered", {
-        description: "A new scan has been started.",
-      })
-      queryClient.invalidateQueries({ queryKey: ['scan-history', scanId] })
-      queryClient.invalidateQueries({ queryKey: ['project-scans', projectId] })
-      // Optionally navigate to the new scan
-      // navigate(`/projects/${projectId}/scans/${newScan._id}`)
-    },
-    onError: () => {
-      toast.error("Error", {
-        description: "Failed to trigger re-scan.",
-      })
-    }
-  })
-
-  const { data: project, isLoading: isProjectLoading } = useQuery({
-    queryKey: ['project', projectId],
-    queryFn: () => getProject(projectId!),
-    enabled: !!projectId
-  })
-
-  const { data: scanResults, isLoading: isResultsLoading } = useQuery({
-    queryKey: ['scan-results', scanId],
-    queryFn: () => getScanResults(scanId!),
-    enabled: !!scanId
-  })
-
-  const { data: scanSboms, isLoading: isSbomsLoading } = useQuery({
-    queryKey: ['scan-sboms', scanId],
-    queryFn: () => getScanSboms(scanId!),
-    enabled: !!scanId && activeTab === 'raw' // Only load when on raw tab
-  })
-
-  const { data: categoryStats } = useQuery({
-    queryKey: ['scan-stats', scanId],
-    queryFn: () => getScanStats(scanId!),
-    enabled: !!scanId
-  })
+  const triggerRescanMutation = useTriggerRescan()
 
   // Scroll to SBOM when navigating from finding details
   useEffect(() => {
@@ -245,10 +183,21 @@ export default function ScanDetails() {
                 </Select>
             )}
             <Button 
-                onClick={() => rescanMutation.mutate()} 
-                disabled={rescanMutation.isPending || !scan.sbom_refs || scan.sbom_refs.length === 0}
+                onClick={() => triggerRescanMutation.mutate({ projectId: projectId!, scanId: scanId! }, {
+                     onSuccess: () => {
+                         toast.success("Re-scan triggered", {
+                            description: "A new scan has been started.",
+                          })
+                     },
+                     onError: () => {
+                          toast.error("Error", {
+                            description: "Failed to trigger re-scan.",
+                          })
+                     }
+                })} 
+                disabled={triggerRescanMutation.isPending || !scan.sbom_refs || scan.sbom_refs.length === 0}
             >
-                <RefreshCw className={`mr-2 h-4 w-4 ${rescanMutation.isPending ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`mr-2 h-4 w-4 ${triggerRescanMutation.isPending ? 'animate-spin' : ''}`} />
                 Trigger Re-scan
             </Button>
         </div>

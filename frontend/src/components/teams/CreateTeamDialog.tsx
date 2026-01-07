@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { createTeam } from '@/lib/api';
+import { useCreateTeam } from '@/hooks/queries/use-teams';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,22 +19,21 @@ export function CreateTeamDialog() {
   const [isOpen, setIsOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const queryClient = useQueryClient();
-
-  const createTeamMutation = useMutation({
-    mutationFn: (data: { name: string; description: string }) => createTeam(data.name, data.description),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['teams'] });
-      setIsOpen(false);
-      setName('');
-      setDescription('');
-      toast.success("Team created successfully");
-    },
-  });
+  const createTeamMutation = useCreateTeam();
 
   const handleCreateTeam = (e: React.FormEvent) => {
     e.preventDefault();
-    createTeamMutation.mutate({ name, description });
+    createTeamMutation.mutate(
+      { name, description },
+      {
+        onSuccess: () => {
+          setIsOpen(false);
+          setName('');
+          setDescription('');
+          toast.success("Team created successfully");
+        }
+      }
+    );
   };
 
   return (

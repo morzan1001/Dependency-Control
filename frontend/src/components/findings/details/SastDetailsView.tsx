@@ -1,4 +1,4 @@
-import { Finding } from "@/lib/api"
+import { Finding } from "@/types/scan"
 import { Badge } from "@/components/ui/badge"
 import { ExternalLink, AlertTriangle, Info, BookOpen, Shield, Target, Gauge } from "lucide-react"
 import { Button } from "@/components/ui/button"

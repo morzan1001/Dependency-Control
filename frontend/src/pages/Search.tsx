@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { searchDependencies, SearchResult } from '@/lib/api'
+import { useSearchDependencies } from '@/hooks/queries/use-analytics'
+import { SearchResult } from '@/types/analytics'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -13,11 +13,7 @@ export default function SearchPage() {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
 
-  const { data: results, isLoading } = useQuery({
-    queryKey: ['search', debouncedQuery],
-    queryFn: () => searchDependencies(debouncedQuery),
-    enabled: !!debouncedQuery && debouncedQuery.length > 2
-  })
+  const { data: results, isLoading } = useSearchDependencies(debouncedQuery)
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()

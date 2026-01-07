@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getDependencyTree, DependencyTreeNode } from '@/lib/api'
+import { useDependencyTree } from '@/hooks/queries/use-analytics'
+import { DependencyTreeNode } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -146,11 +146,7 @@ export function DependencyTree({ onSelectNode }: DependencyTreeProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showDirectOnly, setShowDirectOnly] = useState(false)
 
-  const { data: tree, isLoading: isLoadingTree } = useQuery({
-    queryKey: ['dependency-tree', selectedProjectId],
-    queryFn: () => getDependencyTree(selectedProjectId),
-    enabled: !!selectedProjectId,
-  })
+  const { data: tree, isLoading: isLoadingTree } = useDependencyTree(selectedProjectId)
 
   const filteredTree = showDirectOnly 
     ? tree?.filter(n => n.direct) 

@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { useState, useRef, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getProjects } from '@/lib/api'
+import { useProjects } from '@/hooks/queries/use-projects'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -29,10 +28,7 @@ export function ProjectCombobox({
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Fetch projects with search
-  const { data: projectsData, isLoading } = useQuery({
-    queryKey: ['projects-search', debouncedSearch],
-    queryFn: () => getProjects(debouncedSearch || undefined, 0, 50),
-  })
+  const { data: projectsData, isLoading } = useProjects(debouncedSearch || undefined, 1, 50)
 
   const projects = projectsData?.items || []
   const selectedProject = projects.find(p => p._id === value)

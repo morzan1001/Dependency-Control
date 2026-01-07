@@ -1,5 +1,13 @@
-import { User, updateUser, getProjects, getTeams, adminMigrateUserToLocal, adminResetUserPassword, adminDisableUser2FA, UserUpdate, ApiError } from '@/lib/api';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ApiError } from '@/api/client';
+import { User, UserUpdate } from '@/types/user';
+import { useProjects } from '@/hooks/queries/use-projects';
+import { useTeams } from '@/hooks/queries/use-teams';
+import { 
+  useUpdateUser, 
+  useAdminMigrateUser, 
+  useAdminResetPassword, 
+  useAdminDisable2FA 
+} from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -24,113 +32,75 @@ interface UserDetailsDialogProps {
 
 export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialogProps) {
   const { hasPermission } = useAuth();
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [resetLink, setResetLink] = useState<string | null>(null);
 
-  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => getProjects(undefined, 0, 100),
-    enabled: open && !!user,
-  });
+  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjects('', 1, 100);
 
   const projects = projectsData?.items || [];
 
-  const { data: teams, isLoading: isLoadingTeams, error: errorTeams } = useQuery({
-    queryKey: ['teams'],
-    queryFn: () => getTeams(),
-    enabled: open && !!user,
-  });
+  const { data: teams, isLoading: isLoadingTeams, error: errorTeams } = useTeams();
 
-  const updateUserMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UserUpdate }) => updateUser(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success("Success", {
-        description: "User updated successfully.",
-      });
-    },
-    onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: error.response?.data?.detail || "Failed to update user.",
-      });
-    },
-  });
+  const updateUserMutation = useUpdateUser();
+  const migrateUserMutation = useAdminMigrateUser();
+  const resetPasswordMutation = useAdminResetPassword();
+  const disable2FAMutation = useAdminDisable2FA();
 
-  const migrateUserMutation = useMutation({
-    mutationFn: (userId: string) => adminMigrateUserToLocal(userId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success("User Migrated", {
-        description: "User authentication provider set to 'local'. You can now reset their password.",
-      });
-    },
-    onError: (error: ApiError) => {
-      toast.error("Migration Failed", {
-        description: error.response?.data?.detail || "Failed to migrate user.",
-      });
-    }
-  });
-
-  const resetPasswordMutation = useMutation({
-    mutationFn: (userId: string) => adminResetUserPassword(userId),
-    onSuccess: (data) => {
-      if (data.email_sent) {
-        toast.success("Password Reset Initiated", {
-          description: "An email with the reset link has been sent to the user.",
-        });
-      } else {
-        toast.success("Password Reset Initiated", {
-          description: "Email not configured. Please share the link manually.",
-        });
-      }
-      setResetLink(data.reset_link || null);
-    },
-    onError: (error: ApiError) => {
-      toast.error("Reset Failed", {
-        description: error.response?.data?.detail || "Failed to initiate password reset.",
-      });
-    }
-  });
-
-  const disable2FAMutation = useMutation({
-    mutationFn: (userId: string) => adminDisableUser2FA(userId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success("2FA Disabled", {
-        description: "Two-Factor Authentication has been disabled for this user.",
-      });
-    },
-    onError: (error: ApiError) => {
-      toast.error("Action Failed", {
-        description: error.response?.data?.detail || "Failed to disable 2FA.",
-      });
-    }
-  });
-
-  const handleToggleStatus = () => {
-    if (!user) return;
-    
-    const newStatus = !user.is_active;
-    
-    updateUserMutation.mutate({
-      id: user._id || user.id,
-      data: { is_active: newStatus }
+  // Helper to handle mutation executions with toasts
+  const handleUpdate = (id: string, data: UserUpdate) => {
+    updateUserMutation.mutate({ id, data }, {
+        onSuccess: () => {
+             toast.success("Success", { description: "User updated successfully." });
+        },
+        onError: (error: any) => {
+             toast.error("Error", { description: (error as ApiError).response?.data?.detail || "Failed to update user." });
+        }
     });
   };
 
-  const handleMigrate = () => {
-    if (!user) return;
-    if (confirm("Are you sure you want to migrate this user to 'local' authentication? They will need a password reset to login.")) {
-        migrateUserMutation.mutate(user._id || user.id);
-    }
+  const handleMigrate = (userId: string) => {
+      migrateUserMutation.mutate(userId, {
+          onSuccess: () => {
+              toast.success("User Migrated", { description: "User authentication provider set to 'local'. You can now reset their password." });
+          },
+          onError: (error: any) => {
+              toast.error("Migration Failed", { description: (error as ApiError).response?.data?.detail || "Failed to migrate user." });
+          }
+      });
   };
 
-  const handleResetPassword = () => {
+  const handleResetPassword = (userId: string) => {
+      resetPasswordMutation.mutate(userId, {
+          onSuccess: (data: any) => {
+            if (data.email_sent) {
+                toast.success("Password Reset Initiated", { description: "An email with the reset link has been sent to the user." });
+            } else {
+                toast.success("Password Reset Initiated", { description: "Email not configured. Please share the link manually." });
+            }
+            setResetLink(data.reset_link || null);
+          },
+          onError: (error: any) => {
+              toast.error("Reset Failed", { description: (error as ApiError).response?.data?.detail || "Failed to initiate password reset." });
+          }
+      });
+  };
+
+  const handleDisable2FA = (userId: string) => {
+      disable2FAMutation.mutate(userId, {
+          onSuccess: () => {
+              toast.success("2FA Disabled", { description: "Two-Factor Authentication has been disabled for this user." });
+          },
+          onError: (error: any) => {
+              toast.error("Action Failed", { description: (error as ApiError).response?.data?.detail || "Failed to disable 2FA." });
+          }
+      });
+  };
+
+  const handleToggleStatus = () => {
     if (!user) return;
-    setResetLink(null);
-    resetPasswordMutation.mutate(user._id || user.id);
+    const newStatus = !user.is_active;
+    handleUpdate(user._id || user.id, { is_active: newStatus });
   };
 
   const getUserProjects = (userId: string) => {
@@ -264,7 +234,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                             <Button 
                                 variant="outline" 
                                 size="sm" 
-                                onClick={handleResetPassword}
+                                onClick={() => handleResetPassword(user._id || user.id)}
                                 disabled={resetPasswordMutation.isPending}
                             >
                                 {resetPasswordMutation.isPending ? "Sending..." : "Send Reset Email"}
@@ -288,7 +258,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                             <Button 
                                 variant="destructive" 
                                 size="sm" 
-                                onClick={() => disable2FAMutation.mutate(user._id || user.id)}
+                                onClick={() => handleDisable2FA(user._id || user.id)}
                                 disabled={disable2FAMutation.isPending}
                             >
                                 {disable2FAMutation.isPending ? "Disabling..." : "Disable 2FA"}

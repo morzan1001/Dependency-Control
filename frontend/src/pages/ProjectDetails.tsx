@@ -1,6 +1,7 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { getProject, getMe, getProjectBranches, exportProjectCsv, exportProjectSbom } from '@/lib/api'
+import { projectApi } from '@/api/projects'
+import { useProject, useProjectBranches } from '@/hooks/queries/use-projects'
+import { useMe } from '@/hooks/queries/use-auth'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Filter } from 'lucide-react'
@@ -31,22 +32,11 @@ export default function ProjectDetails() {
   const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
   
-  const { data: project, isLoading: isLoadingProject } = useQuery({
-    queryKey: ['project', id],
-    queryFn: () => getProject(id!),
-    enabled: !!id
-  })
+  const { data: project, isLoading: isLoadingProject } = useProject(id!)
 
-  const { data: branches } = useQuery({
-    queryKey: ['project-branches', id],
-    queryFn: () => getProjectBranches(id!),
-    enabled: !!id
-  })
+  const { data: branches } = useProjectBranches(id!)
 
-  const { data: user } = useQuery({
-    queryKey: ['me'],
-    queryFn: getMe,
-  })
+  const { data: user } = useMe()
 
   const allBranches = branches || []
 
@@ -81,7 +71,7 @@ export default function ProjectDetails() {
 
   const handleExportCsv = async () => {
     try {
-      const blob = await exportProjectCsv(id!)
+      const blob = await projectApi.exportCsv(id!)
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -97,7 +87,7 @@ export default function ProjectDetails() {
 
   const handleExportSbom = async () => {
     try {
-      const blob = await exportProjectSbom(id!)
+      const blob = await projectApi.exportSbom(id!)
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url

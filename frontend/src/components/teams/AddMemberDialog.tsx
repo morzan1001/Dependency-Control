@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { addTeamMember } from '@/lib/api';
+import { useAddTeamMember } from '@/hooks/queries/use-teams';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,23 +29,22 @@ interface AddMemberDialogProps {
 export function AddMemberDialog({ teamId, isOpen, onClose }: AddMemberDialogProps) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('member');
-  const queryClient = useQueryClient();
-
-  const addMemberMutation = useMutation({
-    mutationFn: (data: { teamId: string; email: string; role: string }) => addTeamMember(data.teamId, data.email, data.role),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['teams'] });
-      onClose();
-      setEmail('');
-      setRole('member');
-      toast.success("Member added successfully");
-    },
-  });
+  const addMemberMutation = useAddTeamMember();
 
   const handleAddMember = (e: React.FormEvent) => {
     e.preventDefault();
     if (teamId) {
-      addMemberMutation.mutate({ teamId, email, role });
+      addMemberMutation.mutate(
+        { teamId, data: { email, role } },
+        {
+          onSuccess: () => {
+            onClose();
+            setEmail('');
+            setRole('member');
+            toast.success("Member added successfully");
+          }
+        }
+      );
     }
   };
 

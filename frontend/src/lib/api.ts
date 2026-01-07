@@ -573,81 +573,11 @@ export interface PaginatedResponse<T> {
   pages: number;
 }
 
-export const getProjects = async (search?: string, skip: number = 0, limit: number = 20, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc') => {
-  const params = new URLSearchParams();
-  if (search) params.append('search', search);
-  params.append('skip', skip.toString());
-  params.append('limit', limit.toString());
-  params.append('sort_by', sortBy);
-  params.append('sort_order', sortOrder);
-  const response = await api.get<PaginatedResponse<Project>>('/projects/', { params });
-  return response.data;
-};
+// Projects
+// See src/api/projects.ts and src/hooks/queries/use-projects.ts
 
-export interface ProjectCreate {
-  name: string;
-  team_id?: string;
-  active_analyzers?: string[];
-  retention_days?: number;
-}
-
-export const createProject = async (data: ProjectCreate) => {
-  const response = await api.post<ProjectApiKeyResponse>('/projects/', data);
-  return response.data;
-};
-
-export interface ProjectUpdate {
-  name?: string;
-  team_id?: string | null;
-  active_analyzers?: string[];
-  retention_days?: number;
-  enforce_notification_settings?: boolean;
-  default_branch?: string | null;
-  rescan_enabled?: boolean;
-  rescan_interval?: number;
-  gitlab_mr_comments_enabled?: boolean;
-  owner_notification_preferences?: Record<string, string[]>;
-}
-
-export interface ProjectApiKeyResponse {
-  project_id: string;
-  api_key: string;
-  note: string;
-}
-
-export const updateProject = async (id: string, data: ProjectUpdate) => {
-  const response = await api.put<Project>(`/projects/${id}`, data);
-  return response.data;
-};
-
-export const deleteProject = async (projectId: string) => {
-  await api.delete(`/projects/${projectId}`);
-};
-
-export const rotateProjectApiKey = async (id: string) => {
-  const response = await api.post<ProjectApiKeyResponse>(`/projects/${id}/rotate-key`);
-  return response.data;
-};
-
-export interface ProjectNotificationSettings {
-  enforce_notification_settings?: boolean;
-  notification_preferences: Record<string, string[]>;
-}
-
-export const updateProjectNotificationSettings = async (projectId: string, settings: ProjectNotificationSettings) => {
-  const response = await api.put<Project>(`/projects/${projectId}/notifications`, settings);
-  return response.data;
-};
-
-export const getRecentScans = async () => {
-  const response = await api.get<RecentScan[]>('/projects/recent-scans');
-  return response.data;
-};
-
-export const getProject = async (id: string) => {
-  const response = await api.get<Project>(`/projects/${id}`);
-  return response.data;
-};
+// Teams
+// See src/api/teams.ts and src/hooks/queries/use-teams.ts
 
 export const getProjectScans = async (id: string, skip: number = 0, limit: number = 20, branch?: string, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc', excludeRescans: boolean = false) => {
   const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
@@ -750,43 +680,6 @@ export const updateUser = async (userId: string, data: UserUpdate) => {
   return response.data;
 };
 
-export interface TeamMember {
-  user_id: string;
-  username?: string;
-  role: string;
-}
-
-export interface Team {
-  _id: string;
-  name: string;
-  description?: string;
-  members: TeamMember[];
-  created_at: string;
-  updated_at: string;
-}
-
-export const getTeams = async (search?: string, sortBy = 'name', sortOrder = 'asc') => {
-  const params = new URLSearchParams();
-  if (search) params.append('search', search);
-  params.append('sort_by', sortBy);
-  params.append('sort_order', sortOrder);
-  const response = await api.get<Team[]>('/teams/', { params });
-  return response.data;
-};
-
-export const createTeam = async (name: string, description?: string) => {
-  const response = await api.post<Team>('/teams/', { name, description });
-  return response.data;
-};
-
-export const addTeamMember = async (teamId: string, email: string, role: string) => {
-  const response = await api.post<Team>(`/teams/${teamId}/members`, { email, role });
-  return response.data;
-};
-
-export const deleteTeam = async (teamId: string) => {
-  await api.delete(`/teams/${teamId}`);
-};
 
 export const updatePassword = async (currentPassword: string, newPassword: string) => {
   const response = await api.post<User>('/users/me/password', { current_password: currentPassword, new_password: newPassword });

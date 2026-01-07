@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
-import { getImpactAnalysis, ImpactAnalysisResult } from '@/lib/api'
+import { useImpactAnalysis } from '@/hooks/queries/use-analytics'
+import { ImpactAnalysisResult } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -18,10 +18,7 @@ interface ImpactAnalysisProps {
 }
 
 export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
-  const { data: results, isLoading } = useQuery({
-    queryKey: ['impact-analysis'],
-    queryFn: () => getImpactAnalysis(20),
-  })
+  const { data: results, isLoading } = useImpactAnalysis(20)
 
   // Calculate max impact score for relative sizing
   const maxImpact = results?.reduce((max, r) => Math.max(max, r.fix_impact_score), 0) || 1

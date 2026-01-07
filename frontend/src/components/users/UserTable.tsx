@@ -1,5 +1,6 @@
-import { User, deleteUser, inviteUser, ApiError } from '@/lib/api';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { ApiError } from '@/api/client';
+import { User } from '@/types/user';
+import { useDeleteUser, useInviteUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Check, X, Trash2, ChevronLeft, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react';
 import {
@@ -27,37 +28,39 @@ interface UserTableProps {
 
 export function UserTable({ users, page, limit, onPageChange, onSelectUser, sortBy, sortOrder, onSort }: UserTableProps) {
   const { hasPermission } = useAuth();
-  const queryClient = useQueryClient();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
-  const deleteUserMutation = useMutation({
-    mutationFn: (userId: string) => deleteUser(userId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      queryClient.invalidateQueries({ queryKey: ['invitations'] });
-      setIsDeleteDialogOpen(false);
-      setUserToDelete(null);
-      toast.success("User deleted successfully");
-    },
-    onError: (error: ApiError) => {
-      toast.error("Failed to delete user", {
-        description: error.response?.data?.detail || "An error occurred"
-      })
-    }
-  });
+  const deleteUserMutation = useDeleteUser();
+  const resendInviteMutation = useInviteUser();
+  
+  const handleDeleteUser = (userId: string) => {
+      deleteUserMutation.mutate(userId, {
+        onSuccess: () => {
+          setIsDeleteDialogOpen(false);
+          setUserToDelete(null);
+          toast.success("User deleted successfully");
+        },
+        onError: (error: any) => {
+          toast.error("Failed to delete user", {
+            description: (error as ApiError).response?.data?.detail || "An error occurred"
+          })
+        }
+      });
+  }
 
-  const resendInviteMutation = useMutation({
-    mutationFn: (email: string) => inviteUser(email),
-    onSuccess: () => {
-      toast.success("Invitation resent successfully");
-    },
-    onError: (error: ApiError) => {
-      toast.error("Failed to resend invitation", {
-        description: error.response?.data?.detail || "An error occurred"
-      })
-    }
-  });
+  const handleResendInvite = (email: string) => {
+      resendInviteMutation.mutate(email, {
+        onSuccess: () => {
+          toast.success("Invitation resent successfully");
+        },
+        onError: (error: any) => {
+          toast.error("Failed to resend invitation", {
+            description: (error as ApiError).response?.data?.detail || "An error occurred"
+          })
+        }
+      });
+  }
 
   const renderSortIcon = (column: string) => {
     if (sortBy === column) {
@@ -158,7 +161,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                          size="sm"
                          onClick={(e: React.MouseEvent) => {
                            e.stopPropagation();
-                           resendInviteMutation.mutate(user.email);
+                           handleResendInvite(user.email);
                          }}
                          disabled={resendInviteMutation.isPending}
                        >
@@ -222,7 +225,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
             <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>Cancel</Button>
             <Button 
                 variant="destructive" 
-                onClick={() => userToDelete && deleteUserMutation.mutate(userToDelete._id || userToDelete.id)}
+                onClick={() => userToDelete && handleDeleteUser(userToDelete._id || userToDelete.id)}
                 disabled={deleteUserMutation.isPending}
             >
               {deleteUserMutation.isPending ? "Deleting..." : "Delete"}

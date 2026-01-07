@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import type { FindingDetails } from '@/lib/api'
+import type { FindingDetails } from '@/types/scan'
 import { AlertTriangle, Building, Calendar, ExternalLink, FileText, User } from 'lucide-react'
 
 export function AdditionalDetailsView({ details }: { details: FindingDetails }) {

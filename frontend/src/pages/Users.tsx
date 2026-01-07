@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { getUsers, getPendingInvitations, User } from '@/lib/api';
+import { useUsers, usePendingInvitations } from '@/hooks/queries/use-users';
+import { User } from '@/types/user'; 
 import { useAuth } from '@/context/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,7 +9,7 @@ import { UserTable } from '@/components/users/UserTable';
 import { UserDetailsDialog } from '@/components/users/UserDetailsDialog';
 import { Input } from '@/components/ui/input';
 import { Search } from 'lucide-react';
-import { useDebounce } from '@/hooks/use-debounce'; // Assuming we have this or I'll implement a simple debounce
+import { useDebounce } from '@/hooks/use-debounce'; 
 
 export default function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -21,17 +21,16 @@ export default function UsersPage() {
   const limit = 20;
   
   const { hasPermission } = useAuth();
+  
+  const { data: users, isLoading: isLoadingUsers, error } = useUsers(
+    page * limit,
+    limit,
+    debouncedSearch,
+    sortBy,
+    sortOrder
+  );
 
-  const { data: users, isLoading: isLoadingUsers, error } = useQuery({
-    queryKey: ['users', page, debouncedSearch, sortBy, sortOrder],
-    queryFn: () => getUsers(page * limit, limit, debouncedSearch, sortBy, sortOrder),
-    placeholderData: keepPreviousData,
-  });
-
-  const { data: invitations, isLoading: isLoadingInvitations } = useQuery({
-    queryKey: ['invitations'],
-    queryFn: getPendingInvitations,
-  });
+  const { data: invitations, isLoading: isLoadingInvitations } = usePendingInvitations();
 
   const isLoading = isLoadingUsers || isLoadingInvitations;
 

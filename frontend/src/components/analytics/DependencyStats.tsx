@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getTopDependencies, getDependencyTypes, DependencyUsage } from '@/lib/api'
+import { useDependencyTypes, useTopDependencies } from '@/hooks/queries/use-analytics'
+import { DependencyUsage } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -22,15 +22,9 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
 
-  const { data: types } = useQuery({
-    queryKey: ['dependency-types'],
-    queryFn: getDependencyTypes,
-  })
+  const { data: types } = useDependencyTypes()
 
-  const { data: dependencies, isLoading } = useQuery({
-    queryKey: ['top-dependencies', limit, selectedType],
-    queryFn: () => getTopDependencies(limit, selectedType),
-  })
+  const { data: dependencies, isLoading } = useTopDependencies(limit, selectedType)
 
   const handleRowClick = (dep: DependencyUsage) => {
     onSelectDependency?.(dep)

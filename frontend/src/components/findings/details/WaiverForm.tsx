@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { AxiosError } from 'axios'
 import { toast } from 'sonner'
 import { ShieldAlert } from 'lucide-react'
@@ -7,7 +7,8 @@ import { ShieldAlert } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { createWaiver, type Finding } from '@/lib/api'
+import { useCreateWaiver, waiverKeys } from '@/hooks/queries/use-waivers'
+import { Finding } from '@/types/scan'
 import { getFindingId, getFindingPackage, getFindingVersion } from '@/components/findings/details/finding-details-helpers'
 
 export function WaiverForm({
@@ -27,19 +28,7 @@ export function WaiverForm({
   const [date, setDate] = useState('')
   const queryClient = useQueryClient()
 
-  const createWaiverMutation = useMutation({
-    mutationFn: createWaiver,
-    onSuccess: () => {
-      toast.success('Waiver created successfully')
-      queryClient.invalidateQueries({ queryKey: ['waivers', projectId] })
-      onSuccess()
-    },
-    onError: (error: AxiosError<{ detail?: string }>) => {
-      toast.error('Failed to create waiver', {
-        description: error.response?.data?.detail || 'An error occurred',
-      })
-    },
-  })
+  const createWaiverMutation = useCreateWaiver()
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -49,13 +38,29 @@ export function WaiverForm({
     // The backend now supports waiving specific vulnerabilities within aggregated findings
     createWaiverMutation.mutate({
       project_id: projectId,
-      finding_id: getFindingId(finding),
-      vulnerability_id: vulnId || undefined, // Pass specific CVE if waiving single vuln
+      finding_id: vulnId ? undefined : getFindingId(finding), // Only set finding_id if waiting whole finding
+      vulnerability_id: vulnId || undefined, // Set vuln_id for specific cve waiver
       package_name: getFindingPackage(finding),
       package_version: getFindingVersion(finding),
       finding_type: finding.type || 'unknown',
-      reason: reason,
+      reason,
       expiration_date: date ? new Date(date).toISOString() : undefined,
+    }, {
+        onSuccess: () => {
+            toast.success('Waiver created successfully')
+            queryClient.invalidateQueries({ queryKey: waiverKeys.project(projectId) })
+            onSuccess()
+        },
+        onError: (error) => {
+            // Check if it's an AxiosError to access response data
+            const msg = (error instanceof AxiosError) 
+                ? error.response?.data?.detail 
+                : 'An error occurred';
+                
+            toast.error('Failed to create waiver', {
+                description: typeof msg === 'string' ? msg : 'Unknown error',
+            })
+        }
     })
   }
 

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Webhook, WebhookCreate } from "@/lib/api"
+import { Webhook, WebhookCreate } from "@/types/webhook"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"

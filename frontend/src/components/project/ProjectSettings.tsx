@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { updateProject, rotateProjectApiKey, updateProjectNotificationSettings, ProjectNotificationSettings, getProjectWebhooks, createProjectWebhook, deleteWebhook, WebhookCreate, getTeams, getSystemSettings, Project, getProjectBranches, deleteProject, User, ProjectUpdate, ApiError } from '@/lib/api'
+import { projectApi } from '@/api/projects'
+import { webhookApi } from '@/api/webhooks'
+import { teamApi } from '@/api/teams'
+import { systemApi } from '@/api/system'
+import { WebhookCreate } from '@/types/webhook'
+import { Project, ProjectUpdate } from '@/types/project'
+import { User } from '@/types/user'
+import { ApiError } from '@/api/client'
 import { useAuth } from '@/context/useAuth'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -65,22 +72,22 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
 
   const { data: teams } = useQuery({
     queryKey: ['teams'],
-    queryFn: () => getTeams(),
+    queryFn: () => teamApi.getAll(),
   })
 
   const { data: branches } = useQuery({
     queryKey: ['project-branches', projectId],
-    queryFn: () => getProjectBranches(projectId),
+    queryFn: () => projectApi.getBranches(projectId),
   })
 
   const { data: systemSettings } = useQuery({
     queryKey: ['systemSettings'],
-    queryFn: getSystemSettings,
+    queryFn: systemApi.getSettings,
   })
 
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useQuery({
     queryKey: ['projectWebhooks', projectId],
-    queryFn: () => getProjectWebhooks(projectId),
+    queryFn: () => webhookApi.getProject(projectId),
     enabled: !!projectId
   })
 
@@ -108,7 +115,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   }, [project, user])
 
   const deleteProjectMutation = useMutation({
-    mutationFn: () => deleteProject(projectId),
+    mutationFn: () => projectApi.delete(projectId),
     onSuccess: () => {
       toast.success("Project Deleted", { description: "The project has been permanently deleted." })
       navigate('/projects')
@@ -119,7 +126,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   })
 
   const updateProjectMutation = useMutation({
-    mutationFn: (data: ProjectUpdate) => updateProject(projectId, data),
+    mutationFn: (data: ProjectUpdate) => projectApi.update(projectId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Project updated successfully")
@@ -132,7 +139,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   })
 
   const updateNotificationSettingsMutation = useMutation({
-    mutationFn: (settings: ProjectNotificationSettings) => updateProjectNotificationSettings(projectId, settings),
+    mutationFn: (settings: Record<string, string[]>) => projectApi.updateNotificationSettings(projectId, settings),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Notification settings updated")
@@ -143,7 +150,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   })
 
   const rotateKeyMutation = useMutation({
-    mutationFn: () => rotateProjectApiKey(projectId),
+    mutationFn: () => projectApi.rotateApiKey(projectId),
     onSuccess: (data) => {
       setApiKey(data.api_key)
       setIsApiKeyDialogOpen(true)
@@ -157,14 +164,14 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   })
 
   const createWebhookMutation = useMutation({
-    mutationFn: (data: WebhookCreate) => createProjectWebhook(projectId, data),
+    mutationFn: (data: WebhookCreate) => webhookApi.createProject(projectId, data),
     onSuccess: () => {
       refetchWebhooks()
     }
   })
 
   const deleteWebhookMutation = useMutation({
-    mutationFn: deleteWebhook,
+    mutationFn: webhookApi.delete,
     onSuccess: () => {
       refetchWebhooks()
     }
@@ -485,8 +492,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             {hasPermission('project:update') && (
                 <Button 
                     onClick={() => updateNotificationSettingsMutation.mutate({ 
-                        notification_preferences: notificationPrefs,
-                        enforce_notification_settings: enforceNotificationSettings
+                        id: project._id as any,
+                        settings: {
+                            notification_preferences: notificationPrefs,
+                            enforce_notification_settings: enforceNotificationSettings
+                        } as any
                     })}
                     disabled={updateNotificationSettingsMutation.isPending}
                 >

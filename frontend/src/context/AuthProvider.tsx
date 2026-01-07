@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jwtDecode } from 'jwt-decode'
 
-import { getMe, setLogoutCallback } from '@/lib/api'
+import { setLogoutCallback } from '@/api/client'
+import { userApi } from '@/api/users'
 
 import { AuthContext } from './auth-context'
 
@@ -46,7 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const decoded: DecodedToken = jwtDecode(token)
         setPermissions(decoded.permissions || [])
-        await getMe()
+        await userApi.getMe()
         setIsAuthenticated(true)
       } catch (error) {
         console.error('Auth init failed', error)

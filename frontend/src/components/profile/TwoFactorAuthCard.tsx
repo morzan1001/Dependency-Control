@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { setup2FA, TwoFASetup, User, ApiError } from '@/lib/api';
+import { authApi } from '@/api/auth';
+import { ApiError } from '@/api/client';
+import { User, TwoFASetup } from '@/types/user';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Shield, ShieldAlert } from 'lucide-react';
@@ -19,7 +21,7 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
   const [setupData, setSetupData] = useState<TwoFASetup | null>(null);
 
   const setup2FAMutation = useMutation({
-    mutationFn: setup2FA,
+    mutationFn: authApi.setup2FA,
     onSuccess: (data) => {
       setSetupData(data);
       setIsSetupOpen(true);

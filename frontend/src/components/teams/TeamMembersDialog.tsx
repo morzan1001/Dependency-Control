@@ -1,5 +1,5 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { updateTeamMember, removeTeamMember, Team } from '@/lib/api';
+import { useUpdateTeamMember, useRemoveTeamMember } from '@/hooks/queries/use-teams';
+import { Team } from '@/types/team';
 import { Button } from '@/components/ui/button';
 import { UserMinus } from 'lucide-react';
 import {
@@ -34,23 +34,8 @@ interface TeamMembersDialogProps {
 }
 
 export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogProps) {
-  const queryClient = useQueryClient();
-
-  const updateMemberMutation = useMutation({
-    mutationFn: (data: { teamId: string; userId: string; role: string }) => updateTeamMember(data.teamId, data.userId, data.role),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['teams'] });
-      toast.success("Member role updated");
-    },
-  });
-
-  const removeMemberMutation = useMutation({
-    mutationFn: (data: { teamId: string; userId: string }) => removeTeamMember(data.teamId, data.userId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['teams'] });
-      toast.success("Member removed");
-    },
-  });
+  const updateMemberMutation = useUpdateTeamMember();
+  const removeMemberMutation = useRemoveTeamMember();
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -84,7 +69,10 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                         defaultValue={member.role} 
                         onValueChange={(value) => {
                             if (team) {
-                                updateMemberMutation.mutate({ teamId: team._id, userId: member.user_id, role: value })
+                                updateMemberMutation.mutate(
+                                  { teamId: team._id, userId: member.user_id, role: value },
+                                  { onSuccess: () => toast.success("Member role updated") }
+                                );
                             }
                         }}
                       >
@@ -105,7 +93,10 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                         className="text-destructive"
                         onClick={() => {
                             if (team) {
-                                removeMemberMutation.mutate({ teamId: team._id, userId: member.user_id })
+                                removeMemberMutation.mutate(
+                                  { teamId: team._id, userId: member.user_id },
+                                  { onSuccess: () => toast.success("Member removed") }
+                                );
                             }
                         }}
                       >

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { CopyableCode } from '@/components/findings/CopyableCode'
-import type { Finding } from '@/lib/api'
+import type { Finding } from '@/types/scan'
 import { getSourceInfo } from '@/lib/finding-utils'
 import { ChevronDown, ChevronRight, Package } from 'lucide-react'
 

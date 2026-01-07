@@ -1,7 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Activity, ShieldAlert, ShieldCheck, FolderGit2, ArrowUp, ArrowDown } from 'lucide-react'
-import { useQuery, keepPreviousData } from '@tanstack/react-query'
-import { getDashboardStats, getRecentScans, getProjects } from '@/lib/api'
+import { useDashboardStats } from '@/hooks/queries/use-analytics'
+import { useRecentScans } from '@/hooks/queries/use-scans'
+import { useProjects} from '@/hooks/queries/use-projects'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -15,22 +16,16 @@ export default function Dashboard() {
   const [sortBy, setSortBy] = useState('created_at')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const limit = 50 // Optimized for virtual scrolling
+  const { data: recentScans, isLoading: isLoadingScans } = useRecentScans()
+  const { data: dashboardStats, isLoading: isLoadingStats } = useDashboardStats()
 
-  const { data: dashboardStats, isLoading: isLoadingStats } = useQuery({
-    queryKey: ['dashboard-stats'],
-    queryFn: getDashboardStats,
-  })
-
-  const { data: recentScans, isLoading: isLoadingScans } = useQuery({
-    queryKey: ['recent-scans'],
-    queryFn: getRecentScans,
-  })
-
-  const { data: projectsData, isLoading: isLoadingProjects } = useQuery({
-    queryKey: ['projects', page, sortBy, sortOrder],
-    queryFn: () => getProjects(undefined, (page - 1) * limit, limit, sortBy, sortOrder),
-    placeholderData: keepPreviousData,
-  })
+  const { data: projectsData, isLoading: isLoadingProjects } = useProjects(
+    '', // search
+    page,
+    limit,
+    sortBy,
+    sortOrder
+  )
 
   const handleSort = (field: string) => {
     if (sortBy === field) {

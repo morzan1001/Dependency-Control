@@ -3,8 +3,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { validateInvitation, acceptInvitation, login as apiLogin } from '@/lib/api'
 import { useAuth } from '@/context/useAuth'
+import { useValidateInvitation, useAcceptInvitation, useLogin } from '@/hooks/queries/use-auth'
 import { AxiosError } from 'axios'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -18,6 +18,10 @@ export default function AcceptInvite() {
   const [email, setEmail] = useState<string | null>(null)
   const navigate = useNavigate()
   const { login } = useAuth()
+  
+  const validateMutation = useValidateInvitation();
+  const acceptMutation = useAcceptInvitation();
+  const loginMutation = useLogin();
 
   useEffect(() => {
     if (!token) {
@@ -26,16 +30,17 @@ export default function AcceptInvite() {
       return
     }
 
-    validateInvitation(token)
-      .then((data) => {
-        setEmail(data.email)
-        setIsLoading(false)
-      })
-      .catch((err) => {
-        const error = err as AxiosError<{ detail: string }>
-        setError(error.response?.data?.detail || "Invalid or expired invitation.")
-        setIsLoading(false)
-      })
+    validateMutation.mutate(token, {
+       onSuccess: (data) => {
+         setEmail(data.email)
+         setIsLoading(false)
+       },
+       onError: (err) => {
+         const error = err as AxiosError<{ detail: string }>
+         setError(error.response?.data?.detail || "Invalid or expired invitation.")
+         setIsLoading(false)
+       }
+    })
   }, [token])
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -56,23 +61,24 @@ export default function AcceptInvite() {
       return
     }
 
-    try {
-      await acceptInvitation(token, username, password)
-      
-      // Auto-login
-      try {
-        const data = await apiLogin(username, password)
-        login(data.access_token, data.refresh_token)
-      } catch {
-        navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
-      }
-
-    } catch (err) {
-      const error = err as AxiosError<{ detail: string }>
-      setError(error.response?.data?.detail || "Failed to create account.")
-    } finally {
-      setIsSubmitting(false)
-    }
+    acceptMutation.mutate({ token, username, password }, {
+       onSuccess: () => {
+         // Auto-login
+         loginMutation.mutate({ username, password }, {
+             onSuccess: (data) => {
+                 login(data.access_token, data.refresh_token)
+             },
+             onError: () => {
+                 navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
+             }
+         })
+       },
+       onError: (err) => {
+          const error = err as AxiosError<{ detail: string }>
+          setError(error.response?.data?.detail || "Failed to create account.")
+          setIsSubmitting(false)
+       }
+    })
   }
 
   if (isLoading) {

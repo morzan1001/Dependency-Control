@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { searchDependenciesAdvanced, getDependencyTypes, getProjects, AdvancedSearchResult } from '@/lib/api'
+import { analyticsApi } from '@/api/analytics'
+import { AdvancedSearchResult } from '@/types/analytics'
+import { projectApi } from '@/api/projects'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -60,12 +62,12 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
 
   const { data: types } = useQuery({
     queryKey: ['dependency-types'],
-    queryFn: getDependencyTypes,
+    queryFn: analyticsApi.getDependencyTypes,
   })
 
   const { data: projectsData } = useQuery({
     queryKey: ['projects-list'],
-    queryFn: () => getProjects(undefined, 0, 100),
+    queryFn: () => projectApi.getAll(undefined, 0, 100),
   })
 
   const {
@@ -77,7 +79,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   } = useInfiniteQuery({
     queryKey: ['advanced-search', debouncedQuery, version, selectedType, selectedSourceType, hasVulnerabilities, selectedProject],
     queryFn: async ({ pageParam = 0 }) => {
-      return searchDependenciesAdvanced(debouncedQuery, {
+      return analyticsApi.searchDependenciesAdvanced(debouncedQuery, {
         version: version || undefined,
         type: selectedType !== '__all__' ? selectedType : undefined,
         source_type: selectedSourceType !== '__all__' ? selectedSourceType : undefined,
@@ -211,7 +213,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">All types</SelectItem>
-                    {types?.map((t) => (
+                    {types?.map((t: string) => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>

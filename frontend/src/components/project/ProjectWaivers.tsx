@@ -1,8 +1,10 @@
 import { useState, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { getWaivers, deleteWaiver, Waiver, ApiError } from '@/lib/api'
+import { useQueryClient } from '@tanstack/react-query'
+import { useProjectWaivers, useDeleteWaiver, waiverKeys } from '@/hooks/queries/use-waivers'
+import { Waiver } from '@/types/waiver'
 import { useAuth } from '@/context/useAuth'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { AxiosError } from 'axios'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -16,26 +18,28 @@ interface ProjectWaiversProps {
 export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
     const queryClient = useQueryClient()
     const { hasPermission } = useAuth()
-    const { data: waivers, isLoading } = useQuery({
-        queryKey: ['waivers', projectId],
-        queryFn: () => getWaivers(projectId)
-    })
+    const { data: waivers, isLoading } = useProjectWaivers(projectId)
     
     const [searchQuery, setSearchQuery] = useState('')
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null)
 
-    const deleteWaiverMutation = useMutation({
-        mutationFn: deleteWaiver,
-        onSuccess: () => {
-            toast.success("Waiver deleted successfully")
-            queryClient.invalidateQueries({ queryKey: ['waivers', projectId] })
-        },
-        onError: (error: ApiError) => {
-            toast.error("Failed to delete waiver", {
-                description: error.response?.data?.detail || "An error occurred"
-            })
-        }
-    })
+    const deleteWaiverMutation = useDeleteWaiver()
+    
+    // Helper wrapper to match original usage pattern if needed or use mutation directly in list
+    const handleDelete = (id: string) => {
+        deleteWaiverMutation.mutate(id, {
+            onSuccess: () => {
+                toast.success("Waiver deleted successfully")
+                queryClient.invalidateQueries({ queryKey: waiverKeys.project(projectId) })
+            },
+            onError: (error) => {
+                const msg = (error instanceof AxiosError) ? error.response?.data?.detail : "An error occurred"
+                toast.error("Failed to delete waiver", {
+                    description: msg
+                })
+            }
+        })
+    }
 
     const filteredWaivers = useMemo(() => {
         if (!waivers) return []
@@ -148,7 +152,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                                 className="text-destructive hover:text-destructive hover:bg-destructive/10"
                                                 onClick={() => {
                                                     if (confirm("Are you sure you want to delete this waiver?")) {
-                                                        deleteWaiverMutation.mutate(waiver.id)
+                                                        handleDelete(waiver.id)
                                                     }
                                                 }}
                                                 disabled={deleteWaiverMutation.isPending}

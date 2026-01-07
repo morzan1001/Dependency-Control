@@ -25,7 +25,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
-import { getPublicConfig } from '@/lib/api'
+import { systemApi } from '@/api/system'
 import { useState, useEffect } from 'react'
 import { AxiosError } from 'axios'
 
@@ -102,7 +102,7 @@ function SignupRoute() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
-    getPublicConfig().then(config => setEnabled(config.allow_public_registration)).catch(() => setEnabled(false));
+    systemApi.getPublicConfig().then(config => setEnabled(config.allow_public_registration)).catch(() => setEnabled(false));
   }, []);
 
   if (enabled === null) return (

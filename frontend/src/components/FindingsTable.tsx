@@ -1,7 +1,8 @@
 import { useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useRef, useEffect, useState, useLayoutEffect } from 'react'
-import { getScanFindings, Finding } from '@/lib/api'
+import { scanApi } from '@/api/scans'
+import { Finding } from '@/types/scan'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -65,7 +66,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
     } = useInfiniteQuery({
         queryKey: ['findings', scanId, category, search, sortBy, sortOrder],
         queryFn: async ({ pageParam = 0 }) => {
-            const res = await getScanFindings(scanId, {
+            const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
                 limit: DEFAULT_PAGE_SIZE,
                 category,
@@ -411,27 +412,27 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                             try {
                                 if (id.startsWith("OUTDATED-")) {
                                     const component = id.replace("OUTDATED-", "")
-                                    const res = await getScanFindings(scanId, { type: 'outdated', search: component, skip: 0, limit: 200 })
+                                    const res = await scanApi.getFindings(scanId, { type: 'outdated', search: component, skip: 0, limit: 200 })
                                     found = res.items.find(f => f.type === 'outdated' && f.component?.toLowerCase() === component.toLowerCase())
                                 } else if (id.startsWith("QUALITY:")) {
                                     const parts = id.split(":")
                                     const component = parts[1]
                                     const version = parts[2]
-                                    const res = await getScanFindings(scanId, { type: 'quality', search: component, skip: 0, limit: 200 })
+                                    const res = await scanApi.getFindings(scanId, { type: 'quality', search: component, skip: 0, limit: 200 })
                                     found = res.items.find(f => f.type === 'quality' && f.component?.toLowerCase() === component?.toLowerCase() && (!version || f.version === version))
                                 } else if (id.startsWith("LIC-")) {
-                                    const res = await getScanFindings(scanId, { type: 'license', search: id, skip: 0, limit: 200 })
+                                    const res = await scanApi.getFindings(scanId, { type: 'license', search: id, skip: 0, limit: 200 })
                                     found = res.items.find(f => f.id === id) || res.items[0]
                                 } else if (id.startsWith("EOL-")) {
                                     const component = id.replace("EOL-", "").split("-")[0]
-                                    const res = await getScanFindings(scanId, { type: 'eol', search: component, skip: 0, limit: 200 })
+                                    const res = await scanApi.getFindings(scanId, { type: 'eol', search: component, skip: 0, limit: 200 })
                                     found = res.items.find(f => f.type === 'eol' && f.component?.toLowerCase() === component?.toLowerCase())
                                 } else if (id.includes(":") && !id.startsWith("AGG:")) {
                                     const [component, version] = id.split(":")
-                                    const res = await getScanFindings(scanId, { type: 'vulnerability', search: component, skip: 0, limit: 200 })
+                                    const res = await scanApi.getFindings(scanId, { type: 'vulnerability', search: component, skip: 0, limit: 200 })
                                     found = res.items.find(f => f.type === 'vulnerability' && f.component?.toLowerCase() === component?.toLowerCase() && f.version === version)
                                 } else {
-                                    const res = await getScanFindings(scanId, { search: id, skip: 0, limit: 200 })
+                                    const res = await scanApi.getFindings(scanId, { search: id, skip: 0, limit: 200 })
                                     found = res.items.find(f => f.id === id) || res.items[0]
                                 }
                             } catch {

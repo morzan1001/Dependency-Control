@@ -1,5 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { deleteTeam } from '@/lib/api';
+import { useDeleteTeam } from '@/hooks/queries/use-teams';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -18,20 +17,16 @@ interface DeleteTeamDialogProps {
 }
 
 export function DeleteTeamDialog({ teamId, isOpen, onClose }: DeleteTeamDialogProps) {
-  const queryClient = useQueryClient();
-
-  const deleteTeamMutation = useMutation({
-    mutationFn: (id: string) => deleteTeam(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['teams'] });
-      onClose();
-      toast.success("Team deleted successfully");
-    },
-  });
+  const deleteTeamMutation = useDeleteTeam();
 
   const handleDelete = () => {
     if (teamId) {
-      deleteTeamMutation.mutate(teamId);
+      deleteTeamMutation.mutate(teamId, {
+        onSuccess: () => {
+            onClose();
+            toast.success("Team deleted successfully");
+        }
+      });
     }
   };
 

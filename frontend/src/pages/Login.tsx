@@ -3,7 +3,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { login as apiLogin, getPublicConfig } from '@/lib/api'
+import { useLogin } from '@/hooks/queries/use-auth'
+import { usePublicConfig } from '@/hooks/queries/use-system'
 import { useAuth } from '@/context/useAuth'
 import { AxiosError } from 'axios'
 import { Link, useLocation } from 'react-router-dom'
@@ -23,22 +24,18 @@ export default function Login() {
   const { login } = useAuth()
   const location = useLocation()
   const message = location.state?.message
+  const { data: config } = usePublicConfig();
+  const loginMutation = useLogin();
 
   useEffect(() => {
-    let cancelled = false
-    getPublicConfig().then(config => {
-      if (!cancelled) {
-        setSignupEnabled(config.allow_public_registration)
-        setOidcConfig({
-          enabled: config.oidc_enabled || false,
-          providerName: config.oidc_provider_name || 'GitLab'
-        })
-      }
-    }).catch(err => {
-      if (!cancelled) console.error(err)
-    })
-    return () => { cancelled = true }
-  }, [])
+    if (config) {
+      setSignupEnabled(config.allow_public_registration)
+      setOidcConfig({
+        enabled: config.oidc_enabled || false,
+        providerName: config.oidc_provider_name || 'GitLab'
+      })
+    }
+  }, [config])
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -49,37 +46,39 @@ export default function Login() {
     const formData = new FormData(event.currentTarget)
     const otp = formData.get('otp') as string
 
-    try {
-      const data = await apiLogin(username, password, otp)
-      login(data.access_token, data.refresh_token)
-    } catch (err) {
-      const error = err as AxiosError<{ detail: string }>
-      
-      if (error.response) {
-        if (error.response.status === 401 && error.response.data?.detail === '2FA required') {
-          setShowOTP(true)
-          setError('Please enter your 2FA code')
-          return;
-        }
-
-        if (error.response.status === 401 && error.response.data?.detail === 'Email not verified') {
-          setError('Email not verified.')
-          setShowResendLink(true)
-          return;
-        }
+    loginMutation.mutate({ username, password, otp }, {
+      onSuccess: (data) => {
+        login(data.access_token, data.refresh_token)
+        setIsLoading(false)
+      },
+      onError: (err) => {
+        setIsLoading(false)
+        const error = err as AxiosError<{ detail: string }>
         
-        // Handle cases where data might not be JSON (e.g. Pomerium HTML response)
-        if (typeof error.response.data === 'string') {
-             setError(`Login failed: Server returned ${error.response.status}. Check console for details.`);
+        if (error.response) {
+          if (error.response.status === 401 && error.response.data?.detail === '2FA required') {
+            setShowOTP(true)
+            setError('Please enter your 2FA code')
+            return;
+          }
+
+          if (error.response.status === 401 && error.response.data?.detail === 'Email not verified') {
+            setError('Email not verified.')
+            setShowResendLink(true)
+            return;
+          }
+          
+          // Handle cases where data might not be JSON (e.g. Pomerium HTML response)
+          if (typeof error.response.data === 'string') {
+               setError(`Login failed: Server returned ${error.response.status}. Check console for details.`);
+          } else {
+               setError(error.response.data?.detail || `Login failed with status ${error.response.status}`);
+          }
         } else {
-             setError(error.response.data?.detail || `Login failed with status ${error.response.status}`);
+          setError('Network error or server unreachable');
         }
-      } else {
-        setError('Network error or server unreachable');
       }
-    } finally {
-      setIsLoading(false)
-    }
+    })
   }
 
   return (

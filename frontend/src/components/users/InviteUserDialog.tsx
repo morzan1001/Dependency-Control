@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { inviteUser, getSystemSettings, ApiError } from '@/lib/api';
+import { useInviteUser } from '@/hooks/queries/use-users';
+import { systemApi } from '@/api/system';
+import { ApiError } from '@/api/client';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,42 +21,38 @@ export function InviteUserDialog() {
   const [isOpen, setIsOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
-  const queryClient = useQueryClient();
 
   const { data: systemSettings } = useQuery({
     queryKey: ['systemSettings'],
-    queryFn: getSystemSettings,
+    queryFn: systemApi.getSettings,
   });
 
-  const inviteUserMutation = useMutation({
-    mutationFn: (email: string) => inviteUser(email),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      queryClient.invalidateQueries({ queryKey: ['invitations'] });
-      
-      if (!systemSettings?.smtp_host && data.link) {
-        setInviteLink(data.link);
-        toast.success("Invitation created", {
-          description: "Please copy the invitation link below.",
-        });
-      } else {
-        setIsOpen(false);
-        setInviteEmail("");
-        toast.success("Invitation sent", {
-          description: "An invitation email has been sent to the user.",
-        });
-      }
-    },
-    onError: (error: ApiError) => {
-      toast.error("Error", {
-        description: error.response?.data?.detail || "Failed to send invitation",
-      });
-    }
-  });
+  const inviteUserMutation = useInviteUser();
 
   const handleInviteUser = (e: React.FormEvent) => {
     e.preventDefault();
-    inviteUserMutation.mutate(inviteEmail);
+    inviteUserMutation.mutate(inviteEmail, {
+      onSuccess: (data) => {
+        if (!systemSettings?.smtp_host && data.link) {
+          setInviteLink(data.link);
+          toast.success("Invitation created", {
+            description: "Please copy the invitation link below.",
+          });
+        } else {
+          setIsOpen(false);
+          setInviteEmail("");
+          toast.success("Invitation sent", {
+            description: "An invitation email has been sent to the user.",
+          });
+        }
+      },
+      onError: (error: any) => { // Cast to any to access response
+          const apiError = error as ApiError;
+          toast.error("Error", {
+            description: apiError.response?.data?.detail || "Failed to send invitation",
+          });
+      }
+    });
   };
 
   return (

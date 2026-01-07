@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { resetPassword } from '@/lib/api'
+import { useResetPassword } from '@/hooks/queries/use-auth'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
@@ -16,6 +16,7 @@ export default function ResetPassword() {
   const navigate = useNavigate()
   
   const token = searchParams.get('token')
+  const resetPasswordMutation = useResetPassword();
 
   const validatePassword = (password: string) => {
     if (password.length < 8) return "Password must be at least 8 characters long";
@@ -46,20 +47,22 @@ export default function ResetPassword() {
     }
 
     setIsLoading(true)
-
-    try {
-      await resetPassword(token, newPassword)
-      toast.success("Password Reset Successful", {
-        description: "You can now login with your new password.",
-      })
-      navigate('/login')
-    } catch (err) {
-      toast.error("Reset Failed", {
-        description: getErrorMessage(err),
-      })
-    } finally {
-      setIsLoading(false)
-    }
+resetPasswordMutation.mutate({ token, newPassword }, {
+         onSuccess: () => {
+             toast.success("Password Reset Successful", {
+                description: "You can now login with your new password.",
+             })
+             navigate('/login')
+         },
+         onError: (err) => {
+             toast.error("Reset Failed", {
+                description: getErrorMessage(err),
+             })
+         },
+         onSettled: () => {
+             setIsLoading(false)
+         }
+    })
   }
 
   if (!token) {

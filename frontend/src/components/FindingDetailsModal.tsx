@@ -2,7 +2,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
-import { Finding, NestedVulnerability } from "@/lib/api"
+import { Finding, NestedVulnerability } from "@/types/scan"
 import { AlertTriangle, ExternalLink, Shield, ShieldAlert } from "lucide-react"
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"

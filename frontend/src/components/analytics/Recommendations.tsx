@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
-import { getProjectRecommendations, Recommendation, RecommendationsResponse, CrossProjectCve } from '@/lib/api'
+import { useProjectRecommendations } from '@/hooks/queries/use-analytics'
+import { Recommendation, RecommendationsResponse, CrossProjectCve } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1138,11 +1138,7 @@ function SummaryCard({ data }: { data: RecommendationsResponse }) {
 export function Recommendations({ projectId: initialProjectId, scanId }: RecommendationsProps) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId || '')
   
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['recommendations', selectedProjectId, scanId],
-    queryFn: () => getProjectRecommendations(selectedProjectId, scanId),
-    enabled: !!selectedProjectId,
-  })
+  const { data, isLoading, error } = useProjectRecommendations(selectedProjectId, scanId)
   
   return (
     <div className="space-y-6">

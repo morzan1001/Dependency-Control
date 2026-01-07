@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { setup2FA, enable2FA, getMe, TwoFASetup } from '@/lib/api'
+import { useQueryClient } from '@tanstack/react-query'
+import { useSetup2FA, useEnable2FA } from '@/hooks/queries/use-auth'
+import { useCurrentUser } from '@/hooks/queries/use-users'
+import { TwoFASetup } from '@/types/user'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,10 +19,7 @@ export default function Setup2FA() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const { data: user } = useQuery({
-    queryKey: ['me'],
-    queryFn: getMe,
-  })
+  const { data: user } = useCurrentUser();
 
   useEffect(() => {
     if (user?.totp_enabled) {
@@ -28,45 +27,39 @@ export default function Setup2FA() {
     }
   }, [user, navigate])
 
-  const setupMutation = useMutation({
-    mutationFn: setup2FA,
-    onSuccess: (data) => {
-      setSetupData(data)
-      setStep('verify')
-    },
-    onError: (error) => {
-      toast.error("Failed to start 2FA setup", {
-        description: getErrorMessage(error)
-      })
-    }
-  })
-
-  const enableMutation = useMutation({
-    mutationFn: () => enable2FA(otpCode, password),
-    onSuccess: () => {
-      toast.success("2FA Enabled", {
-        description: "Two-factor authentication has been successfully enabled."
-      })
-      queryClient.invalidateQueries({ queryKey: ['me'] })
-      // Force a reload or re-login to get a full token
-      // Since we might have a limited token, we need to re-authenticate or refresh
-      // For now, redirecting to login is the safest way to ensure a clean state with full token
-      navigate('/login', { state: { message: '2FA enabled. Please login again.' } })
-    },
-    onError: (error) => {
-      toast.error("Failed to enable 2FA", {
-        description: getErrorMessage(error)
-      })
-    }
-  })
+  const setupMutation = useSetup2FA();
+  const enableMutation = useEnable2FA();
 
   const handleStartSetup = () => {
-    setupMutation.mutate()
+    setupMutation.mutate(undefined, {
+       onSuccess: (data) => {
+        setSetupData(data)
+        setStep('verify')
+      },
+      onError: (error) => {
+        toast.error("Failed to start 2FA setup", {
+          description: getErrorMessage(error)
+        })
+      }
+    })
   }
 
   const handleVerify = (e: React.FormEvent) => {
     e.preventDefault()
-    enableMutation.mutate()
+    enableMutation.mutate({ code: otpCode, password }, {
+       onSuccess: () => {
+        toast.success("2FA Enabled", {
+           description: "Two-factor authentication has been successfully enabled."
+        })
+        queryClient.invalidateQueries({ queryKey: ['me'] })
+        navigate('/login', { state: { message: '2FA enabled. Please login again.' } })
+      },
+      onError: (error) => {
+        toast.error("Failed to enable 2FA", {
+          description: getErrorMessage(error)
+        })
+      }
+    })
   }
 
   return (

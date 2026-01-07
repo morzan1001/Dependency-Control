@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { AdditionalDetailsView } from '@/components/findings/details/AdditionalDetailsView'
 import { DetailSection } from '@/components/findings/details/shared'
-import type { FindingDetails } from '@/lib/api'
+import type { FindingDetails } from '@/types/scan'
 import {
   formatScorecardCriticalIssue,
   getScoreBorderColor,

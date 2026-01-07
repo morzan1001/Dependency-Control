@@ -1,7 +1,7 @@
 import React from 'react'
 import { Badge } from '@/components/ui/badge'
 import { ContextBanner } from '@/components/findings/ContextBanner'
-import type { Finding } from '@/lib/api'
+import type { Finding } from '@/types/scan'
 import { formatScorecardCriticalIssue } from '@/lib/finding-utils'
 import {
   Activity,

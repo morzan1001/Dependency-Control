@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { updateMe, User, ApiError } from '@/lib/api';
+import { userApi } from '@/api/users';
+import { User } from '@/types/user';
+import { ApiError } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,7 +32,7 @@ export function UserDetailsCard({ user, notificationChannels }: UserDetailsCardP
   }, [user]);
 
   const updateProfileMutation = useMutation({
-    mutationFn: () => updateMe({ 
+    mutationFn: () => userApi.updateMe({ 
       username, 
       email,
       slack_username: slackUsername || undefined,

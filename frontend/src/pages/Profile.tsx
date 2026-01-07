@@ -1,20 +1,14 @@
-import { useQuery } from '@tanstack/react-query';
-import { getMe, getNotificationChannels } from '@/lib/api';
+import { useCurrentUser } from '@/hooks/queries/use-users';
+import { useNotificationChannels } from '@/hooks/queries/use-system';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserDetailsCard } from '@/components/profile/UserDetailsCard';
 import { PasswordUpdateCard } from '@/components/profile/PasswordUpdateCard';
 import { TwoFactorAuthCard } from '@/components/profile/TwoFactorAuthCard';
 
 export default function ProfilePage() {
-  const { data: user, isLoading } = useQuery({
-    queryKey: ['me'],
-    queryFn: getMe,
-  });
+  const { data: user, isLoading } = useCurrentUser();
 
-  const { data: notificationChannels } = useQuery({
-    queryKey: ['notificationChannels'],
-    queryFn: getNotificationChannels,
-  });
+  const { data: notificationChannels } = useNotificationChannels();
 
   if (isLoading) {
     return (

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { updatePassword, migrateToLocal, User, ApiError } from '@/lib/api';
+import { userApi } from '@/api/users';
+import { User } from '@/types/user';
+import { ApiError } from '@/api/client';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,7 +32,7 @@ export function PasswordUpdateCard({ user }: PasswordUpdateCardProps) {
   };
 
   const updatePasswordMutation = useMutation({
-    mutationFn: () => updatePassword(currentPassword, newPassword),
+    mutationFn: () => userApi.updatePassword(currentPassword, newPassword),
     onSuccess: () => {
       toast.success("Password updated", {
         description: "Your password has been updated successfully.",
@@ -47,7 +49,7 @@ export function PasswordUpdateCard({ user }: PasswordUpdateCardProps) {
   });
 
   const migrateToLocalMutation = useMutation({
-    mutationFn: () => migrateToLocal(newPassword),
+    mutationFn: () => userApi.migrateToLocal(newPassword),
     onSuccess: () => {
       toast.success("Account Migrated", {
         description: "Your account has been migrated to local authentication. You can now login with your password.",

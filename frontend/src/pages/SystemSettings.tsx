@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { getSystemSettings, updateSystemSettings, SystemSettings as SystemSettingsType, getGlobalWebhooks, createGlobalWebhook, deleteWebhook } from "@/lib/api"
+import { useQueryClient } from "@tanstack/react-query"
+import { useSystemSettings, useUpdateSystemSettings } from "@/hooks/queries/use-system"
+import { useGlobalWebhooks, useCreateGlobalWebhook, useDeleteWebhook } from "@/hooks/queries/use-webhooks"
+import { SystemSettings as SystemSettingsType } from "@/types/system"
 import { WebhookManager } from "@/components/WebhookManager"
 import { useAuth } from "@/context/useAuth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -29,10 +31,7 @@ export default function SystemSettings() {
   const [slackAuthMode, setSlackAuthMode] = useState("oauth")
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const { data: settings, isLoading } = useQuery({
-    queryKey: ['systemSettings'],
-    queryFn: getSystemSettings,
-  })
+  const { data: settings, isLoading } = useSystemSettings();
 
   useEffect(() => {
     if (settings) {
@@ -58,43 +57,23 @@ export default function SystemSettings() {
     }
   }, [searchParams, setSearchParams, queryClient])
 
-  const mutation = useMutation({
-    mutationFn: updateSystemSettings,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['systemSettings'] })
-      toast.success("Settings updated successfully")
-    },
-    onError: () => {
-      toast.error("Failed to update settings")
-    }
-  })
+  const mutation = useUpdateSystemSettings();
 
   const handleInputChange = (field: keyof SystemSettingsType, value: string | number | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 
   const handleSave = () => {
-    mutation.mutate(formData)
+    mutation.mutate(formData, {
+        onSuccess: () => toast.success("Settings updated successfully"),
+        onError: () => toast.error("Failed to update settings")
+    })
   }
 
-  const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useQuery({
-    queryKey: ['globalWebhooks'],
-    queryFn: getGlobalWebhooks,
-  })
+  const { data: webhooks, isLoading: isLoadingWebhooks } = useGlobalWebhooks();
 
-  const createWebhookMutation = useMutation({
-    mutationFn: createGlobalWebhook,
-    onSuccess: () => {
-      refetchWebhooks()
-    }
-  })
-
-  const deleteWebhookMutation = useMutation({
-    mutationFn: deleteWebhook,
-    onSuccess: () => {
-      refetchWebhooks()
-    }
-  })
+  const createWebhookMutation = useCreateGlobalWebhook();
+  const deleteWebhookMutation = useDeleteWebhook();
 
   if (isLoading) {
     return (

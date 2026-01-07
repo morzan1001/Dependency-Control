@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { disable2FA, ApiError } from '@/lib/api';
+import { authApi } from '@/api/auth';
+import { ApiError } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,7 +26,7 @@ export function TwoFADisableDialog({ isOpen, onClose }: TwoFADisableDialogProps)
   const [password, setPassword] = useState('');
 
   const disable2FAMutation = useMutation({
-    mutationFn: (password: string) => disable2FA(password),
+    mutationFn: (password: string) => authApi.disable2FA(password),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
       onClose();

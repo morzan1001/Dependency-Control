@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getProjectScans, getWaivers, Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts } from '@/lib/api'
+import { useProjectScans } from '@/hooks/queries/use-scans'
+import { useProjectWaivers } from '@/hooks/queries/use-waivers'
+import { Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts } from '@/types/scan'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Activity, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
@@ -13,23 +14,17 @@ interface ProjectOverviewProps {
 }
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
-  const { data: scans, isLoading } = useQuery({
-    queryKey: ['project-scans-overview', projectId],
-    queryFn: () => getProjectScans(projectId, 0, 100), // Fetch last 100 for charts
-  })
+  const { data: scans, isLoading } = useProjectScans(projectId, 1, 100)
 
-  const { data: waivers } = useQuery({
-    queryKey: ['waivers', projectId],
-    queryFn: () => getWaivers(projectId),
-  })
+  const { data: waivers } = useProjectWaivers(projectId)
 
   const scanList = scans || []
   
   // Filter scans based on selection
-  const filteredScans = scanList.filter(s => selectedBranches.includes(s.branch))
+  const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch))
 
   // Count unique pipelines (excluding rescans)
-  const uniqueScansCount = filteredScans.filter(s => !s.is_rescan).length
+  const uniqueScansCount = filteredScans.filter((s: Scan) => !s.is_rescan).length
 
   // Calculate Project Stats (Using pre-calculated stats from scans)
   const projectStats = useMemo(() => {
@@ -38,7 +33,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       // 1. Group by branch and find latest scan for each
       const latestScansByBranch: Record<string, Scan> = {};
       
-      filteredScans.forEach(scan => {
+      filteredScans.forEach((scan: Scan) => {
           if (scan.status !== 'completed') return;
           
           const currentLatest = latestScansByBranch[scan.branch];

@@ -1,14 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
-import { getAnalyticsSummary } from '@/lib/api'
+import { useAnalyticsSummary } from '@/hooks/queries/use-analytics'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Package, AlertTriangle, Layers, PieChart } from 'lucide-react'
 
 export function AnalyticsSummaryCards() {
-  const { data: summary, isLoading } = useQuery({
-    queryKey: ['analytics-summary'],
-    queryFn: getAnalyticsSummary,
-  })
+  const { data: summary, isLoading } = useAnalyticsSummary()
 
   if (isLoading) {
     return (
@@ -70,10 +66,7 @@ export function AnalyticsSummaryCards() {
 }
 
 export function SeverityDistribution() {
-  const { data: summary, isLoading } = useQuery({
-    queryKey: ['analytics-summary'],
-    queryFn: getAnalyticsSummary,
-  })
+  const { data: summary, isLoading } = useAnalyticsSummary()
 
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />
@@ -139,10 +132,7 @@ export function SeverityDistribution() {
 }
 
 export function DependencyTypesChart() {
-  const { data: summary, isLoading } = useQuery({
-    queryKey: ['analytics-summary'],
-    queryFn: getAnalyticsSummary,
-  })
+  const { data: summary, isLoading } = useAnalyticsSummary()
 
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />
@@ -182,7 +172,7 @@ export function DependencyTypesChart() {
         {types.slice(0, 8).map((t, i) => (
           <div key={t.type} className="space-y-1">
             <div className="flex justify-between text-sm">
-              <span className="font-medium">{t.type}</span>
+              <span className="fo: { type: string; count: number; percentage: number }, i: numbermedium">{t.type}</span>
               <span className="text-muted-foreground">{t.count} ({t.percentage}%)</span>
             </div>
             <div className="h-2 bg-secondary rounded-full overflow-hidden">

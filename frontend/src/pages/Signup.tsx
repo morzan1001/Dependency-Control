@@ -3,8 +3,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { signup, login as apiLogin } from '@/lib/api'
 import { useAuth } from '@/context/useAuth'
+import { useSignup, useLogin } from '@/hooks/queries/use-auth'
 import { AxiosError } from 'axios'
 import { useNavigate, Link } from 'react-router-dom'
 
@@ -13,6 +13,9 @@ export default function Signup() {
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const { login } = useAuth()
+  
+  const signupMutation = useSignup();
+  const loginMutation = useLogin();
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -31,30 +34,32 @@ export default function Signup() {
       return
     }
 
-    try {
-      await signup(username, email, password)
-      
-      // Auto-login after signup
-      try {
-        const data = await apiLogin(username, password)
-        login(data.access_token, data.refresh_token)
-        // The AuthContext will handle redirection to /setup-2fa if needed
-      } catch {
-        // If auto-login fails, redirect to login page
-        navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
+    signupMutation.mutate({ username, email, password }, {
+      onSuccess: () => {
+        // Auto-login after signup
+        loginMutation.mutate({ username, password }, {
+          onSuccess: (data) => {
+            login(data.access_token, data.refresh_token)
+            // The AuthContext will handle redirection/state
+            setIsLoading(false)
+          },
+          onError: () => {
+             // If auto-login fails, redirect to login page
+             setIsLoading(false)
+             navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
+          }
+        })
+      },
+      onError: (err) => {
+        setIsLoading(false)
+        const error = err as AxiosError<{ detail: string }>
+        if (error.response) {
+          setError(error.response.data?.detail || `Signup failed with status ${error.response.status}`);
+        } else {
+          setError('Network error or server unreachable');
+        }
       }
-
-    } catch (err) {
-      const error = err as AxiosError<{ detail: string }>
-      
-      if (error.response) {
-        setError(error.response.data?.detail || `Signup failed with status ${error.response.status}`);
-      } else {
-        setError('Network error or server unreachable');
-      }
-    } finally {
-      setIsLoading(false)
-    }
+    })
   }
 
   return (

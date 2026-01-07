@@ -1,5 +1,5 @@
 import React from 'react'
-import type { FindingDetails } from '@/lib/api'
+import type { FindingDetails } from '@/types/scan'
 import {
   AlertTriangle,
   BookOpen,

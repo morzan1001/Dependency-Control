@@ -1,4 +1,4 @@
-import type { Finding } from '@/lib/api'
+import type { Finding } from '@/types/scan'
 
 export const getFindingTitle = (finding: Finding) => finding.id || 'Finding Details'
 export const getFindingPackage = (finding: Finding) => finding.component || 'Unknown'
