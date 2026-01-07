@@ -1,3 +1,15 @@
+# Release 1.2.2
+
+## 🚀 Features
+
+- feat: update project and team role constants, enhance role validation, and increment version to 1.2.2 (#0)
+
+## 🐛 Fixes
+
+- fix: update Dockerfile to install pnpm directly and add pnpm-workspace.yaml for built dependencies (#0)
+
+
+
 # Release 1.2.1
 
 
