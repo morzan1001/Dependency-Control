@@ -4,10 +4,12 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES
+
 
 class TeamMember(BaseModel):
     user_id: str
-    role: str = "member"  # "owner", "admin", "member"
+    role: str = TEAM_ROLE_MEMBER  # One of TEAM_ROLES
 
 
 class Team(BaseModel):

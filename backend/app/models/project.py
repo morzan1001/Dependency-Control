@@ -4,13 +4,14 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES
 from app.models.finding import Finding
 from app.models.stats import Stats
 
 
 class ProjectMember(BaseModel):
     user_id: str
-    role: str = "viewer"  # "admin", "editor", "viewer"
+    role: str = PROJECT_ROLE_VIEWER  # One of PROJECT_ROLES
     notification_preferences: Dict[str, List[str]] = Field(default_factory=dict)
     username: Optional[str] = None
     inherited_from: Optional[str] = None  # e.g. "Team: DevOps"

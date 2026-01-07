@@ -12,6 +12,13 @@ from pydantic import BaseModel
 
 from app.api import deps
 from app.core import security
+from app.core.constants import (
+    PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_VIEWER,
+    PROJECT_ROLES,
+    TEAM_ROLE_ADMIN,
+    TEAM_ROLE_OWNER,
+)
 from app.core.worker import worker_manager
 from app.db.mongodb import get_database
 from app.models.invitation import ProjectInvitation
@@ -65,10 +72,10 @@ async def check_project_access(
             # Team admins/owners get 'admin' access on project.
             for tm in team["members"]:
                 if tm["user_id"] == str(user.id):
-                    if tm["role"] in ["admin", "owner"]:
-                        member_role = "admin"
+                    if tm["role"] in [TEAM_ROLE_ADMIN, TEAM_ROLE_OWNER]:
+                        member_role = PROJECT_ROLE_ADMIN
                     else:
-                        member_role = "viewer"
+                        member_role = PROJECT_ROLE_VIEWER
                     break
             is_member = True
 
@@ -86,9 +93,9 @@ async def check_project_access(
         if is_owner:
             return project
         # Role hierarchy: admin > editor > viewer
-        roles = ["viewer", "editor", "admin"]
+        roles = PROJECT_ROLES
         # If member_role is None, default to viewer
-        current_role = member_role or "viewer"
+        current_role = member_role or PROJECT_ROLE_VIEWER
         if roles.index(current_role) < roles.index(required_role):
             raise HTTPException(status_code=403, detail="Not enough permissions")
 

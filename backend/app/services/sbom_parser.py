@@ -14,49 +14,12 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from app.core.constants import LICENSE_URL_PATTERNS
 from app.schemas.sbom import (ParsedDependency, ParsedSBOM, SBOMFormat,
                               SourceType)
 
 logger = logging.getLogger(__name__)
 
-# Common license URL patterns to SPDX ID mapping
-LICENSE_URL_PATTERNS = {
-    # GNU Licenses
-    r"gnu\.org/licenses/gpl-3\.0": "GPL-3.0",
-    r"gnu\.org/licenses/gpl-2\.0": "GPL-2.0",
-    r"gnu\.org/licenses/lgpl-3\.0": "LGPL-3.0",
-    r"gnu\.org/licenses/lgpl-2\.1": "LGPL-2.1",
-    r"gnu\.org/licenses/lgpl-2\.0": "LGPL-2.0",
-    r"gnu\.org/licenses/agpl-3\.0": "AGPL-3.0",
-    r"gnu\.org/licenses/fdl": "GFDL-1.3",
-    # Apache
-    r"apache\.org/licenses/LICENSE-2\.0": "Apache-2.0",
-    r"apache\.org/licenses/LICENSE-1\.1": "Apache-1.1",
-    # MIT
-    r"opensource\.org/licenses/MIT": "MIT",
-    r"mit-license\.org": "MIT",
-    # BSD
-    r"opensource\.org/licenses/BSD-3-Clause": "BSD-3-Clause",
-    r"opensource\.org/licenses/BSD-2-Clause": "BSD-2-Clause",
-    # Creative Commons
-    r"creativecommons\.org/licenses/by/4\.0": "CC-BY-4.0",
-    r"creativecommons\.org/licenses/by-sa/4\.0": "CC-BY-SA-4.0",
-    r"creativecommons\.org/publicdomain/zero/1\.0": "CC0-1.0",
-    # Mozilla
-    r"mozilla\.org/MPL/2\.0": "MPL-2.0",
-    r"mozilla\.org/MPL/1\.1": "MPL-1.1",
-    # Eclipse
-    r"eclipse\.org/legal/epl-2\.0": "EPL-2.0",
-    r"eclipse\.org/legal/epl-v10": "EPL-1.0",
-    # ISC
-    r"opensource\.org/licenses/ISC": "ISC",
-    # Unlicense
-    r"unlicense\.org": "Unlicense",
-    # WTFPL
-    r"wtfpl\.net": "WTFPL",
-    # Zlib
-    r"zlib\.net/zlib_license\.html": "Zlib",
-}
 
 
 def is_url(value: str) -> bool:

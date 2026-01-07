@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.constants import PROJECT_ROLES, PROJECT_ROLE_VIEWER
 from app.models.project import Project
 
 
@@ -57,20 +58,22 @@ class ProjectMemberInvite(BaseModel):
         example="colleague@example.com",
     )
     role: str = Field(
-        "viewer", description="Role to assign (viewer, editor, admin)", example="editor"
+        PROJECT_ROLE_VIEWER,
+        description=f"Role to assign ({', '.join(PROJECT_ROLES)})",
+        example=PROJECT_ROLE_VIEWER,
     )
 
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
-        if v not in ["viewer", "editor", "admin"]:
-            raise ValueError("Role must be one of: viewer, editor, admin")
+        if v not in PROJECT_ROLES:
+            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
         return v
 
 
-class ProjectMemberUpdate(BaseModel):
-    role: Optional[str] = Field(
-        None, description="New role to assign (viewer, editor, admin)", example="admin"
+class Project
+        description=f"New role to assign ({', '.join(PROJECT_ROLES)})",
+        example=PROJECT_ROLE_VIEWER,
     )
     notification_preferences: Optional[Dict[str, List[str]]] = Field(
         None, description="Notification preferences for the member"
@@ -79,6 +82,8 @@ class ProjectMemberUpdate(BaseModel):
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: Optional[str]) -> Optional[str]:
+        if v and v not in PROJECT_ROLES:
+            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}
         if v and v not in ["viewer", "editor", "admin"]:
             raise ValueError("Role must be one of: viewer, editor, admin")
         return v
