@@ -216,7 +216,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                             <Button 
                                 variant="outline" 
                                 size="sm" 
-                                onClick={handleMigrate}
+                                onClick={() => handleMigrate(user._id || user.id)}
                                 disabled={migrateUserMutation.isPending}
                             >
                                 {migrateUserMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
