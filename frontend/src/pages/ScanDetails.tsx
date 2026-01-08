@@ -59,7 +59,7 @@ export default function ScanDetails() {
   const { data: scan, isLoading: isScanLoading } = useScan(scanId!)
   const { data: scanHistory } = useScanHistory(projectId!, scanId!)
 
-  const [activeTab, setActiveTab] = useState('findings');
+  const [activeTab, setActiveTab] = useState('overview');
   const sbomParam = searchParams.get('sbom');
   const handleTabChange = (val: string) => setActiveTab(val);
 
@@ -69,6 +69,11 @@ export default function ScanDetails() {
   const { data: categoryStats } = useScanStats(scanId!)
   
   const triggerRescanMutation = useTriggerRescan()
+
+  // Reset tab to overview when scanId changes
+  useEffect(() => {
+    setActiveTab('overview')
+  }, [scanId])
 
   // Scroll to SBOM when navigating from finding details
   useEffect(() => {
