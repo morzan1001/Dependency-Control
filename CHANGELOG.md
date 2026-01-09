@@ -1,3 +1,11 @@
+# Release 1.2.5
+
+## 📦 Build & CI
+
+- chore: update version to 1.2.5 and enhance authentication flow (#0)
+
+
+
 # Release 1.2.4
 
 ## 📦 Build & CI
