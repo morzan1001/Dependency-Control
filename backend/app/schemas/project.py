@@ -71,7 +71,9 @@ class ProjectMemberInvite(BaseModel):
         return v
 
 
-class Project
+class ProjectMemberUpdate(BaseModel):
+    role: Optional[str] = Field(
+        None,
         description=f"New role to assign ({', '.join(PROJECT_ROLES)})",
         example=PROJECT_ROLE_VIEWER,
     )
@@ -83,9 +85,7 @@ class Project
     @classmethod
     def validate_role(cls, v: Optional[str]) -> Optional[str]:
         if v and v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}
-        if v and v not in ["viewer", "editor", "admin"]:
-            raise ValueError("Role must be one of: viewer, editor, admin")
+            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
         return v
 
 

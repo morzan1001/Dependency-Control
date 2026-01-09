@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/useAuth'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -6,7 +6,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 export default function LoginCallback() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { login } = useAuth()
+  const { login, isAuthenticated } = useAuth()
+  const [tokenProcessed, setTokenProcessed] = useState(false)
 
   useEffect(() => {
     const hash = location.hash
@@ -20,11 +21,19 @@ export default function LoginCallback() {
     const refreshToken = params.get('refresh_token')
 
     if (accessToken && refreshToken) {
-      login(accessToken, refreshToken)
+      login(accessToken, refreshToken, true)
+      setTokenProcessed(true)
     } else {
       navigate('/login', { state: { error: 'Invalid token response' } })
     }
   }, [location, navigate, login])
+
+  // Navigate after authentication state is fully updated
+  useEffect(() => {
+    if (tokenProcessed && isAuthenticated) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [tokenProcessed, isAuthenticated, navigate])
 
   return (
     <div className="flex h-screen items-center justify-center">
