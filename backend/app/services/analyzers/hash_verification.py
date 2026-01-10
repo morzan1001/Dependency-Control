@@ -20,7 +20,7 @@ import httpx
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 
 from .base import Analyzer
-from .purl_utils import get_registry_system, is_npm, is_pypi
+from .purl_utils import is_npm, is_pypi
 
 logger = logging.getLogger(__name__)
 

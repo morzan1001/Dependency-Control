@@ -62,25 +62,6 @@ PURL_TYPE_TO_SYSTEM = {
     "cran": "cran",  # R
 }
 
-# Mapping for ecosystem names used in various APIs
-PURL_TYPE_TO_ECOSYSTEM = {
-    "pypi": "PyPI",
-    "npm": "npm",
-    "maven": "Maven",
-    "golang": "Go",
-    "go": "Go",
-    "cargo": "crates.io",
-    "nuget": "NuGet",
-    "gem": "RubyGems",
-    "composer": "Packagist",
-    "cocoapods": "CocoaPods",
-    "swift": "SwiftPM",
-    "pub": "Pub",
-    "hex": "Hex",
-    "cran": "CRAN",
-}
-
-
 def parse_purl(purl: str) -> Optional[ParsedPURL]:
     """
     Parse a PURL string into its components.
@@ -162,18 +143,6 @@ def get_purl_type(purl: str) -> Optional[str]:
         return type_part
     except (IndexError, AttributeError):
         return None
-
-
-def get_registry_system(purl: str) -> Optional[str]:
-    """Get the registry system name for a PURL (for deps.dev API)."""
-    purl_type = get_purl_type(purl)
-    return PURL_TYPE_TO_SYSTEM.get(purl_type) if purl_type else None
-
-
-def get_ecosystem(purl: str) -> Optional[str]:
-    """Get the ecosystem name for a PURL (for OSV, etc.)."""
-    purl_type = get_purl_type(purl)
-    return PURL_TYPE_TO_ECOSYSTEM.get(purl_type) if purl_type else None
 
 
 def is_pypi(purl: str) -> bool:
