@@ -8,7 +8,7 @@ import httpx
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 
 from .base import Analyzer
-from .purl_utils import get_registry_system
+from .purl_utils import parse_purl
 
 logger = logging.getLogger(__name__)
 
@@ -121,14 +121,13 @@ class DepsDevAnalyzer(Analyzer):
     def _get_cache_key_for_component(self, component: Dict[str, Any]) -> Optional[str]:
         """Get cache key for a component."""
         purl = component.get("purl", "")
-        name = component.get("name", "")
         version = component.get("version", "")
-        system = self._get_system_from_purl(purl)
 
-        if not system or not name or not version:
+        parsed = parse_purl(purl)
+        if not parsed or not parsed.registry_system or not version:
             return None
 
-        return CacheKeys.deps_dev(system, name, version)
+        return CacheKeys.deps_dev(parsed.registry_system, parsed.deps_dev_name, version)
 
     async def _get_cached_components(
         self, components: List[Dict[str, Any]]
@@ -143,14 +142,13 @@ class DepsDevAnalyzer(Analyzer):
 
         for component in components:
             purl = component.get("purl", "")
-            name = component.get("name", "")
             version = component.get("version", "")
-            system = self._get_system_from_purl(purl)
 
-            if not system or not name or not version:
+            parsed = parse_purl(purl)
+            if not parsed or not parsed.registry_system or not version:
                 continue
 
-            cache_key = CacheKeys.deps_dev(system, name, version)
+            cache_key = CacheKeys.deps_dev(parsed.registry_system, parsed.deps_dev_name, version)
             cache_keys.append(cache_key)
             component_map[cache_key] = component
 
@@ -191,14 +189,19 @@ class DepsDevAnalyzer(Analyzer):
         name = component.get("name", "")
         version = component.get("version", "")
 
-        # Determine the package system from PURL
-        system = self._get_system_from_purl(purl)
+        parsed = parse_purl(purl)
+        if not parsed:
+            return None
 
-        if not system or not name or not version:
+        system = parsed.registry_system
+        # Use specific name format for lookup
+        lookup_name = parsed.deps_dev_name
+
+        if not system or not lookup_name or not version:
             return None
 
         # URL-encode the package name (handles scoped packages like @scope/pkg)
-        encoded_name = quote(name, safe="")
+        encoded_name = quote(lookup_name, safe="")
         encoded_version = quote(version, safe="")
 
         version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
@@ -419,6 +422,4 @@ class DepsDevAnalyzer(Analyzer):
             "warning": ". ".join(warning_parts),
         }
 
-    def _get_system_from_purl(self, purl: str) -> Optional[str]:
-        """Extract the package system from a PURL. Uses centralized purl_utils."""
-        return get_registry_system(purl)
+

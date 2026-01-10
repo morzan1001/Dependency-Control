@@ -6,7 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from app.api import deps
-from app.core.constants import SEVERITY_ORDER
+from app.core.constants import SEVERITY_ORDER, get_severity_value
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.schemas.analytics import (AnalyticsSummary, DependencyMetadata,
@@ -1299,7 +1299,7 @@ async def search_vulnerabilities(
     # Sort by severity if needed (since MongoDB can't sort by severity order)
     if sort_by == "severity":
         results.sort(
-            key=lambda x: SEVERITY_ORDER.get(x["severity"], 0),
+            key=lambda x: get_severity_value(x["severity"]),
             reverse=(sort_order == "desc"),
         )
 

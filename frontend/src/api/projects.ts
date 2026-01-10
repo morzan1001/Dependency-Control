@@ -1,5 +1,5 @@
 import { api } from '@/api/client';
-import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse } from '@/types/project';
+import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings } from '@/types/project';
 
 export const projectApi = {
   getAll: async (
@@ -60,8 +60,7 @@ export const projectApi = {
     return response.data;
   },
 
-  updateNotificationSettings: async (projectId: string, settings: any) => {
-     // TODO: Strict type for settings
+  updateNotificationSettings: async (projectId: string, settings: ProjectNotificationSettings) => {
     const response = await api.put<Project>(`/projects/${projectId}/notifications`, settings);
     return response.data;
   },

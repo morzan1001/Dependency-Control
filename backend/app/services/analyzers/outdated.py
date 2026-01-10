@@ -1,13 +1,14 @@
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 
 from .base import Analyzer
-from .purl_utils import get_registry_system
+from .purl_utils import parse_purl
 
 logger = logging.getLogger(__name__)
 
@@ -116,13 +117,12 @@ class OutdatedAnalyzer(Analyzer):
 
         for component in components:
             purl = component.get("purl", "")
-            name = component.get("name", "")
-            system = get_registry_system(purl)
 
-            if not system or not name:
+            parsed = parse_purl(purl)
+            if not parsed or not parsed.registry_system:
                 continue
 
-            cache_key = CacheKeys.latest_version(system, name)
+            cache_key = CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name)
             cache_keys.append(cache_key)
             component_map[cache_key] = component
 
@@ -148,21 +148,21 @@ class OutdatedAnalyzer(Analyzer):
         self, client: httpx.AsyncClient, component: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Check component and return result with cache metadata for batch caching."""
-        purl = component.get("purl", "")
+        purl_str = component.get("purl", "")
+        # Fallback name/version if parse fails (though parse is better)
         name = component.get("name", "")
         version = component.get("version", "")
 
-        # Use centralized PURL parsing
-        system = get_registry_system(purl)
-
-        if not system or not name or not version:
+        parsed = parse_purl(purl_str)
+        if not parsed:
             return None
 
-        # Encode name for URL
-        encoded_name = name
-        if system == "npm" and "/" in name:
-            encoded_name = name.replace("/", "%2F")
+        system = parsed.registry_system
+        if not system or not version:
+            return None
 
+        # Use correct name format for deps.dev (e.g. Maven group:artifact)
+        encoded_name = quote(parsed.deps_dev_name, safe="")
         url = f"{self.base_url}/{system}/packages/{encoded_name}"
 
         try:
@@ -180,12 +180,12 @@ class OutdatedAnalyzer(Analyzer):
 
                 # If a default version is found and differs from the current one
                 if default_version and default_version != version:
-                    cache_key = CacheKeys.latest_version(system, name)
+                    cache_key = CacheKeys.latest_version(system, parsed.deps_dev_name)
                     return {
                         "component": name,
                         "current_version": version,
                         "latest_version": default_version,
-                        "purl": purl,
+                        "purl": purl_str,
                         "severity": "INFO",
                         "message": f"Update available: {default_version}",
                         "_cache_key": cache_key,
@@ -193,7 +193,7 @@ class OutdatedAnalyzer(Analyzer):
                     }
                 elif default_version:
                     # Version is current, but still cache the latest version for future lookups
-                    cache_key = CacheKeys.latest_version(system, name)
+                    cache_key = CacheKeys.latest_version(system, parsed.deps_dev_name)
                     return {
                         "_cache_key": cache_key,
                         "_latest_version": default_version,
@@ -206,5 +206,5 @@ class OutdatedAnalyzer(Analyzer):
             logger.debug(f"Connection error checking outdated for {name}")
             return None
         except Exception as e:
-            logger.debug(f"Error checking outdated for {name}: {type(e).__name__}")
+            logger.debug(f"Error checking outdated for {name}: {e}")
             return None
