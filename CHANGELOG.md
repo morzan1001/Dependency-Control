@@ -1,3 +1,11 @@
+# Release 1.2.7
+
+## 📦 Build & CI
+
+- chore: update version to 1.2.7 and enhance notification settings mutation (#0)
+
+
+
 # Release 1.2.6
 
 ## 🚀 Features
