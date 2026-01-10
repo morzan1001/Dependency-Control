@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 
+
 def process_sast(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     """Process SAST (Static Application Security Testing) findings."""
     if not findings:
@@ -37,7 +38,7 @@ def process_sast(findings: List[Dict[str, Any]]) -> List[Recommendation]:
 
     # Create recommendations per category if significant
     for category, cat_findings in findings_by_category.items():
-        severity_counts = defaultdict(int)
+        severity_counts: Dict[str, int] = defaultdict(int)
         files_affected = set()
 
         for f in cat_findings:

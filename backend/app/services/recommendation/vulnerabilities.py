@@ -1,10 +1,14 @@
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
-import re
 
-from app.schemas.recommendation import (Priority, Recommendation,
-                                        RecommendationType, VulnerabilityInfo)
+from app.schemas.recommendation import (
+    Priority,
+    Recommendation,
+    RecommendationType,
+    VulnerabilityInfo,
+)
 from app.core.constants import OS_PACKAGE_TYPES
+
 
 def process_vulnerabilities(
     findings: List[Dict[str, Any]],
@@ -17,9 +21,7 @@ def process_vulnerabilities(
     recommendations = []
 
     # Categorize vulnerabilities by source
-    vulns_by_source = _categorize_by_source(
-        findings, dep_by_purl, dep_by_name_version
-    )
+    vulns_by_source = _categorize_by_source(findings, dep_by_purl, dep_by_name_version)
 
     # 1. Check for base image update recommendation
     base_image_rec = _analyze_base_image_vulns(
@@ -45,6 +47,7 @@ def process_vulnerabilities(
     recommendations.extend(no_fix_recs)
 
     return recommendations
+
 
 def _categorize_by_source(
     findings: List[Dict[str, Any]],
@@ -76,13 +79,15 @@ def _categorize_by_source(
             dep = dep_by_name_version[f"{component}@{version}"]
 
         # Extract CVE ID
-        cve_id = f.get("id")
-        if not cve_id or not cve_id.startswith("CVE-"):
+        cve_id_val = f.get("id")
+        if not cve_id_val or not str(cve_id_val).startswith("CVE-"):
             # Check aliases
             for alias in f.get("aliases", []):
                 if alias.startswith("CVE-"):
-                    cve_id = alias
+                    cve_id_val = alias
                     break
+
+        cve_id = str(cve_id_val) if cve_id_val else "unknown"
 
         # Extract EPSS/KEV/Reachability data from details
         epss_score = details.get("epss_score")
@@ -129,6 +134,7 @@ def _categorize_by_source(
 
     return categories
 
+
 def _is_os_package(dep: Dict[str, Any]) -> bool:
     """Check if a dependency is an OS-level package."""
     pkg_type = dep.get("type", "").lower()
@@ -144,6 +150,7 @@ def _is_os_package(dep: Dict[str, Any]) -> bool:
             return True
 
     return False
+
 
 def _analyze_base_image_vulns(
     vulns: List[VulnerabilityInfo],
@@ -164,9 +171,7 @@ def _analyze_base_image_vulns(
         affected_packages.add(v.package_name)
 
     total_vulns = len(vulns)
-    critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get(
-        "HIGH", 0
-    )
+    critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)
 
     # Only recommend if significant impact
     if total_vulns < 3 and critical_high < 1:
@@ -222,6 +227,7 @@ def _analyze_base_image_vulns(
         effort="low" if total_vulns > 10 else "medium",
     )
 
+
 def _analyze_direct_dependencies(
     vulns: List[VulnerabilityInfo],
     dep_by_purl: Dict[str, Dict],
@@ -238,9 +244,7 @@ def _analyze_direct_dependencies(
 
     for component, component_vulns in vulns_by_component.items():
         # Find the best fix version (one that fixes all vulns)
-        fixed_versions = [
-            v.fixed_version for v in component_vulns if v.fixed_version
-        ]
+        fixed_versions = [v.fixed_version for v in component_vulns if v.fixed_version]
 
         if not fixed_versions:
             continue
@@ -349,9 +353,7 @@ def _analyze_direct_dependencies(
                 f"{reachable_count} are confirmed reachable in your code."
             )
         if unreachable_count > 0 and unreachable_count == len(component_vulns):
-            desc_parts.append(
-                "All vulnerabilities are unreachable - lower priority."
-            )
+            desc_parts.append("All vulnerabilities are unreachable - lower priority.")
 
         recommendations.append(
             Recommendation(
@@ -403,6 +405,7 @@ def _analyze_direct_dependencies(
 
     return recommendations
 
+
 def _analyze_transitive_dependencies(
     vulns: List[VulnerabilityInfo], dependencies: List[Dict[str, Any]]
 ) -> List[Recommendation]:
@@ -416,9 +419,7 @@ def _analyze_transitive_dependencies(
         vulns_by_component[v.package_name].append(v)
 
     for component, component_vulns in vulns_by_component.items():
-        fixed_versions = [
-            v.fixed_version for v in component_vulns if v.fixed_version
-        ]
+        fixed_versions = [v.fixed_version for v in component_vulns if v.fixed_version]
 
         if not fixed_versions:
             continue
@@ -539,6 +540,7 @@ def _analyze_transitive_dependencies(
 
     return recommendations
 
+
 def _analyze_no_fix_vulns(vulns: List[VulnerabilityInfo]) -> List[Recommendation]:
     """Analyze vulnerabilities with no available fix."""
 
@@ -589,6 +591,7 @@ def _analyze_no_fix_vulns(vulns: List[VulnerabilityInfo]) -> List[Recommendation
         )
     ]
 
+
 def _calculate_best_fix_version(versions: List[str]) -> str:
     """
     Calculate the best fix version from a list of options.
@@ -598,16 +601,16 @@ def _calculate_best_fix_version(versions: List[str]) -> str:
     """
     if not versions:
         return "unknown"
-    
+
     # Simple heuristic: longer string or last one (often highest)
     # A proper semver sort would be better but requires a specialized library or complex logic
     # Assuming 'versions' contains strings like "1.2.3", "2.0.0"
-    
+
     # Try to find the max version simply
     try:
         # This is a very naive sort for now, better to import semver if available
-        # But we don't have semver in standard lib. 
+        # But we don't have semver in standard lib.
         # Using string length and value as proxy for now
-        return sorted(versions)[-1] 
+        return sorted(versions)[-1]
     except Exception:
         return versions[0]

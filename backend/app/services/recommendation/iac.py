@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 
+
 def process_iac(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     """Process IAC (Infrastructure as Code) findings."""
     if not findings:
@@ -37,7 +38,7 @@ def process_iac(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     recommendations = []
 
     for platform, plat_findings in findings_by_platform.items():
-        severity_counts = defaultdict(int)
+        severity_counts: Dict[str, int] = defaultdict(int)
         files_affected = set()
 
         for f in plat_findings:
@@ -89,6 +90,7 @@ def process_iac(findings: List[Dict[str, Any]]) -> List[Recommendation]:
         )
 
     return recommendations
+
 
 def _get_common_iac_issues(findings: List[Dict[str, Any]]) -> List[str]:
     """Extract common IAC issue types."""

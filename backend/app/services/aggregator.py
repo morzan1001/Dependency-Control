@@ -1,21 +1,34 @@
-import hashlib
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from app.core.constants import SEVERITY_ORDER, get_severity_value
+from app.core.constants import get_severity_value
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.enrichment import DependencyEnrichment
-from app.schemas.finding import (QualityAggregatedDetails, QualityEntry,
-                                 SecretDetails, VulnerabilityAggregatedDetails,
-                                 VulnerabilityEntry)
-from app.services.normalizers.vulnerability import normalize_trivy, normalize_grype, normalize_osv
+from app.schemas.finding import (
+    QualityAggregatedDetails,
+    QualityEntry,
+    VulnerabilityAggregatedDetails,
+    VulnerabilityEntry,
+)
+from app.services.normalizers.vulnerability import (
+    normalize_trivy,
+    normalize_grype,
+    normalize_osv,
+)
 from app.services.normalizers.lifecycle import normalize_outdated, normalize_eol
 from app.services.normalizers.license import normalize_license
-from app.services.normalizers.quality import normalize_scorecard, normalize_typosquatting, normalize_maintainer_risk
+from app.services.normalizers.quality import (
+    normalize_scorecard,
+    normalize_typosquatting,
+    normalize_maintainer_risk,
+)
 from app.services.normalizers.secret import normalize_trufflehog
 from app.services.normalizers.sast import normalize_opengrep, normalize_bearer
 from app.services.normalizers.iac import normalize_kics
-from app.services.normalizers.security import normalize_malware, normalize_hash_verification
+from app.services.normalizers.security import (
+    normalize_malware,
+    normalize_hash_verification,
+)
 
 
 class ResultAggregator:
@@ -160,7 +173,9 @@ class ResultAggregator:
             # Store full license data for reference
             self._license_data[f"{name}@{version}"] = license_info
 
-    def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: str = None):
+    def aggregate(
+        self, analyzer_name: str, result: Dict[str, Any], source: Optional[str] = None
+    ):
         """
         Dispatches the result to the specific normalizer based on analyzer name.
         """
@@ -218,8 +233,10 @@ class ResultAggregator:
 
         # 2. Group by Version + CVE-Set hash to find potential duplicates
         # Map: (version, cve_set_hash) -> List[Finding]
-        groups = {}
-        sast_groups = {}  # Map: (component, line) -> List[Finding]
+        groups: Dict[str, List[Finding]] = {}
+        sast_groups: Dict[Any, List[Finding]] = (
+            {}
+        )  # Map: (component, line) -> List[Finding]
 
         for f in current_findings:
             if f.type == FindingType.SAST:
@@ -227,14 +244,14 @@ class ResultAggregator:
                 line = f.details.get("line")
                 start_line = f.details.get("start", {}).get("line")
                 effective_line = line or start_line or 0
-                
+
                 # Normalize component path to avoid slight mismatches (e.g. ./file vs file)
                 # But component should be normalized by ingest already.
-                key = (f.component, effective_line)
-                
-                if key not in sast_groups:
-                    sast_groups[key] = []
-                sast_groups[key].append(f)
+                sast_key = (f.component, effective_line)
+
+                if sast_key not in sast_groups:
+                    sast_groups[sast_key] = []
+                sast_groups[sast_key].append(f)
                 continue
 
             if f.type != FindingType.VULNERABILITY:
@@ -250,10 +267,10 @@ class ResultAggregator:
             # Group by version only. We will rely on component name matching to merge.
             # This allows merging findings for the same component that have DIFFERENT sets of vulnerabilities
             # (e.g. different scanners found different things).
-            key = f.version
-            if key not in groups:
-                groups[key] = []
-            groups[key].append(f)
+            group_key = f.version or ""
+            if group_key not in groups:
+                groups[group_key] = []
+            groups[group_key].append(f)
 
         # 3. Process groups
         final_findings = []
@@ -268,7 +285,7 @@ class ResultAggregator:
         for key, group in sast_groups.items():
             if not group:
                 continue
-                
+
             # If group has only 1 item, no merge needed, but wrap in standardized structure if needed?
             # Actually, user wants consistent UI so maybe we should ensure 'sast_findings' exists?
             # But let's stick to merging logic first.
@@ -279,7 +296,7 @@ class ResultAggregator:
                 # But let's verify if that's required. FrontEnd currently handles flat details.
                 # If we start merging, some will have 'sast_findings' and some won't.
                 # BETTER: Always restructure to have 'sast_findings' list if type is SAST.
-                
+
                 # Convert single finding to merged structure
                 merged_f = self._merge_sast_findings(group)
                 final_findings.append(merged_f)
@@ -540,8 +557,6 @@ class ResultAggregator:
                             )
                         )
 
-
-
     def _parse_version_key(self, v: str):
         """Helper to parse version string into a comparable tuple."""
         # Remove common prefixes
@@ -550,7 +565,7 @@ class ResultAggregator:
             v = v[1:]
 
         # Split by non-alphanumeric characters
-        parts = []
+        parts: List[int | str] = []
         for part in re.split(r"[^a-z0-9]+", v):
             if not part:
                 continue
@@ -562,7 +577,7 @@ class ResultAggregator:
 
     def _calculate_aggregated_fixed_version(
         self, fixed_versions_list: List[str]
-    ) -> str:
+    ) -> Optional[str]:
         """
         Calculates the best fixed version(s) considering multiple vulnerabilities and major versions.
         Input: List of fixed version strings (e.g. ["1.2.5, 2.0.1", "1.2.6"])
@@ -573,7 +588,7 @@ class ResultAggregator:
 
         # 1. Parse all available fixes
         # Structure: { MajorVersion: { VulnIndex: [VersionTuple, OriginalString] } }
-        major_buckets = {}
+        major_buckets: Dict[Any, Any] = {}
 
         for i, fv_str in enumerate(fixed_versions_list):
             # Split by comma to handle "1.2.5, 2.0.1"
@@ -655,69 +670,70 @@ class ResultAggregator:
         """
         if not findings:
             return None
-            
+
         # Use the first finding as the base
         base = findings[0]
-        
+
         # Prepare the container logic
         merged_details = {
             "sast_findings": [],
             # Keep common top-level fields for easy access/compatibility
             "file": base.component,
-            "line": base.details.get("line") or base.details.get("start", {}).get("line"),
+            "line": base.details.get("line")
+            or base.details.get("start", {}).get("line"),
             # Merge lists
             "cwe_ids": [],
             "category_groups": [],
             "owasp": [],
         }
-        
+
         merged_scanners = set()
         max_severity_val = 0
         max_severity = "INFO"
-        
+
         all_descriptions = []
-        
+
         for f in findings:
             # Update severity
             s_val = get_severity_value(f.severity)
             if s_val > max_severity_val:
                 max_severity_val = s_val
                 max_severity = f.severity
-            
+
             # Collect scanners
             for s in f.scanners:
                 merged_scanners.add(s)
-                
+
             # Parse individual entry
             entry = {
-                "id": f.details.get("rule_id", "unknown"), # specific rule id
+                "id": f.details.get("rule_id", "unknown"),  # specific rule id
                 "scanner": f.scanners[0] if f.scanners else "unknown",
                 "severity": f.severity,
                 "title": f.details.get("title", f.description[:50]),
                 "description": f.description,
-                "details": f.details # Keep full details
+                "details": f.details,  # Keep full details
             }
             merged_details["sast_findings"].append(entry)
-            
+
             # Aggregate sets
             if f.details.get("cwe_ids"):
                 for cwe in f.details.get("cwe_ids"):
                     if cwe not in merged_details["cwe_ids"]:
                         merged_details["cwe_ids"].append(cwe)
-            
+
             if f.details.get("category_groups"):
-                 for cat in f.details.get("category_groups"):
+                for cat in f.details.get("category_groups"):
                     if cat not in merged_details["category_groups"]:
                         merged_details["category_groups"].append(cat)
-            
+
             if f.details.get("owasp"):
-                 for start in f.details.get("owasp"):
+                for start in f.details.get("owasp"):
                     if start not in merged_details["owasp"]:
                         merged_details["owasp"].append(start)
 
             if f.description and f.description not in all_descriptions:
                 all_descriptions.append(f.description)
-        
+
         # Determine a merged description
         if len(findings) > 1:
             description = f"Multiple SAST issues found at this location by {len(merged_scanners)} scanners."
@@ -726,7 +742,11 @@ class ResultAggregator:
 
         # Construct new Finding
         return Finding(
-            id=base.id if len(findings) == 1 else f"SAST-AGG-{base.component}-{merged_details['line']}", # create stable ID for group
+            id=(
+                base.id
+                if len(findings) == 1
+                else f"SAST-AGG-{base.component}-{merged_details['line']}"
+            ),  # create stable ID for group
             type=FindingType.SAST,
             severity=max_severity,
             component=base.component,
@@ -734,8 +754,12 @@ class ResultAggregator:
             description=description,
             scanners=list(merged_scanners),
             details=merged_details,
-            found_in=base.found_in, # simplistic merge
-            aliases=[f.id for f in findings if f.id != base.id] if len(findings) > 1 else base.aliases
+            found_in=base.found_in,  # simplistic merge
+            aliases=(
+                [f.id for f in findings if f.id != base.id]
+                if len(findings) > 1
+                else base.aliases
+            ),
         )
 
     def _is_same_component_name(self, name1: str, name2: str) -> bool:
@@ -767,7 +791,7 @@ class ResultAggregator:
         return False
 
     def _merge_vulnerability_into_list(
-        self, target_list: List[Dict[str, Any]], source_entry: Dict[str, Any]
+        self, target_list: List[Any], source_entry: Dict[str, Any]
     ):
         """
         Merges a source vulnerability entry into a target list, handling deduplication by ID and Aliases.
@@ -905,7 +929,7 @@ class ResultAggregator:
             return v[1:]
         return v
 
-    def add_finding(self, finding: Finding, source: str = None):
+    def add_finding(self, finding: Finding, source: Optional[str] = None):
         """
         Adds a finding to the map, merging if it already exists.
         """
@@ -916,7 +940,9 @@ class ResultAggregator:
         else:
             self._add_generic_finding(finding, source)
 
-    def _add_vulnerability_finding(self, finding: Finding, source: str = None):
+    def _add_vulnerability_finding(
+        self, finding: Finding, source: Optional[str] = None
+    ):
         # Normalize keys
         raw_comp = finding.component if finding.component else "unknown"
         comp_key = self._normalize_component(raw_comp)
@@ -996,7 +1022,9 @@ class ResultAggregator:
 
             # Update top-level fixed_version
             # Only consider vulnerabilities that actually HAVE a fixed version
-            fvs = [v.get("fixed_version") for v in vuln_list if v.get("fixed_version")]
+            fvs = [
+                str(v.get("fixed_version")) for v in vuln_list if v.get("fixed_version")
+            ]
 
             if not fvs:
                 existing.details["fixed_version"] = None
@@ -1028,7 +1056,7 @@ class ResultAggregator:
             )
             self.findings[agg_key] = agg_finding
 
-    def _add_quality_finding(self, finding: Finding, source: str = None):
+    def _add_quality_finding(self, finding: Finding, source: Optional[str] = None):
         """
         Adds a quality finding to the map, aggregating multiple quality issues
         (scorecard, maintainer_risk, etc.) for the same component+version.
@@ -1190,7 +1218,7 @@ class ResultAggregator:
 
         finding.description = " | ".join(parts) if parts else f"{count} quality issues"
 
-    def _add_generic_finding(self, finding: Finding, source: str = None):
+    def _add_generic_finding(self, finding: Finding, source: Optional[str] = None):
         """
         Adds a finding to the map, merging if it already exists.
         Key for deduplication: type + id + component + version
@@ -1265,33 +1293,3 @@ class ResultAggregator:
             for alias in finding.aliases:
                 k = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
                 self.alias_map[k] = primary_key
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

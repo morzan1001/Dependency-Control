@@ -43,7 +43,8 @@ class BearerFinding(BaseModel):
 
     # Categorization
     category_groups: List[str] = Field(
-        default_factory=list, description="Category groups (e.g., 'PII', 'Personal Data')"
+        default_factory=list,
+        description="Category groups (e.g., 'PII', 'Personal Data')",
     )
 
     # Code context

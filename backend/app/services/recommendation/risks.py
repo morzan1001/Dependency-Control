@@ -2,8 +2,13 @@ from collections import defaultdict
 from typing import List, Dict, Any
 
 from app.core.constants import EPSS_HIGH_THRESHOLD
-from backend.app.schemas.recommendation import Recommendation, RecommendationType, Priority
-from backend.app.services.recommendation.common import SEVERITY_WEIGHTS
+from app.schemas.recommendation import (
+    Recommendation,
+    RecommendationType,
+    Priority,
+)
+from app.core.constants import EPSS_HIGH_THRESHOLD, SEVERITY_WEIGHTS
+
 
 def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
     """Generate specific remediation steps for a hotspot."""
@@ -50,6 +55,7 @@ def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
         )
 
     return steps
+
 
 def detect_critical_hotspots(
     findings: List[Dict[str, Any]],
@@ -106,7 +112,10 @@ def detect_critical_hotspots(
                 pkg_data["high_count"] += 1
             if details.get("is_kev"):
                 pkg_data["kev_count"] += 1
-            if details.get("epss_score") and details.get("epss_score") >= EPSS_HIGH_THRESHOLD:
+            if (
+                details.get("epss_score")
+                and details.get("epss_score") >= EPSS_HIGH_THRESHOLD
+            ):
                 pkg_data["high_epss_count"] += 1
             if f.get("reachable") is True:
                 pkg_data["reachable_count"] += 1
@@ -264,6 +273,7 @@ def detect_critical_hotspots(
 
     return recommendations
 
+
 def detect_toxic_dependencies(
     findings: List[Dict[str, Any]],
     dependencies: List[Dict[str, Any]],
@@ -354,13 +364,9 @@ def detect_toxic_dependencies(
     for component, pkg in package_risks.items():
         vuln_count = len(pkg["vulns"])
         if vuln_count > 0:
-            critical = len(
-                [v for v in pkg["vulns"] if v.get("severity") == "CRITICAL"]
-            )
+            critical = len([v for v in pkg["vulns"] if v.get("severity") == "CRITICAL"])
             high = len([v for v in pkg["vulns"] if v.get("severity") == "HIGH"])
-            kev = len(
-                [v for v in pkg["vulns"] if v.get("details", {}).get("is_kev")]
-            )
+            kev = len([v for v in pkg["vulns"] if v.get("details", {}).get("is_kev")])
 
             pkg["risk_factors"].append(
                 {
@@ -373,9 +379,7 @@ def detect_toxic_dependencies(
                     "description": f"{vuln_count} vulnerabilities ({critical} critical, {high} high, {kev} KEV)",
                 }
             )
-            pkg["total_score"] += (
-                critical * 50 + high * 20 + vuln_count * 5 + kev * 100
-            )
+            pkg["total_score"] += critical * 50 + high * 20 + vuln_count * 5 + kev * 100
 
     # Filter to packages with 2+ risk factors
     toxic_packages = [
@@ -437,6 +441,7 @@ def detect_toxic_dependencies(
 
     return recommendations
 
+
 def analyze_attack_surface(
     dependencies: List[Dict[str, Any]],
     findings: List[Dict[str, Any]],
@@ -470,9 +475,7 @@ def analyze_attack_surface(
                     "name": pkg_name,
                     "version": dep.get("version", "unknown"),
                     "vuln_count": vuln_count,
-                    "parent": dep.get(
-                        "introduced_by", dep.get("parent", "unknown")
-                    ),
+                    "parent": dep.get("introduced_by", dep.get("parent", "unknown")),
                 }
             )
 

@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -70,7 +70,7 @@ def get_vulnerability_found_template(
     vulnerabilities: list,
     has_kev: bool = False,
     kev_count: int = 0,
-    kev_vulnerabilities: list = None,
+    kev_vulnerabilities: Optional[list] = None,
     has_high_epss: bool = False,
     high_epss_count: int = 0,
 ) -> str:

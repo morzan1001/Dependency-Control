@@ -1,10 +1,13 @@
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from app.models.finding import Finding, FindingType, Severity
 
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
-def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], source: str = None):
+
+def normalize_scorecard(
+    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+):
     """
     Process OpenSSF Scorecard results and package metadata from deps_dev scanner.
     Also stores scorecard data for component enrichment.
@@ -30,10 +33,10 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
         # Store scorecard data for component enrichment
         # This allows other findings to reference scorecard data
         component_key = f"{component}@{version}" if version else component
-        
+
         # Access cache directly via private member (or public if we open it)
         # Using public property would be better if available
-        if hasattr(aggregator, 'scorecard_cache'):
+        if hasattr(aggregator, "scorecard_cache"):
             aggregator.scorecard_cache[component_key] = {
                 "overall_score": overall,
                 "failed_checks": failed_checks,
@@ -67,14 +70,10 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
         description_parts = [f"OpenSSF Scorecard score: {overall:.1f}/10"]
 
         if critical_issues:
-            description_parts.append(
-                f"Critical issues: {', '.join(critical_issues)}"
-            )
+            description_parts.append(f"Critical issues: {', '.join(critical_issues)}")
 
         if failed_checks:
-            failed_names = [
-                f"{c['name']} ({c['score']}/10)" for c in failed_checks[:3]
-            ]
+            failed_names = [f"{c['name']} ({c['score']}/10)" for c in failed_checks[:3]]
             description_parts.append(f"Failed checks: {', '.join(failed_names)}")
             if len(failed_checks) > 3:
                 description_parts[-1] += f" (+{len(failed_checks) - 3} more)"
@@ -92,9 +91,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
             elif check_name == "Vulnerabilities":
                 recommendations.append("Check for and apply security patches")
             elif check_name == "CII-Best-Practices":
-                recommendations.append(
-                    "Package doesn't follow OpenSSF best practices"
-                )
+                recommendations.append("Package doesn't follow OpenSSF best practices")
             elif check_name == "Code-Review":
                 recommendations.append(
                     "Limited code review process - higher risk of unreviewed changes"
@@ -136,7 +133,10 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
             source=source,
         )
 
-def normalize_typosquatting(aggregator: "ResultAggregator", result: Dict[str, Any], source: str = None):
+
+def normalize_typosquatting(
+    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+):
     for item in result.get("typosquatting_issues", []):
         similarity = item.get("similarity", 0)
         imitated = item.get("imitated_package")
@@ -155,7 +155,10 @@ def normalize_typosquatting(aggregator: "ResultAggregator", result: Dict[str, An
             source=source,
         )
 
-def normalize_maintainer_risk(aggregator: "ResultAggregator", result: Dict[str, Any], source: str = None):
+
+def normalize_maintainer_risk(
+    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+):
     """Normalize maintainer risk results into findings."""
     for item in result.get("maintainer_issues", []):
         risks = item.get("risks", [])
@@ -163,9 +166,7 @@ def normalize_maintainer_risk(aggregator: "ResultAggregator", result: Dict[str, 
         # Create a combined description from all risks
         risk_messages = [r.get("message", "") for r in risks]
         description = (
-            "; ".join(risk_messages)
-            if risk_messages
-            else "Maintainer risk detected"
+            "; ".join(risk_messages) if risk_messages else "Maintainer risk detected"
         )
 
         aggregator.add_finding(

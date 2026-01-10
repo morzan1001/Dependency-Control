@@ -41,8 +41,8 @@ class DepsDevAnalyzer(Analyzer):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
         scorecard_issues = []
@@ -90,7 +90,9 @@ class DepsDevAnalyzer(Analyzer):
                         )
                     )
 
-                component_results = await asyncio.gather(*tasks, return_exceptions=True)
+                component_results: List[Any] = await asyncio.gather(
+                    *tasks, return_exceptions=True
+                )
 
                 for component, result in zip(uncached_components, component_results):
                     if isinstance(result, Exception):
@@ -148,7 +150,9 @@ class DepsDevAnalyzer(Analyzer):
             if not parsed or not parsed.registry_system or not version:
                 continue
 
-            cache_key = CacheKeys.deps_dev(parsed.registry_system, parsed.deps_dev_name, version)
+            cache_key = CacheKeys.deps_dev(
+                parsed.registry_system, parsed.deps_dev_name, version
+            )
             cache_keys.append(cache_key)
             component_map[cache_key] = component
 
@@ -156,7 +160,7 @@ class DepsDevAnalyzer(Analyzer):
             return {}, components
 
         # Batch get from Redis
-        cached_data = await cache_service.mget(cache_keys)
+        cached_data: Dict[str, Any] = await cache_service.mget(cache_keys)
 
         for cache_key, data in cached_data.items():
             component = component_map.get(cache_key)
@@ -206,7 +210,7 @@ class DepsDevAnalyzer(Analyzer):
 
         version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
 
-        result = {"metadata": None, "scorecard_issue": None}
+        result: Dict[str, Any | None] = {"metadata": None, "scorecard_issue": None}
 
         try:
             # Step 1: Get version info
@@ -421,5 +425,3 @@ class DepsDevAnalyzer(Analyzer):
             "critical_issues": critical_issues,
             "warning": ". ".join(warning_parts),
         }
-
-

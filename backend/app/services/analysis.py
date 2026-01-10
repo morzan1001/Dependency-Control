@@ -3,28 +3,40 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core.constants import sort_by_severity
 from app.models.project import Project
-from app.models.stats import (PrioritizedCounts, ReachabilityStats, Stats,
-                              ThreatIntelligenceStats)
+from app.models.stats import (
+    PrioritizedCounts,
+    ReachabilityStats,
+    Stats,
+    ThreatIntelligenceStats,
+)
 from app.models.system import SystemSettings
 from app.services.aggregator import ResultAggregator
-from app.services.analyzers import (Analyzer, DepsDevAnalyzer,
-                                    EndOfLifeAnalyzer, EPSSKEVAnalyzer,
-                                    GrypeAnalyzer, HashVerificationAnalyzer,
-                                    LicenseAnalyzer, MaintainerRiskAnalyzer,
-                                    OpenSourceMalwareAnalyzer, OSVAnalyzer,
-                                    OutdatedAnalyzer, ReachabilityAnalyzer,
-                                    TrivyAnalyzer, TyposquattingAnalyzer)
+from app.services.analyzers import (
+    Analyzer,
+    DepsDevAnalyzer,
+    EndOfLifeAnalyzer,
+    EPSSKEVAnalyzer,
+    GrypeAnalyzer,
+    HashVerificationAnalyzer,
+    LicenseAnalyzer,
+    MaintainerRiskAnalyzer,
+    OpenSourceMalwareAnalyzer,
+    OSVAnalyzer,
+    OutdatedAnalyzer,
+    ReachabilityAnalyzer,
+    TrivyAnalyzer,
+    TyposquattingAnalyzer,
+)
 from app.services.gitlab import GitLabService
 from app.services.notifications import notification_service
-from app.services.reachability_enrichment import \
-    enrich_findings_with_reachability
+from app.services.reachability_enrichment import enrich_findings_with_reachability
 from app.services.sbom_parser import parse_sbom
 from app.services.vulnerability_enrichment import enrich_vulnerability_findings
 
@@ -112,9 +124,9 @@ async def process_analyzer(
     scan_id: str,
     db,
     aggregator: ResultAggregator,
-    settings: Dict[str, Any] = None,
+    settings: Optional[Dict[str, Any]] = None,
     fallback_source: str = "unknown-sbom",
-    parsed_components: List[Dict[str, Any]] = None,
+    parsed_components: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     try:
         # Pass parsed components to analyzer if available
@@ -616,9 +628,9 @@ async def run_analysis(
                 # Check for critical vulnerabilities and send vulnerability_found notification
                 # Convert Finding objects to dicts for attribute access
                 vulnerability_findings = [
-                    f.model_dump() if hasattr(f, 'model_dump') else f
+                    f.model_dump()
                     for f in aggregated_findings
-                    if (f.type if hasattr(f, 'type') else f.get("type")) == "vulnerability"
+                    if f.type == "vulnerability"
                 ]
 
                 if vulnerability_findings:
@@ -731,7 +743,7 @@ def _build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
     Returns:
         Summary dict with statistics and details
     """
-    summary = {
+    summary: Dict[str, Any] = {
         "total_vulnerabilities": len(findings),
         "epss_enriched": 0,
         "kev_matches": 0,
@@ -846,7 +858,7 @@ def _build_reachability_summary(
     Returns:
         Summary dict with statistics and details
     """
-    summary = {
+    summary: Dict[str, Any] = {
         "total_vulnerabilities": len(findings),
         "analyzed": enriched_count,
         "reachability_levels": {

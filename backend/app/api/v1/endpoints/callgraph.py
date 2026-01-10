@@ -13,10 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_current_user
 from app.db.mongodb import get_database
 from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
-from app.schemas.callgraph import (CallgraphUploadRequest,
-                                   CallgraphUploadResponse)
-from app.services.reachability_enrichment import \
-    run_pending_reachability_for_scan
+from app.schemas.callgraph import CallgraphUploadRequest, CallgraphUploadResponse
+from app.services.reachability_enrichment import run_pending_reachability_for_scan
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -118,8 +116,8 @@ def parse_pyan_format(
         "edges": [{"source": "module.func", "target": "other.func", "type": "calls"}]
     }
     """
-    imports = []
-    calls = []
+    imports: List[Any] = []
+    calls: List[CallEdge] = []
     module_usage: Dict[str, ModuleUsage] = {}
 
     nodes = data.get("nodes", [])
@@ -386,7 +384,7 @@ async def upload_callgraph(
     # Upsert callgraph - keyed by scan_id if available, otherwise by pipeline_id
     # This ensures one callgraph per scan/pipeline
     if scan_id:
-        upsert_filter = {"project_id": project_id, "scan_id": scan_id}
+        upsert_filter: Dict[str, Any] = {"project_id": project_id, "scan_id": scan_id}
         match_context = f"scan {scan_id}"
     elif request.pipeline_id:
         upsert_filter = {"project_id": project_id, "pipeline_id": request.pipeline_id}

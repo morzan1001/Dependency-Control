@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES
+from app.core.constants import TEAM_ROLE_MEMBER
 
 
 class TeamMember(BaseModel):

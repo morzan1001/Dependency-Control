@@ -44,8 +44,8 @@ class EmailProvider(NotificationProvider):
         destination: str,
         subject: str,
         message: str,
-        html_message: str = None,
-        logo_path: str = None,
+        html_message: Optional[str] = None,
+        logo_path: Optional[str] = None,
         system_settings: Optional[SystemSettings] = None,
     ) -> bool:
         if not system_settings:

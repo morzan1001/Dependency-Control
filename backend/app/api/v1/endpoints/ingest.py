@@ -139,9 +139,7 @@ async def ingest_opengrep(
     # Prepare result dict
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
-    return await _process_findings_ingest(
-        manager, "opengrep", result_dict, ctx.scan_id
-    )
+    return await _process_findings_ingest(manager, "opengrep", result_dict, ctx.scan_id)
 
 
 @router.post("/ingest/kics", summary="Ingest KICS Results", status_code=200)
@@ -281,7 +279,9 @@ async def ingest_sbom(
                 dependencies_to_insert.append(dep.model_dump(by_alias=True))
 
         except Exception as e:
-            logger.error(f"Failed to extract dependencies from SBOM: {e}", exc_info=True)
+            logger.error(
+                f"Failed to extract dependencies from SBOM: {e}", exc_info=True
+            )
 
     # Bulk insert dependencies
     if dependencies_to_insert:

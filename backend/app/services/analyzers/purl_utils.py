@@ -7,8 +7,7 @@ See: https://github.com/package-url/purl-spec
 Format: pkg:type/namespace/name@version?qualifiers#subpath
 """
 
-import re
-from typing import Any, Dict, NamedTuple, Optional
+from typing import Dict, NamedTuple, Optional
 from urllib.parse import unquote
 
 
@@ -61,6 +60,7 @@ PURL_TYPE_TO_SYSTEM = {
     "hex": "hex",  # Erlang/Elixir
     "cran": "cran",  # R
 }
+
 
 def parse_purl(purl: str) -> Optional[ParsedPURL]:
     """

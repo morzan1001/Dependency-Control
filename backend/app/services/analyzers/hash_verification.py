@@ -11,7 +11,6 @@ Detects:
 """
 
 import asyncio
-import hashlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -38,8 +37,8 @@ class HashVerificationAnalyzer(Analyzer):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Analyze packages by verifying their hashes against official registries.

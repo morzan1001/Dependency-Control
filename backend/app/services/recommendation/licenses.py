@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 
+
 def process_licenses(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     """Process license compliance findings."""
     if not findings:
@@ -12,12 +13,10 @@ def process_licenses(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     by_license = defaultdict(list)
     for f in findings:
         details = f.get("details", {})
-        license_name = (
-            details.get("license") or details.get("license_id") or "unknown"
-        )
+        license_name = details.get("license") or details.get("license_id") or "unknown"
         by_license[license_name].append(f)
 
-    severity_counts = defaultdict(int)
+    severity_counts: Dict[str, int] = defaultdict(int)
     components = set()
 
     for f in findings:

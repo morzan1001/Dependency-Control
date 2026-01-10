@@ -18,8 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.core.constants import sort_by_severity
-from app.services.vulnerable_symbols import (ExtractedSymbols,
-                                             get_symbols_for_finding)
+from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
 

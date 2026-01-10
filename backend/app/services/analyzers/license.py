@@ -550,8 +550,8 @@ class LicenseAnalyzer(Analyzer):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Analyze SBOM components for license compliance issues.
@@ -857,10 +857,10 @@ class LicenseAnalyzer(Analyzer):
         message: str,
         explanation: str,
         recommendation: str,
-        obligations: List[str] = None,
-        risks: List[str] = None,
-        purl: str = None,
-        license_url: str = None,
+        obligations: Optional[List[str]] = None,
+        risks: Optional[List[str]] = None,
+        purl: Optional[str] = None,
+        license_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a license issue with full context."""
         return {

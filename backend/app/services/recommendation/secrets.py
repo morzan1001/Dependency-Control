@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 
+
 def process_secrets(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     """Process secret/credential findings."""
     if not findings:
@@ -12,15 +13,13 @@ def process_secrets(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     secrets_by_type = defaultdict(list)
     for f in findings:
         details = f.get("details", {})
-        detector = (
-            details.get("detector_type") or details.get("rule_id") or "generic"
-        )
+        detector = details.get("detector_type") or details.get("rule_id") or "generic"
         secrets_by_type[detector].append(f)
 
     recommendations = []
 
     # Count severities
-    severity_counts = defaultdict(int)
+    severity_counts: Dict[str, int] = defaultdict(int)
     files_affected = set()
 
     for f in findings:

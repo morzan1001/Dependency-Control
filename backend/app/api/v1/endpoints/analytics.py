@@ -1,18 +1,24 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from app.api import deps
-from app.core.constants import SEVERITY_ORDER, get_severity_value
+from app.core.constants import get_severity_value
 from app.db.mongodb import get_database
 from app.models.user import User
-from app.schemas.analytics import (AnalyticsSummary, DependencyMetadata,
-                                   DependencyTreeNode, DependencyTypeStats,
-                                   DependencyUsage, ImpactAnalysisResult,
-                                   SeverityBreakdown, VulnerabilityHotspot)
+from app.schemas.analytics import (
+    AnalyticsSummary,
+    DependencyMetadata,
+    DependencyTreeNode,
+    DependencyTypeStats,
+    DependencyUsage,
+    ImpactAnalysisResult,
+    SeverityBreakdown,
+    VulnerabilityHotspot,
+)
 
 router = APIRouter()
 
@@ -108,7 +114,7 @@ async def get_analytics_summary(
     total_deps = await db.dependencies.count_documents({"scan_id": {"$in": scan_ids}})
 
     # Count unique packages
-    unique_pipeline = [
+    unique_pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}}},
         {"$group": {"_id": "$name"}},
         {"$count": "count"},
@@ -117,7 +123,7 @@ async def get_analytics_summary(
     unique_packages = unique_result[0]["count"] if unique_result else 0
 
     # Get dependency types distribution
-    type_pipeline = [
+    type_pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}}},
         {"$group": {"_id": "$type", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
@@ -138,7 +144,7 @@ async def get_analytics_summary(
             )
 
     # Get vulnerability counts by severity
-    severity_pipeline = [
+    severity_pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
         {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
     ]
@@ -195,7 +201,7 @@ async def get_top_dependencies(
     if type:
         match_stage["type"] = type
 
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": match_stage},
         {
             "$group": {
@@ -371,7 +377,8 @@ async def get_impact_analysis(
         return []
 
     # Aggregate vulnerabilities by component with more details
-    pipeline = [
+    # Identical structure to find vulnerability density
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
         {
             "$group": {
@@ -405,7 +412,7 @@ async def get_impact_analysis(
 
     # Collect all CVE IDs for enrichment
     all_cves = []
-    cve_to_result = {}
+    cve_to_result: Dict[str, Any] = {}
     cvss_scores = {}
 
     for r in results:
@@ -428,8 +435,7 @@ async def get_impact_analysis(
     enrichments = {}
     if all_cves:
         try:
-            from app.services.vulnerability_enrichment import \
-                get_cve_enrichment
+            from app.services.vulnerability_enrichment import get_cve_enrichment
 
             enrichments = await get_cve_enrichment(all_cves)
         except Exception as e:
@@ -702,7 +708,7 @@ async def get_vulnerability_hotspots(
     # For EPSS/risk sorting, we'll sort after enrichment
     post_sort_by = sort_by if sort_by in ["epss", "risk"] else None
 
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
         {
             "$group": {
@@ -736,8 +742,7 @@ async def get_vulnerability_hotspots(
     enrichments = {}
     if all_cves:
         try:
-            from app.services.vulnerability_enrichment import \
-                get_cve_enrichment
+            from app.services.vulnerability_enrichment import get_cve_enrichment
 
             enrichments = await get_cve_enrichment(list(set(all_cves)))
         except Exception as e:
@@ -1501,7 +1506,7 @@ async def get_dependency_types(
     if not scan_ids:
         return []
 
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}}},
         {"$group": {"_id": "$type"}},
         {"$sort": {"_id": 1}},
@@ -1720,7 +1725,7 @@ async def get_project_recommendations(
     quality_count = sum(1 for f in findings if f.get("type") == "quality")
 
     # Build extended summary
-    summary = {
+    summary: Dict[str, Any] = {
         "base_image_updates": 0,
         "direct_updates": 0,
         "transitive_updates": 0,

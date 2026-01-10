@@ -19,7 +19,6 @@ SEVERITY_ORDER: Dict[str, int] = {
 }
 
 
-
 def get_severity_value(severity: Optional[str]) -> int:
     """Get numeric value for severity. Higher = more severe."""
     if not severity:
@@ -49,7 +48,6 @@ def sort_by_severity(items: list, key: str = "severity", reverse: bool = True) -
 EPSS_HIGH_THRESHOLD: float = 0.1  # >= 10% - Very likely to be exploited
 EPSS_MEDIUM_THRESHOLD: float = 0.01  # >= 1% - Moderate exploitation risk
 EPSS_LOW_THRESHOLD: float = 0.0  # < 1% - Low exploitation risk
-
 
 
 # License URL Patterns
@@ -250,13 +248,11 @@ RECOMMENDATION_SCORING_WEIGHTS: Dict[str, int] = {
     "priority_high": 1000,
     "priority_medium": 100,
     "priority_low": 10,
-
     # Impact multipliers
     "impact_critical": 100,
     "impact_high": 50,
     "impact_medium": 20,
     "impact_low": 5,
-
     # Threat intel bonuses
     "kev_bonus": 500,
     "kev_ransomware_bonus": 250,
@@ -279,7 +275,3 @@ REACHABILITY_MODIFIERS: Dict[str, float] = {
     "medium_unreachable_ratio_threshold": 0.5,
     "medium_unreachable_penalty": 0.7,
 }
-
-
-
-

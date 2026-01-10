@@ -3,16 +3,19 @@ from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 
+
 def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     """Process supply chain quality findings from OpenSSF Scorecard."""
     if not findings:
         return []
 
     recommendations = []
-    severity_counts = defaultdict(int)
-    components_by_issue = defaultdict(list)  # issue_type -> [components]
-    low_score_packages = []  # Packages with very low scores
-    unmaintained_packages = []
+    severity_counts: Dict[str, int] = defaultdict(int)
+    components_by_issue: Dict[str, List[Any]] = defaultdict(
+        list
+    )  # issue_type -> [components]
+    low_score_packages: List[Any] = []  # Packages with very low scores
+    unmaintained_packages: List[Any] = []
 
     for f in findings:
         severity = f.get("severity", "UNKNOWN")
@@ -70,9 +73,7 @@ def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
                 ),
                 impact={
                     "total": len(unmaintained_packages),
-                    "packages": [
-                        p["component"] for p in unmaintained_packages[:10]
-                    ],
+                    "packages": [p["component"] for p in unmaintained_packages[:10]],
                 },
                 affected_components=[p["component"] for p in unmaintained_packages],
                 action={
@@ -159,9 +160,9 @@ def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
                             "score": p["score"],
                             "issues": p.get("critical_issues", []),
                         }
-                        for p in sorted(
-                            low_score_packages, key=lambda x: x["score"]
-                        )[:10]
+                        for p in sorted(low_score_packages, key=lambda x: x["score"])[
+                            :10
+                        ]
                     ],
                 },
                 effort="medium",
@@ -195,4 +196,3 @@ def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
         )
 
     return recommendations
-

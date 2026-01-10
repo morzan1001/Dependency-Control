@@ -12,3 +12,20 @@ from .outdated import OutdatedAnalyzer
 from .reachability import ReachabilityAnalyzer
 from .trivy import TrivyAnalyzer
 from .typosquatting import TyposquattingAnalyzer
+
+__all__ = [
+    "Analyzer",
+    "DepsDevAnalyzer",
+    "EndOfLifeAnalyzer",
+    "EPSSKEVAnalyzer",
+    "GrypeAnalyzer",
+    "HashVerificationAnalyzer",
+    "LicenseAnalyzer",
+    "MaintainerRiskAnalyzer",
+    "OpenSourceMalwareAnalyzer",
+    "OSVAnalyzer",
+    "OutdatedAnalyzer",
+    "ReachabilityAnalyzer",
+    "TrivyAnalyzer",
+    "TyposquattingAnalyzer",
+]

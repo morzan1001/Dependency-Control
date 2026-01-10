@@ -173,11 +173,14 @@ def with_http_error_handling(
         log_level: Logging level for errors ("debug", "warning", "error")
     """
 
-    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         async def wrapper(*args, **kwargs) -> T:
             try:
-                return await func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                if hasattr(result, "__await__"):
+                    return await result
+                return result
             except httpx.TimeoutException:
                 getattr(logger, log_level)(
                     f"Timeout in {func.__name__} ({service_name})"

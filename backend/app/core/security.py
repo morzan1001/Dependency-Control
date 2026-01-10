@@ -11,7 +11,7 @@ pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 def create_access_token(
     subject: Union[str, Any],
-    permissions: list[str] = None,
+    permissions: Optional[list[str]] = None,
     expires_delta: Optional[timedelta] = None,
 ) -> str:
     if permissions is None:

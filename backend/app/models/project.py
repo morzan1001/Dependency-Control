@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import PROJECT_ROLE_VIEWER
 from app.models.finding import Finding
 from app.models.stats import Stats
 

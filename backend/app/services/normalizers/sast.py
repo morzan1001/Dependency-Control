@@ -1,10 +1,13 @@
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from app.models.finding import Finding, FindingType, Severity
 
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
-def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], source: str = None):
+
+def normalize_opengrep(
+    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+):
     """Normalize OpenGrep (Semgrep) SAST results."""
     # OpenGrep JSON schema:
     # {
@@ -36,10 +39,10 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], s
     for item in results:
         check_id = item.get("check_id", "unknown-check")
         path = item.get("path", "unknown")
-        
+
         start_obj = item.get("start", {})
         end_obj = item.get("end", {})
-        
+
         start_line = start_obj.get("line", 0)
         start_col = start_obj.get("col", 0)
         end_line = end_obj.get("line", 0)
@@ -49,7 +52,7 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], s
         sev_str = extra.get("severity", "INFO").upper()
         severity = severity_map.get(sev_str, Severity.INFO)
         message = extra.get("message", "Potential issue found")
-        
+
         # OpenGrep (semgrep) metadata
         metadata = extra.get("metadata", {})
         cwe = metadata.get("cwe")
@@ -67,7 +70,7 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], s
         # Build details with extra SAST context
         details = {
             "check_id": check_id,
-            "lines": extra.get("lines"), # Snippet if available
+            "lines": extra.get("lines"),  # Snippet if available
             "cwe": cwe,
             "owasp": owasp,
             "impact": metadata.get("impact"),
@@ -80,7 +83,7 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], s
                 id=finding_id,
                 type=FindingType.SAST,
                 severity=severity,
-                component=path, # SAST findings are attached to files
+                component=path,  # SAST findings are attached to files
                 version=None,
                 description=description,
                 scanners=["opengrep"],
@@ -96,7 +99,10 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], s
             source=source,
         )
 
-def normalize_bearer(aggregator: "ResultAggregator", result: Dict[str, Any], source: str = None):
+
+def normalize_bearer(
+    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+):
     """Normalize Bearer SAST results."""
     # Bearer JSON format:
     # {
@@ -125,7 +131,7 @@ def normalize_bearer(aggregator: "ResultAggregator", result: Dict[str, Any], sou
     }
 
     findings_container = result.get("findings", {})
-    
+
     # Bearer groups usually by severity key, but let's iterate safely
     # It might be a flat list in some versions or grouped
     # Assuming grouped based on standard reports
@@ -145,10 +151,10 @@ def normalize_bearer(aggregator: "ResultAggregator", result: Dict[str, Any], sou
         desc = item.get("description", "")
         sev_str = item.get("severity", "info").lower()
         severity = severity_map.get(sev_str, Severity.INFO)
-        
+
         filename = item.get("filename") or item.get("file") or "unknown"
         line_number = item.get("line_number") or item.get("line") or 0
-        
+
         # Rule ID or hash
         rule_id = item.get("rule_id") or item.get("id") or "unknown"
 

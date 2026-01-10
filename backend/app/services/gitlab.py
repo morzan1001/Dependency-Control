@@ -20,7 +20,7 @@ class GitLabService:
         self.base_url = settings.gitlab_url.rstrip("/")
         self.api_url = f"{self.base_url}/api/v4"
         self._jwks_cache = None
-        self._jwks_cache_time = 0
+        self._jwks_cache_time = 0.0
         self._jwks_uri_cache = None
 
     async def _get_jwks_uri(self) -> Optional[str]:
@@ -34,8 +34,7 @@ class GitLabService:
             try:
                 # Try OpenID Connect discovery endpoint first
                 response = await client.get(
-                    f"{self.base_url}/.well-known/openid-configuration",
-                    timeout=10.0
+                    f"{self.base_url}/.well-known/openid-configuration", timeout=10.0
                 )
                 if response.status_code == 200:
                     config = response.json()
@@ -46,7 +45,7 @@ class GitLabService:
 
         return None
 
-    async def get_jwks(self) -> dict:
+    async def get_jwks(self) -> Optional[dict]:
         """
         Fetches and caches the JWKS from GitLab.
         """

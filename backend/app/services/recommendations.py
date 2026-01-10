@@ -9,7 +9,7 @@ import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
-from app.schemas.recommendation import Recommendation, Priority, RecommendationType
+from app.schemas.recommendation import Recommendation
 
 from app.services.recommendation import (
     vulnerabilities,
@@ -96,14 +96,10 @@ class RecommendationEngine:
         )
 
         # 3. Process SAST (code security)
-        recommendations.extend(
-            sast.process_sast(findings_by_type.get("sast", []))
-        )
+        recommendations.extend(sast.process_sast(findings_by_type.get("sast", [])))
 
         # 4. Process IAC (infrastructure as code)
-        recommendations.extend(
-            iac.process_iac(findings_by_type.get("iac", []))
-        )
+        recommendations.extend(iac.process_iac(findings_by_type.get("iac", [])))
 
         # 5. Process LICENSE issues
         recommendations.extend(
@@ -117,26 +113,18 @@ class RecommendationEngine:
 
         # 7. Dependency Hygiene (Outdated, Fragmentation, Dev-in-Prod)
         # Assuming analyze_outdated_dependencies returns list
-        recommendations.extend(
-            dep_analysis.analyze_outdated_dependencies(dependencies)
-        )
-        recommendations.extend(
-            dep_analysis.analyze_version_fragmentation(dependencies)
-        )
-        recommendations.extend(
-            dep_analysis.analyze_dev_in_production(dependencies)
-        )
+        recommendations.extend(dep_analysis.analyze_outdated_dependencies(dependencies))
+        recommendations.extend(dep_analysis.analyze_version_fragmentation(dependencies))
+        recommendations.extend(dep_analysis.analyze_dev_in_production(dependencies))
 
         # 8. Trends & Regressions
         if previous_scan_findings is not None:
             recommendations.extend(
                 trends.analyze_regressions(findings, previous_scan_findings)
             )
-        
+
         if scan_history:
-            recommendations.extend(
-                trends.analyze_recurring_issues(scan_history)
-            )
+            recommendations.extend(trends.analyze_recurring_issues(scan_history))
 
         # 9. Graph Analysis (Deep chains, Duplicates)
         recommendations.extend(
@@ -144,9 +132,7 @@ class RecommendationEngine:
                 dependencies, max_dependency_depth=self.max_dependency_depth
             )
         )
-        recommendations.extend(
-            graph.analyze_duplicate_packages(dependencies)
-        )
+        recommendations.extend(graph.analyze_duplicate_packages(dependencies))
 
         # 10. Cross Project Insights & Scorecard Correlation
         if cross_project_data:
@@ -155,11 +141,11 @@ class RecommendationEngine:
                     findings, dependencies, cross_project_data
                 )
             )
-        
+
         recommendations.extend(
             insights.correlate_scorecard_with_vulnerabilities(
                 findings_by_type.get("vulnerability", []),
-                findings_by_type.get("quality", [])
+                findings_by_type.get("quality", []),
             )
         )
 
@@ -169,16 +155,14 @@ class RecommendationEngine:
                 findings, dependencies, dep_by_purl, dep_by_name_version
             )
         )
-        
+
         recommendations.extend(
             risks.detect_toxic_dependencies(
                 findings, dependencies, dep_by_purl, dep_by_name_version
             )
         )
 
-        recommendations.extend(
-            risks.analyze_attack_surface(dependencies, findings)
-        )
+        recommendations.extend(risks.analyze_attack_surface(dependencies, findings))
 
         # 12. Incidents (Malware, Exploits, Typosquatting)
         recommendations.extend(
@@ -188,7 +172,7 @@ class RecommendationEngine:
         recommendations.extend(
             incidents.detect_known_exploits(findings_by_type.get("vulnerability", []))
         )
-        
+
         # Typosquatting
         typosquat_findings = [
             f
@@ -196,11 +180,9 @@ class RecommendationEngine:
             if "typosquat" in f.get("details", {}).get("risk_type", "").lower()
         ]
         if typosquat_findings:
-            recommendations.extend(
-                incidents.process_typosquatting(typosquat_findings)
-            )
+            recommendations.extend(incidents.process_typosquatting(typosquat_findings))
         if findings_by_type.get("typosquatting"):
-             recommendations.extend(
+            recommendations.extend(
                 incidents.process_typosquatting(findings_by_type["typosquatting"])
             )
 
@@ -217,9 +199,7 @@ class RecommendationEngine:
         )
 
         # Sort by priority and impact using common scoring logic
-        recommendations.sort(
-            key=lambda r: common.calculate_score(r), reverse=True
-        )
+        recommendations.sort(key=lambda r: common.calculate_score(r), reverse=True)
 
         return recommendations
 

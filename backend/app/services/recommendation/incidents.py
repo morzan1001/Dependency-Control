@@ -1,10 +1,13 @@
 from typing import List, Dict, Any
 
-from backend.app.schemas.recommendation import Recommendation, RecommendationType, Priority
+from app.schemas.recommendation import (
+    Recommendation,
+    RecommendationType,
+    Priority,
+)
 
-def process_malware(
-    malware_findings: List[Dict[str, Any]]
-) -> List[Recommendation]:
+
+def process_malware(malware_findings: List[Dict[str, Any]]) -> List[Recommendation]:
     """Process malware detection findings."""
     if not malware_findings:
         return []
@@ -47,8 +50,9 @@ def process_malware(
         )
     ]
 
+
 def process_typosquatting(
-    typosquat_findings: List[Dict[str, Any]]
+    typosquat_findings: List[Dict[str, Any]],
 ) -> List[Recommendation]:
     """Process potential typosquatting package findings."""
     if not typosquat_findings:
@@ -96,9 +100,8 @@ def process_typosquatting(
         )
     ]
 
-def detect_known_exploits(
-    vuln_findings: List[Dict[str, Any]]
-) -> List[Recommendation]:
+
+def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommendation]:
     """
     Detect vulnerabilities with known exploits (KEV, ransomware, high EPSS).
     These require immediate action.
@@ -120,9 +123,7 @@ def detect_known_exploits(
             high_epss_vulns.append(f)
 
     if ransomware_vulns:
-        affected_packages = list(
-            set(f.get("component", "") for f in ransomware_vulns)
-        )
+        affected_packages = list(set(f.get("component", "") for f in ransomware_vulns))
         cves = list(
             set(
                 f.get("finding_id", "")
@@ -193,9 +194,7 @@ def detect_known_exploits(
                     "critical": len(
                         [v for v in kev_vulns if v.get("severity") == "CRITICAL"]
                     ),
-                    "high": len(
-                        [v for v in kev_vulns if v.get("severity") == "HIGH"]
-                    ),
+                    "high": len([v for v in kev_vulns if v.get("severity") == "HIGH"]),
                     "medium": len(
                         [v for v in kev_vulns if v.get("severity") == "MEDIUM"]
                     ),
@@ -221,9 +220,7 @@ def detect_known_exploits(
         )
 
     if high_epss_vulns:
-        affected_packages = list(
-            set(f.get("component", "") for f in high_epss_vulns)
-        )
+        affected_packages = list(set(f.get("component", "") for f in high_epss_vulns))
         cves = list(
             set(
                 f.get("finding_id", "")
@@ -248,21 +245,13 @@ def detect_known_exploits(
                 ),
                 impact={
                     "critical": len(
-                        [
-                            v
-                            for v in high_epss_vulns
-                            if v.get("severity") == "CRITICAL"
-                        ]
+                        [v for v in high_epss_vulns if v.get("severity") == "CRITICAL"]
                     ),
                     "high": len(
                         [v for v in high_epss_vulns if v.get("severity") == "HIGH"]
                     ),
                     "medium": len(
-                        [
-                            v
-                            for v in high_epss_vulns
-                            if v.get("severity") == "MEDIUM"
-                        ]
+                        [v for v in high_epss_vulns if v.get("severity") == "MEDIUM"]
                     ),
                     "low": 0,
                     "total": len(high_epss_vulns),

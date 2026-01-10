@@ -1,14 +1,18 @@
 import re
 from collections import defaultdict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
-from backend.app.schemas.recommendation import Recommendation, RecommendationType, Priority
-from backend.app.services.recommendation.common import parse_version_tuple
-from backend.app.core.constants import DEV_DEPENDENCY_PATTERNS
+from app.schemas.recommendation import (
+    Recommendation,
+    RecommendationType,
+    Priority,
+)
+from app.services.recommendation.common import parse_version_tuple
+from app.core.constants import DEV_DEPENDENCY_PATTERNS
 
 
 def analyze_outdated_dependencies(
-    dependencies: List[Dict[str, Any]]
+    dependencies: List[Dict[str, Any]],
 ) -> List[Recommendation]:
     """
     Identify dependencies that appear to be outdated based on scanner data.
@@ -39,7 +43,7 @@ def analyze_outdated_dependencies(
                 {
                     "name": dep.get("name"),
                     "version": version,
-                    "recommended_major": latest_version, # converting to showing the specific version
+                    "recommended_major": latest_version,  # converting to showing the specific version
                     "message": f"Newer version {latest_version} is available",
                     "direct": dep.get("direct", False),
                 }
@@ -109,8 +113,9 @@ def analyze_outdated_dependencies(
 
     return recommendations
 
+
 def analyze_version_fragmentation(
-    dependencies: List[Dict[str, Any]]
+    dependencies: List[Dict[str, Any]],
 ) -> List[Recommendation]:
     """
     Detect when multiple versions of the same package exist in the dependency tree.
@@ -154,9 +159,7 @@ def analyze_version_fragmentation(
 
     if significant_fragmented:
         # High priority if many packages have 3+ versions
-        priority = (
-            Priority.MEDIUM if len(significant_fragmented) > 3 else Priority.LOW
-        )
+        priority = Priority.MEDIUM if len(significant_fragmented) > 3 else Priority.LOW
 
         # Limit to top 15 most fragmented
         top_fragmented = significant_fragmented[:15]
@@ -169,9 +172,7 @@ def analyze_version_fragmentation(
                 description="These packages have 3 or more versions in your dependency tree. This can increase bundle size and cause subtle bugs. Consider deduplication or pinning to a single version.",
                 impact={
                     "critical": 0,
-                    "high": len(
-                        [f for f in significant_fragmented if f["count"] >= 5]
-                    ),
+                    "high": len([f for f in significant_fragmented if f["count"] >= 5]),
                     "medium": len(
                         [f for f in significant_fragmented if 3 <= f["count"] < 5]
                     ),
@@ -186,9 +187,7 @@ def analyze_version_fragmentation(
                     "packages": [
                         {
                             "name": f["name"],
-                            "versions": f["versions"][
-                                :5
-                            ],  # Limit displayed versions
+                            "versions": f["versions"][:5],  # Limit displayed versions
                             "version_count": f["count"],
                             "suggestion": f"Pin to {max(f['versions'], key=lambda v: parse_version_tuple(v))}",
                         }
@@ -206,8 +205,9 @@ def analyze_version_fragmentation(
 
     return recommendations
 
+
 def analyze_dev_in_production(
-    dependencies: List[Dict[str, Any]]
+    dependencies: List[Dict[str, Any]],
 ) -> List[Recommendation]:
     """
     Identify development dependencies that may be included in production builds.
@@ -264,9 +264,8 @@ def analyze_dev_in_production(
 
     return recommendations
 
-def analyze_end_of_life(
-    eol_findings: List[Dict[str, Any]]
-) -> List[Recommendation]:
+
+def analyze_end_of_life(eol_findings: List[Dict[str, Any]]) -> List[Recommendation]:
     """Process end-of-life dependency findings."""
     if not eol_findings:
         return []
@@ -282,9 +281,7 @@ def analyze_end_of_life(
             affected_packages.append(f"{pkg}@{version}")
 
     # Check severity based on how long ago EOL was
-    critical_count = len(
-        [f for f in eol_findings if f.get("severity") == "CRITICAL"]
-    )
+    critical_count = len([f for f in eol_findings if f.get("severity") == "CRITICAL"])
     high_count = len([f for f in eol_findings if f.get("severity") == "HIGH"])
 
     priority = Priority.HIGH if critical_count > 0 else Priority.MEDIUM

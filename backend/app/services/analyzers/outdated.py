@@ -26,8 +26,8 @@ class OutdatedAnalyzer(Analyzer):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
         results = []
@@ -71,7 +71,7 @@ class OutdatedAnalyzer(Analyzer):
                         self._check_component_for_batch(client, comp) for comp in batch
                     ]
 
-                    component_results = await asyncio.gather(
+                    component_results: List[Any] = await asyncio.gather(
                         *tasks, return_exceptions=True
                     )
 
@@ -122,7 +122,9 @@ class OutdatedAnalyzer(Analyzer):
             if not parsed or not parsed.registry_system:
                 continue
 
-            cache_key = CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name)
+            cache_key = CacheKeys.latest_version(
+                parsed.registry_system, parsed.deps_dev_name
+            )
             cache_keys.append(cache_key)
             component_map[cache_key] = component
 
@@ -130,7 +132,7 @@ class OutdatedAnalyzer(Analyzer):
             return [], components
 
         # Batch get from Redis
-        cached_data = await cache_service.mget(cache_keys)
+        cached_data: Dict[str, Any] = await cache_service.mget(cache_keys)
 
         for cache_key, latest_version in cached_data.items():
             component = component_map.get(cache_key)

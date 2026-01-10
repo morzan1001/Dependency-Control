@@ -4,8 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List
 
-from fastapi import (APIRouter, BackgroundTasks, Body, Depends, HTTPException,
-                     status)
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps

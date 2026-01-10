@@ -1,7 +1,12 @@
 from collections import defaultdict
 from typing import List, Dict, Any
 
-from backend.app.schemas.recommendation import Recommendation, RecommendationType, Priority
+from app.schemas.recommendation import (
+    Recommendation,
+    RecommendationType,
+    Priority,
+)
+
 
 def analyze_regressions(
     current_findings: List[Dict[str, Any]],
@@ -54,9 +59,7 @@ def analyze_regressions(
                     "medium": len(
                         [f for f in new_vulns if f.get("severity") == "MEDIUM"]
                     ),
-                    "low": len(
-                        [f for f in new_vulns if f.get("severity") == "LOW"]
-                    ),
+                    "low": len([f for f in new_vulns if f.get("severity") == "LOW"]),
                     "total": len(new_vulns),
                 },
                 affected_components=list(
@@ -98,20 +101,21 @@ def analyze_regressions(
 
     return recommendations
 
+
 def analyze_recurring_issues(
-    scan_history: List[Dict[str, Any]]
+    scan_history: List[Dict[str, Any]],
 ) -> List[Recommendation]:
     """
     Identify issues that keep appearing across multiple scans.
     These are candidates for waivers or architectural fixes.
     """
-    recommendations = []
+    recommendations: List[Recommendation] = []
 
     if not scan_history:
         return recommendations
 
     # Count how often each CVE/finding appears across scans
-    finding_frequency = defaultdict(
+    finding_frequency: Dict[str, Dict[str, Any]] = defaultdict(
         lambda: {"count": 0, "scans": set(), "info": None}
     )
 

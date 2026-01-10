@@ -1,10 +1,14 @@
 from typing import List, Dict, Any
 
-from backend.app.schemas.recommendation import Recommendation, RecommendationType, Priority
+from app.schemas.recommendation import (
+    Recommendation,
+    RecommendationType,
+    Priority,
+)
+
 
 def analyze_deep_dependency_chains(
-    dependencies: List[Dict[str, Any]],
-    max_dependency_depth: int = 8
+    dependencies: List[Dict[str, Any]], max_dependency_depth: int = 8
 ) -> List[Recommendation]:
     """
     Identify dependencies with very deep transitive chains.
@@ -104,8 +108,9 @@ def analyze_deep_dependency_chains(
 
     return recommendations
 
+
 def analyze_duplicate_packages(
-    dependencies: List[Dict[str, Any]]
+    dependencies: List[Dict[str, Any]],
 ) -> List[Recommendation]:
     """
     Detect packages that likely provide similar/duplicate functionality.

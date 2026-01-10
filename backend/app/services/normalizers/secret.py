@@ -1,12 +1,15 @@
 import hashlib
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding import SecretDetails
 
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
-def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any], source: str = None):
+
+def normalize_trufflehog(
+    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+):
     """Normalize TruffleHog secret scan results."""
     # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
     for finding in result.get("findings", []):

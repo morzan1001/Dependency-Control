@@ -1,9 +1,14 @@
 from collections import defaultdict
 from typing import List, Dict, Any
 
-from backend.app.core.constants import QUICK_WIN_SCORING_WEIGHTS
-from backend.app.schemas.recommendation import Recommendation, RecommendationType, Priority
-from backend.app.services.recommendation.common import calculate_best_fix_version
+from app.core.constants import QUICK_WIN_SCORING_WEIGHTS
+from app.schemas.recommendation import (
+    Recommendation,
+    RecommendationType,
+    Priority,
+)
+from app.services.recommendation.common import calculate_best_fix_version
+
 
 def identify_quick_wins(
     vuln_findings: List[Dict[str, Any]],
@@ -88,9 +93,7 @@ def identify_quick_wins(
         if qw["vuln_count"] < 2 and qw["kev_count"] == 0:
             continue
 
-        dep_type = (
-            "direct dependency" if qw["is_direct"] else "transitive dependency"
-        )
+        dep_type = "direct dependency" if qw["is_direct"] else "transitive dependency"
 
         recommendations.append(
             Recommendation(

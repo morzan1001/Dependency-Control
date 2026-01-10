@@ -1,8 +1,13 @@
 from collections import defaultdict
-from typing import List, Dict, Any
+from typing import List, Dict, Any, cast
 
-from backend.app.schemas.recommendation import Recommendation, RecommendationType, Priority
-from backend.app.services.recommendation.common import parse_version_tuple
+from app.schemas.recommendation import (
+    Recommendation,
+    RecommendationType,
+    Priority,
+)
+from app.services.recommendation.common import parse_version_tuple
+
 
 def correlate_scorecard_with_vulnerabilities(
     vulnerability_findings: List[Dict[str, Any]],
@@ -14,7 +19,7 @@ def correlate_scorecard_with_vulnerabilities(
     Identifies high-risk situations where vulnerabilities exist in packages
     that also have poor maintenance or quality scores.
     """
-    recommendations = []
+    recommendations: List[Recommendation] = []
 
     if not vulnerability_findings or not quality_findings:
         return recommendations
@@ -59,9 +64,7 @@ def correlate_scorecard_with_vulnerabilities(
                     "unmaintained": is_unmaintained,
                     "cves": [
                         v.get("id")
-                        for v in vf.get("details", {}).get("vulnerabilities", [])[
-                            :3
-                        ]
+                        for v in vf.get("details", {}).get("vulnerabilities", [])[:3]
                     ],
                     "project_url": scorecard.get("project_url"),
                 }
@@ -90,9 +93,7 @@ def correlate_scorecard_with_vulnerabilities(
                 ),
                 impact={
                     "critical": sum(
-                        1
-                        for v in high_risk_vulns
-                        if v["vuln_severity"] == "CRITICAL"
+                        1 for v in high_risk_vulns if v["vuln_severity"] == "CRITICAL"
                     ),
                     "high": sum(
                         1 for v in high_risk_vulns if v["vuln_severity"] == "HIGH"
@@ -133,6 +134,7 @@ def correlate_scorecard_with_vulnerabilities(
 
     return recommendations
 
+
 def analyze_cross_project_patterns(
     current_findings: List[Dict[str, Any]],
     dependencies: List[Dict[str, Any]],
@@ -157,7 +159,7 @@ def analyze_cross_project_patterns(
         "total_projects": 5
     }
     """
-    recommendations = []
+    recommendations: List[Recommendation] = []
 
     if not cross_project_data or not cross_project_data.get("projects"):
         return recommendations
@@ -224,14 +226,16 @@ def analyze_cross_project_patterns(
     # ----------------------------------------------------------------
     # 2. Find packages used across many projects (standardization candidates)
     # ----------------------------------------------------------------
-    package_usage = defaultdict(lambda: {"versions": set(), "projects": []})
+    package_usage: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {"versions": set(), "projects": []}
+    )
 
     for proj in projects:
         for pkg in proj.get("packages", []):
             name = pkg.get("name", "").lower()
             if name:
-                package_usage[name]["versions"].add(pkg.get("version", "unknown"))
-                package_usage[name]["projects"].append(proj.get("project_name"))
+                package_usage[name]["versions"].add(pkg.get("version", "unknown"))  # type: ignore
+                package_usage[name]["projects"].append(proj.get("project_name"))  # type: ignore
 
     # Packages with multiple versions across projects
     inconsistent_packages = [
@@ -247,7 +251,9 @@ def analyze_cross_project_patterns(
 
     if inconsistent_packages:
         # Sort by spread (how many different versions)
-        inconsistent_packages.sort(key=lambda x: x["version_count"], reverse=True)
+        inconsistent_packages.sort(
+            key=lambda x: int(cast(int, x["version_count"])), reverse=True
+        )
 
         recommendations.append(
             Recommendation(
@@ -259,13 +265,17 @@ def analyze_cross_project_patterns(
                     "critical": 0,
                     "high": 0,
                     "medium": len(
-                        [p for p in inconsistent_packages if p["version_count"] > 2]
+                        [
+                            p
+                            for p in inconsistent_packages
+                            if int(cast(int, p["version_count"])) > 2
+                        ]
                     ),
                     "low": len(
                         [
                             p
                             for p in inconsistent_packages
-                            if p["version_count"] <= 2
+                            if int(cast(int, p["version_count"])) <= 2
                         ]
                     ),
                     "total": len(inconsistent_packages),
@@ -281,7 +291,7 @@ def analyze_cross_project_patterns(
                             "name": p["name"],
                             "versions": p["versions"][:5],
                             "suggestion": max(
-                                p["versions"],
+                                (str(v) for v in p["versions"]),
                                 key=lambda v: parse_version_tuple(v),
                             ),
                             "project_count": p["project_count"],
@@ -320,9 +330,7 @@ def analyze_cross_project_patterns(
                         "critical": sum(
                             p.get("total_critical", 0) for p in top_problematic
                         ),
-                        "high": sum(
-                            p.get("total_high", 0) for p in top_problematic
-                        ),
+                        "high": sum(p.get("total_high", 0) for p in top_problematic),
                         "medium": 0,
                         "low": 0,
                         "total": sum(

@@ -1,8 +1,11 @@
 import re
 from typing import List
-from backend.app.schemas.recommendation import Recommendation, RecommendationType, Priority
-from backend.app.core.constants import (
-    SEVERITY_WEIGHTS,
+from app.schemas.recommendation import (
+    Recommendation,
+    RecommendationType,
+    Priority,
+)
+from app.core.constants import (
     RECOMMENDATION_SCORING_WEIGHTS,
     REACHABILITY_SCORING_WEIGHTS,
     REACHABILITY_MODIFIERS,
@@ -15,6 +18,7 @@ def parse_version_tuple(version: str) -> tuple:
     # This handles simplified version parsing sufficient for comparisons
     parts = re.findall(r"\d+", version)
     return tuple(int(p) for p in parts)
+
 
 def calculate_best_fix_version(versions: List[str]) -> str:
     """Calculate the best version that fixes all vulnerabilities."""
@@ -43,6 +47,7 @@ def calculate_best_fix_version(versions: List[str]) -> str:
     except Exception:
         return parsed[0]
 
+
 def calculate_score(rec: Recommendation) -> int:
     """
     Calculate a score for sorting recommendations.
@@ -64,7 +69,8 @@ def calculate_score(rec: Recommendation) -> int:
 
     # Add impact score
     impact_score = (
-        rec.impact.get("critical", 0) * RECOMMENDATION_SCORING_WEIGHTS["impact_critical"]
+        rec.impact.get("critical", 0)
+        * RECOMMENDATION_SCORING_WEIGHTS["impact_critical"]
         + rec.impact.get("high", 0) * RECOMMENDATION_SCORING_WEIGHTS["impact_high"]
         + rec.impact.get("medium", 0) * RECOMMENDATION_SCORING_WEIGHTS["impact_medium"]
         + rec.impact.get("low", 0) * RECOMMENDATION_SCORING_WEIGHTS["impact_low"]
@@ -75,27 +81,39 @@ def calculate_score(rec: Recommendation) -> int:
     # KEV bonus: Known exploited vulnerabilities are highest priority
     kev_count = rec.impact.get("kev_count", 0)
     if kev_count > 0:
-        threat_intel_score += kev_count * RECOMMENDATION_SCORING_WEIGHTS["kev_bonus"]  # Major boost for KEV findings
+        threat_intel_score += (
+            kev_count * RECOMMENDATION_SCORING_WEIGHTS["kev_bonus"]
+        )  # Major boost for KEV findings
 
     # KEV Ransomware: Even higher priority if ransomware campaigns use it
     kev_ransomware_count = rec.impact.get("kev_ransomware_count", 0)
     if kev_ransomware_count > 0:
-        threat_intel_score += kev_ransomware_count * RECOMMENDATION_SCORING_WEIGHTS["kev_ransomware_bonus"]  # Additional boost
+        threat_intel_score += (
+            kev_ransomware_count
+            * RECOMMENDATION_SCORING_WEIGHTS["kev_ransomware_bonus"]
+        )  # Additional boost
 
     # High EPSS bonus: Vulnerabilities likely to be exploited soon
     high_epss_count = rec.impact.get("high_epss_count", 0)
     if high_epss_count > 0:
-        threat_intel_score += high_epss_count * RECOMMENDATION_SCORING_WEIGHTS["high_epss_bonus"]
+        threat_intel_score += (
+            high_epss_count * RECOMMENDATION_SCORING_WEIGHTS["high_epss_bonus"]
+        )
 
     # Medium EPSS: Some probability of exploitation
     medium_epss_count = rec.impact.get("medium_epss_count", 0)
     if medium_epss_count > 0:
-        threat_intel_score += medium_epss_count * RECOMMENDATION_SCORING_WEIGHTS["medium_epss_bonus"]
+        threat_intel_score += (
+            medium_epss_count * RECOMMENDATION_SCORING_WEIGHTS["medium_epss_bonus"]
+        )
 
     # Active exploitation: Currently being exploited in the wild
     active_exploitation = rec.impact.get("active_exploitation_count", 0)
     if active_exploitation > 0:
-        threat_intel_score += active_exploitation * RECOMMENDATION_SCORING_WEIGHTS["active_exploitation_bonus"]
+        threat_intel_score += (
+            active_exploitation
+            * RECOMMENDATION_SCORING_WEIGHTS["active_exploitation_bonus"]
+        )
 
     reachability_modifier = 1.0
 
@@ -121,13 +139,16 @@ def calculate_score(rec: Recommendation) -> int:
     if unreachable_count > 0 and rec.impact.get("total", 1) > 0:
         unreachable_ratio = unreachable_count / rec.impact.get("total", 1)
         # If mostly unreachable, reduce priority significantly
-        if unreachable_ratio > REACHABILITY_MODIFIERS["high_unreachable_ratio_threshold"]:
+        if (
+            unreachable_ratio
+            > REACHABILITY_MODIFIERS["high_unreachable_ratio_threshold"]
+        ):
             reachability_modifier = REACHABILITY_MODIFIERS["high_unreachable_penalty"]
         elif (
-            unreachable_ratio > REACHABILITY_MODIFIERS["medium_unreachable_ratio_threshold"]
+            unreachable_ratio
+            > REACHABILITY_MODIFIERS["medium_unreachable_ratio_threshold"]
         ):
             reachability_modifier = REACHABILITY_MODIFIERS["medium_unreachable_penalty"]
-
 
     actionable_count = rec.impact.get("actionable_count", 0)
     if actionable_count > 0:

@@ -16,7 +16,7 @@ class ProjectList(BaseModel):
 
 class ProjectCreate(BaseModel):
     name: str = Field(
-        ..., description="The name of the project", example="My Awesome App"
+        ..., description="The name of the project", examples=["My Awesome App"]
     )
     team_id: Optional[str] = Field(
         None, description="ID of the team this project belongs to"
@@ -24,7 +24,7 @@ class ProjectCreate(BaseModel):
     active_analyzers: List[str] = Field(
         default=["trivy", "osv", "license_compliance", "end_of_life"],
         description="List of analyzers to run on this project",
-        example=["end_of_life", "os_malware", "trivy"],
+        examples=[["end_of_life", "os_malware", "trivy"]],
     )
     retention_days: Optional[int] = Field(
         90, description="Number of days to keep scan history", ge=1
@@ -55,12 +55,12 @@ class ProjectMemberInvite(BaseModel):
     email: str = Field(
         ...,
         description="Email address of the user to invite",
-        example="colleague@example.com",
+        examples=["colleague@example.com"],
     )
     role: str = Field(
         PROJECT_ROLE_VIEWER,
         description=f"Role to assign ({', '.join(PROJECT_ROLES)})",
-        example=PROJECT_ROLE_VIEWER,
+        examples=[PROJECT_ROLE_VIEWER],
     )
 
     @field_validator("role")
@@ -75,7 +75,7 @@ class ProjectMemberUpdate(BaseModel):
     role: Optional[str] = Field(
         None,
         description=f"New role to assign ({', '.join(PROJECT_ROLES)})",
-        example=PROJECT_ROLE_VIEWER,
+        examples=[PROJECT_ROLE_VIEWER],
     )
     notification_preferences: Optional[Dict[str, List[str]]] = Field(
         None, description="Notification preferences for the member"
@@ -93,10 +93,12 @@ class ProjectNotificationSettings(BaseModel):
     notification_preferences: Dict[str, List[str]] = Field(
         ...,
         description="Map of event types to notification channels",
-        example={
-            "analysis_completed": ["email", "slack"],
-            "vulnerability_found": ["slack"],
-        },
+        examples=[
+            {
+                "analysis_completed": ["email", "slack"],
+                "vulnerability_found": ["slack"],
+            }
+        ],
     )
     enforce_notification_settings: Optional[bool] = Field(
         None, description="Enforce these settings for all members (Owner only)"

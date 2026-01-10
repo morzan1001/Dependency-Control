@@ -3,7 +3,7 @@ import io
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -24,10 +24,15 @@ from app.db.mongodb import get_database
 from app.models.invitation import ProjectInvitation
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.user import User
-from app.schemas.project import (ProjectApiKeyResponse, ProjectCreate,
-                                 ProjectList, ProjectMemberInvite,
-                                 ProjectMemberUpdate,
-                                 ProjectNotificationSettings, ProjectUpdate)
+from app.schemas.project import (
+    ProjectApiKeyResponse,
+    ProjectCreate,
+    ProjectList,
+    ProjectMemberInvite,
+    ProjectMemberUpdate,
+    ProjectNotificationSettings,
+    ProjectUpdate,
+)
 
 router = APIRouter()
 
@@ -37,7 +42,10 @@ class RecentScan(Scan):
 
 
 async def check_project_access(
-    project_id: str, user: User, db: AsyncIOMotorDatabase, required_role: str = None
+    project_id: str,
+    user: User,
+    db: AsyncIOMotorDatabase,
+    required_role: Optional[str] = None,
 ) -> Project:
     project_data = await db.projects.find_one({"_id": project_id})
     if not project_data:
@@ -136,7 +144,7 @@ async def get_dashboard_stats(
         }
 
     # Use aggregation for performance instead of fetching all projects
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": query},
         {
             "$project": {
@@ -310,7 +318,7 @@ async def rotate_api_key(
 
 @router.get("/", response_model=ProjectList, summary="List all projects")
 async def read_projects(
-    search: str = None,
+    search: Optional[str] = None,
     skip: int = 0,
     limit: int = 20,
     sort_by: str = "created_at",
@@ -432,14 +440,16 @@ async def read_recent_scans(
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     projects = await project_cursor.to_list(10000)
-    project_map = {p["_id"]: p["name"] for p in projects}
+    project_map: Dict[str, str] = {
+        str(p["_id"]): str(p.get("name", "")) for p in projects
+    }
     project_ids = list(project_map.keys())
 
     if not project_ids:
         return []
 
     # 2. Get recent scans for these projects
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"project_id": {"$in": project_ids}}},
         {"$sort": {"created_at": -1}},
         {"$limit": limit},
@@ -470,7 +480,7 @@ async def read_project(
     Get a specific project by ID.
     """
     # Optimized fetch with aggregation to avoid N+1 queries
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"_id": project_id}},
         # Lookup Team
         {
@@ -637,7 +647,9 @@ async def update_project(
         await db.projects.update_one({"_id": project_id}, {"$set": update_data})
 
     updated_project_data = await db.projects.find_one({"_id": project_id})
-    return Project(**updated_project_data)
+    if updated_project_data:
+        return Project(**updated_project_data)
+    raise HTTPException(status_code=404, detail="Project not found")
 
 
 @router.get(
@@ -664,7 +676,7 @@ async def read_project_scans(
     project_id: str,
     skip: int = 0,
     limit: int = 20,
-    branch: str = None,
+    branch: Optional[str] = None,
     exclude_rescans: bool = False,
     sort_by: str = "created_at",
     sort_order: str = "desc",
@@ -916,7 +928,9 @@ async def update_notification_settings(
 
     # Return updated project
     updated_project_data = await db.projects.find_one({"_id": project_id})
-    return Project(**updated_project_data)
+    if updated_project_data:
+        return Project(**updated_project_data)
+    raise HTTPException(status_code=404, detail="Project not found")
 
 
 @router.post(
@@ -1209,10 +1223,10 @@ async def read_scan_findings(
     limit: int = 50,
     sort_by: str = "severity",  # severity, type, component
     sort_order: str = "desc",  # asc, desc
-    type: str = None,
-    category: str = None,  # security, secret, sast, compliance, quality
-    severity: str = None,
-    search: str = None,
+    type: Optional[str] = None,
+    category: Optional[str] = None,  # security, secret, sast, compliance, quality
+    severity: Optional[str] = None,
+    search: Optional[str] = None,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
@@ -1252,7 +1266,7 @@ async def read_scan_findings(
         ]
 
     # Severity Ranking for sorting
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": query},
         # Lookup dependency info to get source details
         {
@@ -1370,7 +1384,7 @@ async def get_scan_stats(
         raise HTTPException(status_code=404, detail="Scan not found")
     await check_project_access(scan["project_id"], current_user, db)
 
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": scan_id}},
         {"$group": {"_id": "$type", "count": {"$sum": 1}}},
     ]
@@ -1458,7 +1472,9 @@ async def update_project_member(
         )
 
     updated_project_data = await db.projects.find_one({"_id": project_id})
-    return Project(**updated_project_data)
+    if updated_project_data:
+        return Project(**updated_project_data)
+    raise HTTPException(status_code=404, detail="Project not found")
 
 
 @router.delete(
@@ -1500,7 +1516,9 @@ async def remove_project_member(
     )
 
     updated_project_data = await db.projects.find_one({"_id": project_id})
-    return Project(**updated_project_data)
+    if updated_project_data:
+        return Project(**updated_project_data)
+    raise HTTPException(status_code=404, detail="Project not found")
 
 
 @router.get("/{project_id}/export/csv", summary="Export latest scan results as CSV")
@@ -1544,15 +1562,16 @@ async def export_project_csv(
     # Assuming findings_summary structure. Adjust based on actual data.
     if scan.findings_summary:
         for finding in scan.findings_summary:
+            f_dict = finding.model_dump()
             writer.writerow(
                 [
-                    finding.get("pkg_name", ""),
-                    finding.get("installed_version", ""),
-                    finding.get("pkg_type", ""),
-                    finding.get("vulnerability_id", ""),
-                    finding.get("severity", ""),
-                    finding.get("description", ""),
-                    finding.get("fixed_version", ""),
+                    f_dict.get("component", ""),
+                    f_dict.get("version", ""),
+                    f_dict.get("type", ""),
+                    f_dict.get("id", ""),
+                    f_dict.get("severity", ""),
+                    f_dict.get("description", ""),
+                    f_dict.get("details", {}).get("fixed_version", ""),
                 ]
             )
 

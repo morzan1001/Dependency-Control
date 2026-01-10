@@ -1,10 +1,13 @@
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 from app.models.finding import Finding, FindingType, Severity
 
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
-def normalize_kics(aggregator: "ResultAggregator", result: Dict[str, Any], source: str = None):
+
+def normalize_kics(
+    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+):
     """Normalize KICS IaC scan results."""
     # KICS JSON schema:
     # {

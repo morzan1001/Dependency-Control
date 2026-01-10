@@ -29,9 +29,9 @@ class ScanManager:
     Usage:
         manager = ScanManager(db, project)
         ctx = await manager.find_or_create_scan(data)
-        
+
         # Process findings...
-        
+
         await manager.store_results("trufflehog", result_dict, ctx.scan_id)
         findings = await manager.apply_waivers(findings)
         await manager.trigger_aggregation(ctx.scan_id)
@@ -144,9 +144,7 @@ class ScanManager:
 
         return False
 
-    async def apply_waivers(
-        self, findings: List[Finding]
-    ) -> tuple[List[Finding], int]:
+    async def apply_waivers(self, findings: List[Finding]) -> tuple[List[Finding], int]:
         """
         Apply waivers to findings.
 
