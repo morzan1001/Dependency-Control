@@ -1,3 +1,11 @@
+# Release 1.2.6
+
+## 🚀 Features
+
+- feat: enhance SAST findings aggregation and display in UI (#0)
+
+
+
 # Release 1.2.5
 
 ## 📦 Build & CI
