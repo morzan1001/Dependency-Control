@@ -139,7 +139,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   })
 
   const updateNotificationSettingsMutation = useMutation({
-    mutationFn: (settings: Record<string, string[]>) => projectApi.updateNotificationSettings(projectId, settings),
+    mutationFn: (settings: Record<string, string[]>) => projectApi.updateNotificationSettings(projectId, { notification_preferences: settings }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Notification settings updated")

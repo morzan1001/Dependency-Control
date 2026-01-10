@@ -73,14 +73,8 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set())
     
     // Check for aggregated SAST findings
-    const sastFindings = (details.sast_findings as SastIssueEntry[]) || []
+    const sastFindings = ((details as any).sast_findings as SastIssueEntry[]) || []
     
-    // Legacy/Single finding logic
-    const isBearer = finding.scanners?.includes('bearer')
-    const isOpenGrep = finding.scanners?.includes('opengrep')
-    const isKics = finding.scanners?.includes('kics')
-
-    const ruleId = details.rule_id || details.check_id || "Unknown"
     const startLine = details.start?.line || details.line
     const endLine = details.end?.line || details.line || startLine
 
@@ -95,7 +89,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     }
 
     // Single Finding View
-    const renderSingleFindingDetails = (details: any, findingTitle: string, findingDesc: string, scannerList: string[]) => {
+    const renderSingleFindingDetails = (details: any, findingDesc: string | undefined, scannerList: string[]) => {
        const localIsBearer = scannerList.includes('bearer')
        const localIsOpenGrep = scannerList.includes('opengrep')
        const localIsKics = scannerList.includes('kics')
@@ -356,7 +350,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                                 {isExpanded && (
                                     <div className="p-4 pt-0 border-t bg-muted/10">
                                         <div className="mt-4">
-                                            {renderSingleFindingDetails(issue.details, issue.title, issue.description, [issue.scanner])}
+                                            {renderSingleFindingDetails(issue.details, issue.description, [issue.scanner])}
                                         </div>
                                     </div>
                                 )}
@@ -381,7 +375,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 scmContext={scanContext}
             />
             
-            {renderSingleFindingDetails(details, finding.details?.title, finding.description, finding.scanners || [])}
+            {renderSingleFindingDetails(details, finding.description, finding.scanners || [])}
 
             {/* Fingerprint for debugging/reference (Classic view only) */}
             {details.fingerprint && (
