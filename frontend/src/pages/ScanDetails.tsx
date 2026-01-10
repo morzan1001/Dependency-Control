@@ -59,7 +59,7 @@ export default function ScanDetails() {
   const { data: scan, isLoading: isScanLoading } = useScan(scanId!)
   const { data: scanHistory } = useScanHistory(projectId!, scanId!)
 
-  const [activeTab, setActiveTab] = useState('findings');
+  const [activeTab, setActiveTab] = useState('overview');
   const sbomParam = searchParams.get('sbom');
   const handleTabChange = (val: string) => setActiveTab(val);
 

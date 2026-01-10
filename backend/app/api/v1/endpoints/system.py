@@ -23,6 +23,7 @@ async def get_current_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
 
 
 @router.get("/", response_model=SystemSettingsResponse)
+@router.get("/settings", response_model=SystemSettingsResponse)
 async def get_settings(
     current_user: User = Depends(deps.PermissionChecker("system:manage")),
     db: AsyncIOMotorDatabase = Depends(get_database),
@@ -34,6 +35,7 @@ async def get_settings(
 
 
 @router.put("/", response_model=SystemSettingsResponse)
+@router.put("/settings", response_model=SystemSettingsResponse)
 async def update_settings(
     settings_in: SystemSettingsUpdate,
     current_user: User = Depends(deps.PermissionChecker("system:manage")),

@@ -398,18 +398,25 @@ async def read_projects(
     }
 
 
+
+
+
 @router.get(
-    "/recent-scans",
+    "/scans",
     response_model=List[RecentScan],
-    summary="List recent scans across all accessible projects",
+    summary="List scans across all accessible projects",
 )
-async def read_recent_scans(
-    limit: int = 10,
+async def read_all_scans(
+    limit: int = 20,
+    skip: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    Retrieve recent scans for all projects the user has access to.
+    Retrieve scans for all projects the user has access to.
+    Supports pagination and sorting.
     """
     # 1. Get accessible project IDs
     if (
@@ -448,10 +455,23 @@ async def read_recent_scans(
     if not project_ids:
         return []
 
+    # Determine sort direction
+    direction = -1 if sort_order.lower() == "desc" else 1
+
+    # Validate sort_by
+    allowed_sort_fields = {
+        "created_at": "created_at",
+        "pipeline_iid": "pipeline_iid",
+        "branch": "branch",
+        "status": "status",
+    }
+    sort_field = allowed_sort_fields.get(sort_by, "created_at")
+
     # 2. Get recent scans for these projects
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"project_id": {"$in": project_ids}}},
-        {"$sort": {"created_at": -1}},
+        {"$sort": {sort_field: direction}},
+        {"$skip": skip},
         {"$limit": limit},
         {
             "$lookup": {
