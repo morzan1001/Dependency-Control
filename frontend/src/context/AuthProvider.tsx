@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jwtDecode } from 'jwt-decode'
 
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const login = (accessToken: string, refreshToken: string, skipNavigation = false) => {
+  const login = useCallback((accessToken: string, refreshToken: string, skipNavigation = false) => {
     localStorage.setItem('token', accessToken)
     localStorage.setItem('refresh_token', refreshToken)
 
@@ -86,7 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!skipNavigation) {
       navigate('/dashboard')
     }
-  }
+  }, [navigate])
 
   return (
     <AuthContext.Provider

@@ -211,8 +211,24 @@ class ResultAggregator:
         # 2. Group by Version + CVE-Set hash to find potential duplicates
         # Map: (version, cve_set_hash) -> List[Finding]
         groups = {}
+        sast_groups = {}  # Map: (component, line) -> List[Finding]
 
         for f in current_findings:
+            if f.type == FindingType.SAST:
+                # Group SAST findings by component (file) and line number
+                line = f.details.get("line")
+                start_line = f.details.get("start", {}).get("line")
+                effective_line = line or start_line or 0
+                
+                # Normalize component path to avoid slight mismatches (e.g. ./file vs file)
+                # But component should be normalized by ingest already.
+                key = (f.component, effective_line)
+                
+                if key not in sast_groups:
+                    sast_groups[key] = []
+                sast_groups[key].append(f)
+                continue
+
             if f.type != FindingType.VULNERABILITY:
                 continue
 
@@ -235,10 +251,35 @@ class ResultAggregator:
         final_findings = []
         merged_ids = set()
 
-        # Add non-vulnerability findings first
+        # Add non-vulnerability/non-sast findings first
         for f in current_findings:
-            if f.type != FindingType.VULNERABILITY:
+            if f.type != FindingType.VULNERABILITY and f.type != FindingType.SAST:
                 final_findings.append(f)
+
+        # Process SAST groups
+        for key, group in sast_groups.items():
+            if not group:
+                continue
+                
+            # If group has only 1 item, no merge needed, but wrap in standardized structure if needed?
+            # Actually, user wants consistent UI so maybe we should ensure 'sast_findings' exists?
+            # But let's stick to merging logic first.
+            if len(group) == 1:
+                f = group[0]
+                # Ensure structure is consistent for single item too?
+                # If we want a unified list in frontend, we might want to restructure even single items.
+                # But let's verify if that's required. FrontEnd currently handles flat details.
+                # If we start merging, some will have 'sast_findings' and some won't.
+                # BETTER: Always restructure to have 'sast_findings' list if type is SAST.
+                
+                # Convert single finding to merged structure
+                merged_f = self._merge_sast_findings(group)
+                final_findings.append(merged_f)
+                continue
+
+            # Merge items in group
+            merged_f = self._merge_sast_findings(group)
+            final_findings.append(merged_f)
 
         # Process vulnerability groups
         for key, group in groups.items():
@@ -647,6 +688,96 @@ class ResultAggregator:
         if not component:
             return "unknown"
         return component.strip().lower()
+
+    def _merge_sast_findings(self, findings: List[Finding]) -> Finding:
+        """
+        Merges a list of SAST findings into a single finding with a list of individual results.
+        Similar to how vulnerabilities or quality issues are aggregated.
+        """
+        if not findings:
+            return None
+            
+        # Use the first finding as the base
+        base = findings[0]
+        
+        # Prepare the container logic
+        merged_details = {
+            "sast_findings": [],
+            # Keep common top-level fields for easy access/compatibility
+            "file": base.component,
+            "line": base.details.get("line") or base.details.get("start", {}).get("line"),
+            # Merge lists
+            "cwe_ids": [],
+            "category_groups": [],
+            "owasp": [],
+        }
+        
+        merged_scanners = set()
+        max_severity_val = 0
+        max_severity = "INFO"
+        
+        all_descriptions = []
+        
+        for f in findings:
+            # Update severity
+            s_val = SEVERITY_ORDER.get(f.severity, 0)
+            if s_val > max_severity_val:
+                max_severity_val = s_val
+                max_severity = f.severity
+            
+            # Collect scanners
+            for s in f.scanners:
+                merged_scanners.add(s)
+                
+            # Parse individual entry
+            entry = {
+                "id": f.details.get("rule_id", "unknown"), # specific rule id
+                "scanner": f.scanners[0] if f.scanners else "unknown",
+                "severity": f.severity,
+                "title": f.details.get("title", f.description[:50]),
+                "description": f.description,
+                "details": f.details # Keep full details
+            }
+            merged_details["sast_findings"].append(entry)
+            
+            # Aggregate sets
+            if f.details.get("cwe_ids"):
+                for cwe in f.details.get("cwe_ids"):
+                    if cwe not in merged_details["cwe_ids"]:
+                        merged_details["cwe_ids"].append(cwe)
+            
+            if f.details.get("category_groups"):
+                 for cat in f.details.get("category_groups"):
+                    if cat not in merged_details["category_groups"]:
+                        merged_details["category_groups"].append(cat)
+            
+            if f.details.get("owasp"):
+                 for start in f.details.get("owasp"):
+                    if start not in merged_details["owasp"]:
+                        merged_details["owasp"].append(start)
+
+            if f.description and f.description not in all_descriptions:
+                all_descriptions.append(f.description)
+        
+        # Determine a merged description
+        if len(findings) > 1:
+            description = f"Multiple SAST issues found at this location by {len(merged_scanners)} scanners."
+        else:
+            description = base.description
+
+        # Construct new Finding
+        return Finding(
+            id=base.id if len(findings) == 1 else f"SAST-AGG-{base.component}-{merged_details['line']}", # create stable ID for group
+            type=FindingType.SAST,
+            severity=max_severity,
+            component=base.component,
+            version=base.version,
+            description=description,
+            scanners=list(merged_scanners),
+            details=merged_details,
+            found_in=base.found_in, # simplistic merge
+            aliases=[f.id for f in findings if f.id != base.id] if len(findings) > 1 else base.aliases
+        )
 
     def _is_same_component_name(self, name1: str, name2: str) -> bool:
         """
@@ -1763,6 +1894,13 @@ class ResultAggregator:
             
             # Build documentation URL from source or shortlink
             documentation_url = metadata.get("shortlink") or metadata.get("source")
+            
+            # Normalize categories
+            categories = []
+            if metadata.get("category"):
+                categories.append(metadata.get("category"))
+
+            start_line = (finding.get("start") or {}).get("line")
 
             self._add_finding(
                 Finding(
@@ -1775,6 +1913,8 @@ class ResultAggregator:
                     scanners=["opengrep"],
                     details={
                         "rule_id": check_id,
+                        "title": title,
+                        "line": start_line,
                         "start": finding.get("start"),
                         "end": finding.get("end"),
                         # Extracted and normalized fields
@@ -1789,6 +1929,7 @@ class ResultAggregator:
                         "impact": metadata.get("impact"),
                         # Categorization
                         "category": metadata.get("category"),
+                        "category_groups": categories,
                         "subcategory": metadata.get("subcategory", []),
                         "technology": metadata.get("technology", []),
                         "vulnerability_class": metadata.get("vulnerability_class", []),
