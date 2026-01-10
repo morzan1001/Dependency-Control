@@ -1,3 +1,11 @@
+# Release 1.2.9
+
+## 📦 Build & CI
+
+- chore: update version to 1.2.9 and enhance API endpoints for scans and system settings (#0)
+
+
+
 # Release 1.2.8
 
 
