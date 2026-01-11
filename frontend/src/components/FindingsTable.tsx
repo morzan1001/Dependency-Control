@@ -1,6 +1,6 @@
 import { useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useRef, useEffect, useState, useLayoutEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { scanApi } from '@/api/scans'
 import { Finding } from '@/types/scan'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -19,6 +19,7 @@ import { SeverityBadge } from '@/components/findings/SeverityBadge'
 import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
 import { getSourceInfo } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
+import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
 
 interface FindingsTableProps {
     scanId: string;
@@ -29,32 +30,10 @@ interface FindingsTableProps {
 }
 
 export function FindingsTable({ scanId, projectId, category, search, scanContext }: FindingsTableProps) {
-    const parentRef = useRef<HTMLDivElement>(null)
-    const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
-    const [tableOffset, setTableOffset] = useState(0)
+    const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [sortBy, setSortBy] = useState("severity")
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
-
-    useLayoutEffect(() => {
-        // Find the main scroll container
-        const container = document.querySelector('main') as HTMLElement
-        setScrollContainer(container)
-
-        if (container && parentRef.current) {
-             const updateOffset = () => {
-                if (parentRef.current && container) {
-                    const rect = parentRef.current.getBoundingClientRect()
-                    const containerRect = container.getBoundingClientRect()
-                    setTableOffset(rect.top - containerRect.top + container.scrollTop)
-                }
-             }
-             
-             updateOffset()
-             window.addEventListener('resize', updateOffset)
-             return () => window.removeEventListener('resize', updateOffset)
-        }
-    }, [])
 
     const {
         data,
@@ -91,21 +70,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
         getScrollElement: () => scrollContainer,
         estimateSize: () => 60,
         overscan: VIRTUAL_SCROLL_OVERSCAN,
-        observeElementOffset: (_instance, cb) => {
-            const element = scrollContainer
-            if (!element) return undefined
-
-            const onScroll = () => {
-                const offset = element.scrollTop - tableOffset
-                cb(Math.max(0, offset), false)
-            }
-
-            element.addEventListener('scroll', onScroll, { passive: true })
-            onScroll()
-            return () => {
-                element.removeEventListener('scroll', onScroll)
-            }
-        },
+        observeElementOffset: createScrollObserver(scrollContainer, tableOffset),
     })
 
     const virtualItems = rowVirtualizer.getVirtualItems()

@@ -1,5 +1,5 @@
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { SbomResponse, SbomTool, SbomToolComponent } from '@/api/scans'
 import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
@@ -7,10 +7,11 @@ import { FindingsTable } from '@/components/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, Copy, Check, RefreshCw, Loader2, Tag, Folder } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Loader2, Tag, Folder } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
+import { CodeBlock } from '@/components/ui/code-block'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
 import { PostProcessorResultCard } from '@/components/PostProcessorResults'
@@ -23,32 +24,6 @@ interface ScanHistoryItem {
   _id: string;
   is_rescan?: boolean;
   created_at: string;
-}
-
-function CodeBlock({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false)
-
-  const onCopy = () => {
-    navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  return (
-    <div className="relative rounded-md bg-muted p-4">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="absolute right-2 top-2 h-8 w-8 bg-background/50 hover:bg-background"
-        onClick={onCopy}
-      >
-        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-      </Button>
-      <pre className="overflow-auto max-h-[600px] text-xs font-mono whitespace-pre-wrap break-all">
-        {code}
-      </pre>
-    </div>
-  )
 }
 
 export default function ScanDetails() {
@@ -70,24 +45,30 @@ export default function ScanDetails() {
   
   const triggerRescanMutation = useTriggerRescan()
 
+  // Memoized scroll handler to avoid recreating on every render
+  const scrollToSbom = useCallback((index: number) => {
+    const sbomElement = sbomRefs.current[index]
+    if (sbomElement) {
+      sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      // Highlight briefly
+      sbomElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
+      setTimeout(() => {
+        sbomElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2')
+      }, 2000)
+    }
+  }, [])
+
   // Scroll to SBOM when navigating from finding details
   useEffect(() => {
-    if (activeTab === 'raw' && sbomParam !== null && !isSbomsLoading) {
+    if (activeTab === 'raw' && sbomParam !== null && !isSbomsLoading && scanSboms && scanSboms.length > 0) {
       const sbomIndex = parseInt(sbomParam, 10)
-      // Small delay to ensure DOM is rendered
-      setTimeout(() => {
-        const sbomElement = sbomRefs.current[sbomIndex]
-        if (sbomElement) {
-          sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          // Highlight briefly
-          sbomElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
-          setTimeout(() => {
-            sbomElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2')
-          }, 2000)
-        }
-      }, 100)
+      if (!isNaN(sbomIndex) && sbomIndex >= 0 && sbomIndex < scanSboms.length) {
+        // Small delay to ensure DOM is rendered
+        const timeoutId = setTimeout(() => scrollToSbom(sbomIndex), 100)
+        return () => clearTimeout(timeoutId)
+      }
     }
-    }, [activeTab, sbomParam, isSbomsLoading, scanSboms?.length])
+  }, [activeTab, sbomParam, isSbomsLoading, scanSboms, scrollToSbom])
 
   if (isScanLoading || isProjectLoading) {
     return (

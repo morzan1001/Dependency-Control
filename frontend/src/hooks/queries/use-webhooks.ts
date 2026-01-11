@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { webhookApi } from '@/api/webhooks';
-import { WebhookCreate } from '@/types/webhook';
+import { Webhook, WebhookCreate } from '@/types/webhook';
 
 export const webhookKeys = {
   all: ['webhooks'] as const,
@@ -25,7 +25,7 @@ export const useProjectWebhooks = (projectId: string) => {
 
 export const useCreateGlobalWebhook = () => {
   const queryClient = useQueryClient();
-  return useMutation({
+  return useMutation<Webhook, Error, WebhookCreate>({
     mutationFn: (data: WebhookCreate) => webhookApi.createGlobal(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: webhookKeys.global() });
@@ -35,8 +35,8 @@ export const useCreateGlobalWebhook = () => {
 
 export const useCreateProjectWebhook = () => {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ projectId, data }: { projectId: string; data: WebhookCreate }) => 
+  return useMutation<Webhook, Error, { projectId: string; data: WebhookCreate }>({
+    mutationFn: ({ projectId, data }) => 
       webhookApi.createProject(projectId, data),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: webhookKeys.project(variables.projectId) });
@@ -46,7 +46,7 @@ export const useCreateProjectWebhook = () => {
 
 export const useDeleteWebhook = () => {
   const queryClient = useQueryClient();
-  return useMutation({
+  return useMutation<void, Error, string>({
     mutationFn: (id: string) => webhookApi.delete(id),
     onSuccess: () => {
       // Invalidate all webhooks as we don't know if it was global or project from ID

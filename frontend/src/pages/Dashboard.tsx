@@ -6,9 +6,10 @@ import { useProjects} from '@/hooks/queries/use-projects'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useState, useRef, useLayoutEffect } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -46,51 +47,14 @@ export default function Dashboard() {
   const totalPages = projectsData?.pages || 0
 
   // Virtual Scroll Setup
-  const parentRef = useRef<HTMLDivElement>(null)
-  const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
-  const [tableOffset, setTableOffset] = useState(0)
-
-  useLayoutEffect(() => {
-      if (!parentRef.current) return
-      
-      const container = parentRef.current.closest('main') as HTMLElement
-      setScrollContainer(container)
-
-      if (container) {
-           const updateOffset = () => {
-              if (parentRef.current && container) {
-                  const rect = parentRef.current.getBoundingClientRect()
-                  const containerRect = container.getBoundingClientRect()
-                  setTableOffset(rect.top - containerRect.top + container.scrollTop)
-              }
-           }
-           
-           updateOffset()
-           window.addEventListener('resize', updateOffset)
-           return () => window.removeEventListener('resize', updateOffset)
-      }
-  }, [])
+  const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
   
   const rowVirtualizer = useVirtualizer({
     count: projectList.length,
     getScrollElement: () => scrollContainer,
     estimateSize: () => 73, // Approximate row height
     overscan: 5,
-    observeElementOffset: (_instance, cb) => {
-        const element = scrollContainer
-        if (!element) return undefined
-
-        const onScroll = () => {
-            const offset = element.scrollTop - tableOffset
-            cb(Math.max(0, offset), false)
-        }
-
-        element.addEventListener('scroll', onScroll, { passive: true })
-        onScroll()
-        return () => {
-            element.removeEventListener('scroll', onScroll)
-        }
-    },
+    observeElementOffset: createScrollObserver(scrollContainer, tableOffset),
   })
 
   const stats = [

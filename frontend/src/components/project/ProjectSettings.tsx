@@ -4,7 +4,7 @@ import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
-import { useProjectWebhooks } from '@/hooks/queries/use-webhooks'
+import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { User } from '@/types/user'
@@ -149,19 +149,24 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     }
   })
 
-  const createWebhookMutation = useMutation({
-    mutationFn: (data: WebhookCreate) => webhookApi.createProject(projectId, data),
-    onSuccess: () => {
-      refetchWebhooks()
-    }
-  })
+  const createProjectWebhookMutation = useCreateProjectWebhook()
+  const deleteWebhookMutation = useDeleteWebhook()
 
-  const deleteWebhookMutation = useMutation({
-    mutationFn: webhookApi.delete,
-    onSuccess: () => {
-      refetchWebhooks()
-    }
-  })
+  // Wrapper to include projectId in the mutation
+  const createWebhookMutation = {
+    mutateAsync: (data: WebhookCreate) => 
+      createProjectWebhookMutation.mutateAsync({ projectId, data }).then(result => {
+        refetchWebhooks()
+        return result
+      }),
+    isPending: createProjectWebhookMutation.isPending,
+  }
+
+  // Add refetch on delete success
+  const handleDeleteWebhook = async (id: string) => {
+    await deleteWebhookMutation.mutateAsync(id)
+    refetchWebhooks()
+  }
 
   const handleUpdate = (e: React.FormEvent) => {
     e.preventDefault()
@@ -496,7 +501,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
         webhooks={webhooks || []} 
         isLoading={isLoadingWebhooks}
         onCreate={createWebhookMutation.mutateAsync}
-        onDelete={deleteWebhookMutation.mutateAsync}
+        onDelete={handleDeleteWebhook}
         createPermission="project:update"
         deletePermission="project:update"
       />
