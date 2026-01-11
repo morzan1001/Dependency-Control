@@ -7,7 +7,12 @@ from app.api import deps
 from app.db.mongodb import get_database
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.schemas.system import SystemSettingsResponse, SystemSettingsUpdate
+from app.schemas.system import (
+    SystemSettingsResponse,
+    SystemSettingsUpdate,
+    AppConfig,
+    NotificationChannels,
+)
 
 router = APIRouter()
 
@@ -74,6 +79,7 @@ async def update_settings(
 async def get_public_config(db: AsyncIOMotorDatabase = Depends(get_database)):
     """
     Returns public configuration flags (e.g. if registration is allowed).
+    No authentication required.
     """
     settings = await get_current_settings(db)
     return {
@@ -83,6 +89,41 @@ async def get_public_config(db: AsyncIOMotorDatabase = Depends(get_database)):
         "oidc_enabled": settings.oidc_enabled,
         "oidc_provider_name": settings.oidc_provider_name,
     }
+
+
+@router.get(
+    "/app-config",
+    response_model=AppConfig,
+    summary="Get application configuration for authenticated users",
+)
+async def get_app_config(
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    Returns lightweight, non-sensitive configuration for authenticated users.
+    This endpoint provides only the data needed by frontend components
+    without exposing secrets like API keys or passwords.
+    """
+    settings = await get_current_settings(db)
+
+    # Determine available notification channels
+    notifications = NotificationChannels(
+        email=bool(settings.smtp_host and settings.smtp_user),
+        slack=bool(settings.slack_bot_token),
+        mattermost=bool(settings.mattermost_bot_token and settings.mattermost_url),
+    )
+
+    return AppConfig(
+        project_limit_per_user=settings.project_limit_per_user,
+        retention_mode=settings.retention_mode,
+        global_retention_days=settings.global_retention_days,
+        rescan_mode=settings.rescan_mode,
+        global_rescan_enabled=settings.global_rescan_enabled,
+        global_rescan_interval=settings.global_rescan_interval,
+        gitlab_integration_enabled=settings.gitlab_integration_enabled,
+        notifications=notifications,
+    )
 
 
 @router.get(

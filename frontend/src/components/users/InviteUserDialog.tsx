@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useInviteUser } from '@/hooks/queries/use-users';
-import { systemApi } from '@/api/system';
+import { useAppConfig } from '@/hooks/queries/use-system';
 import { ApiError } from '@/api/client';
-import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,10 +21,8 @@ export function InviteUserDialog() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
 
-  const { data: systemSettings } = useQuery({
-    queryKey: ['systemSettings'],
-    queryFn: systemApi.getSettings,
-  });
+  // Only fetch app config when dialog is open - we only need it after submit
+  const { data: appConfig } = useAppConfig({ enabled: isOpen });
 
   const inviteUserMutation = useInviteUser();
 
@@ -33,7 +30,8 @@ export function InviteUserDialog() {
     e.preventDefault();
     inviteUserMutation.mutate(inviteEmail, {
       onSuccess: (data) => {
-        if (!systemSettings?.smtp_host && data.link) {
+        // Show invitation link if email is not configured
+        if (!appConfig?.notifications.email && data.link) {
           setInviteLink(data.link);
           toast.success("Invitation created", {
             description: "Please copy the invitation link below.",

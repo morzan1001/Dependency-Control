@@ -6,6 +6,9 @@ from pydantic import BaseModel
 class SystemSettingsBase(BaseModel):
     instance_name: Optional[str] = "Dependency Control"
 
+    # Limits
+    project_limit_per_user: int = 0  # 0 means unlimited
+
     allow_public_registration: bool = False
     enforce_2fa: bool = False
     enforce_email_verification: bool = False
@@ -64,3 +67,34 @@ class SystemSettingsUpdate(SystemSettingsBase):
 
 class SystemSettingsResponse(SystemSettingsBase):
     pass
+
+
+class NotificationChannels(BaseModel):
+    """Available notification channels based on system configuration."""
+    email: bool = False
+    slack: bool = False
+    mattermost: bool = False
+
+
+class AppConfig(BaseModel):
+    """
+    Lightweight configuration for authenticated users.
+    Contains only non-sensitive data needed by various frontend components.
+    """
+    # Limits
+    project_limit_per_user: int = 0
+
+    # Retention settings
+    retention_mode: str = "project"
+    global_retention_days: int = 90
+
+    # Rescan settings
+    rescan_mode: str = "project"
+    global_rescan_enabled: bool = False
+    global_rescan_interval: int = 24
+
+    # Integration status (only whether enabled, no secrets)
+    gitlab_integration_enabled: bool = False
+
+    # Available notification channels
+    notifications: NotificationChannels = NotificationChannels()
