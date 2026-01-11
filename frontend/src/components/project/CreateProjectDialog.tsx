@@ -52,8 +52,8 @@ export function CreateProjectDialog({
   } | null>(null);
   const [hasCopied, setHasCopied] = useState(false);
   
-  const { data: teams } = useTeams();
-  // Only fetch app config when dialog is open - we only need it for the retention hint
+  // Only fetch teams and app config when dialog is open
+  const { data: teams } = useTeams(undefined, undefined, undefined, { enabled: open });
   const { data: appConfig } = useAppConfig({ enabled: open });
 
   const createProjectMutation = useCreateProject();

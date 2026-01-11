@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
-import { webhookApi } from '@/api/webhooks'
-import { teamApi } from '@/api/teams'
 import { useAppConfig } from '@/hooks/queries/use-system'
+import { useTeams } from '@/hooks/queries/use-teams'
+import { useProjectBranches } from '@/hooks/queries/use-projects'
+import { useProjectWebhooks } from '@/hooks/queries/use-webhooks'
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { User } from '@/types/user'
@@ -70,23 +71,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>({})
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
 
-  const { data: teams } = useQuery({
-    queryKey: ['teams'],
-    queryFn: () => teamApi.getAll(),
-  })
-
-  const { data: branches } = useQuery({
-    queryKey: ['project-branches', projectId],
-    queryFn: () => projectApi.getBranches(projectId),
-  })
-
-  const { data: appConfig } = useAppConfig()
-
-  const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useQuery({
-    queryKey: ['projectWebhooks', projectId],
-    queryFn: () => webhookApi.getProject(projectId),
-    enabled: !!projectId
-  })
+  // Use centralized hooks for better caching and consistency
+  const { data: teams } = useTeams();
+  const { data: branches } = useProjectBranches(projectId);
+  const { data: appConfig } = useAppConfig();
+  const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
 
   useEffect(() => {
     if (project && user) {
