@@ -1,3 +1,43 @@
+# Release 1.3.0
+
+
+
+# Release 1.2.9
+
+## 📦 Build & CI
+
+- chore: update version to 1.2.9 and enhance API endpoints for scans and system settings (#0)
+
+
+
+# Release 1.2.8
+
+
+
+# Release 1.2.7
+
+## 📦 Build & CI
+
+- chore: update version to 1.2.7 and enhance notification settings mutation (#0)
+
+
+
+# Release 1.2.6
+
+## 🚀 Features
+
+- feat: enhance SAST findings aggregation and display in UI (#0)
+
+
+
+# Release 1.2.5
+
+## 📦 Build & CI
+
+- chore: update version to 1.2.5 and enhance authentication flow (#0)
+
+
+
 # Release 1.2.4
 
 ## 📦 Build & CI

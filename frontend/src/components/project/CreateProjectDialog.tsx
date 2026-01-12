@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useCreateProject } from "@/hooks/queries/use-projects";
 import { useTeams } from "@/hooks/queries/use-teams";
-import { useSystemSettings } from "@/hooks/queries/use-system";
+import { useAppConfig } from "@/hooks/queries/use-system";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -52,8 +52,9 @@ export function CreateProjectDialog({
   } | null>(null);
   const [hasCopied, setHasCopied] = useState(false);
   
-  const { data: teams } = useTeams();
-  const { data: systemSettings } = useSystemSettings();
+  // Only fetch teams and app config when dialog is open
+  const { data: teams } = useTeams(undefined, undefined, undefined, { enabled: open });
+  const { data: appConfig } = useAppConfig({ enabled: open });
 
   const createProjectMutation = useCreateProject();
 
@@ -214,9 +215,9 @@ export function CreateProjectDialog({
                     onChange={(e) => setRetentionDays(parseInt(e.target.value))}
                     required
                 />
-                 {systemSettings?.retention_days && (
+                 {appConfig?.global_retention_days && appConfig.global_retention_days > 0 && (
                     <p className="text-xs text-muted-foreground">
-                        Global default: {systemSettings.retention_days} days. Set to 0 to use global default.
+                        Global default: {appConfig.global_retention_days} days. Set to 0 to use global default.
                     </p>
                 )}
             </div>

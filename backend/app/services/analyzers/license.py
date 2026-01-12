@@ -14,10 +14,12 @@ License Categories:
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.constants import LICENSE_ALIASES, UNKNOWN_LICENSE_PATTERNS
+from app.models.finding import Severity
 from .base import Analyzer
 
 
@@ -45,13 +47,13 @@ class LicenseInfo:
     category: LicenseCategory
     name: str
     description: str
-    obligations: List[str]
-    risks: List[str]
-    compatible_with_proprietary: bool
-    requires_attribution: bool
-    requires_source_disclosure: bool
-    viral: bool  # If true, license applies to derivative works
-    network_clause: bool  # AGPL-style network use clause
+    obligations: List[str] = field(default_factory=list)
+    risks: List[str] = field(default_factory=list)
+    compatible_with_proprietary: bool = False
+    requires_attribution: bool = True
+    requires_source_disclosure: bool = False
+    viral: bool = False
+    network_clause: bool = False
 
 
 class LicenseAnalyzer(Analyzer):
@@ -59,19 +61,13 @@ class LicenseAnalyzer(Analyzer):
 
     # Comprehensive license database with context
     LICENSE_DATABASE: Dict[str, LicenseInfo] = {
-        # ========== PERMISSIVE LICENSES (Safe for commercial use) ==========
         "MIT": LicenseInfo(
             spdx_id="MIT",
             category=LicenseCategory.PERMISSIVE,
             name="MIT License",
             description="Very permissive license allowing almost any use with attribution.",
             obligations=["Include copyright notice", "Include license text"],
-            risks=[],
             compatible_with_proprietary=True,
-            requires_attribution=True,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
         "Apache-2.0": LicenseInfo(
             spdx_id="Apache-2.0",
@@ -84,12 +80,7 @@ class LicenseAnalyzer(Analyzer):
                 "State changes",
                 "Include NOTICE file if present",
             ],
-            risks=[],
             compatible_with_proprietary=True,
-            requires_attribution=True,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
         "BSD-2-Clause": LicenseInfo(
             spdx_id="BSD-2-Clause",
@@ -97,12 +88,7 @@ class LicenseAnalyzer(Analyzer):
             name="BSD 2-Clause License",
             description="Simple permissive license with minimal requirements.",
             obligations=["Include copyright notice", "Include license text"],
-            risks=[],
             compatible_with_proprietary=True,
-            requires_attribution=True,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
         "BSD-3-Clause": LicenseInfo(
             spdx_id="BSD-3-Clause",
@@ -114,12 +100,7 @@ class LicenseAnalyzer(Analyzer):
                 "Include license text",
                 "No endorsement without permission",
             ],
-            risks=[],
             compatible_with_proprietary=True,
-            requires_attribution=True,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
         "ISC": LicenseInfo(
             spdx_id="ISC",
@@ -127,66 +108,42 @@ class LicenseAnalyzer(Analyzer):
             name="ISC License",
             description="Simplified permissive license similar to MIT.",
             obligations=["Include copyright notice"],
-            risks=[],
             compatible_with_proprietary=True,
-            requires_attribution=True,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
         "Unlicense": LicenseInfo(
             spdx_id="Unlicense",
             category=LicenseCategory.PUBLIC_DOMAIN,
             name="The Unlicense",
             description="Public domain dedication with no restrictions.",
-            obligations=[],
             risks=["May not be recognized in all jurisdictions"],
             compatible_with_proprietary=True,
             requires_attribution=False,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
         "CC0-1.0": LicenseInfo(
             spdx_id="CC0-1.0",
             category=LicenseCategory.PUBLIC_DOMAIN,
             name="CC0 1.0 Universal",
             description="Public domain dedication by Creative Commons.",
-            obligations=[],
-            risks=[],
             compatible_with_proprietary=True,
             requires_attribution=False,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
         "0BSD": LicenseInfo(
             spdx_id="0BSD",
             category=LicenseCategory.PUBLIC_DOMAIN,
             name="Zero-Clause BSD",
             description="Public domain equivalent BSD license.",
-            obligations=[],
-            risks=[],
             compatible_with_proprietary=True,
             requires_attribution=False,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
         "WTFPL": LicenseInfo(
             spdx_id="WTFPL",
             category=LicenseCategory.PUBLIC_DOMAIN,
             name="Do What The F*ck You Want To Public License",
             description="Extremely permissive, essentially public domain.",
-            obligations=[],
             risks=["May not be legally enforceable in all jurisdictions"],
             compatible_with_proprietary=True,
             requires_attribution=False,
-            requires_source_disclosure=False,
-            viral=False,
-            network_clause=False,
         ),
-        # ========== WEAK COPYLEFT (Library modifications must be shared) ==========
         "LGPL-2.1": LicenseInfo(
             spdx_id="LGPL-2.1",
             category=LicenseCategory.WEAK_COPYLEFT,
@@ -198,11 +155,8 @@ class LicenseAnalyzer(Analyzer):
                 "Include license text",
             ],
             risks=["Static linking may trigger full GPL terms"],
-            compatible_with_proprietary=True,  # If dynamically linked
-            requires_attribution=True,
-            requires_source_disclosure=True,  # For library modifications only
-            viral=False,  # Only for the library itself
-            network_clause=False,
+            compatible_with_proprietary=True,
+            requires_source_disclosure=True,
         ),
         "LGPL-2.1-only": LicenseInfo(
             spdx_id="LGPL-2.1-only",
@@ -212,10 +166,7 @@ class LicenseAnalyzer(Analyzer):
             obligations=["Share source of library modifications", "Allow relinking"],
             risks=["Static linking may trigger full GPL terms"],
             compatible_with_proprietary=True,
-            requires_attribution=True,
             requires_source_disclosure=True,
-            viral=False,
-            network_clause=False,
         ),
         "LGPL-2.1-or-later": LicenseInfo(
             spdx_id="LGPL-2.1-or-later",
@@ -223,12 +174,8 @@ class LicenseAnalyzer(Analyzer):
             name="GNU Lesser General Public License v2.1 or later",
             description="LGPL 2.1 with option to use later versions.",
             obligations=["Share source of library modifications", "Allow relinking"],
-            risks=[],
             compatible_with_proprietary=True,
-            requires_attribution=True,
             requires_source_disclosure=True,
-            viral=False,
-            network_clause=False,
         ),
         "LGPL-3.0": LicenseInfo(
             spdx_id="LGPL-3.0",
@@ -242,10 +189,7 @@ class LicenseAnalyzer(Analyzer):
             ],
             risks=["Must allow user to replace library version"],
             compatible_with_proprietary=True,
-            requires_attribution=True,
             requires_source_disclosure=True,
-            viral=False,
-            network_clause=False,
         ),
         "LGPL-3.0-only": LicenseInfo(
             spdx_id="LGPL-3.0-only",
@@ -603,76 +547,11 @@ class LicenseAnalyzer(Analyzer):
     }
 
     # Aliases and variations
-    LICENSE_ALIASES: Dict[str, str] = {
-        # MIT variations
-        "MIT/X11": "MIT",
-        "Expat": "MIT",
-        # Apache variations
-        "Apache 2.0": "Apache-2.0",
-        "Apache License 2.0": "Apache-2.0",
-        "Apache License, Version 2.0": "Apache-2.0",
-        "ASL 2.0": "Apache-2.0",
-        # BSD variations
-        "BSD": "BSD-3-Clause",
-        "BSD License": "BSD-3-Clause",
-        "BSD-2": "BSD-2-Clause",
-        "BSD-3": "BSD-3-Clause",
-        "Simplified BSD": "BSD-2-Clause",
-        "New BSD": "BSD-3-Clause",
-        "Modified BSD": "BSD-3-Clause",
-        # GPL variations
-        "GPL": "GPL-2.0-or-later",
-        "GPLv2": "GPL-2.0",
-        "GPLv2+": "GPL-2.0-or-later",
-        "GPLv3": "GPL-3.0",
-        "GPLv3+": "GPL-3.0-or-later",
-        "GPL v2": "GPL-2.0",
-        "GPL v3": "GPL-3.0",
-        "GNU GPL": "GPL-2.0-or-later",
-        "GNU GPLv2": "GPL-2.0",
-        "GNU GPLv3": "GPL-3.0",
-        # LGPL variations
-        "LGPL": "LGPL-2.1-or-later",
-        "LGPLv2": "LGPL-2.1",
-        "LGPLv2.1": "LGPL-2.1",
-        "LGPLv3": "LGPL-3.0",
-        "GNU LGPL": "LGPL-2.1-or-later",
-        # AGPL variations
-        "AGPL": "AGPL-3.0",
-        "AGPLv3": "AGPL-3.0",
-        "GNU AGPL": "AGPL-3.0",
-        # MPL variations
-        "MPL": "MPL-2.0",
-        "MPL 2.0": "MPL-2.0",
-        "Mozilla Public License 2.0": "MPL-2.0",
-        # Other
-        "Public Domain": "Unlicense",
-        "CC0": "CC0-1.0",
-        "ISC License": "ISC",
-        "Artistic": "Artistic-2.0",
-        "zlib/libpng": "Zlib",
-        "Boost": "BSL-1.0",
-        "PSF": "Python-2.0",
-    }
-
-    # Patterns indicating unknown/missing license
-    UNKNOWN_PATTERNS = {
-        "NOASSERTION",
-        "UNKNOWN",
-        "NONE",
-        "N/A",
-        "NOT FOUND",
-        "UNLICENSED",
-        "SEE LICENSE",
-        "CUSTOM",
-        "PROPRIETARY",
-    }
-
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Analyze SBOM components for license compliance issues.
@@ -803,13 +682,13 @@ class LicenseAnalyzer(Analyzer):
                 lic = lic_entry["license"]
                 lic_id = lic.get("id") or lic.get("name")
                 lic_url = lic.get("url")
-                if lic_id and lic_id.upper() not in self.UNKNOWN_PATTERNS:
+                if lic_id and lic_id.upper() not in UNKNOWN_LICENSE_PATTERNS:
                     licenses.append((lic_id, lic_url))
 
             # SPDX expression
             if "expression" in lic_entry:
                 expr = lic_entry["expression"]
-                if expr and expr.upper() not in self.UNKNOWN_PATTERNS:
+                if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
                     # Handle expressions like "MIT OR Apache-2.0"
                     for lic_id in re.split(r"\s+(?:AND|OR|WITH)\s+", expr):
                         lic_id = lic_id.strip("() ")
@@ -820,7 +699,7 @@ class LicenseAnalyzer(Analyzer):
         direct_license = component.get("license")
         if (
             isinstance(direct_license, str)
-            and direct_license.upper() not in self.UNKNOWN_PATTERNS
+            and direct_license.upper() not in UNKNOWN_LICENSE_PATTERNS
         ):
             licenses.append((direct_license, None))
 
@@ -832,11 +711,11 @@ class LicenseAnalyzer(Analyzer):
             return ""
 
         # Check aliases first
-        if lic_id in self.LICENSE_ALIASES:
-            return self.LICENSE_ALIASES[lic_id]
+        if lic_id in LICENSE_ALIASES:
+            return LICENSE_ALIASES[lic_id]
 
         # Try case-insensitive alias match
-        for alias, spdx in self.LICENSE_ALIASES.items():
+        for alias, spdx in LICENSE_ALIASES.items():
             if alias.lower() == lic_id.lower():
                 return spdx
 
@@ -978,10 +857,10 @@ class LicenseAnalyzer(Analyzer):
         message: str,
         explanation: str,
         recommendation: str,
-        obligations: List[str] = None,
-        risks: List[str] = None,
-        purl: str = None,
-        license_url: str = None,
+        obligations: Optional[List[str]] = None,
+        risks: Optional[List[str]] = None,
+        purl: Optional[str] = None,
+        license_url: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a license issue with full context."""
         return {

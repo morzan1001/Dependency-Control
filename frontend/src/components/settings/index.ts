@@ -1,0 +1,5 @@
+export { GeneralSettingsTab } from './GeneralSettingsTab'
+export { SecuritySettingsTab } from './SecuritySettingsTab'
+export { NotificationsSettingsTab } from './NotificationsSettingsTab'
+export { IntegrationsSettingsTab } from './IntegrationsSettingsTab'
+export type { SettingsTabProps } from './types'

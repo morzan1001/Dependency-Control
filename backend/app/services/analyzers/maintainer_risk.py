@@ -23,7 +23,7 @@ import httpx
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 
 from .base import Analyzer
-from .purl_utils import get_registry_system, is_npm, is_pypi
+from .purl_utils import is_npm, is_pypi, parse_purl
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ class MaintainerRiskAnalyzer(Analyzer):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Analyze maintainer health for packages in the SBOM.
@@ -108,7 +108,8 @@ class MaintainerRiskAnalyzer(Analyzer):
         maintainer_info = {}
 
         # Determine registry and get cache key
-        registry = get_registry_system(purl)
+        parsed = parse_purl(purl)
+        registry = parsed.registry_system if parsed else None
         cache_key = CacheKeys.maintainer(registry, name) if registry else None
 
         # Check cache first

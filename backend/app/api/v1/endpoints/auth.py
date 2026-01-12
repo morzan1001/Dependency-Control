@@ -7,8 +7,16 @@ from urllib.parse import urlencode
 
 import httpx
 import pyotp
-from fastapi import (APIRouter, BackgroundTasks, Body, Depends, Form,
-                     HTTPException, Request, status)
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    Form,
+    HTTPException,
+    Request,
+    status,
+)
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -25,8 +33,7 @@ from app.schemas.token import Token, TokenPayload
 from app.schemas.user import User as UserSchema
 from app.schemas.user import UserCreate, UserPasswordReset
 from app.services.notifications.email_provider import EmailProvider
-from app.services.notifications.templates import \
-    get_verification_email_template
+from app.services.notifications.templates import get_verification_email_template
 
 logger = logging.getLogger(__name__)
 
@@ -447,9 +454,13 @@ async def login_oidc_callback(
     async with httpx.AsyncClient() as client:
         # Exchange code for token
         try:
-            response = await client.post(system_config.oidc_token_endpoint, data=token_data)
+            response = await client.post(
+                system_config.oidc_token_endpoint, data=token_data
+            )
         except httpx.RequestError as exc:
-            logger.error(f"An error occurred while requesting {exc.request.url!r}: {exc}")
+            logger.error(
+                f"An error occurred while requesting {exc.request.url!r}: {exc}"
+            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. Please check your system configuration.",
@@ -471,7 +482,9 @@ async def login_oidc_callback(
                 headers={"Authorization": f"Bearer {access_token}"},
             )
         except httpx.RequestError as exc:
-            logger.error(f"An error occurred while requesting user info {exc.request.url!r}: {exc}")
+            logger.error(
+                f"An error occurred while requesting user info {exc.request.url!r}: {exc}"
+            )
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}.",

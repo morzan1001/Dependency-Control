@@ -10,6 +10,9 @@ class SystemSettings(BaseModel):
     instance_name: str = "Dependency Control"
     dashboard_url: str = "http://localhost:5173"
 
+    # Limits
+    project_limit_per_user: int = 0  # 0 means unlimited
+
     # Security
     allow_public_registration: bool = False
     enforce_2fa: bool = False

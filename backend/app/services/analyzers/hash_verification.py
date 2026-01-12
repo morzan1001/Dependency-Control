@@ -11,7 +11,6 @@ Detects:
 """
 
 import asyncio
-import hashlib
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -20,7 +19,7 @@ import httpx
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 
 from .base import Analyzer
-from .purl_utils import get_registry_system, is_npm, is_pypi
+from .purl_utils import is_npm, is_pypi
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +37,8 @@ class HashVerificationAnalyzer(Analyzer):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Analyze packages by verifying their hashes against official registries.

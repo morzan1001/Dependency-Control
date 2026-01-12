@@ -7,8 +7,7 @@ See: https://github.com/package-url/purl-spec
 Format: pkg:type/namespace/name@version?qualifiers#subpath
 """
 
-import re
-from typing import Any, Dict, NamedTuple, Optional
+from typing import Dict, NamedTuple, Optional
 from urllib.parse import unquote
 
 
@@ -34,6 +33,15 @@ class ParsedPURL(NamedTuple):
         """Get the registry system name for deps.dev API."""
         return PURL_TYPE_TO_SYSTEM.get(self.type)
 
+    @property
+    def deps_dev_name(self) -> str:
+        """Get the package name formatted for deps.dev API."""
+        if self.type == "maven" and self.namespace:
+            return f"{self.namespace}:{self.name}"
+        if self.namespace:
+            return f"{self.namespace}/{self.name}"
+        return self.name
+
 
 # Mapping from PURL types to deps.dev/registry system names
 PURL_TYPE_TO_SYSTEM = {
@@ -53,24 +61,6 @@ PURL_TYPE_TO_SYSTEM = {
     "cran": "cran",  # R
 }
 
-# Mapping for ecosystem names used in various APIs
-PURL_TYPE_TO_ECOSYSTEM = {
-    "pypi": "PyPI",
-    "npm": "npm",
-    "maven": "Maven",
-    "golang": "Go",
-    "go": "Go",
-    "cargo": "crates.io",
-    "nuget": "NuGet",
-    "gem": "RubyGems",
-    "composer": "Packagist",
-    "cocoapods": "CocoaPods",
-    "swift": "SwiftPM",
-    "pub": "Pub",
-    "hex": "Hex",
-    "cran": "CRAN",
-}
-
 
 def parse_purl(purl: str) -> Optional[ParsedPURL]:
     """
@@ -86,16 +76,13 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
         return None
 
     try:
-        # Remove "pkg:" prefix
         rest = purl[4:]
 
-        # Extract subpath (after #)
         subpath = None
         if "#" in rest:
             rest, subpath = rest.rsplit("#", 1)
             subpath = unquote(subpath)
 
-        # Extract qualifiers (after ?)
         qualifiers = {}
         if "?" in rest:
             rest, qualifier_str = rest.rsplit("?", 1)
@@ -104,41 +91,31 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
                     key, value = pair.split("=", 1)
                     qualifiers[unquote(key)] = unquote(value)
 
-        # Extract version (after @)
         version = None
         if "@" in rest:
             rest, version = rest.rsplit("@", 1)
             version = unquote(version)
 
-        # Extract type (before first /)
         if "/" not in rest:
             return None
 
         purl_type, rest = rest.split("/", 1)
         purl_type = purl_type.lower()
 
-        # Extract namespace and name
         namespace = None
         name = rest
 
-        # Handle namespaced packages
         if "/" in rest:
-            # Maven: group/artifact
-            # npm: @scope/name
-            # Go: domain/path/name
             parts = rest.rsplit("/", 1)
             if purl_type == "maven":
                 namespace = parts[0]
                 name = parts[1]
             elif purl_type in ("npm",) and rest.startswith("@"):
-                # npm scoped package: @scope/name
                 namespace, name = rest.split("/", 1)
             elif purl_type in ("golang", "go"):
-                # Go: keep full path as name, extract domain as namespace
                 namespace = rest.split("/")[0]
                 name = rest
             else:
-                # For other types, treat as namespace/name
                 namespace = parts[0]
                 name = parts[1]
 
@@ -166,18 +143,6 @@ def get_purl_type(purl: str) -> Optional[str]:
         return type_part
     except (IndexError, AttributeError):
         return None
-
-
-def get_registry_system(purl: str) -> Optional[str]:
-    """Get the registry system name for a PURL (for deps.dev API)."""
-    purl_type = get_purl_type(purl)
-    return PURL_TYPE_TO_SYSTEM.get(purl_type) if purl_type else None
-
-
-def get_ecosystem(purl: str) -> Optional[str]:
-    """Get the ecosystem name for a PURL (for OSV, etc.)."""
-    purl_type = get_purl_type(purl)
-    return PURL_TYPE_TO_ECOSYSTEM.get(purl_type) if purl_type else None
 
 
 def is_pypi(purl: str) -> bool:

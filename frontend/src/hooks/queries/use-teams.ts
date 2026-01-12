@@ -10,10 +10,22 @@ export const teamKeys = {
   detail: (id: string) => [...teamKeys.details(), id] as const,
 };
 
-export const useTeams = (search?: string, sortBy = 'name', sortOrder = 'asc') => {
+interface UseTeamsOptions {
+  /** Set to false to disable the query until needed (e.g., dialog is open) */
+  enabled?: boolean;
+}
+
+export const useTeams = (
+  search?: string, 
+  sortBy = 'name', 
+  sortOrder = 'asc',
+  options: UseTeamsOptions = {}
+) => {
+  const { enabled = true } = options;
   return useQuery({
     queryKey: teamKeys.list({ search, sortBy, sortOrder }),
     queryFn: () => teamApi.getAll(search, sortBy, sortOrder),
+    enabled,
   });
 };
 

@@ -1,7 +1,7 @@
 import base64
 import io
 import logging
-from typing import Any, List
+from typing import Any, List, Optional
 
 import pyotp
 import qrcode
@@ -14,9 +14,16 @@ from app.core.config import settings
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.schemas.user import User as UserSchema
-from app.schemas.user import (User2FADisable, User2FASetup, User2FAVerify,
-                              UserCreate, UserMigrateToLocal,
-                              UserPasswordUpdate, UserUpdate, UserUpdateMe)
+from app.schemas.user import (
+    User2FADisable,
+    User2FASetup,
+    User2FAVerify,
+    UserCreate,
+    UserMigrateToLocal,
+    UserPasswordUpdate,
+    UserUpdate,
+    UserUpdateMe,
+)
 from app.services.notifications import templates
 from app.services.notifications.service import notification_service
 
@@ -61,7 +68,7 @@ async def create_user(
 async def read_users(
     skip: int = 0,
     limit: int = 100,
-    search: str = None,
+    search: Optional[str] = None,
     sort_by: str = "username",
     sort_order: str = "asc",
     current_user: User = Depends(
@@ -248,8 +255,7 @@ async def reset_user_password(
             import os
 
             from app.services.notifications.email_provider import EmailProvider
-            from app.services.notifications.templates import \
-                get_password_reset_template
+            from app.services.notifications.templates import get_password_reset_template
 
             current_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
@@ -380,7 +386,7 @@ async def setup_2fa(
 
     img = qrcode.make(totp_uri)
     buffered = io.BytesIO()
-    img.save(buffered, format="PNG")
+    img.save(buffered)
     qr_code_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     return {"secret": secret, "qr_code": qr_code_base64}

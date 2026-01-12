@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import tempfile
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .base import Analyzer
 
@@ -16,8 +16,8 @@ class TrivyAnalyzer(Analyzer):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         # Create a temporary file for the SBOM
         with tempfile.NamedTemporaryFile(

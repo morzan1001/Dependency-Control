@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
-import { webhookApi } from '@/api/webhooks'
-import { teamApi } from '@/api/teams'
-import { systemApi } from '@/api/system'
+import { useAppConfig } from '@/hooks/queries/use-system'
+import { useTeams } from '@/hooks/queries/use-teams'
+import { useProjectBranches } from '@/hooks/queries/use-projects'
+import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { User } from '@/types/user'
@@ -70,26 +71,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>({})
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
 
-  const { data: teams } = useQuery({
-    queryKey: ['teams'],
-    queryFn: () => teamApi.getAll(),
-  })
-
-  const { data: branches } = useQuery({
-    queryKey: ['project-branches', projectId],
-    queryFn: () => projectApi.getBranches(projectId),
-  })
-
-  const { data: systemSettings } = useQuery({
-    queryKey: ['systemSettings'],
-    queryFn: systemApi.getSettings,
-  })
-
-  const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useQuery({
-    queryKey: ['projectWebhooks', projectId],
-    queryFn: () => webhookApi.getProject(projectId),
-    enabled: !!projectId
-  })
+  // Use centralized hooks for better caching and consistency
+  const { data: teams } = useTeams();
+  const { data: branches } = useProjectBranches(projectId);
+  const { data: appConfig } = useAppConfig();
+  const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
 
   useEffect(() => {
     if (project && user) {
@@ -139,7 +125,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   })
 
   const updateNotificationSettingsMutation = useMutation({
-    mutationFn: (settings: Record<string, string[]>) => projectApi.updateNotificationSettings(projectId, settings),
+    mutationFn: (settings: Record<string, string[]>) => projectApi.updateNotificationSettings(projectId, { notification_preferences: settings }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Notification settings updated")
@@ -163,19 +149,24 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     }
   })
 
-  const createWebhookMutation = useMutation({
-    mutationFn: (data: WebhookCreate) => webhookApi.createProject(projectId, data),
-    onSuccess: () => {
-      refetchWebhooks()
-    }
-  })
+  const createProjectWebhookMutation = useCreateProjectWebhook()
+  const deleteWebhookMutation = useDeleteWebhook()
 
-  const deleteWebhookMutation = useMutation({
-    mutationFn: webhookApi.delete,
-    onSuccess: () => {
-      refetchWebhooks()
-    }
-  })
+  // Wrapper to include projectId in the mutation
+  const createWebhookMutation = {
+    mutateAsync: (data: WebhookCreate) => 
+      createProjectWebhookMutation.mutateAsync({ projectId, data }).then(result => {
+        refetchWebhooks()
+        return result
+      }),
+    isPending: createProjectWebhookMutation.isPending,
+  }
+
+  // Add refetch on delete success
+  const handleDeleteWebhook = async (id: string) => {
+    await deleteWebhookMutation.mutateAsync(id)
+    refetchWebhooks()
+  }
 
   const handleUpdate = (e: React.FormEvent) => {
     e.preventDefault()
@@ -265,12 +256,12 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="retention">Retention Period (Days)</Label>
-                    {systemSettings?.retention_mode === 'global' ? (
+                    {appConfig?.retention_mode === 'global' ? (
                         <div className="p-3 bg-muted rounded-md text-sm border">
                             <p className="font-medium">Managed Globally</p>
                             <p className="text-muted-foreground mt-1">
-                                {systemSettings.global_retention_days && systemSettings.global_retention_days > 0 
-                                    ? `Data is retained for ${systemSettings.global_retention_days} days.` 
+                                {appConfig.global_retention_days && appConfig.global_retention_days > 0 
+                                    ? `Data is retained for ${appConfig.global_retention_days} days.` 
                                     : "Data retention is disabled (data is kept forever)."}
                             </p>
                         </div>
@@ -286,12 +277,12 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </div>
                 <div className="grid gap-2">
                     <Label>Periodic Re-scanning</Label>
-                    {systemSettings?.rescan_mode === 'global' ? (
+                    {appConfig?.rescan_mode === 'global' ? (
                         <div className="p-3 bg-muted rounded-md text-sm border">
                             <p className="font-medium">Managed Globally</p>
                             <p className="text-muted-foreground mt-1">
-                                {systemSettings.global_rescan_enabled 
-                                    ? `Re-scanning is enabled (every ${systemSettings.global_rescan_interval} hours).` 
+                                {appConfig.global_rescan_enabled 
+                                    ? `Re-scanning is enabled (every ${appConfig.global_rescan_interval} hours).` 
                                     : "Re-scanning is disabled globally."}
                             </p>
                         </div>
@@ -329,7 +320,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     )}
                 </div>
 
-                {systemSettings?.gitlab_access_token && (
+                {appConfig?.gitlab_integration_enabled && (
                     <div className="grid gap-2">
                         <Label>GitLab Integration</Label>
                         <div className="border rounded-md p-4 space-y-4">
@@ -448,9 +439,9 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         <TableRow>
                             <TableHead className="w-[300px]">Event</TableHead>
                             {['email', 'slack', 'mattermost'].map(channel => {
-                                if (channel === 'email' && !systemSettings?.smtp_host) return null;
-                                if (channel === 'slack' && !systemSettings?.slack_bot_token) return null;
-                                if (channel === 'mattermost' && !systemSettings?.mattermost_url) return null;
+                                if (channel === 'email' && !appConfig?.notifications.email) return null;
+                                if (channel === 'slack' && !appConfig?.notifications.slack) return null;
+                                if (channel === 'mattermost' && !appConfig?.notifications.mattermost) return null;
                                 return (
                                     <TableHead key={channel} className="capitalize text-center">{channel}</TableHead>
                                 );
@@ -467,9 +458,9 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                     </div>
                                 </TableCell>
                                 {['email', 'slack', 'mattermost'].map(channel => {
-                                    if (channel === 'email' && !systemSettings?.smtp_host) return null;
-                                    if (channel === 'slack' && !systemSettings?.slack_bot_token) return null;
-                                    if (channel === 'mattermost' && !systemSettings?.mattermost_url) return null;
+                                    if (channel === 'email' && !appConfig?.notifications.email) return null;
+                                    if (channel === 'slack' && !appConfig?.notifications.slack) return null;
+                                    if (channel === 'mattermost' && !appConfig?.notifications.mattermost) return null;
                                     
                                     return (
                                         <TableCell key={channel} className="text-center">
@@ -510,7 +501,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
         webhooks={webhooks || []} 
         isLoading={isLoadingWebhooks}
         onCreate={createWebhookMutation.mutateAsync}
-        onDelete={deleteWebhookMutation.mutateAsync}
+        onDelete={handleDeleteWebhook}
         createPermission="project:update"
         deletePermission="project:update"
       />

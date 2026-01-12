@@ -1,5 +1,5 @@
 import { api } from '@/api/client';
-import { SystemSettings, PublicConfig } from '@/types/system';
+import { SystemSettings, PublicConfig, AppConfig } from '@/types/system';
 
 export const systemApi = {
   getSettings: async () => {
@@ -14,6 +14,15 @@ export const systemApi = {
 
   getPublicConfig: async () => {
     const response = await api.get<PublicConfig>('/system/public-config');
+    return response.data;
+  },
+
+  /**
+   * Get lightweight, non-sensitive app configuration for authenticated users.
+   * Use this instead of getSettings for components that only need config data.
+   */
+  getAppConfig: async () => {
+    const response = await api.get<AppConfig>('/system/app-config');
     return response.data;
   },
 

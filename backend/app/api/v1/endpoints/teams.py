@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -8,8 +8,13 @@ from app.api import deps
 from app.db.mongodb import get_database
 from app.models.team import Team, TeamMember
 from app.models.user import User
-from app.schemas.team import (TeamCreate, TeamMemberAdd, TeamMemberUpdate,
-                              TeamResponse, TeamUpdate)
+from app.schemas.team import (
+    TeamCreate,
+    TeamMemberAdd,
+    TeamMemberUpdate,
+    TeamResponse,
+    TeamUpdate,
+)
 
 router = APIRouter()
 
@@ -31,7 +36,10 @@ async def enrich_team_with_usernames(team_data: dict, db: AsyncIOMotorDatabase) 
 
 
 async def check_team_access(
-    team_id: str, user: User, db: AsyncIOMotorDatabase, required_role: str = None
+    team_id: str,
+    user: User,
+    db: AsyncIOMotorDatabase,
+    required_role: Optional[str] = None,
 ) -> Team:
     team_data = await db.teams.find_one({"_id": team_id})
     if not team_data:
@@ -62,6 +70,10 @@ async def check_team_access(
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     if required_role:
+        if member_role is None:
+            raise HTTPException(
+                status_code=403, detail="Not enough permissions in this team"
+            )
         # Role hierarchy: owner > admin > member
         roles = ["member", "admin", "owner"]
         if roles.index(member_role) < roles.index(required_role):
@@ -98,7 +110,7 @@ async def create_team(
 
 @router.get("/", response_model=List[TeamResponse])
 async def read_teams(
-    search: str = None,
+    search: Optional[str] = None,
     sort_by: str = "name",
     sort_order: str = "asc",
     current_user: User = Depends(deps.get_current_active_user),
@@ -125,7 +137,7 @@ async def read_teams(
 
     sort_direction = 1 if sort_order == "asc" else -1
 
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": final_query},
         {"$sort": {sort_by: sort_direction}},
         {
@@ -203,7 +215,7 @@ async def read_team(
     """
     await check_team_access(team_id, current_user, db)
 
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"_id": team_id}},
         {
             "$lookup": {
@@ -294,8 +306,10 @@ async def update_team(
     await db.teams.update_one({"_id": team_id}, {"$set": update_data})
 
     updated_team = await db.teams.find_one({"_id": team_id})
-    await enrich_team_with_usernames(updated_team, db)
-    return updated_team
+    if updated_team:
+        await enrich_team_with_usernames(updated_team, db)
+        return TeamResponse(**updated_team)
+    raise HTTPException(status_code=404, detail="Team not found")
 
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -356,8 +370,10 @@ async def add_team_member(
     )
 
     updated_team = await db.teams.find_one({"_id": team_id})
-    await enrich_team_with_usernames(updated_team, db)
-    return TeamResponse(**updated_team)
+    if updated_team:
+        await enrich_team_with_usernames(updated_team, db)
+        return TeamResponse(**updated_team)
+    raise HTTPException(status_code=404, detail="Team not found")
 
 
 @router.put("/{team_id}/members/{user_id}", response_model=TeamResponse)
@@ -407,8 +423,10 @@ async def update_team_member(
     )
 
     updated_team = await db.teams.find_one({"_id": team_id})
-    await enrich_team_with_usernames(updated_team, db)
-    return TeamResponse(**updated_team)
+    if updated_team:
+        await enrich_team_with_usernames(updated_team, db)
+        return TeamResponse(**updated_team)
+    raise HTTPException(status_code=404, detail="Team not found")
 
 
 @router.delete("/{team_id}/members/{user_id}", response_model=TeamResponse)
@@ -453,5 +471,7 @@ async def remove_team_member(
     )
 
     updated_team = await db.teams.find_one({"_id": team_id})
-    await enrich_team_with_usernames(updated_team, db)
-    return TeamResponse(**updated_team)
+    if updated_team:
+        await enrich_team_with_usernames(updated_team, db)
+        return TeamResponse(**updated_team)
+    raise HTTPException(status_code=404, detail="Team not found")

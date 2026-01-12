@@ -1,4 +1,5 @@
 import time
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,7 +15,9 @@ router = APIRouter()
 
 @router.get("/slack/callback")
 async def slack_callback(
-    code: str, state: str = None, db: AsyncIOMotorDatabase = Depends(get_database)
+    code: str,
+    state: Optional[str] = None,
+    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Callback endpoint for Slack OAuth.

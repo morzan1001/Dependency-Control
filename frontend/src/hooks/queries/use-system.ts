@@ -4,12 +4,18 @@ import { SystemSettings } from '@/types/system';
 
 export const systemKeys = {
   settings: ['systemSettings'] as const,
+  appConfig: ['appConfig'] as const,
 };
 
+/**
+ * Full system settings - only for the admin settings page.
+ * Requires 'system:manage' permission.
+ */
 export const useSystemSettings = () => {
   return useQuery({
     queryKey: systemKeys.settings,
     queryFn: systemApi.getSettings,
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 };
 
@@ -19,13 +25,39 @@ export const useUpdateSystemSettings = () => {
     mutationFn: (data: Partial<SystemSettings>) => systemApi.updateSettings(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: systemKeys.settings });
+      // Also invalidate app config since some values might have changed
+      queryClient.invalidateQueries({ queryKey: systemKeys.appConfig });
     },
   });
 };
+
+interface UseAppConfigOptions {
+  /** Set to false to disable the query until needed (e.g., dialog is open) */
+  enabled?: boolean;
+}
+
+/**
+ * Lightweight app configuration for authenticated users.
+ * Use this for components that only need config data (limits, retention, etc.).
+ * Does NOT expose secrets like API keys or passwords.
+ * 
+ * @param options.enabled - Set to false to defer loading until needed (default: true)
+ */
+export const useAppConfig = (options: UseAppConfigOptions = {}) => {
+  const { enabled = true } = options;
+  return useQuery({
+    queryKey: systemKeys.appConfig,
+    queryFn: systemApi.getAppConfig,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    enabled,
+  });
+};
+
 export const usePublicConfig = () => {
   return useQuery({
     queryKey: ['publicConfig'],
     queryFn: systemApi.getPublicConfig,
+    staleTime: 10 * 60 * 1000, // 10 minutes - rarely changes
   });
 };
 
@@ -33,5 +65,6 @@ export const useNotificationChannels = () => {
   return useQuery({
     queryKey: ['notificationChannels'],
     queryFn: systemApi.getNotificationChannels,
+    staleTime: 5 * 60 * 1000, // 5 minutes
   });
 };

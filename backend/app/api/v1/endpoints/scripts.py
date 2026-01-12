@@ -23,6 +23,7 @@ router = APIRouter()
 SCRIPTS_DIR = Path("/app/ci-cd/scripts")
 ALLOWED_SCRIPTS = {"scanner.sh"}
 
+
 def get_script_version(content: str) -> str:
     """Extract version from script content."""
     match = re.search(r'SCRIPT_VERSION="([^"]+)"', content)

@@ -23,6 +23,7 @@ export const useDashboardStats = () => {
     return useQuery({
         queryKey: analyticsKeys.dashboardStats(),
         queryFn: analyticsApi.getDashboardStats,
+        staleTime: 2 * 60 * 1000, // 2 minutes - stats are expensive to compute
     });
 }
 
@@ -38,6 +39,7 @@ export const useAnalyticsSummary = () => {
     return useQuery({
         queryKey: analyticsKeys.summary(),
         queryFn: analyticsApi.getSummary,
+        staleTime: 5 * 60 * 1000, // 5 minutes
     });
 }
 
@@ -45,6 +47,7 @@ export const useTopDependencies = (limit: number = 20, type?: string) => {
     return useQuery({
         queryKey: analyticsKeys.topDependencies(limit, type),
         queryFn: () => analyticsApi.getTopDependencies(limit, type),
+        staleTime: 5 * 60 * 1000, // 5 minutes
     });
 }
 
@@ -52,7 +55,8 @@ export const useDependencyTree = (projectId: string, scanId?: string) => {
     return useQuery({
         queryKey: analyticsKeys.dependencyTree(projectId, scanId),
         queryFn: () => analyticsApi.getDependencyTree(projectId, scanId),
-        enabled: !!projectId
+        enabled: !!projectId,
+        staleTime: 5 * 60 * 1000, // 5 minutes
     });
 }
 
@@ -60,6 +64,7 @@ export const useImpactAnalysis = (limit: number = 20) => {
     return useQuery({
         queryKey: analyticsKeys.impactAnalysis(limit),
         queryFn: () => analyticsApi.getImpactAnalysis(limit),
+        staleTime: 5 * 60 * 1000, // 5 minutes
     });
 }
 
@@ -109,6 +114,7 @@ export const useDependencyTypes = () => {
     return useQuery({
         queryKey: analyticsKeys.dependencyTypes(),
         queryFn: analyticsApi.getDependencyTypes,
+        staleTime: 30 * 60 * 1000, // 30 minutes - types almost never change
     });
 }
 
@@ -116,6 +122,7 @@ export const useProjectRecommendations = (projectId: string, scanId?: string) =>
     return useQuery({
         queryKey: analyticsKeys.recommendations(projectId, scanId),
         queryFn: () => analyticsApi.getProjectRecommendations(projectId, scanId),
-        enabled: !!projectId
+        enabled: !!projectId,
+        staleTime: 5 * 60 * 1000, // 5 minutes
     });
 }

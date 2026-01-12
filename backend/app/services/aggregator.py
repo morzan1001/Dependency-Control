@@ -1,13 +1,34 @@
-import hashlib
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from app.core.constants import SEVERITY_ORDER
+from app.core.constants import get_severity_value
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.enrichment import DependencyEnrichment
-from app.schemas.finding import (QualityAggregatedDetails, QualityEntry,
-                                 SecretDetails, VulnerabilityAggregatedDetails,
-                                 VulnerabilityEntry)
+from app.schemas.finding import (
+    QualityAggregatedDetails,
+    QualityEntry,
+    VulnerabilityAggregatedDetails,
+    VulnerabilityEntry,
+)
+from app.services.normalizers.vulnerability import (
+    normalize_trivy,
+    normalize_grype,
+    normalize_osv,
+)
+from app.services.normalizers.lifecycle import normalize_outdated, normalize_eol
+from app.services.normalizers.license import normalize_license
+from app.services.normalizers.quality import (
+    normalize_scorecard,
+    normalize_typosquatting,
+    normalize_maintainer_risk,
+)
+from app.services.normalizers.secret import normalize_trufflehog
+from app.services.normalizers.sast import normalize_opengrep, normalize_bearer
+from app.services.normalizers.iac import normalize_kics
+from app.services.normalizers.security import (
+    normalize_malware,
+    normalize_hash_verification,
+)
 
 
 class ResultAggregator:
@@ -35,7 +56,7 @@ class ResultAggregator:
             )
         return self._dependency_enrichments[key]
 
-    def _enrich_from_deps_dev(self, name: str, version: str, metadata: Dict[str, Any]):
+    def enrich_from_deps_dev(self, name: str, version: str, metadata: Dict[str, Any]):
         """Enrich dependency with data from deps.dev."""
         enrichment = self._get_or_create_enrichment(name, version)
         if "deps_dev" not in enrichment.sources:
@@ -119,7 +140,7 @@ class ResultAggregator:
         if metadata.get("has_slsa_provenance"):
             enrichment.has_slsa_provenance = True
 
-    def _enrich_from_license_scanner(
+    def enrich_from_license_scanner(
         self, name: str, version: str, license_info: Dict[str, Any]
     ):
         """Enrich dependency with data from license compliance scanner."""
@@ -152,7 +173,9 @@ class ResultAggregator:
             # Store full license data for reference
             self._license_data[f"{name}@{version}"] = license_info
 
-    def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: str = None):
+    def aggregate(
+        self, analyzer_name: str, result: Dict[str, Any], source: Optional[str] = None
+    ):
         """
         Dispatches the result to the specific normalizer based on analyzer name.
         """
@@ -161,7 +184,7 @@ class ResultAggregator:
 
         # Check for scanner errors
         if "error" in result:
-            self._add_finding(
+            self.add_finding(
                 Finding(
                     id=f"SCAN-ERROR-{analyzer_name}",
                     type=FindingType.SYSTEM_WARNING,
@@ -181,25 +204,25 @@ class ResultAggregator:
             return
 
         normalizers = {
-            "trivy": self._normalize_trivy,
-            "grype": self._normalize_grype,
-            "osv": self._normalize_osv,
-            "outdated_packages": self._normalize_outdated,
-            "license_compliance": self._normalize_license,
-            "deps_dev": self._normalize_scorecard,
-            "os_malware": self._normalize_malware,
-            "end_of_life": self._normalize_eol,
-            "typosquatting": self._normalize_typosquatting,
-            "trufflehog": self._normalize_trufflehog,
-            "opengrep": self._normalize_opengrep,
-            "kics": self._normalize_kics,
-            "bearer": self._normalize_bearer,
-            "hash_verification": self._normalize_hash_verification,
-            "maintainer_risk": self._normalize_maintainer_risk,
+            "trivy": normalize_trivy,
+            "grype": normalize_grype,
+            "osv": normalize_osv,
+            "outdated_packages": normalize_outdated,
+            "license_compliance": normalize_license,
+            "deps_dev": normalize_scorecard,
+            "os_malware": normalize_malware,
+            "end_of_life": normalize_eol,
+            "typosquatting": normalize_typosquatting,
+            "trufflehog": normalize_trufflehog,
+            "opengrep": normalize_opengrep,
+            "kics": normalize_kics,
+            "bearer": normalize_bearer,
+            "hash_verification": normalize_hash_verification,
+            "maintainer_risk": normalize_maintainer_risk,
         }
 
         if analyzer_name in normalizers:
-            normalizers[analyzer_name](result, source=source)
+            normalizers[analyzer_name](self, result, source=source)
 
     def get_findings(self) -> List[Finding]:
         """
@@ -210,9 +233,27 @@ class ResultAggregator:
 
         # 2. Group by Version + CVE-Set hash to find potential duplicates
         # Map: (version, cve_set_hash) -> List[Finding]
-        groups = {}
+        groups: Dict[str, List[Finding]] = {}
+        sast_groups: Dict[Any, List[Finding]] = (
+            {}
+        )  # Map: (component, line) -> List[Finding]
 
         for f in current_findings:
+            if f.type == FindingType.SAST:
+                # Group SAST findings by component (file) and line number
+                line = f.details.get("line")
+                start_line = f.details.get("start", {}).get("line")
+                effective_line = line or start_line or 0
+
+                # Normalize component path to avoid slight mismatches (e.g. ./file vs file)
+                # But component should be normalized by ingest already.
+                sast_key = (f.component, effective_line)
+
+                if sast_key not in sast_groups:
+                    sast_groups[sast_key] = []
+                sast_groups[sast_key].append(f)
+                continue
+
             if f.type != FindingType.VULNERABILITY:
                 continue
 
@@ -226,19 +267,44 @@ class ResultAggregator:
             # Group by version only. We will rely on component name matching to merge.
             # This allows merging findings for the same component that have DIFFERENT sets of vulnerabilities
             # (e.g. different scanners found different things).
-            key = f.version
-            if key not in groups:
-                groups[key] = []
-            groups[key].append(f)
+            group_key = f.version or ""
+            if group_key not in groups:
+                groups[group_key] = []
+            groups[group_key].append(f)
 
         # 3. Process groups
         final_findings = []
         merged_ids = set()
 
-        # Add non-vulnerability findings first
+        # Add non-vulnerability/non-sast findings first
         for f in current_findings:
-            if f.type != FindingType.VULNERABILITY:
+            if f.type != FindingType.VULNERABILITY and f.type != FindingType.SAST:
                 final_findings.append(f)
+
+        # Process SAST groups
+        for key, group in sast_groups.items():
+            if not group:
+                continue
+
+            # If group has only 1 item, no merge needed, but wrap in standardized structure if needed?
+            # Actually, user wants consistent UI so maybe we should ensure 'sast_findings' exists?
+            # But let's stick to merging logic first.
+            if len(group) == 1:
+                f = group[0]
+                # Ensure structure is consistent for single item too?
+                # If we want a unified list in frontend, we might want to restructure even single items.
+                # But let's verify if that's required. FrontEnd currently handles flat details.
+                # If we start merging, some will have 'sast_findings' and some won't.
+                # BETTER: Always restructure to have 'sast_findings' list if type is SAST.
+
+                # Convert single finding to merged structure
+                merged_f = self._merge_sast_findings(group)
+                final_findings.append(merged_f)
+                continue
+
+            # Merge items in group
+            merged_f = self._merge_sast_findings(group)
+            final_findings.append(merged_f)
 
         # Process vulnerability groups
         for key, group in groups.items():
@@ -491,57 +557,6 @@ class ResultAggregator:
                             )
                         )
 
-    def _normalize_trufflehog(self, result: Dict[str, Any], source: str = None):
-        # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
-        # The result dict is expected to contain a list of findings under "findings" key
-        for finding in result.get("findings", []):
-            # finding is a dict (from Pydantic model dump)
-
-            # Extract file path
-            file_path = "unknown"
-            if finding.get("SourceMetadata") and "Data" in finding["SourceMetadata"]:
-                # Filesystem mode
-                data = finding["SourceMetadata"]["Data"]
-                if "Filesystem" in data and "file" in data["Filesystem"]:
-                    file_path = data["Filesystem"]["file"]
-                elif "Git" in data and "file" in data["Git"]:
-                    file_path = data["Git"]["file"]
-
-            detector = finding.get("DetectorType", "Generic Secret")
-
-            # Create a unique ID based on detector, file path, and secret hash
-            # Storing the raw secret in the ID is avoided.
-            # Using Raw secret hash for deduplication is good.
-            raw_secret = finding.get("Raw", "")
-            secret_hash = (
-                hashlib.md5(raw_secret.encode()).hexdigest() if raw_secret else "nohash"
-            )
-
-            finding_id = f"SECRET-{detector}-{secret_hash[:8]}"
-
-            secret_details: SecretDetails = {
-                "detector": detector,
-                "decoder": finding.get("DecoderName"),
-                "verified": finding.get("Verified"),
-                # Do NOT store Raw secret in details unless encrypted/redacted.
-                # TruffleHog provides "Redacted" field.
-                "redacted": finding.get("Redacted"),
-            }
-
-            self._add_finding(
-                Finding(
-                    id=finding_id,
-                    type=FindingType.SECRET,
-                    severity=Severity.CRITICAL,
-                    component=file_path,
-                    version="",  # No version for secrets in files
-                    description=f"Secret detected: {detector}",
-                    scanners=["trufflehog"],
-                    details=secret_details,
-                ),
-                source=source,
-            )
-
     def _parse_version_key(self, v: str):
         """Helper to parse version string into a comparable tuple."""
         # Remove common prefixes
@@ -550,7 +565,7 @@ class ResultAggregator:
             v = v[1:]
 
         # Split by non-alphanumeric characters
-        parts = []
+        parts: List[int | str] = []
         for part in re.split(r"[^a-z0-9]+", v):
             if not part:
                 continue
@@ -562,7 +577,7 @@ class ResultAggregator:
 
     def _calculate_aggregated_fixed_version(
         self, fixed_versions_list: List[str]
-    ) -> str:
+    ) -> Optional[str]:
         """
         Calculates the best fixed version(s) considering multiple vulnerabilities and major versions.
         Input: List of fixed version strings (e.g. ["1.2.5, 2.0.1", "1.2.6"])
@@ -573,7 +588,7 @@ class ResultAggregator:
 
         # 1. Parse all available fixes
         # Structure: { MajorVersion: { VulnIndex: [VersionTuple, OriginalString] } }
-        major_buckets = {}
+        major_buckets: Dict[Any, Any] = {}
 
         for i, fv_str in enumerate(fixed_versions_list):
             # Split by comma to handle "1.2.5, 2.0.1"
@@ -648,6 +663,105 @@ class ResultAggregator:
             return "unknown"
         return component.strip().lower()
 
+    def _merge_sast_findings(self, findings: List[Finding]) -> Finding:
+        """
+        Merges a list of SAST findings into a single finding with a list of individual results.
+        Similar to how vulnerabilities or quality issues are aggregated.
+        """
+        if not findings:
+            return None
+
+        # Use the first finding as the base
+        base = findings[0]
+
+        # Prepare the container logic
+        merged_details = {
+            "sast_findings": [],
+            # Keep common top-level fields for easy access/compatibility
+            "file": base.component,
+            "line": base.details.get("line")
+            or base.details.get("start", {}).get("line"),
+            # Merge lists
+            "cwe_ids": [],
+            "category_groups": [],
+            "owasp": [],
+        }
+
+        merged_scanners = set()
+        max_severity_val = 0
+        max_severity = "INFO"
+
+        all_descriptions = []
+
+        for f in findings:
+            # Update severity
+            s_val = get_severity_value(f.severity)
+            if s_val > max_severity_val:
+                max_severity_val = s_val
+                max_severity = f.severity
+
+            # Collect scanners
+            for s in f.scanners:
+                merged_scanners.add(s)
+
+            # Parse individual entry
+            entry = {
+                "id": f.details.get("rule_id", "unknown"),  # specific rule id
+                "scanner": f.scanners[0] if f.scanners else "unknown",
+                "severity": f.severity,
+                "title": f.details.get("title", f.description[:50]),
+                "description": f.description,
+                "details": f.details,  # Keep full details
+            }
+            merged_details["sast_findings"].append(entry)
+
+            # Aggregate sets
+            if f.details.get("cwe_ids"):
+                for cwe in f.details.get("cwe_ids"):
+                    if cwe not in merged_details["cwe_ids"]:
+                        merged_details["cwe_ids"].append(cwe)
+
+            if f.details.get("category_groups"):
+                for cat in f.details.get("category_groups"):
+                    if cat not in merged_details["category_groups"]:
+                        merged_details["category_groups"].append(cat)
+
+            if f.details.get("owasp"):
+                for start in f.details.get("owasp"):
+                    if start not in merged_details["owasp"]:
+                        merged_details["owasp"].append(start)
+
+            if f.description and f.description not in all_descriptions:
+                all_descriptions.append(f.description)
+
+        # Determine a merged description
+        if len(findings) > 1:
+            description = f"Multiple SAST issues found at this location by {len(merged_scanners)} scanners."
+        else:
+            description = base.description
+
+        # Construct new Finding
+        return Finding(
+            id=(
+                base.id
+                if len(findings) == 1
+                else f"SAST-AGG-{base.component}-{merged_details['line']}"
+            ),  # create stable ID for group
+            type=FindingType.SAST,
+            severity=max_severity,
+            component=base.component,
+            version=base.version,
+            description=description,
+            scanners=list(merged_scanners),
+            details=merged_details,
+            found_in=base.found_in,  # simplistic merge
+            aliases=(
+                [f.id for f in findings if f.id != base.id]
+                if len(findings) > 1
+                else base.aliases
+            ),
+        )
+
     def _is_same_component_name(self, name1: str, name2: str) -> bool:
         """
         Checks if two component names likely refer to the same software.
@@ -677,7 +791,7 @@ class ResultAggregator:
         return False
 
     def _merge_vulnerability_into_list(
-        self, target_list: List[Dict[str, Any]], source_entry: Dict[str, Any]
+        self, target_list: List[Any], source_entry: Dict[str, Any]
     ):
         """
         Merges a source vulnerability entry into a target list, handling deduplication by ID and Aliases.
@@ -706,10 +820,8 @@ class ResultAggregator:
                 tv["aliases"] = list(all_aliases)
 
                 # Merge Severity (Max)
-                tv_sev_val = SEVERITY_ORDER.get(tv.get("severity", "UNKNOWN"), 0)
-                sv_sev_val = SEVERITY_ORDER.get(
-                    source_entry.get("severity", "UNKNOWN"), 0
-                )
+                tv_sev_val = get_severity_value(tv.get("severity"))
+                sv_sev_val = get_severity_value(source_entry.get("severity"))
                 if sv_sev_val > tv_sev_val:
                     tv["severity"] = source_entry["severity"]
 
@@ -773,8 +885,8 @@ class ResultAggregator:
         target.scanners = list(set(target.scanners + source.scanners))
 
         # 2. Severity (Max)
-        t_sev = SEVERITY_ORDER.get(target.severity, 0)
-        s_sev = SEVERITY_ORDER.get(source.severity, 0)
+        t_sev = get_severity_value(target.severity)
+        s_sev = get_severity_value(source.severity)
         if s_sev > t_sev:
             target.severity = source.severity
 
@@ -817,7 +929,7 @@ class ResultAggregator:
             return v[1:]
         return v
 
-    def _add_finding(self, finding: Finding, source: str = None):
+    def add_finding(self, finding: Finding, source: Optional[str] = None):
         """
         Adds a finding to the map, merging if it already exists.
         """
@@ -828,7 +940,9 @@ class ResultAggregator:
         else:
             self._add_generic_finding(finding, source)
 
-    def _add_vulnerability_finding(self, finding: Finding, source: str = None):
+    def _add_vulnerability_finding(
+        self, finding: Finding, source: Optional[str] = None
+    ):
         # Normalize keys
         raw_comp = finding.component if finding.component else "unknown"
         comp_key = self._normalize_component(raw_comp)
@@ -884,8 +998,8 @@ class ResultAggregator:
             existing.scanners = list(set(existing.scanners + finding.scanners))
 
             # 2. Update Severity of the aggregate (Max of all vulns)
-            existing_severity_val = SEVERITY_ORDER.get(existing.severity, 0)
-            new_severity_val = SEVERITY_ORDER.get(finding.severity, 0)
+            existing_severity_val = get_severity_value(existing.severity)
+            new_severity_val = get_severity_value(finding.severity)
             if new_severity_val > existing_severity_val:
                 existing.severity = finding.severity
 
@@ -908,7 +1022,9 @@ class ResultAggregator:
 
             # Update top-level fixed_version
             # Only consider vulnerabilities that actually HAVE a fixed version
-            fvs = [v.get("fixed_version") for v in vuln_list if v.get("fixed_version")]
+            fvs = [
+                str(v.get("fixed_version")) for v in vuln_list if v.get("fixed_version")
+            ]
 
             if not fvs:
                 existing.details["fixed_version"] = None
@@ -940,7 +1056,7 @@ class ResultAggregator:
             )
             self.findings[agg_key] = agg_finding
 
-    def _add_quality_finding(self, finding: Finding, source: str = None):
+    def _add_quality_finding(self, finding: Finding, source: Optional[str] = None):
         """
         Adds a quality finding to the map, aggregating multiple quality issues
         (scorecard, maintainer_risk, etc.) for the same component+version.
@@ -1001,8 +1117,8 @@ class ResultAggregator:
             existing.scanners = list(set(existing.scanners + finding.scanners))
 
             # 2. Update Severity of the aggregate (Max of all sources)
-            existing_severity_val = SEVERITY_ORDER.get(existing.severity, 0)
-            new_severity_val = SEVERITY_ORDER.get(finding.severity, 0)
+            existing_severity_val = get_severity_value(existing.severity)
+            new_severity_val = get_severity_value(finding.severity)
             if new_severity_val > existing_severity_val:
                 existing.severity = finding.severity
 
@@ -1102,7 +1218,7 @@ class ResultAggregator:
 
         finding.description = " | ".join(parts) if parts else f"{count} quality issues"
 
-    def _add_generic_finding(self, finding: Finding, source: str = None):
+    def _add_generic_finding(self, finding: Finding, source: Optional[str] = None):
         """
         Adds a finding to the map, merging if it already exists.
         Key for deduplication: type + id + component + version
@@ -1141,8 +1257,8 @@ class ResultAggregator:
             existing.scanners = list(set(existing.scanners + finding.scanners))
 
             # 2. Merge Severity (keep highest)
-            existing_severity_val = SEVERITY_ORDER.get(existing.severity, 0)
-            new_severity_val = SEVERITY_ORDER.get(finding.severity, 0)
+            existing_severity_val = get_severity_value(existing.severity)
+            new_severity_val = get_severity_value(finding.severity)
 
             if new_severity_val > existing_severity_val:
                 existing.severity = finding.severity
@@ -1177,861 +1293,3 @@ class ResultAggregator:
             for alias in finding.aliases:
                 k = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
                 self.alias_map[k] = primary_key
-
-    def _normalize_trivy(self, result: Dict[str, Any], source: str = None):
-        # Trivy structure: {"Results": [{"Vulnerabilities": [...]}]}
-        if "Results" not in result:
-            return
-
-        for target in result.get("Results", []):
-            for vuln in target.get("Vulnerabilities", []):
-                # Extract extra details
-                references = vuln.get("References", [])
-                published_date = vuln.get("PublishedDate")
-                last_modified_date = vuln.get("LastModifiedDate")
-                cwe_ids = vuln.get("CweIDs", [])
-
-                # Extract aliases from references
-                aliases = set()
-                vuln_id = vuln.get("VulnerabilityID")
-
-                for ref in references:
-                    match = re.search(r"(CVE-\d{4}-\d{4,})", ref)
-                    if match:
-                        cve = match.group(1)
-                        if cve != vuln_id:
-                            aliases.add(cve)
-
-                # ID Normalization: Prefer CVE if available in aliases
-                aliases_list = list(aliases)
-                cve_alias = next(
-                    (a for a in aliases_list if a.startswith("CVE-")), None
-                )
-
-                if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
-                    if vuln_id not in aliases_list:
-                        aliases_list.append(vuln_id)
-                    vuln_id = cve_alias
-
-                # CVSS Parsing
-                cvss_score = None
-                cvss_vector = None
-                if "CVSS" in vuln:
-                    # Trivy CVSS structure varies, usually {"nvd": {"V3Score": ...}, "redhat": ...}
-                    # We prefer NVD V3, then V2, then Vendor
-                    for source_cvss in ["nvd", "redhat", "ghsa", "bitnami"]:
-                        if source_cvss in vuln["CVSS"]:
-                            data = vuln["CVSS"][source_cvss]
-                            if "V3Score" in data:
-                                cvss_score = data["V3Score"]
-                                cvss_vector = data.get("V3Vector")
-                                break
-                            elif "V2Score" in data and cvss_score is None:
-                                cvss_score = data["V2Score"]
-                                cvss_vector = data.get("V2Vector")
-
-                # Construct description: Title + Description for maximum context
-                title = vuln.get("Title", "").strip()
-                desc = vuln.get("Description", "").strip()
-
-                if title and desc:
-                    # Check if title is just a truncated or full version of the description
-                    clean_title = title
-                    if title.endswith("..."):
-                        clean_title = title[:-3].strip()
-
-                    if clean_title in desc:
-                        final_desc = desc
-                    else:
-                        final_desc = f"{title}\n\n{desc}"
-                else:
-                    final_desc = desc or title or ""
-
-                self._add_finding(
-                    Finding(
-                        id=vuln_id,
-                        type=FindingType.VULNERABILITY,
-                        severity=Severity(vuln.get("Severity", "UNKNOWN").upper()),
-                        component=vuln.get("PkgName"),
-                        version=vuln.get("InstalledVersion"),
-                        description=final_desc,
-                        scanners=["trivy"],
-                        details={
-                            "fixed_version": vuln.get("FixedVersion"),
-                            "cvss_score": cvss_score,
-                            "cvss_vector": cvss_vector,
-                            "references": references,
-                            "published_date": published_date,
-                            "last_modified_date": last_modified_date,
-                            "cwe_ids": cwe_ids,
-                            "layer_id": vuln.get("Layer", {}).get("Digest"),
-                        },
-                        aliases=aliases_list,
-                    ),
-                    source=source,
-                )
-
-    def _normalize_grype(self, result: Dict[str, Any], source: str = None):
-        # Grype structure: {"matches": [{"vulnerability": {...}, "artifact": {...}}]}
-        for match in result.get("matches", []):
-            vuln = match.get("vulnerability", {})
-            artifact = match.get("artifact", {})
-
-            # ID Normalization: Prefer CVE if available in aliases
-            vuln_id = vuln.get("id")
-            aliases = [
-                r.get("id")
-                for r in vuln.get("relatedVulnerabilities", [])
-                if r.get("id")
-            ]
-
-            # If current ID is GHSA/GO/etc and a CVE exists in aliases, use CVE as primary ID
-            cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
-            if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
-                if vuln_id not in aliases:
-                    aliases.append(vuln_id)
-                vuln_id = cve_alias
-
-            # CVSS Parsing
-            cvss_score = None
-            cvss_vector = None
-            if "cvss" in vuln:
-                # Grype CVSS is a list of objects
-                # We look for the highest version (3.1 > 3.0 > 2.0)
-                best_cvss = None
-                for cvss in vuln["cvss"]:
-                    version = cvss.get("version", "0.0")
-                    if best_cvss is None or version > best_cvss.get("version", "0.0"):
-                        best_cvss = cvss
-
-                if best_cvss:
-                    cvss_score = float(best_cvss.get("metrics", {}).get("baseScore", 0))
-                    cvss_vector = best_cvss.get("vector")
-
-            self._add_finding(
-                Finding(
-                    id=vuln_id,
-                    type=FindingType.VULNERABILITY,
-                    severity=Severity(vuln.get("severity", "UNKNOWN").upper()),
-                    component=artifact.get("name"),
-                    version=artifact.get("version"),
-                    description=vuln.get("description", ""),
-                    scanners=["grype"],
-                    details={
-                        "fixed_version": ", ".join(
-                            vuln.get("fix", {}).get("versions", [])
-                        ),
-                        "datasource": vuln.get("dataSource"),
-                        "references": vuln.get("urls", []),
-                        "cvss_score": cvss_score,
-                        "cvss_vector": cvss_vector,
-                        "namespace": vuln.get("namespace"),
-                    },
-                    aliases=aliases,
-                ),
-                source=source,
-            )
-
-    def _normalize_osv(self, result: Dict[str, Any], source: str = None):
-        # OSV structure: {"osv_vulnerabilities": [{"component":..., "vulnerabilities": [...]}]}
-        for item in result.get("osv_vulnerabilities", []):
-            comp_name = item.get("component")
-            comp_version = item.get("version")
-
-            for vuln in item.get("vulnerabilities", []):
-                vuln_id = vuln.get("id", "")
-
-                # Check if this is a malware entry from OpenSSF (MAL- prefix)
-                if vuln_id.startswith("MAL-"):
-                    self._normalize_osv_malware(vuln, comp_name, comp_version, source)
-                    continue
-
-                # 1. Determine Severity
-                severity = "UNKNOWN"
-
-                # Check database_specific (common in GHSA)
-                if (
-                    "database_specific" in vuln
-                    and "severity" in vuln["database_specific"]
-                ):
-                    severity = vuln["database_specific"]["severity"].upper()
-
-                # Map OSV specific terms
-                if severity == "MODERATE":
-                    severity = "MEDIUM"
-
-                # 2. Extract Fixed Version
-                fixed_version = None
-                if "affected" in vuln:
-                    for affected in vuln["affected"]:
-                        # We assume the first fixed event we find is relevant
-                        if "ranges" in affected:
-                            for r in affected["ranges"]:
-                                if "events" in r:
-                                    for event in r["events"]:
-                                        if "fixed" in event:
-                                            fixed_version = event["fixed"]
-                                            break
-                                if fixed_version:
-                                    break
-                        if fixed_version:
-                            break
-
-                # 3. ID Normalization: Prefer CVE if available in aliases
-                aliases = vuln.get("aliases", [])
-
-                # Handle prefixed CVEs like DEBIAN-CVE-2025-10148
-                if vuln_id and "CVE-" in vuln_id and not vuln_id.startswith("CVE-"):
-                    # Try to extract CVE
-                    match = re.search(r"(CVE-\d{4}-\d{4,})", vuln_id)
-                    if match:
-                        cve_extracted = match.group(1)
-                        if vuln_id not in aliases:
-                            aliases.append(vuln_id)
-                        vuln_id = cve_extracted
-
-                # If current ID is GHSA/GO/etc and a CVE exists in aliases, use CVE as primary ID
-                cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
-                if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
-                    # Add original ID to aliases list to preserve it
-                    if vuln_id not in aliases:
-                        aliases.append(vuln_id)
-                    vuln_id = cve_alias
-
-                self._add_finding(
-                    Finding(
-                        id=vuln_id,
-                        type=FindingType.VULNERABILITY,
-                        severity=Severity(severity),
-                        component=comp_name,
-                        version=comp_version,
-                        description=vuln.get("summary") or vuln.get("details", ""),
-                        scanners=["osv"],
-                        details={
-                            "fixed_version": fixed_version,
-                            "references": vuln.get("references"),
-                            "published": vuln.get("published"),
-                            "modified": vuln.get("modified"),
-                            "osv_url": f"https://osv.dev/vulnerability/{vuln.get('id')}",
-                        },
-                        aliases=aliases,
-                    ),
-                    source=source,
-                )
-
-    def _normalize_osv_malware(
-        self,
-        vuln: Dict[str, Any],
-        comp_name: str,
-        comp_version: str,
-        source: str = None,
-    ):
-        """
-        Handle OpenSSF malicious-packages entries (MAL- prefix) from OSV.dev.
-        These are not vulnerabilities but confirmed malware.
-        """
-        vuln_id = vuln.get("id", "")
-
-        # Extract affected versions
-        affected_versions = []
-        for affected in vuln.get("affected", []):
-            versions = affected.get("versions", [])
-            affected_versions.extend(versions)
-
-        # Build references list
-        references = []
-        for ref in vuln.get("references", []):
-            if ref.get("url"):
-                references.append(ref["url"])
-
-        description = vuln.get("summary") or vuln.get(
-            "details", "Malicious package detected"
-        )
-
-        self._add_finding(
-            Finding(
-                id=f"MALWARE-{comp_name}",
-                type=FindingType.MALWARE,
-                severity=Severity.CRITICAL,
-                component=comp_name,
-                version=comp_version,
-                description=f"[{vuln_id}] {description}",
-                scanners=["osv"],
-                details={
-                    "osv_id": vuln_id,
-                    "source": "openssf",
-                    "reference": references[0] if references else None,
-                    "references": references,
-                    "published": vuln.get("published"),
-                    "modified": vuln.get("modified"),
-                    "affected_versions": affected_versions[:10],
-                    "osv_url": f"https://osv.dev/vulnerability/{vuln_id}",
-                },
-                aliases=[vuln_id],
-            ),
-            source=source,
-        )
-
-    def _normalize_outdated(self, result: Dict[str, Any], source: str = None):
-        for item in result.get("outdated_dependencies", []):
-            self._add_finding(
-                Finding(
-                    id=f"OUTDATED-{item['component']}",
-                    type=FindingType.OUTDATED,
-                    severity=Severity(item.get("severity", "INFO")),
-                    component=item.get("component"),
-                    version=item.get("current_version"),
-                    description=item.get("message"),
-                    scanners=["outdated_packages"],
-                    details={"fixed_version": item.get("latest_version")},
-                ),
-                source=source,
-            )
-
-    def _normalize_license(self, result: Dict[str, Any], source: str = None):
-        for item in result.get("license_issues", []):
-            # Map severity strings to enum (handle INFO as LOW since INFO might not exist)
-            severity_str = item.get("severity", "MEDIUM").upper()
-            if severity_str == "INFO":
-                severity = Severity.LOW
-            else:
-                severity = Severity(severity_str)
-
-            component = item.get("component")
-            version = item.get("version")
-
-            # Enrich dependency with license data (aggregation)
-            if component and version:
-                self._enrich_from_license_scanner(component, version, item)
-
-            self._add_finding(
-                Finding(
-                    id=f"LIC-{item['license']}",
-                    type=FindingType.LICENSE,
-                    severity=severity,
-                    component=component,
-                    version=version,
-                    description=item.get("message"),
-                    scanners=["license_compliance"],
-                    details={
-                        "license": item.get("license"),
-                        "license_url": item.get("license_url"),
-                        "category": item.get("category"),
-                        "explanation": item.get("explanation"),
-                        "recommendation": item.get("recommendation"),
-                        "obligations": item.get("obligations", []),
-                        "risks": item.get("risks", []),
-                        "purl": item.get("purl"),
-                    },
-                ),
-                source=source,
-            )
-
-    def _normalize_scorecard(self, result: Dict[str, Any], source: str = None):
-        """
-        Process OpenSSF Scorecard results and package metadata from deps_dev scanner.
-        Also stores scorecard data for component enrichment.
-        """
-        # Process package metadata (not findings, but enrichment data)
-        for key, metadata in result.get("package_metadata", {}).items():
-            # Populate the DependencyEnrichment structure
-            name = metadata.get("name", "")
-            version = metadata.get("version", "")
-            if name and version:
-                self._enrich_from_deps_dev(name, version, metadata)
-
-        # Process scorecard issues (these become findings)
-        for item in result.get("scorecard_issues", []):
-            scorecard = item.get("scorecard", {})
-            overall = scorecard.get("overallScore", 0)
-            failed_checks = item.get("failed_checks", [])
-            critical_issues = item.get("critical_issues", [])
-            project_url = item.get("project_url", "")
-            component = item.get("component", "")
-            version = item.get("version", "")
-
-            # Store scorecard data for component enrichment
-            # This allows other findings to reference scorecard data
-            component_key = f"{component}@{version}" if version else component
-            self._scorecard_cache[component_key] = {
-                "overall_score": overall,
-                "failed_checks": failed_checks,
-                "critical_issues": critical_issues,
-                "project_url": project_url,
-                "checks": scorecard.get("checks", []),
-            }
-
-            # Determine severity based on score and critical issues
-            if (
-                overall < 3.0
-                or "Maintained" in critical_issues
-                or "Vulnerabilities" in critical_issues
-            ):
-                severity = Severity.HIGH
-            elif overall < 5.0 or critical_issues:
-                severity = Severity.MEDIUM
-            else:
-                severity = Severity.LOW
-
-            # Build detailed description
-            description_parts = [f"OpenSSF Scorecard score: {overall:.1f}/10"]
-
-            if critical_issues:
-                description_parts.append(
-                    f"Critical issues: {', '.join(critical_issues)}"
-                )
-
-            if failed_checks:
-                failed_names = [
-                    f"{c['name']} ({c['score']}/10)" for c in failed_checks[:3]
-                ]
-                description_parts.append(f"Failed checks: {', '.join(failed_names)}")
-                if len(failed_checks) > 3:
-                    description_parts[-1] += f" (+{len(failed_checks) - 3} more)"
-
-            description = ". ".join(description_parts)
-
-            # Build recommendation based on issues
-            recommendations = []
-            for check in failed_checks:
-                check_name = check.get("name", "")
-                if check_name == "Maintained":
-                    recommendations.append(
-                        "Consider finding an actively maintained alternative"
-                    )
-                elif check_name == "Vulnerabilities":
-                    recommendations.append("Check for and apply security patches")
-                elif check_name == "CII-Best-Practices":
-                    recommendations.append(
-                        "Package doesn't follow OpenSSF best practices"
-                    )
-                elif check_name == "Code-Review":
-                    recommendations.append(
-                        "Limited code review process - higher risk of unreviewed changes"
-                    )
-                elif check_name == "Fuzzing":
-                    recommendations.append("No fuzzing - potential undiscovered bugs")
-                elif check_name == "SAST":
-                    recommendations.append(
-                        "No static analysis - potential code quality issues"
-                    )
-
-            self._add_finding(
-                Finding(
-                    id=f"SCORECARD-{component}",
-                    type=FindingType.QUALITY,
-                    severity=severity,
-                    component=component,
-                    version=version,
-                    description=description,
-                    scanners=["deps_dev"],
-                    details={
-                        "scorecard": scorecard,
-                        "overall_score": overall,
-                        "failed_checks": failed_checks,
-                        "critical_issues": critical_issues,
-                        "project_url": project_url,
-                        "repository": scorecard.get("repository"),
-                        "scorecard_date": scorecard.get("date"),
-                        "recommendation": (
-                            " • ".join(recommendations) if recommendations else None
-                        ),
-                        "checks_summary": {
-                            check.get("name"): check.get("score")
-                            for check in scorecard.get("checks", [])
-                            if check.get("score", -1) >= 0
-                        },
-                    },
-                ),
-                source=source,
-            )
-
-    def _normalize_malware(self, result: Dict[str, Any], source: str = None):
-        """
-        Normalize malware findings from the OpenSourceMalware.com API (os_malware scanner).
-        Note: OpenSSF malware data comes through OSV scanner and is handled by _normalize_osv_malware.
-        """
-        for item in result.get("malware_issues", []):
-            malware_info = item.get("malware_info", {})
-            threats = malware_info.get("threats", [])
-
-            description = "Potential malware detected"
-            if isinstance(threats, list) and threats:
-                if isinstance(threats[0], str):
-                    description = f"Malware detected: {', '.join(threats[:5])}"
-                    if len(threats) > 5:
-                        description += f" (+{len(threats) - 5} more)"
-            elif malware_info.get("description"):
-                description = f"Malware detected: {malware_info.get('description')}"
-
-            self._add_finding(
-                Finding(
-                    id=f"MALWARE-{item['component']}",
-                    type=FindingType.MALWARE,
-                    severity=Severity.CRITICAL,
-                    component=item.get("component"),
-                    version=item.get("version"),
-                    description=description,
-                    scanners=["os_malware"],
-                    details={
-                        "info": malware_info,
-                        "threats": threats,
-                        "reference": malware_info.get("reference"),
-                        "source": "opensourcemalware",
-                    },
-                ),
-                source=source,
-            )
-
-    def _normalize_eol(self, result: Dict[str, Any], source: str = None):
-        for item in result.get("eol_issues", []):
-            eol_info = item.get("eol_info", {})
-            eol_date = eol_info.get("eol")
-            cycle = eol_info.get("cycle")
-            latest = eol_info.get("latest")
-
-            self._add_finding(
-                Finding(
-                    id=f"EOL-{item['component']}-{cycle}",
-                    type=FindingType.EOL,
-                    severity=Severity.HIGH,
-                    component=item.get("component"),
-                    version=item.get("version"),
-                    description=f"End of Life reached on {eol_date} (Cycle {cycle}). Latest: {latest}",
-                    scanners=["end_of_life"],
-                    details={
-                        "fixed_version": latest,
-                        "eol_date": eol_date,
-                        "cycle": cycle,
-                        "link": eol_info.get("link"),
-                        "lts": eol_info.get("lts"),
-                    },
-                ),
-                source=source,
-            )
-
-    def _normalize_typosquatting(self, result: Dict[str, Any], source: str = None):
-        for item in result.get("typosquatting_issues", []):
-            similarity = item.get("similarity", 0)
-            imitated = item.get("imitated_package")
-
-            self._add_finding(
-                Finding(
-                    id=f"TYPO-{item['component']}",
-                    type=FindingType.MALWARE,  # Typosquatting is a form of malware/attack
-                    severity=Severity.CRITICAL,
-                    component=item.get("component"),
-                    version=item.get("version"),
-                    description=f"Possible typosquatting detected! '{item.get('component')}' is {similarity*100:.1f}% similar to popular package '{imitated}'",
-                    scanners=["typosquatting"],
-                    details={"imitated_package": imitated, "similarity": similarity},
-                ),
-                source=source,
-            )
-
-    def _normalize_opengrep(self, result: Dict[str, Any], source: str = None):
-        # OpenGrep structure: {"findings": [OpenGrepFinding objects]}
-        for finding in result.get("findings", []):
-            # finding is a dict
-            check_id = finding.get("check_id", "unknown-check")
-            path = finding.get("path", "unknown")
-            extra = finding.get("extra", {})
-            metadata = extra.get("metadata", {})
-
-            severity_map = {"ERROR": "HIGH", "WARNING": "MEDIUM", "INFO": "LOW"}
-
-            severity = severity_map.get(extra.get("severity"), "MEDIUM")
-            message = extra.get("message", "No description provided")
-
-            # Create unique ID
-            finding_hash = hashlib.md5(
-                f"{check_id}:{path}:{message}".encode()
-            ).hexdigest()
-            finding_id = f"SAST-{finding_hash[:8]}"
-
-            # Extract CWE IDs from metadata (format: "CWE-327: Description")
-            cwe_ids = []
-            for cwe_entry in metadata.get("cwe", []):
-                if isinstance(cwe_entry, str) and cwe_entry.startswith("CWE-"):
-                    # Extract just the number: "CWE-327: Description" -> "327"
-                    cwe_match = cwe_entry.split(":")[0].replace("CWE-", "")
-                    if cwe_match:
-                        cwe_ids.append(cwe_match)
-
-            # Extract references from metadata
-            references = metadata.get("references", [])
-            
-            # Build documentation URL from source or shortlink
-            documentation_url = metadata.get("shortlink") or metadata.get("source")
-
-            self._add_finding(
-                Finding(
-                    id=finding_id,
-                    type=FindingType.SAST,
-                    severity=Severity(severity),
-                    component=path,
-                    version="",
-                    description=message,
-                    scanners=["opengrep"],
-                    details={
-                        "rule_id": check_id,
-                        "start": finding.get("start"),
-                        "end": finding.get("end"),
-                        # Extracted and normalized fields
-                        "cwe_ids": cwe_ids,
-                        "owasp": metadata.get("owasp", []),
-                        "references": references,
-                        "documentation_url": documentation_url,
-                        "source_rule_url": metadata.get("source-rule-url"),
-                        # Confidence and risk assessment
-                        "confidence": metadata.get("confidence"),
-                        "likelihood": metadata.get("likelihood"),
-                        "impact": metadata.get("impact"),
-                        # Categorization
-                        "category": metadata.get("category"),
-                        "subcategory": metadata.get("subcategory", []),
-                        "technology": metadata.get("technology", []),
-                        "vulnerability_class": metadata.get("vulnerability_class", []),
-                        # License info (for rule attribution)
-                        "license": metadata.get("license"),
-                    },
-                ),
-                source=source,
-            )
-
-    def _normalize_kics(self, result: Dict[str, Any], source: str = None):
-        # KICS structure: {"queries": [{"query_name": "...", "files": [...]}]}
-        for query in result.get("queries", []):
-            severity = query.get("severity", "INFO").upper()
-
-            query_id = query.get("query_id")
-            query_name = query.get("query_name")
-            description = query.get("description")
-            category = query.get("category")
-
-            for file_obj in query.get("files", []):
-                file_name = file_obj.get("file_name")
-                line = file_obj.get("line")
-
-                self._add_finding(
-                    Finding(
-                        id=query_id,
-                        type=FindingType.IAC,  # Using IAC for KICS
-                        severity=Severity(severity),
-                        component=file_name,
-                        version="",
-                        description=f"{query_name}: {description}",
-                        scanners=["kics"],
-                        details={
-                            "category": category,
-                            "platform": query.get("platform"),
-                            "line": line,
-                            "issue_type": file_obj.get("issue_type"),
-                            "expected_value": file_obj.get("expected_value"),
-                            "actual_value": file_obj.get("actual_value"),
-                        },
-                    ),
-                    source=source,
-                )
-
-    def _normalize_bearer(self, result: Dict[str, Any], source: str = None):
-        """
-        Normalize Bearer SAST/Data Security findings.
-
-        Bearer structure:
-        {
-            "findings": {
-                "critical": [...],
-                "high": [...],
-                "medium": [...],
-                "low": [...],
-                "warning": [...]
-            }
-        }
-
-        Each finding contains:
-        - id: Rule ID (e.g., 'go_lang_logger_leak')
-        - title: Human-readable title
-        - description: Detailed description with remediation
-        - cwe_ids: List of CWE identifiers
-        - documentation_url: Link to Bearer docs
-        - line_number: Line where finding occurs
-        - filename/full_filename: File path
-        - category_groups: Categories like 'PII', 'Personal Data'
-        - code_extract: The code snippet
-        - fingerprint: For deduplication
-        - source/sink: Location details with columns
-        """
-        findings_data = result.get("findings", {})
-
-        all_findings = []
-        severity_map = {}
-
-        if isinstance(findings_data, list):
-            # Flat list of findings - assume medium severity
-            all_findings = findings_data
-            for f in all_findings:
-                severity_map[id(f)] = "MEDIUM"
-        elif isinstance(findings_data, dict):
-            # Grouped by severity: {"critical": [...], "high": [...], ...}
-            bearer_severity_mapping = {
-                "critical": "CRITICAL",
-                "high": "HIGH",
-                "medium": "MEDIUM",
-                "low": "LOW",
-                "warning": "INFO",
-            }
-            for severity_key, findings_list in findings_data.items():
-                if isinstance(findings_list, list):
-                    mapped_severity = bearer_severity_mapping.get(
-                        severity_key.lower(), "MEDIUM"
-                    )
-                    for f in findings_list:
-                        all_findings.append(f)
-                        severity_map[id(f)] = mapped_severity
-
-        for f in all_findings:
-            # Extract core fields
-            rule_id = f.get("id") or f.get("rule_id") or f.get("rule") or "unknown"
-            title = f.get("title") or "Security issue found"
-            description = f.get("description") or f.get("message") or title
-            cwe_ids = f.get("cwe_ids", [])
-            documentation_url = f.get("documentation_url")
-
-            # Extract location information
-            file_path = (
-                f.get("full_filename")
-                or f.get("filename")
-                or f.get("file")
-                or "unknown"
-            )
-            line_number = f.get("line_number") or f.get("line")
-            parent_line_number = f.get("parent_line_number")
-
-            # Extract source/sink location details
-            source_loc = f.get("source", {})
-            sink_loc = f.get("sink", {})
-
-            # Build column info
-            start_col = None
-            end_col = None
-            if source_loc and "column" in source_loc:
-                col = source_loc["column"]
-                start_col = col.get("start")
-                end_col = col.get("end")
-
-            # Extract categorization
-            category_groups = f.get("category_groups", [])
-
-            # Extract code context
-            code_extract = f.get("code_extract")
-            sink_content = sink_loc.get("content") if sink_loc else None
-
-            # Extract fingerprint for deduplication
-            fingerprint = f.get("fingerprint") or f.get("old_fingerprint")
-
-            # Determine severity from the grouped structure or field
-            severity = severity_map.get(id(f), f.get("severity", "MEDIUM").upper())
-
-            # Create unique ID based on fingerprint or computed hash
-            if fingerprint:
-                finding_id = f"BEARER-{fingerprint[:12]}"
-            else:
-                finding_hash = hashlib.md5(
-                    f"{rule_id}:{file_path}:{line_number}".encode()
-                ).hexdigest()
-                finding_id = f"BEARER-{finding_hash[:8]}"
-
-            # Build comprehensive details
-            details = {
-                "rule_id": rule_id,
-                "title": title,
-                "line": line_number,
-                "parent_line": parent_line_number,
-                "cwe_ids": cwe_ids,
-                "documentation_url": documentation_url,
-                "category_groups": category_groups,
-                "code_extract": code_extract,
-                "fingerprint": fingerprint,
-                # Location details
-                "start": {
-                    "line": source_loc.get("start") if source_loc else line_number,
-                    "column": start_col,
-                },
-                "end": {
-                    "line": source_loc.get("end") if source_loc else line_number,
-                    "column": end_col,
-                },
-            }
-
-            # Add sink content if available and non-empty
-            if sink_content:
-                details["sink_content"] = sink_content
-
-            self._add_finding(
-                Finding(
-                    id=finding_id,
-                    type=FindingType.SAST,
-                    severity=Severity(severity),
-                    component=file_path,
-                    version="",
-                    description=description,
-                    scanners=["bearer"],
-                    details=details,
-                ),
-                source=source,
-            )
-
-    def _normalize_hash_verification(self, result: Dict[str, Any], source: str = None):
-        """Normalize hash verification results into findings."""
-        for item in result.get("hash_issues", []):
-            self._add_finding(
-                Finding(
-                    id=f"HASH-{item['component']}-{item['algorithm']}",
-                    type=FindingType.MALWARE,  # Hash mismatch is a serious supply chain issue
-                    severity=Severity.CRITICAL,
-                    component=item.get("component"),
-                    version=item.get("version"),
-                    description=f"Package integrity check failed! {item.get('message', 'Hash mismatch detected')}",
-                    scanners=["hash_verification"],
-                    details={
-                        "registry": item.get("registry"),
-                        "algorithm": item.get("algorithm"),
-                        "sbom_hash": item.get("sbom_hash"),
-                        "expected_hashes": item.get("expected_hashes", []),
-                        "verification_failed": True,
-                    },
-                ),
-                source=source,
-            )
-
-    def _normalize_maintainer_risk(self, result: Dict[str, Any], source: str = None):
-        """Normalize maintainer risk results into findings."""
-        for item in result.get("maintainer_issues", []):
-            risks = item.get("risks", [])
-
-            # Create a combined description from all risks
-            risk_messages = [r.get("message", "") for r in risks]
-            description = (
-                "; ".join(risk_messages)
-                if risk_messages
-                else "Maintainer risk detected"
-            )
-
-            self._add_finding(
-                Finding(
-                    id=f"MAINT-{item['component']}",
-                    type=FindingType.QUALITY,  # Supply chain quality issue
-                    severity=Severity(item.get("severity", "MEDIUM")),
-                    component=item.get("component"),
-                    version=item.get("version"),
-                    description=description,
-                    scanners=["maintainer_risk"],
-                    details={
-                        "risks": risks,
-                        "maintainer_info": item.get("maintainer_info", {}),
-                        "risk_count": len(risks),
-                    },
-                ),
-                source=source,
-            )

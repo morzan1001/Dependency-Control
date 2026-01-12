@@ -76,8 +76,21 @@ class NotificationService:
         """
         Send a notification to multiple users.
         """
+        system_settings = None
+        if db:
+            settings_data = await db.system_settings.find_one({"_id": "current"})
+            if settings_data:
+                system_settings = SystemSettings(**settings_data)
+
         for user in users:
-            await self.notify_user(user, event_type, subject, message, db)
+            await self._send_based_on_prefs(
+                user,
+                user.notification_preferences or {},
+                event_type,
+                subject,
+                message,
+                system_settings,
+            )
 
     async def notify_project_members(
         self, project: Project, event_type: str, subject: str, message: str, db
@@ -91,40 +104,87 @@ class NotificationService:
         if settings_data:
             system_settings = SystemSettings(**settings_data)
 
-        # Determine preferences to use
-        enforced_prefs = None
-        if project.enforce_notification_settings:
-            enforced_prefs = project.owner_notification_preferences
+        # 1. Identify all target users and their project-specific overrides
+        # Map: user_id -> specific_prefs (or None if no override)
+        targets: Dict[str, Optional[Dict[str, List[str]]]] = {}
 
-        # 1. Check Owner
-        owner_prefs = (
-            enforced_prefs if enforced_prefs else project.owner_notification_preferences
-        )
-        if owner_prefs and event_type in owner_prefs:
-            owner_data = await db.users.find_one({"_id": project.owner_id})
-            if owner_data:
-                owner = User(**owner_data)
-                await self._send_based_on_prefs(
-                    owner, owner_prefs, event_type, subject, message, system_settings
+        # 1a. Owner
+        owner_id = project.owner_id
+        targets[owner_id] = project.owner_notification_preferences
+
+        # 1b. Project Members
+        if project.members:
+            for member in project.members:
+                # If member has configured preferences (non-empty), use them.
+                # Otherwise, treat as None (fallback to Global later)
+                # Note: ProjectMember.notification_preferences defaults to {}
+                m_prefs = (
+                    member.notification_preferences
+                    if member.notification_preferences
+                    else None
                 )
 
-        # 2. Check Members
-        for member in project.members:
-            member_prefs = (
-                enforced_prefs if enforced_prefs else member.notification_preferences
+                # If user already in targets (e.g. Owner), prioritize existing value IF it is set
+                # But here, Owner prefs is managed in project.owner_notification_preferences.
+                # If that was set, targets[owner_id] is set. Member prefs is likely empty for owner.
+                if member.user_id in targets and targets[member.user_id] is not None:
+                    continue
+
+                targets[member.user_id] = m_prefs
+
+        # 1c. Team Members
+        if project.team_id:
+            team_data = await db.teams.find_one({"_id": project.team_id})
+            if team_data:
+                for tm in team_data.get("members", []):
+                    uid = tm["user_id"]
+                    if uid not in targets:
+                        targets[uid] = (
+                            None  # No project specific override possible for implicit team members
+                        )
+
+        # 2. Bulk Fetch Users
+        user_ids = list(targets.keys())
+        if not user_ids:
+            return
+
+        users_cursor = db.users.find({"_id": {"$in": user_ids}})
+        users_list = await users_cursor.to_list(length=len(user_ids))
+        users_map = {str(u["_id"]): User(**u) for u in users_list}
+
+        # 3. Determine Enforced Settings
+        enforced_prefs = (
+            project.owner_notification_preferences
+            if project.enforce_notification_settings
+            else None
+        )
+
+        # 4. Iterate and Send
+        for user_id, specific_prefs in targets.items():
+            user = users_map.get(user_id)
+            if not user:
+                continue
+
+            # Determine effective preferences
+            effective_prefs = user.notification_preferences  # Default to Global
+
+            if enforced_prefs:
+                effective_prefs = enforced_prefs
+            elif specific_prefs:
+                effective_prefs = specific_prefs
+
+            # If effective_prefs is None or empty at this point, checking keys will happen in _send_based_on_prefs
+            if not effective_prefs:
+                continue
+
+            await self._send_based_on_prefs(
+                user,
+                effective_prefs,
+                event_type,
+                subject,
+                message,
+                system_settings,
             )
-            if member_prefs and event_type in member_prefs:
-                user_data = await db.users.find_one({"_id": member.user_id})
-                if user_data:
-                    user = User(**user_data)
-                    await self._send_based_on_prefs(
-                        user,
-                        member_prefs,
-                        event_type,
-                        subject,
-                        message,
-                        system_settings,
-                    )
 
 
 notification_service = NotificationService()

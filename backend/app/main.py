@@ -18,9 +18,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 from app.api import health
-from app.api.v1.endpoints import (analytics, auth, callgraph, ingest,
-                                  integrations, invitations, projects, scripts,
-                                  system, teams, users, waivers, webhooks)
+from app.api.v1.endpoints import (
+    analytics,
+    auth,
+    callgraph,
+    ingest,
+    integrations,
+    invitations,
+    projects,
+    scripts,
+    system,
+    teams,
+    users,
+    waivers,
+    webhooks,
+)
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
 
@@ -39,7 +51,7 @@ app = FastAPI(
 
     Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
     """,
-    version="1.2.4",
+    version="1.3.0",
     license_info={
         "name": "MIT License",
         "url": "https://github.com/morzan1001/Dependency-Control/blob/main/LICENSE",
@@ -129,9 +141,7 @@ app.include_router(
 app.include_router(
     callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"]
 )
-app.include_router(
-    scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"]
-)
+app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 
 
 @app.get("/")

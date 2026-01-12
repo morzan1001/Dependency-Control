@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { analyticsApi } from '@/api/analytics'
@@ -22,6 +22,7 @@ import { Search, Package, Filter, X, Container, FileCode, HardDrive, Loader2 } f
 import { Link } from 'react-router-dom'
 import { useDebounce } from '@/hooks/use-debounce'
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants'
+import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
 
 interface CrossProjectSearchProps {
   onSelectResult?: (result: AdvancedSearchResult) => void;
@@ -36,29 +37,8 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const [selectedProject, setSelectedProject] = useState<string>('__all__')
   const [showFilters, setShowFilters] = useState(false)
 
-  const parentRef = useRef<HTMLDivElement>(null)
-  const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
-  const [tableOffset, setTableOffset] = useState(0)
-
+  const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
   const debouncedQuery = useDebounce(query, 300)
-
-  useLayoutEffect(() => {
-    const container = document.querySelector('main') as HTMLElement
-    setScrollContainer(container)
-
-    if (container && parentRef.current) {
-      const updateOffset = () => {
-        if (parentRef.current && container) {
-          const rect = parentRef.current.getBoundingClientRect()
-          const containerRect = container.getBoundingClientRect()
-          setTableOffset(rect.top - containerRect.top + container.scrollTop)
-        }
-      }
-      updateOffset()
-      window.addEventListener('resize', updateOffset)
-      return () => window.removeEventListener('resize', updateOffset)
-    }
-  }, [])
 
   const { data: types } = useQuery({
     queryKey: ['dependency-types'],
@@ -106,21 +86,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
     getScrollElement: () => scrollContainer,
     estimateSize: () => 52,
     overscan: VIRTUAL_SCROLL_OVERSCAN,
-    observeElementOffset: (_instance, cb) => {
-      const element = scrollContainer
-      if (!element) return undefined
-
-      const onScroll = () => {
-        const offset = element.scrollTop - tableOffset
-        cb(Math.max(0, offset), false)
-      }
-
-      element.addEventListener('scroll', onScroll, { passive: true })
-      onScroll()
-      return () => {
-        element.removeEventListener('scroll', onScroll)
-      }
-    },
+    observeElementOffset: createScrollObserver(scrollContainer, tableOffset),
   })
 
   const virtualItems = rowVirtualizer.getVirtualItems()

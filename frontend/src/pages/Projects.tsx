@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useProjects } from '@/hooks/queries/use-projects';
-import { useSystemSettings } from '@/hooks/queries/use-system';
+import { useAppConfig } from '@/hooks/queries/use-system';
 import { useAuth } from '@/context/useAuth';
 import { useDebounce } from '@/hooks/use-debounce';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,13 +47,14 @@ export default function ProjectsPage() {
   const projects = projectsData?.items || [];
   const totalPages = projectsData?.pages || 0;
 
-  const { data: systemSettings } = useSystemSettings();
+  const { data: appConfig } = useAppConfig();
 
   const isLimitReached = () => {
       if (hasPermission('sysadmin')) return false;
-      if (!systemSettings?.project_limit_per_user) return false;
+      // 0 means unlimited
+      if (!appConfig?.project_limit_per_user) return false;
       if (projectsData?.total !== undefined) {
-         return projectsData.total >= systemSettings.project_limit_per_user;
+         return projectsData.total >= appConfig.project_limit_per_user;
       }
       return false;
   };

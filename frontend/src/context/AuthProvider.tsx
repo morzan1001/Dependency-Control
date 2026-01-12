@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jwtDecode } from 'jwt-decode'
 
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const login = (accessToken: string, refreshToken: string) => {
+  const login = useCallback((accessToken: string, refreshToken: string, skipNavigation = false) => {
     localStorage.setItem('token', accessToken)
     localStorage.setItem('refresh_token', refreshToken)
 
@@ -73,7 +73,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Check if this is a limited token for 2FA setup
       if (perms.length === 1 && perms[0] === 'auth:setup_2fa') {
         setIsAuthenticated(true)
-        navigate('/setup-2fa')
+        if (!skipNavigation) {
+          navigate('/setup-2fa')
+        }
         return
       }
     } catch (e) {
@@ -81,8 +83,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     setIsAuthenticated(true)
-    navigate('/dashboard')
-  }
+    if (!skipNavigation) {
+      navigate('/dashboard')
+    }
+  }, [navigate])
 
   return (
     <AuthContext.Provider

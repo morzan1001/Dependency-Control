@@ -8,7 +8,7 @@ import httpx
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 
 from .base import Analyzer
-from .purl_utils import get_registry_system
+from .purl_utils import parse_purl
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +41,8 @@ class DepsDevAnalyzer(Analyzer):
     async def analyze(
         self,
         sbom: Dict[str, Any],
-        settings: Dict[str, Any] = None,
-        parsed_components: List[Dict[str, Any]] = None,
+        settings: Optional[Dict[str, Any]] = None,
+        parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
         scorecard_issues = []
@@ -90,7 +90,9 @@ class DepsDevAnalyzer(Analyzer):
                         )
                     )
 
-                component_results = await asyncio.gather(*tasks, return_exceptions=True)
+                component_results: List[Any] = await asyncio.gather(
+                    *tasks, return_exceptions=True
+                )
 
                 for component, result in zip(uncached_components, component_results):
                     if isinstance(result, Exception):
@@ -121,14 +123,13 @@ class DepsDevAnalyzer(Analyzer):
     def _get_cache_key_for_component(self, component: Dict[str, Any]) -> Optional[str]:
         """Get cache key for a component."""
         purl = component.get("purl", "")
-        name = component.get("name", "")
         version = component.get("version", "")
-        system = self._get_system_from_purl(purl)
 
-        if not system or not name or not version:
+        parsed = parse_purl(purl)
+        if not parsed or not parsed.registry_system or not version:
             return None
 
-        return CacheKeys.deps_dev(system, name, version)
+        return CacheKeys.deps_dev(parsed.registry_system, parsed.deps_dev_name, version)
 
     async def _get_cached_components(
         self, components: List[Dict[str, Any]]
@@ -143,14 +144,15 @@ class DepsDevAnalyzer(Analyzer):
 
         for component in components:
             purl = component.get("purl", "")
-            name = component.get("name", "")
             version = component.get("version", "")
-            system = self._get_system_from_purl(purl)
 
-            if not system or not name or not version:
+            parsed = parse_purl(purl)
+            if not parsed or not parsed.registry_system or not version:
                 continue
 
-            cache_key = CacheKeys.deps_dev(system, name, version)
+            cache_key = CacheKeys.deps_dev(
+                parsed.registry_system, parsed.deps_dev_name, version
+            )
             cache_keys.append(cache_key)
             component_map[cache_key] = component
 
@@ -158,7 +160,7 @@ class DepsDevAnalyzer(Analyzer):
             return {}, components
 
         # Batch get from Redis
-        cached_data = await cache_service.mget(cache_keys)
+        cached_data: Dict[str, Any] = await cache_service.mget(cache_keys)
 
         for cache_key, data in cached_data.items():
             component = component_map.get(cache_key)
@@ -191,19 +193,24 @@ class DepsDevAnalyzer(Analyzer):
         name = component.get("name", "")
         version = component.get("version", "")
 
-        # Determine the package system from PURL
-        system = self._get_system_from_purl(purl)
+        parsed = parse_purl(purl)
+        if not parsed:
+            return None
 
-        if not system or not name or not version:
+        system = parsed.registry_system
+        # Use specific name format for lookup
+        lookup_name = parsed.deps_dev_name
+
+        if not system or not lookup_name or not version:
             return None
 
         # URL-encode the package name (handles scoped packages like @scope/pkg)
-        encoded_name = quote(name, safe="")
+        encoded_name = quote(lookup_name, safe="")
         encoded_version = quote(version, safe="")
 
         version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
 
-        result = {"metadata": None, "scorecard_issue": None}
+        result: Dict[str, Any | None] = {"metadata": None, "scorecard_issue": None}
 
         try:
             # Step 1: Get version info
@@ -418,7 +425,3 @@ class DepsDevAnalyzer(Analyzer):
             "critical_issues": critical_issues,
             "warning": ". ".join(warning_parts),
         }
-
-    def _get_system_from_purl(self, purl: str) -> Optional[str]:
-        """Extract the package system from a PURL. Uses centralized purl_utils."""
-        return get_registry_system(purl)

@@ -15,11 +15,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from app.core.constants import LICENSE_URL_PATTERNS
-from app.schemas.sbom import (ParsedDependency, ParsedSBOM, SBOMFormat,
-                              SourceType)
+from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 
 logger = logging.getLogger(__name__)
-
 
 
 def is_url(value: str) -> bool:

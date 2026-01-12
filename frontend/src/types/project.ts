@@ -70,3 +70,8 @@ export interface ProjectApiKeyResponse {
 }
 
 export type ProjectsResponse = PaginatedResponse<Project>;
+
+export interface ProjectNotificationSettings {
+  notification_preferences: Record<string, string[]>;
+  enforce_notification_settings?: boolean;
+}
