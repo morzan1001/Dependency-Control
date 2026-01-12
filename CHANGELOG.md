@@ -1,3 +1,19 @@
+# Release 1.3.1
+
+## 🚀 Features
+
+- feat: add project limit per user and GitLab integration enhancements (#0)
+
+## 🐛 Fixes
+
+- fix: reset active tab to overview on scanId change (#0)
+
+## 📦 Build & CI
+
+- chore: bump version to 1.3.1 (#0)
+
+
+
 # Release 1.3.0
 
 
