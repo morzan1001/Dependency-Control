@@ -85,17 +85,23 @@ export function IntegrationsSettingsTab({
                   <div>
                     <span className="font-semibold text-foreground">Why is this needed?</span>
                     <p className="mt-1">
-                      Projects are automatically created using the GitLab Identity Token (OIDC). However, syncing team members often requires higher privileges that the Identity Token lacks.
-                      <br/>
-                      <strong>Note:</strong> If you leave this empty, automatic project creation will still work, but team members might not be synced.
+                      This token enables advanced integration features that the standard CI Job Token cannot perform:
+                    </p>
+                    <ul className="list-disc list-inside mt-1 space-y-1 ml-1">
+                      <li><strong>Merge Request Decoration:</strong> Posting scan results and security warnings as comments on Merge Requests.</li>
+                      <li><strong>Team Sync:</strong> Automatically importing members from GitLab Groups/Projects to manage access.</li>
+                    </ul>
+                    <p className="mt-2">
+                       If left empty, basic scans and project creation via OIDC will still work, but these features will be disabled.
                     </p>
                   </div>
                   <div>
                     <span className="font-semibold text-foreground">How to create a token:</span>
                     <ol className="list-decimal list-inside mt-1 space-y-1">
-                      <li>Go to GitLab <strong>User Settings</strong> (or Group Settings) &rarr; <strong>Access Tokens</strong>.</li>
-                      <li>Create a new token with the <code>read_api</code> scope.</li>
-                      <li>Copy the token (usually starts with <code>glpat-</code>) and paste it here.</li>
+                      <li>Go to <strong>User Settings</strong> (for a Bot user) or <strong>Group Settings</strong> &rarr; <strong>Access Tokens</strong>.</li>
+                      <li>Create a new token with the <code>api</code> scope (required for writing comments).</li>
+                      <li>Ensure the user has at least <strong>Reporter</strong> role in the projects to post comments.</li>
+                      <li>Copy the token (starts with <code>glpat-</code>) and paste it here.</li>
                     </ol>
                   </div>
                 </div>

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Dict, List, Optional
 
@@ -27,24 +28,34 @@ class NotificationService:
         system_settings: Optional[SystemSettings] = None,
     ):
         channels = prefs.get(event_type, [])
+        tasks = []
 
         if "email" in channels and user.email:
-            await self.email_provider.send(
-                user.email, subject, message, system_settings=system_settings
+            tasks.append(
+                self.email_provider.send(
+                    user.email, subject, message, system_settings=system_settings
+                )
             )
 
         if "slack" in channels and user.slack_username:
-            await self.slack_provider.send(
-                user.slack_username, subject, message, system_settings=system_settings
+            tasks.append(
+                self.slack_provider.send(
+                    user.slack_username, subject, message, system_settings=system_settings
+                )
             )
 
         if "mattermost" in channels and user.mattermost_username:
-            await self.mattermost_provider.send(
-                user.mattermost_username,
-                subject,
-                message,
-                system_settings=system_settings,
+            tasks.append(
+                self.mattermost_provider.send(
+                    user.mattermost_username,
+                    subject,
+                    message,
+                    system_settings=system_settings,
+                )
             )
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
     async def notify_user(
         self, user: User, event_type: str, subject: str, message: str, db=None
@@ -82,15 +93,21 @@ class NotificationService:
             if settings_data:
                 system_settings = SystemSettings(**settings_data)
 
+        tasks = []
         for user in users:
-            await self._send_based_on_prefs(
-                user,
-                user.notification_preferences or {},
-                event_type,
-                subject,
-                message,
-                system_settings,
+            tasks.append(
+                self._send_based_on_prefs(
+                    user,
+                    user.notification_preferences or {},
+                    event_type,
+                    subject,
+                    message,
+                    system_settings,
+                )
             )
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
     async def notify_project_members(
         self, project: Project, event_type: str, subject: str, message: str, db
@@ -160,6 +177,7 @@ class NotificationService:
         )
 
         # 4. Iterate and Send
+        tasks = []
         for user_id, specific_prefs in targets.items():
             user = users_map.get(user_id)
             if not user:
@@ -177,14 +195,19 @@ class NotificationService:
             if not effective_prefs:
                 continue
 
-            await self._send_based_on_prefs(
-                user,
-                effective_prefs,
-                event_type,
-                subject,
-                message,
-                system_settings,
+            tasks.append(
+                self._send_based_on_prefs(
+                    user,
+                    effective_prefs,
+                    event_type,
+                    subject,
+                    message,
+                    system_settings,
+                )
             )
+
+        if tasks:
+            await asyncio.gather(*tasks)
 
 
 notification_service = NotificationService()

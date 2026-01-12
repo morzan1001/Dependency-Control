@@ -208,6 +208,63 @@ class GitLabService:
                 logger.error(f"Error posting MR comment: {e}")
         return False
 
+    async def get_merge_request_notes(
+        self, project_id: int, mr_iid: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetches notes (comments) from a merge request.
+        """
+        if not self.settings.gitlab_access_token:
+            return []
+
+        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.api_url}/projects/{project_id}/merge_requests/{mr_iid}/notes",
+                    headers=auth_headers,
+                    timeout=10.0,
+                )
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logger.error(
+                        f"Failed to fetch MR notes: {response.status_code} - {response.text}"
+                    )
+            except Exception as e:
+                logger.error(f"Error fetching MR notes: {e}")
+        return []
+
+    async def update_merge_request_comment(
+        self, project_id: int, mr_iid: int, note_id: int, body: str
+    ) -> bool:
+        """
+        Updates an existing comment on a merge request.
+        """
+        if not self.settings.gitlab_access_token:
+            return False
+
+        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.put(
+                    f"{self.api_url}/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}",
+                    headers=auth_headers,
+                    json={"body": body},
+                    timeout=10.0,
+                )
+                if response.status_code == 200:
+                    return True
+                else:
+                    logger.error(
+                        f"Failed to update MR comment: {response.status_code} - {response.text}"
+                    )
+            except Exception as e:
+                logger.error(f"Error updating MR comment: {e}")
+        return False
+
     async def get_project_members(
         self, project_id: int
     ) -> Optional[list[Dict[str, Any]]]:

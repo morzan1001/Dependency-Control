@@ -597,12 +597,31 @@ async def run_analysis(
 [View Full Report]({scan_url})
 """
                         for mr in mrs:
-                            await gitlab_service.post_merge_request_comment(
-                                project.gitlab_project_id, mr["iid"], comment_body
+                            # Check for existing comment to update instead of creating a new one (deduplication)
+                            existing_notes = await gitlab_service.get_merge_request_notes(
+                                project.gitlab_project_id, mr["iid"]
                             )
-                            logger.info(
-                                f"Posted scan results to MR !{mr['iid']} for project {project.name}"
-                            )
+                            
+                            existing_comment_id = None
+                            for note in existing_notes:
+                                if "Dependency Control Scan Results" in note.get("body", ""):
+                                    existing_comment_id = note["id"]
+                                    break
+                            
+                            if existing_comment_id:
+                                await gitlab_service.update_merge_request_comment(
+                                    project.gitlab_project_id, mr["iid"], existing_comment_id, comment_body
+                                )
+                                logger.info(
+                                    f"Updated scan results on MR !{mr['iid']} for project {project.name}"
+                                )
+                            else:
+                                await gitlab_service.post_merge_request_comment(
+                                    project.gitlab_project_id, mr["iid"], comment_body
+                                )
+                                logger.info(
+                                    f"Posted scan results to MR !{mr['iid']} for project {project.name}"
+                                )
 
     except Exception as e:
         logger.error(f"Failed to decorate GitLab MR: {e}")

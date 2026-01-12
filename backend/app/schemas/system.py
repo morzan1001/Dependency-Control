@@ -95,6 +95,7 @@ class AppConfig(BaseModel):
 
     # Integration status (only whether enabled, no secrets)
     gitlab_integration_enabled: bool = False
+    gitlab_token_configured: bool = False
 
     # Available notification channels
     notifications: NotificationChannels = NotificationChannels()

@@ -94,5 +94,6 @@ export interface AppConfig {
   global_rescan_enabled: boolean;
   global_rescan_interval: number;
   gitlab_integration_enabled: boolean;
+  gitlab_token_configured?: boolean;
   notifications: NotificationChannels;
 }

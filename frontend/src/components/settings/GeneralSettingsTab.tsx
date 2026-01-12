@@ -37,6 +37,19 @@ export function GeneralSettingsTab({
               onChange={(e) => handleInputChange('instance_name', e.target.value)}
             />
           </div>
+          <div className="grid gap-2">
+            <Label htmlFor="project-limit">Project Limit per User</Label>
+            <Input 
+              id="project-limit" 
+              type="number"
+              min="0"
+              value={formData.project_limit_per_user ?? 0} 
+              onChange={(e) => handleInputChange('project_limit_per_user', parseInt(e.target.value))}
+            />
+            <p className="text-sm text-muted-foreground">
+              Maximum number of projects a user can create. Set to 0 for unlimited.
+            </p>
+          </div>
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
             {isPending ? "Saving..." : "Save Changes"}
           </Button>

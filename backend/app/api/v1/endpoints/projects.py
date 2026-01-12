@@ -23,6 +23,7 @@ from app.core.worker import worker_manager
 from app.db.mongodb import get_database
 from app.models.invitation import ProjectInvitation
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
+from app.models.system import SystemSettings
 from app.models.user import User
 from app.schemas.project import (
     ProjectApiKeyResponse,
@@ -234,12 +235,27 @@ async def create_project(
     project_in: ProjectCreate,
     current_user: User = Depends(deps.PermissionChecker("project:create")),
     db: AsyncIOMotorDatabase = Depends(get_database),
+    settings: SystemSettings = Depends(deps.get_system_settings),
 ):
     """
     Create a new project and return the initial API Key.
 
     **Important**: The API Key is only returned once. Save it securely.
     """
+    # Check Project Limit
+    if settings.project_limit_per_user > 0:
+        # Admins are exempt from limits
+        is_admin = "*" in current_user.permissions or "system:manage" in current_user.permissions
+        
+        if not is_admin:
+            # Count projects owned by the user
+            current_count = await db.projects.count_documents({"owner_id": str(current_user.id)})
+            if current_count >= settings.project_limit_per_user:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Project limit reached. You can only create {settings.project_limit_per_user} projects.",
+                )
+
     # If team_id is provided, check if user is member of that team
     if project_in.team_id:
         team = await db.teams.find_one(

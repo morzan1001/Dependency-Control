@@ -330,10 +330,17 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                     <p className="text-sm text-muted-foreground">
                                         Post scan results as comments on GitLab Merge Requests.
                                     </p>
+                                    {!appConfig.gitlab_token_configured && (
+                                        <p className="text-xs text-amber-600 flex items-center mt-1">
+                                            <AlertTriangle className="h-3 w-3 mr-1" />
+                                            Required GitLab Access Token is missing in System Settings.
+                                        </p>
+                                    )}
                                 </div>
                                 <Switch
                                     checked={gitlabMrCommentsEnabled}
                                     onCheckedChange={setGitlabMrCommentsEnabled}
+                                    disabled={!appConfig.gitlab_token_configured}
                                 />
                             </div>
                         </div>
