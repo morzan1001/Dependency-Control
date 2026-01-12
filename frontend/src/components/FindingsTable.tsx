@@ -7,7 +7,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
-import { ArrowUp, ArrowDown, Shield, AlertTriangle } from 'lucide-react';
+import { ArrowUp, ArrowDown, Shield, AlertTriangle, Loader2 } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants';
 import {
   Tooltip,
@@ -193,7 +193,10 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                 className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
                             >
                                 {isLoaderRow ? (
-                                    <TableCell colSpan={6} className="p-4 text-center">Loading more...</TableCell>
+                                    <TableCell colSpan={6} className="p-4 text-center">
+                                        <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                                        <span className="sr-only">Loading more...</span>
+                                    </TableCell>
                                 ) : (
                                     <>
                                         <TableCell className="p-4 align-middle">
