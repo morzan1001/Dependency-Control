@@ -1,3 +1,11 @@
+# Release 1.3.4
+
+## 🚀 Features
+
+- feat: enhance analytics and scans APIs with advanced search options and improved type definitions (#0)
+
+
+
 # Release 1.3.3
 
 
