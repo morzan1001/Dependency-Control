@@ -28,7 +28,9 @@ class BroadcastRequest(BaseModel):
 
     subject: str
     message: str
-    dry_run: bool = Field(False, description="If true, only calculates impact without sending")
+    dry_run: bool = Field(
+        False, description="If true, only calculates impact without sending"
+    )
 
 
 class BroadcastResult(BaseModel):
@@ -45,4 +47,3 @@ class BroadcastHistoryItem(BaseModel):
     created_at: str
     recipient_count: int
     project_count: int
-

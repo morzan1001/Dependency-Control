@@ -35,6 +35,8 @@ mypy = "^1.19.1"
 types-python-jose = "^3.5.0.20250531"
 types-passlib = "^1.7.7.20250602"
 types-qrcode = "^8.2.0.20250914"
+types-markdown = "^3.10.0.20251106"
+types-requests = "^2.32.4.20260107"
 
 [tool.mypy]
 plugins = ["pydantic.mypy"]

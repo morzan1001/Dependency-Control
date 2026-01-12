@@ -71,6 +71,7 @@ class SystemSettingsResponse(SystemSettingsBase):
 
 class NotificationChannels(BaseModel):
     """Available notification channels based on system configuration."""
+
     email: bool = False
     slack: bool = False
     mattermost: bool = False
@@ -81,6 +82,7 @@ class AppConfig(BaseModel):
     Lightweight configuration for authenticated users.
     Contains only non-sensitive data needed by various frontend components.
     """
+
     # Limits
     project_limit_per_user: int = 0
 

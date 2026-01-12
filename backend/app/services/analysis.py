@@ -598,19 +598,26 @@ async def run_analysis(
 """
                         for mr in mrs:
                             # Check for existing comment to update instead of creating a new one (deduplication)
-                            existing_notes = await gitlab_service.get_merge_request_notes(
-                                project.gitlab_project_id, mr["iid"]
+                            existing_notes = (
+                                await gitlab_service.get_merge_request_notes(
+                                    project.gitlab_project_id, mr["iid"]
+                                )
                             )
-                            
+
                             existing_comment_id = None
                             for note in existing_notes:
-                                if "Dependency Control Scan Results" in note.get("body", ""):
+                                if "Dependency Control Scan Results" in note.get(
+                                    "body", ""
+                                ):
                                     existing_comment_id = note["id"]
                                     break
-                            
+
                             if existing_comment_id:
                                 await gitlab_service.update_merge_request_comment(
-                                    project.gitlab_project_id, mr["iid"], existing_comment_id, comment_body
+                                    project.gitlab_project_id,
+                                    mr["iid"],
+                                    existing_comment_id,
+                                    comment_body,
                                 )
                                 logger.info(
                                     f"Updated scan results on MR !{mr['iid']} for project {project.name}"

@@ -245,11 +245,16 @@ async def create_project(
     # Check Project Limit
     if settings.project_limit_per_user > 0:
         # Admins are exempt from limits
-        is_admin = "*" in current_user.permissions or "system:manage" in current_user.permissions
-        
+        is_admin = (
+            "*" in current_user.permissions
+            or "system:manage" in current_user.permissions
+        )
+
         if not is_admin:
             # Count projects owned by the user
-            current_count = await db.projects.count_documents({"owner_id": str(current_user.id)})
+            current_count = await db.projects.count_documents(
+                {"owner_id": str(current_user.id)}
+            )
             if current_count >= settings.project_limit_per_user:
                 raise HTTPException(
                     status_code=403,
@@ -412,9 +417,6 @@ async def read_projects(
         "size": limit,
         "pages": (total + limit - 1) // limit if limit > 0 else 0,
     }
-
-
-
 
 
 @router.get(

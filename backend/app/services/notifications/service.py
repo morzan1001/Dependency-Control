@@ -26,6 +26,7 @@ class NotificationService:
         subject: str,
         message: str,
         system_settings: Optional[SystemSettings] = None,
+        html_message: Optional[str] = None,
     ):
         channels = prefs.get(event_type, [])
         tasks = []
@@ -33,14 +34,21 @@ class NotificationService:
         if "email" in channels and user.email:
             tasks.append(
                 self.email_provider.send(
-                    user.email, subject, message, system_settings=system_settings
+                    user.email,
+                    subject,
+                    message,
+                    system_settings=system_settings,
+                    html_message=html_message,
                 )
             )
 
         if "slack" in channels and user.slack_username:
             tasks.append(
                 self.slack_provider.send(
-                    user.slack_username, subject, message, system_settings=system_settings
+                    user.slack_username,
+                    subject,
+                    message,
+                    system_settings=system_settings,
                 )
             )
 
@@ -103,8 +111,12 @@ class NotificationService:
         tasks = []
         for user in users:
             # If forced_channels is set use it, otherwise use user prefs for event
-            prefs = {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
-            
+            prefs = (
+                {event_type: forced_channels}
+                if forced_channels
+                else (user.notification_preferences or {})
+            )
+
             tasks.append(
                 self._send_based_on_prefs(
                     user,
@@ -113,7 +125,7 @@ class NotificationService:
                     subject,
                     message,
                     system_settings,
-                    html_message=html_message
+                    html_message=html_message,
                 )
             )
 
@@ -200,13 +212,13 @@ class NotificationService:
             user = users_map.get(user_id)
             if not user:
                 continue
-            
-            effective_prefs = {}
+
+            effective_prefs: Dict[str, List[str]] = {}
             if forced_channels:
-                 effective_prefs = {event_type: forced_channels}
+                effective_prefs = {event_type: forced_channels}
             else:
                 # Determine effective preferences
-                effective_prefs = user.notification_preferences  # Default to Global
+                effective_prefs = user.notification_preferences or {}
 
                 if enforced_prefs:
                     effective_prefs = enforced_prefs
@@ -225,7 +237,7 @@ class NotificationService:
                     subject,
                     message,
                     system_settings,
-                    html_message=html_message
+                    html_message=html_message,
                 )
             )
 

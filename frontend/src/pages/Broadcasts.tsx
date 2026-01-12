@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useBroadcast, useBroadcastHistory } from "@/hooks/queries/use-broadcast"
-import { BroadcastTargetType, AdvisoryPackage, NotificationChannel } from "@/types/broadcast"
+import { AdvisoryPackage, NotificationChannel } from "@/types/broadcast"
 import { useTeams } from "@/hooks/queries/use-teams"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -46,7 +46,6 @@ export default function Broadcasts() {
   // Impact Analysis State
   const [impactCount, setImpactCount] = useState<number | null>(null)
   const [impactProjectCount, setImpactProjectCount] = useState<number | null>(null)
-  const [impactUniqueUsers, setImpactUniqueUsers] = useState<number | null>(null)
   const [isCalculating, setIsCalculating] = useState(false)
 
   // Common State
@@ -56,7 +55,6 @@ export default function Broadcasts() {
   useEffect(() => {
     setImpactCount(null)
     setImpactProjectCount(null)
-    setImpactUniqueUsers(null)
   }, [activeTab, announcementTarget, packages, selectedTeams])
 
   const handleChannelToggle = (channel: NotificationChannel) => {
@@ -97,7 +95,6 @@ export default function Broadcasts() {
          })
          setImpactCount(result.recipient_count)
          setImpactProjectCount(0)
-         setImpactUniqueUsers(result.unique_user_count || 0)
       } else {
          const validPackages = packages.filter(p => p.name.trim() !== "")
          if (validPackages.length === 0) return
@@ -113,7 +110,6 @@ export default function Broadcasts() {
          })
          setImpactCount(result.recipient_count) // usually 0 for advisory unless logic changes
          setImpactProjectCount(result.project_count || 0)
-         setImpactUniqueUsers(result.unique_user_count || 0)
       }
     } catch (err) {
       // Error handling is done by mutation hook, but we can add specific logic here
@@ -243,17 +239,19 @@ export default function Broadcasts() {
                   >
                   </Select>
                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 border p-4 rounded-md h-40 overflow-y-auto">
-                      {teams?.items?.map((team: any) => (
-                         <div key={team.id} className="flex items-center space-x-2">
+                      {teams?.map((team) => (
+                         <div key={team.id || team._id} className="flex items-center space-x-2">
                             <Checkbox 
-                               id={`team-${team.id}`}
-                               checked={selectedTeams.includes(team.id)}
+                               id={`team-${team.id || team._id}`}
+                               checked={selectedTeams.includes(team.id || team._id || '')}
                                onCheckedChange={(checked) => {
-                                  if (checked) setSelectedTeams([...selectedTeams, team.id])
-                                  else setSelectedTeams(selectedTeams.filter(id => id !== team.id))
+                                  const tid = team.id || team._id;
+                                  if (!tid) return;
+                                  if (checked) setSelectedTeams([...selectedTeams, tid])
+                                  else setSelectedTeams(selectedTeams.filter(id => id !== tid))
                                }}
                             />
-                            <Label htmlFor={`team-${team.id}`}>{team.name}</Label>
+                            <Label htmlFor={`team-${team.id || team._id}`}>{team.name}</Label>
                          </div>
                       ))}
                    </div>
@@ -338,7 +336,7 @@ export default function Broadcasts() {
                             />
                         </div>
                         <div className="w-32 space-y-2">
-                            <Label className="text-xs">Max Version (<=)</Label>
+                            <Label className="text-xs">Max Version (&lt;=)</Label>
                             <Input 
                                 placeholder="e.g. 2.14.0" 
                                 value={pkg.version || ""}
@@ -446,7 +444,7 @@ export default function Broadcasts() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                   {history?.items?.map((item) => (
+                   {history?.map((item) => (
                       <TableRow key={item.id}>
                          <TableCell className="whitespace-nowrap">
                             {formatDistanceToNow(new Date(item.created_at), { addSuffix: true })}
@@ -469,7 +467,7 @@ export default function Broadcasts() {
                          <TableCell className="text-muted-foreground text-xs">{item.created_by}</TableCell>
                       </TableRow>
                    ))}
-                   {(!history?.items || history.items.length === 0) && (
+                   {(!history || history.length === 0) && (
                       <TableRow>
                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                             No broadcast history found.
