@@ -198,6 +198,30 @@ async def update_user(
     return updated_user
 
 
+@router.post("/me/migrate", response_model=User)
+async def migrate_to_local(
+    *,
+    password_in: UserMigrateToLocal,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(deps.get_database),
+) -> Any:
+    """
+    Migrate SSO user to local account by setting a password.
+    """
+    if current_user.auth_provider == "local":
+        raise HTTPException(status_code=400, detail="User is already a local account.")
+
+    hashed_password = security.get_password_hash(password_in.new_password)
+
+    await db.users.update_one(
+        {"_id": current_user.id},
+        {"$set": {"hashed_password": hashed_password, "auth_provider": "local"}},
+    )
+
+    updated_user = await db.users.find_one({"_id": current_user.id})
+    return updated_user
+
+
 @router.post("/{user_id}/migrate", response_model=UserSchema)
 async def migrate_user_to_local(
     user_id: str,
@@ -338,28 +362,6 @@ async def update_password_me(
     return updated_user
 
 
-@router.post("/me/migrate-to-local", response_model=User)
-async def migrate_to_local(
-    *,
-    password_in: UserMigrateToLocal,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(deps.get_database),
-) -> Any:
-    """
-    Migrate SSO user to local account by setting a password.
-    """
-    if current_user.auth_provider == "local":
-        raise HTTPException(status_code=400, detail="User is already a local account.")
-
-    hashed_password = security.get_password_hash(password_in.new_password)
-
-    await db.users.update_one(
-        {"_id": current_user.id},
-        {"$set": {"hashed_password": hashed_password, "auth_provider": "local"}},
-    )
-
-    updated_user = await db.users.find_one({"_id": current_user.id})
-    return updated_user
 
 
 @router.post("/me/2fa/setup", response_model=User2FASetup)
