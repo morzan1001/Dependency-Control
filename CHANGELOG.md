@@ -1,3 +1,11 @@
+# Release 1.3.2
+
+## 🚀 Features
+
+- feat: bump version to 1.3.2 and enhance notification system with new types and improved logic (#0)
+
+
+
 # Release 1.3.1
 
 ## 🚀 Features
