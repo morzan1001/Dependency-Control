@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3 } from 'lucide-react'
+import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context/useAuth'
@@ -35,6 +35,10 @@ export default function DashboardLayout() {
 
   if (hasPermission('user:manage') || hasPermission('user:read_all')) {
     navItems.push({ href: '/users', label: 'Users', icon: UserCog })
+  }
+
+  if (hasPermission('notifications:broadcast') || hasPermission('system:manage')) {
+    navItems.push({ href: '/broadcasts', label: 'Broadcasts', icon: Megaphone })
   }
 
   if (hasPermission('system:manage')) {

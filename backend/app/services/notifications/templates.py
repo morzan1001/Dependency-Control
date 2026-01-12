@@ -107,6 +107,34 @@ def get_analysis_completed_template(
     )
 
 
+def get_advisory_template(
+    project_link: str,
+    project_name: str,
+    project_name_scanned: str,
+    message: str,
+    findings: list,
+) -> str:
+    return render_template(
+        "advisory.html",
+        {
+            "link": project_link,
+            "project_name": project_name,
+            "project_name_scanned": project_name_scanned,
+            "message": message,
+            "findings": findings,
+        },
+    )
+
+
+def get_announcement_template(
+    message: str, link: str = "#", project_name: str = "Dependency Control"
+) -> str:
+    return render_template(
+        "announcement.html",
+        {"message": message, "link": link, "project_name": project_name},
+    )
+
+
 def get_password_changed_template(
     username: str, login_link: str, project_name: str
 ) -> str:

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Announcement{% endblock %}
+
+{% block content %}
+<h2>Notification</h2>
+
+<div style="background-color: #d1ecf1; color: #0c5460; padding: 15px; border-radius: 4px; border: 1px solid #bee5eb; margin-bottom: 20px;">
+    <strong>System Announcement</strong>
+</div>
+
+<p style="white-space: pre-wrap;">{{ message }}</p>
+
+{% if link %}
+<div style="margin-top: 30px;">
+    <a href="{{ link }}" class="button">View Dashboard</a>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}Security Advisory{% endblock %}
+
+{% block content %}
+<h2>Security Advisory</h2>
+
+<div style="background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 4px; border: 1px solid #ffeeba; margin-bottom: 20px;">
+    <strong>Attention Required for {{ project_name_scanned }}</strong>
+</div>
+
+<p>{{ message }}</p>
+
+<h3>Affected Dependencies</h3>
+<ul>
+    {% for finding in findings %}
+    <li><code>{{ finding }}</code></li>
+    {% endfor %}
+</ul>
+
+<div style="margin-top: 30px;">
+    <a href="{{ link }}" class="button" style="display: inline-block; background-color: #dc3545; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">View Project</a>
+</div>
+{% endblock %}

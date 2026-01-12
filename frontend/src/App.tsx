@@ -16,6 +16,7 @@ import ProjectDetails from './pages/ProjectDetails'
 import ScanDetails from './pages/ScanDetails'
 import ProfilePage from './pages/Profile'
 import SystemSettings from './pages/SystemSettings'
+import Broadcasts from './pages/Broadcasts'
 import SearchPage from './pages/Search'
 import AnalyticsPage from './pages/Analytics'
 import DashboardLayout from './layouts/DashboardLayout'
@@ -180,6 +181,11 @@ function AppRoutes() {
         <Route path="/settings" element={
           <RequirePermission permission="system:manage">
             <SystemSettings />
+          </RequirePermission>
+        } />
+        <Route path="/broadcasts" element={
+          <RequirePermission permission={['notifications:broadcast', 'system:manage']}>
+            <Broadcasts />
           </RequirePermission>
         } />
         {/* Add other routes here */}

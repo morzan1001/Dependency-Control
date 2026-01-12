@@ -25,6 +25,7 @@ from app.api.v1.endpoints import (
     ingest,
     integrations,
     invitations,
+    notifications,
     projects,
     scripts,
     system,
@@ -134,6 +135,11 @@ app.include_router(
     integrations.router,
     prefix=f"{settings.API_V1_STR}/integrations",
     tags=["integrations"],
+)
+app.include_router(
+    notifications.router,
+    prefix=f"{settings.API_V1_STR}/notifications",
+    tags=["notifications"],
 )
 app.include_router(
     analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"]

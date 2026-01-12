@@ -275,3 +275,16 @@ REACHABILITY_MODIFIERS: Dict[str, float] = {
     "medium_unreachable_ratio_threshold": 0.5,
     "medium_unreachable_penalty": 0.7,
 }
+
+# System Permissions
+PERMISSION_SYSTEM_MANAGE = "system:manage"
+PERMISSION_USER_MANAGE = "user:manage"
+PERMISSION_PROJECT_CREATE = "project:create"
+PERMISSION_NOTIFICATIONS_BROADCAST = "notifications:broadcast"
+
+SYSTEM_PERMISSIONS = [
+    PERMISSION_SYSTEM_MANAGE,
+    PERMISSION_USER_MANAGE,
+    PERMISSION_PROJECT_CREATE,
+    PERMISSION_NOTIFICATIONS_BROADCAST,
+]

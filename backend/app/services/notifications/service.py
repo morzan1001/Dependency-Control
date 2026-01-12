@@ -82,7 +82,14 @@ class NotificationService:
         )
 
     async def notify_users(
-        self, users: List[User], event_type: str, subject: str, message: str, db=None
+        self,
+        users: List[User],
+        event_type: str,
+        subject: str,
+        message: str,
+        db=None,
+        forced_channels: Optional[List[str]] = None,
+        html_message: Optional[str] = None,
     ):
         """
         Send a notification to multiple users.
@@ -95,14 +102,18 @@ class NotificationService:
 
         tasks = []
         for user in users:
+            # If forced_channels is set use it, otherwise use user prefs for event
+            prefs = {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
+            
             tasks.append(
                 self._send_based_on_prefs(
                     user,
-                    user.notification_preferences or {},
+                    prefs,
                     event_type,
                     subject,
                     message,
                     system_settings,
+                    html_message=html_message
                 )
             )
 
@@ -110,10 +121,17 @@ class NotificationService:
             await asyncio.gather(*tasks)
 
     async def notify_project_members(
-        self, project: Project, event_type: str, subject: str, message: str, db
+        self,
+        project: Project,
+        event_type: str,
+        subject: str,
+        message: str,
+        db,
+        forced_channels: Optional[List[str]] = None,
+        html_message: Optional[str] = None,
     ):
         """
-        Send notifications to project members (and owner) based on their project-specific preferences.
+        Send notifications to project members.
         """
         # Fetch System Settings
         system_settings = None
@@ -182,14 +200,18 @@ class NotificationService:
             user = users_map.get(user_id)
             if not user:
                 continue
+            
+            effective_prefs = {}
+            if forced_channels:
+                 effective_prefs = {event_type: forced_channels}
+            else:
+                # Determine effective preferences
+                effective_prefs = user.notification_preferences  # Default to Global
 
-            # Determine effective preferences
-            effective_prefs = user.notification_preferences  # Default to Global
-
-            if enforced_prefs:
-                effective_prefs = enforced_prefs
-            elif specific_prefs:
-                effective_prefs = specific_prefs
+                if enforced_prefs:
+                    effective_prefs = enforced_prefs
+                elif specific_prefs:
+                    effective_prefs = specific_prefs
 
             # If effective_prefs is None or empty at this point, checking keys will happen in _send_based_on_prefs
             if not effective_prefs:
@@ -203,6 +225,7 @@ class NotificationService:
                     subject,
                     message,
                     system_settings,
+                    html_message=html_message
                 )
             )
 
