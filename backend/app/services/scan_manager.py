@@ -9,6 +9,7 @@ This service handles:
 - Triggering aggregation jobs
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,8 @@ from app.models.finding import Finding
 from app.models.project import Project, Scan
 from app.models.stats import Stats
 from app.schemas.ingest import BaseIngest, ScanContext
+
+logger = logging.getLogger(__name__)
 
 
 class ScanManager:
@@ -187,6 +190,64 @@ class ScanManager:
     async def trigger_aggregation(self, scan_id: str) -> None:
         """Add scan to worker queue for aggregation."""
         await worker_manager.add_job(scan_id)
+
+    async def register_result(
+        self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False
+    ) -> None:
+        """
+        Register that a scanner has submitted results.
+        
+        This method:
+        1. Updates last_result_at timestamp
+        2. Adds analyzer_name to received_results list
+        3. If scan was 'completed', resets status to 'pending' and triggers re-aggregation
+        4. Optionally triggers the aggregation (for SBOM scanner)
+        
+        Args:
+            scan_id: The scan ID
+            analyzer_name: Name of the analyzer that submitted results
+            trigger_analysis: If True, trigger the aggregation worker
+        """
+        now = datetime.now(timezone.utc)
+        
+        # Get current scan status
+        scan = await self.db.scans.find_one({"_id": scan_id})
+        if not scan:
+            return
+        
+        current_status = scan.get("status", "pending")
+        
+        # Determine new status and whether to trigger re-aggregation
+        new_status = current_status
+        should_reaggregate = False
+        
+        if current_status == "completed":
+            # Late result arrived after completion - need to re-aggregate
+            new_status = "pending"
+            should_reaggregate = True
+            logger.info(
+                f"Late result from {analyzer_name} for completed scan {scan_id}. "
+                f"Resetting to pending for re-aggregation."
+            )
+        
+        update_ops: Dict[str, Any] = {
+            "$set": {
+                "last_result_at": now,
+                "updated_at": now,
+            },
+            "$addToSet": {"received_results": analyzer_name},
+        }
+        
+        if new_status != current_status:
+            update_ops["$set"]["status"] = new_status
+        
+        await self.db.scans.update_one({"_id": scan_id}, update_ops)
+        
+        # Trigger aggregation if:
+        # 1. Explicitly requested (SBOM scanner), OR
+        # 2. Late result arrived after completion
+        if trigger_analysis or should_reaggregate:
+            await self.trigger_aggregation(scan_id)
 
     async def update_project_last_scan(self) -> None:
         """Update the project's last_scan_at timestamp."""

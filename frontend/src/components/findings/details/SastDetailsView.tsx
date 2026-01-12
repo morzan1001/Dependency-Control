@@ -87,6 +87,11 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     // Check for aggregated SAST findings
     const sastFindings = details.sast_findings || []
     
+    // Only show aggregated view if there are actually multiple scanner results
+    // If only one scanner found the issue, show the detailed single view instead
+    const hasMultipleScanners = sastFindings.length > 1 || (finding.scanners?.length ?? 0) > 1
+    const showAggregatedView = sastFindings.length > 0 && hasMultipleScanners
+    
     const startLine = details.start?.line || details.line
     const endLine = details.end?.line || details.line || startLine
 
@@ -311,8 +316,8 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
        )
     }
 
-    if (sastFindings.length > 0) {
-        // Aggregated view
+    if (showAggregatedView) {
+        // Aggregated view - only when multiple scanners found issues at this location
         return (
              <div className="space-y-6">
                  {/* File and Location with Source Link (Common) */}
@@ -326,7 +331,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 />
                 
                 <p className="text-sm text-muted-foreground">
-                    Aggregated findings from <strong>{finding.scanners?.length || 0}</strong> scanners at this location.
+                    Aggregated findings from <strong>{finding.scanners?.length || sastFindings.length}</strong> scanners at this location.
                 </p>
 
                 {/* List of individual findings */}
@@ -375,6 +380,11 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     }
 
     // Default: Single finding view
+    // If there's exactly one sast_finding entry, use its details instead of the parent details
+    const singleFindingDetails = sastFindings.length === 1 ? sastFindings[0].details : details
+    const singleFindingDescription = sastFindings.length === 1 ? sastFindings[0].description : finding.description
+    const singleFindingScanners = sastFindings.length === 1 ? [sastFindings[0].scanner] : (finding.scanners || [])
+    
     return (
         <div className="space-y-4">
             {/* File and Location with Source Link */}
@@ -387,13 +397,13 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 scmContext={scanContext}
             />
             
-            {renderSingleFindingDetails(details, finding.description, finding.scanners || [])}
+            {renderSingleFindingDetails(singleFindingDetails, singleFindingDescription, singleFindingScanners)}
 
             {/* Fingerprint for debugging/reference (Classic view only) */}
-            {details.fingerprint && (
+            {(details.fingerprint || singleFindingDetails.fingerprint) && (
                 <div className="pt-2 border-t">
                     <p className="text-xs text-muted-foreground">
-                        Fingerprint: <code className="font-mono">{details.fingerprint}</code>
+                        Fingerprint: <code className="font-mono">{details.fingerprint || singleFindingDetails.fingerprint}</code>
                     </p>
                 </div>
             )}

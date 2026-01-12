@@ -88,6 +88,10 @@ class Scan(BaseModel):
     # Summary of the latest run (either this scan itself, or the latest re-scan if this is the original)
     latest_run: Optional[Dict[str, Any]] = None
 
+    # Pipeline result tracking - prevents premature completion when multiple scanners run
+    last_result_at: Optional[datetime] = None  # When the last scanner result was received
+    received_results: List[str] = []  # List of analyzer names that have submitted results
+
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True

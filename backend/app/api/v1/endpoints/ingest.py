@@ -54,10 +54,19 @@ async def _process_findings_ingest(
     2. Apply waivers
     3. Store results
     4. Compute stats
-    5. Trigger aggregation
+    5. Register result (does NOT trigger aggregation - waits for all scanners)
     6. Update project timestamp
 
     Returns response dict with scan_id, findings_count, and stats.
+    
+    Note: Unlike SBOM ingestion, findings-based scanners do NOT trigger
+    the aggregation immediately. This prevents race conditions where a fast
+    scanner (e.g., SAST) completes before slower scanners (e.g., SBOM),
+    causing the scan to be marked as 'completed' prematurely.
+    
+    The aggregation is triggered either:
+    - By the SBOM scanner (which typically runs last and is the "main" analysis)
+    - By the housekeeping job if no new results arrive for a configured period
     """
     # Normalize findings
     aggregator = ResultAggregator()
@@ -73,8 +82,12 @@ async def _process_findings_ingest(
     # Compute stats
     stats = ScanManager.compute_stats(final_findings)
 
-    # Trigger aggregation and update project
-    await manager.trigger_aggregation(scan_id)
+    # Register result WITHOUT triggering aggregation
+    # This updates last_result_at and received_results, and resets status
+    # to 'pending' if it was 'completed' (for late arrivals)
+    await manager.register_result(scan_id, analyzer_name, trigger_analysis=False)
+    
+    # Update project timestamp
     await manager.update_project_last_scan()
 
     return {
@@ -336,8 +349,11 @@ async def ingest_sbom(
         )
         await db.scans.insert_one(scan.model_dump(by_alias=True))
 
-    # Trigger analysis
-    await manager.trigger_aggregation(scan_id)
+    # Register SBOM result and trigger analysis
+    # SBOM is considered the "main" scanner, so it triggers aggregation
+    # This will also collect results from other scanners (TruffleHog, OpenGrep, etc.)
+    # that may have already submitted their findings
+    await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 
     return {
         "status": "queued",

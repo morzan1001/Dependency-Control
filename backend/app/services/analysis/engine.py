@@ -426,7 +426,12 @@ async def run_analysis(
                 "completed_at": datetime.now(timezone.utc),
                 "latest_run": latest_run_summary,
             },
-            "$unset": {"findings_summary": ""},
+            "$unset": {
+                "findings_summary": "",
+                # Clear result tracking fields - they will be repopulated on next pipeline run
+                "received_results": "",
+                "last_result_at": "",
+            },
         },
     )
 

@@ -243,6 +243,59 @@ async def run_housekeeping():
         logger.error(f"Housekeeping task failed: {e}")
 
 
+async def trigger_stale_pending_scans(worker_manager=None):
+    """
+    Finds scans that are 'pending' with results but haven't received new results
+    for a while (30 seconds), and triggers their aggregation.
+    
+    This handles the case where only findings-based scanners (TruffleHog, OpenGrep, etc.)
+    ran without an SBOM scan, or where the SBOM scanner failed to trigger.
+    
+    The logic:
+    1. Find scans with status='pending' that have received_results (at least one scanner reported)
+    2. Check if last_result_at is older than 30 seconds
+    3. Trigger aggregation for these scans
+    """
+    if not worker_manager:
+        return
+
+    logger.info("Checking for stale pending scans...")
+    try:
+        db = await get_database()
+        
+        # Threshold: 30 seconds since last result
+        stale_threshold = datetime.now(timezone.utc) - timedelta(seconds=30)
+        
+        # Find pending scans that have results but are stale
+        cursor = db.scans.find(
+            {
+                "status": "pending",
+                "last_result_at": {"$lt": stale_threshold, "$exists": True},
+                "received_results": {"$exists": True, "$ne": []},
+            }
+        )
+        
+        count = 0
+        async for scan in cursor:
+            scan_id = scan["_id"]
+            received = scan.get("received_results", [])
+            last_result = scan.get("last_result_at")
+            
+            logger.info(
+                f"Triggering aggregation for stale pending scan {scan_id}. "
+                f"Received results from: {received}. Last result at: {last_result}"
+            )
+            
+            await worker_manager.add_job(str(scan_id))
+            count += 1
+        
+        if count > 0:
+            logger.info(f"Triggered aggregation for {count} stale pending scans.")
+            
+    except Exception as e:
+        logger.error(f"Stale pending scan check failed: {e}")
+
+
 async def recover_stuck_scans(worker_manager=None):
     """
     Identifies scans that have been stuck in 'processing' state for too long
@@ -310,12 +363,17 @@ async def recover_stuck_scans(worker_manager=None):
 async def housekeeping_loop(worker_manager=None):
     """
     Runs the housekeeping tasks.
+    - Stale pending scan aggregation: Every loop (5 minutes, but scans wait 30s)
     - Stuck scan recovery: Every 5 minutes
+    - Scheduled re-scans: Every 5 minutes
     - Data retention cleanup: Every 24 hours
     """
     last_retention_run = datetime.min
 
     while True:
+        # Run stale pending scan aggregation (for scans without SBOM trigger)
+        await trigger_stale_pending_scans(worker_manager)
+
         # Run stuck scan recovery
         await recover_stuck_scans(worker_manager)
 
