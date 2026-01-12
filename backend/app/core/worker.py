@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.core.config import settings
-from app.core.housekeeping import housekeeping_loop
+from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.db.mongodb import get_database
 from app.services.analysis import run_analysis
 
@@ -16,6 +16,7 @@ class AnalysisWorkerManager:
         self.num_workers = num_workers
         self.workers = []
         self.housekeeping_task = None
+        self.stale_scan_task = None
 
     async def start(self):
         """Starts the worker tasks and recovers pending jobs from DB."""
@@ -26,9 +27,13 @@ class AnalysisWorkerManager:
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
 
-        # Start housekeeping task
+        # Start housekeeping task (slow: every 5 minutes)
         self.housekeeping_task = asyncio.create_task(housekeeping_loop(self))
         logger.info("Housekeeping task started.")
+
+        # Start stale scan loop (fast: every 10 seconds)
+        self.stale_scan_task = asyncio.create_task(stale_scan_loop(self))
+        logger.info("Stale scan loop started.")
 
         # Recover pending jobs from DB
         try:
@@ -55,6 +60,10 @@ class AnalysisWorkerManager:
         if self.housekeeping_task:
             self.housekeeping_task.cancel()
             logger.info("Housekeeping task stopped.")
+
+        if self.stale_scan_task:
+            self.stale_scan_task.cancel()
+            logger.info("Stale scan loop stopped.")
 
     async def add_job(self, scan_id: str):
         """Adds a new scan job to the queue."""

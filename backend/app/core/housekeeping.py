@@ -360,20 +360,33 @@ async def recover_stuck_scans(worker_manager=None):
         logger.error(f"Stuck scan recovery failed: {e}")
 
 
+async def stale_scan_loop(worker_manager=None):
+    """
+    Fast loop to check for stale pending scans that need aggregation.
+    Runs every 10 seconds to quickly catch scans without SBOM trigger.
+    """
+    while True:
+        try:
+            await trigger_stale_pending_scans(worker_manager)
+        except Exception as e:
+            logger.error(f"Stale scan loop failed: {e}")
+        
+        # Check every 10 seconds for responsive aggregation
+        await asyncio.sleep(10)
+
+
 async def housekeeping_loop(worker_manager=None):
     """
     Runs the housekeeping tasks.
-    - Stale pending scan aggregation: Every loop (5 minutes, but scans wait 30s)
     - Stuck scan recovery: Every 5 minutes
     - Scheduled re-scans: Every 5 minutes
     - Data retention cleanup: Every 24 hours
+    
+    Note: Stale pending scan aggregation runs in a separate faster loop.
     """
     last_retention_run = datetime.min
 
     while True:
-        # Run stale pending scan aggregation (for scans without SBOM trigger)
-        await trigger_stale_pending_scans(worker_manager)
-
         # Run stuck scan recovery
         await recover_stuck_scans(worker_manager)
 
