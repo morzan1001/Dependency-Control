@@ -2,7 +2,7 @@ import { ApiError } from '@/api/client';
 import { User } from '@/types/user';
 import { useDeleteUser, useInviteUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
-import { Check, X, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Check, X, Trash2, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
