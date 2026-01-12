@@ -41,7 +41,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
           setUserToDelete(null);
           toast.success("User deleted successfully");
         },
-        onError: (error: any) => {
+        onError: (error) => {
           toast.error("Failed to delete user", {
             description: (error as ApiError).response?.data?.detail || "An error occurred"
           })
@@ -54,7 +54,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
         onSuccess: () => {
           toast.success("Invitation resent successfully");
         },
-        onError: (error: any) => {
+        onError: (error) => {
           toast.error("Failed to resend invitation", {
             description: (error as ApiError).response?.data?.detail || "An error occurred"
           })

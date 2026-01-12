@@ -6,7 +6,7 @@ import { ProjectCreate, ProjectUpdate } from '@/types/project';
 export const projectKeys = {
   all: ['projects'] as const,
   lists: () => [...projectKeys.all, 'list'] as const,
-  list: (filters: Record<string, any>) => [...projectKeys.lists(), filters] as const,
+  list: (filters: Record<string, unknown>) => [...projectKeys.lists(), filters] as const,
   details: () => [...projectKeys.all, 'detail'] as const,
   detail: (id: string) => [...projectKeys.details(), id] as const,
   branches: (id: string) => [...projectKeys.detail(id), 'branches'] as const,
@@ -88,7 +88,7 @@ export const useRotateProjectApiKey = () => {
 export const useUpdateProjectNotifications = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ id, settings }: { id: string, settings: any }) => projectApi.updateNotificationSettings(id, settings),
+        mutationFn: ({ id, settings }: { id: string, settings: unknown }) => projectApi.updateNotificationSettings(id, settings),
         onSuccess: (_, { id }) => {
             queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
         }

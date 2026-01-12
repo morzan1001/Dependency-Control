@@ -60,7 +60,17 @@ interface SastIssueEntry {
     severity: string
     title: string
     description: string
-    details: Record<string, any>
+    details: Record<string, unknown>
+}
+
+interface SastDetails {
+    sast_findings?: SastIssueEntry[];
+    start?: { line: number };
+    end?: { line: number };
+    line?: number;
+    rule_id?: string;
+    check_id?: string;
+    [key: string]: unknown;
 }
 
 interface SastDetailsViewProps {
@@ -69,11 +79,11 @@ interface SastDetailsViewProps {
 }
 
 export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) {
-    const details = finding.details || {}
+    const details = (finding.details || {}) as SastDetails
     const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set())
     
     // Check for aggregated SAST findings
-    const sastFindings = ((details as any).sast_findings as SastIssueEntry[]) || []
+    const sastFindings = details.sast_findings || []
     
     const startLine = details.start?.line || details.line
     const endLine = details.end?.line || details.line || startLine
@@ -89,7 +99,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     }
 
     // Single Finding View
-    const renderSingleFindingDetails = (details: any, findingDesc: string | undefined, scannerList: string[]) => {
+    const renderSingleFindingDetails = (details: SastDetails, findingDesc: string | undefined, scannerList: string[]) => {
        const localIsBearer = scannerList.includes('bearer')
        const localIsOpenGrep = scannerList.includes('opengrep')
        const localIsKics = scannerList.includes('kics')
@@ -332,7 +342,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                                         
                                         <div className="flex flex-col gap-1 min-w-0">
                                             <div className="flex items-center gap-2">
-                                                 <Badge variant={getSeverityBgColor(issue.severity) as any} className="flex-shrink-0">
+                                                 <Badge variant={getSeverityBgColor(issue.severity) as "default" | "secondary" | "destructive" | "outline"} className="flex-shrink-0">
                                                     {issue.severity}
                                                 </Badge>
                                                 <span className="font-medium truncate text-sm">{issue.title}</span>

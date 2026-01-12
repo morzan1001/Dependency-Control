@@ -28,7 +28,7 @@ export default function ProfilePage() {
       <h1 className="text-3xl font-bold tracking-tight">Profile</h1>
 
       <div className="grid gap-6 md:grid-cols-2">
-        <UserDetailsCard user={user} notificationChannels={notificationChannels} />
+        <UserDetailsCard key={user?.id} user={user} notificationChannels={notificationChannels} />
         <div className="space-y-6">
           <PasswordUpdateCard user={user} />
           <TwoFactorAuthCard user={user} />

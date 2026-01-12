@@ -69,6 +69,13 @@ const severityOrder: Record<string, number> = {
 type SortField = 'id' | 'type' | 'severity' | 'project_name'
 type SortOrder = 'asc' | 'desc'
 
+const SortIcon = ({ field, sortBy, sortOrder }: { field: SortField, sortBy: SortField, sortOrder: 'asc'|'desc' }) => {
+  if (sortBy !== field) return null
+  return sortOrder === 'asc' 
+    ? <ArrowUp className="h-4 w-4 inline-block ml-1" />
+    : <ArrowDown className="h-4 w-4 inline-block ml-1" />
+}
+
 interface AnalyticsDependencyModalProps {
   component: string;
   version?: string;
@@ -541,13 +548,6 @@ export function AnalyticsDependencyModal({
     }
   }
 
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortBy !== field) return null
-    return sortOrder === 'asc' 
-      ? <ArrowUp className="h-4 w-4 inline-block ml-1" />
-      : <ArrowDown className="h-4 w-4 inline-block ml-1" />
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
@@ -598,28 +598,28 @@ export function AnalyticsDependencyModal({
                       onClick={() => handleSort('id')}
                     >
                       Finding
-                      <SortIcon field="id" />
+                      <SortIcon field="id" sortBy={sortBy} sortOrder={sortOrder} />
                     </TableHead>
                     <TableHead 
                       className="w-[100px] cursor-pointer hover:bg-muted/50"
                       onClick={() => handleSort('type')}
                     >
                       Type
-                      <SortIcon field="type" />
+                      <SortIcon field="type" sortBy={sortBy} sortOrder={sortOrder} />
                     </TableHead>
                     <TableHead 
                       className="w-[100px] cursor-pointer hover:bg-muted/50"
                       onClick={() => handleSort('severity')}
                     >
                       Severity
-                      <SortIcon field="severity" />
+                      <SortIcon field="severity" sortBy={sortBy} sortOrder={sortOrder} />
                     </TableHead>
                     <TableHead 
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => handleSort('project_name')}
                     >
                       Project
-                      <SortIcon field="project_name" />
+                      <SortIcon field="project_name" sortBy={sortBy} sortOrder={sortOrder} />
                     </TableHead>
                   </TableRow>
                 </TableHeader>

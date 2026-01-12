@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,8 +14,14 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null)
   const [showOTP, setShowOTP] = useState(false)
   const [showResendLink, setShowResendLink] = useState(false)
-  const [signupEnabled, setSignupEnabled] = useState(false)
-  const [oidcConfig, setOidcConfig] = useState<{ enabled: boolean, providerName: string }>({ enabled: false, providerName: 'GitLab' })
+  
+  // Deriving state from config directly
+  const { data: config } = usePublicConfig();
+  const signupEnabled = config?.allow_public_registration || false;
+  const oidcConfig = {
+    enabled: config?.oidc_enabled || false,
+    providerName: config?.oidc_provider_name || 'GitLab'
+  }
   
   // Form State
   const [username, setUsername] = useState('')
@@ -24,18 +30,7 @@ export default function Login() {
   const { login } = useAuth()
   const location = useLocation()
   const message = location.state?.message
-  const { data: config } = usePublicConfig();
   const loginMutation = useLogin();
-
-  useEffect(() => {
-    if (config) {
-      setSignupEnabled(config.allow_public_registration)
-      setOidcConfig({
-        enabled: config.oidc_enabled || false,
-        providerName: config.oidc_provider_name || 'GitLab'
-      })
-    }
-  }, [config])
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()

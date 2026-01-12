@@ -1,5 +1,5 @@
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { SbomResponse, SbomTool, SbomToolComponent } from '@/api/scans'
 import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
@@ -29,14 +29,21 @@ interface ScanHistoryItem {
 export default function ScanDetails() {
   const { projectId, scanId } = useParams<{ projectId: string, scanId: string }>()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const sbomRefs = useRef<(HTMLDivElement | null)[]>([])
   const { data: scan, isLoading: isScanLoading } = useScan(scanId!)
   const { data: scanHistory } = useScanHistory(projectId!, scanId!)
 
-  const [activeTab, setActiveTab] = useState('overview');
+  const activeTab = searchParams.get('tab') || 'overview';
   const sbomParam = searchParams.get('sbom');
-  const handleTabChange = (val: string) => setActiveTab(val);
+  
+  const handleTabChange = (val: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', val);
+      return next;
+    }, { replace: true });
+  };
 
   const { data: project, isLoading: isProjectLoading } = useProject(projectId!)
   const { data: scanResults, isLoading: isResultsLoading } = useScanResults(scanId!)

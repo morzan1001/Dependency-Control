@@ -18,9 +18,10 @@ export const useBroadcast = () => {
         });
       }
     },
-    onError: (error: any) => {
+    onError: (error) => {
+       const err = error as { response?: { data?: { detail?: string } } };
        toast.error("Failed to send broadcast", {
-        description: error.response?.data?.detail || "An unexpected error occurred."
+        description: err.response?.data?.detail || "An unexpected error occurred."
        })
     }
   });

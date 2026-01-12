@@ -4,7 +4,7 @@ import { useUpdateUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -23,13 +23,7 @@ interface UserPermissionsDialogProps {
 }
 
 export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissionsDialogProps) {
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (user && open) {
-      setSelectedPermissions(user.permissions || []);
-    }
-  }, [user, open]);
+  const [selectedPermissions, setSelectedPermissions] = useState<string[]>(user?.permissions || []);
 
   const updateUserMutation = useUpdateUser();
 
@@ -53,7 +47,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
         });
         onOpenChange(false);
       },
-      onError: (error: any) => {
+      onError: (error) => {
         toast.error("Error", {
           description: (error as ApiError).response?.data?.detail || "Failed to update user permissions.",
         });

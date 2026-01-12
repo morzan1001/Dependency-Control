@@ -11,7 +11,7 @@ export const analyticsKeys = {
     impactAnalysis: (limit: number) => [...analyticsKeys.all, 'impact-analysis', { limit }] as const,
     hotspots: (params: HotspotsQueryParams) => [...analyticsKeys.all, 'hotspots', params] as const,
     search: (query: string, version?: string) => [...analyticsKeys.all, 'search', { query, version }] as const,
-    advancedSearch: (query: string, options?: any) => [...analyticsKeys.all, 'search-advanced', { query, options }] as const,
+    advancedSearch: (query: string, options?: unknown) => [...analyticsKeys.all, 'search-advanced', { query, options }] as const,
     vulnerabilitySearch: (query: string, options?: VulnerabilitySearchOptions) => [...analyticsKeys.all, 'search-vulnerabilities', { query, options }] as const,
     componentFindings: (component: string, version?: string) => [...analyticsKeys.all, 'component-findings', { component, version }] as const,
     dependencyMetadata: (component: string, version?: string, type?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }] as const,
@@ -76,7 +76,7 @@ export const useVulnerabilityHotspots = (params: HotspotsQueryParams) => {
     });
 }
 
-export const useAdvancedSearch = (query: string, options?: any) => {
+export const useAdvancedSearch = (query: string, options?: unknown) => {
     return useQuery({
         queryKey: analyticsKeys.advancedSearch(query, options),
         queryFn: () => analyticsApi.searchDependenciesAdvanced(query, options),

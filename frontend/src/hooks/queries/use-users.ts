@@ -5,7 +5,7 @@ import { UserCreate, UserUpdate, UserUpdateMe } from '@/types/user';
 export const userKeys = {
   all: ['users'] as const,
   lists: () => [...userKeys.all, 'list'] as const,
-  list: (filters: Record<string, any>) => [...userKeys.lists(), filters] as const,
+  list: (filters: Record<string, unknown>) => [...userKeys.lists(), filters] as const,
   me: ['me'] as const,
   invitations: ['invitations'] as const,
 };

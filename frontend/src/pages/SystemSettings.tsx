@@ -15,40 +15,33 @@ import {
   IntegrationsSettingsTab,
 } from "@/components/settings"
 
-export default function SystemSettings() {
-  const queryClient = useQueryClient()
-  const { hasPermission } = useAuth()
-  const [formData, setFormData] = useState<Partial<SystemSettingsType>>({})
-  const [slackAuthMode, setSlackAuthMode] = useState("oauth")
-  const [searchParams, setSearchParams] = useSearchParams()
-
-  const { data: settings, isLoading } = useSystemSettings();
-
-  useEffect(() => {
-    if (settings) {
-      setFormData(settings)
-      if (settings.slack_bot_token && !settings.slack_client_id) {
-        setSlackAuthMode("manual")
-      }
+// Inner component that handles the form state
+function SystemSettingsForm({ settings }: { settings: SystemSettingsType }) {
+  const [formData, setFormData] = useState<Partial<SystemSettingsType>>(settings)
+  const [slackAuthMode, setSlackAuthMode] = useState(() => {
+    if (settings.slack_bot_token && !settings.slack_client_id) {
+       return "manual"
     }
-  }, [settings])
+    return "oauth"
+  })
+  
+  const { hasPermission } = useAuth()
+  const mutation = useUpdateSystemSettings();
+  const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   useEffect(() => {
     if (searchParams.get('slack_connected') === 'true') {
       toast.success("Slack connected successfully!", {
         description: "Your Slack workspace has been linked."
       })
-      // Remove the query param
       setSearchParams(params => {
         params.delete('slack_connected')
         return params
       })
-      // Refresh settings to show the new token status
       queryClient.invalidateQueries({ queryKey: ['systemSettings'] })
     }
   }, [searchParams, setSearchParams, queryClient])
-
-  const mutation = useUpdateSystemSettings();
 
   const handleInputChange = (field: keyof SystemSettingsType, value: string | number | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -65,18 +58,6 @@ export default function SystemSettings() {
 
   const createWebhookMutation = useCreateGlobalWebhook();
   const deleteWebhookMutation = useDeleteWebhook();
-
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-64" />
-          <Skeleton className="h-4 w-96" />
-        </div>
-        <Skeleton className="h-[500px] w-full" />
-      </div>
-    )
-  }
 
   const tabProps = {
     formData,
@@ -130,4 +111,22 @@ export default function SystemSettings() {
       </Tabs>
     </div>
   )
+}
+
+export default function SystemSettings() {
+  const { data: settings, isLoading } = useSystemSettings();
+
+  if (isLoading || !settings) {
+    return (
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <Skeleton className="h-[500px] w-full" />
+      </div>
+    )
+  }
+
+  return <SystemSettingsForm settings={settings} />
 }

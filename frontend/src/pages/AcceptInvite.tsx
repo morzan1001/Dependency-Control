@@ -12,25 +12,21 @@ import { Skeleton } from '@/components/ui/skeleton'
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')
-  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(!token ? "Invalid invitation link." : null)
+  const [isLoading, setIsLoading] = useState(!!token)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [email, setEmail] = useState<string | null>(null)
   const navigate = useNavigate()
   const { login } = useAuth()
   
-  const validateMutation = useValidateInvitation();
+  const { mutate: validate } = useValidateInvitation();
   const acceptMutation = useAcceptInvitation();
   const loginMutation = useLogin();
 
   useEffect(() => {
-    if (!token) {
-      setError("Invalid invitation link.")
-      setIsLoading(false)
-      return
-    }
+    if (!token) return
 
-    validateMutation.mutate(token, {
+    validate(token, {
        onSuccess: (data) => {
          setEmail(data.email)
          setIsLoading(false)
@@ -41,7 +37,7 @@ export default function AcceptInvite() {
          setIsLoading(false)
        }
     })
-  }, [token])
+  }, [token, validate])
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()

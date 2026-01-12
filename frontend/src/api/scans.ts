@@ -83,7 +83,7 @@ export const scanApi = {
 
     getResults: async (scanId: string) => {
         // Note: AnalysisResult type might be needed if strictly typed, but sticking to general or importing if available
-        const response = await api.get<any[]>(`/projects/scans/${scanId}/results`);
+        const response = await api.get<Record<string, unknown>[]>(`/projects/scans/${scanId}/results`);
         return response.data;
     },
 

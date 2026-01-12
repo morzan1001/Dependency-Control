@@ -44,7 +44,7 @@ export function InviteUserDialog() {
           });
         }
       },
-      onError: (error: any) => { // Cast to any to access response
+      onError: (error) => {
           const apiError = error as ApiError;
           toast.error("Error", {
             description: apiError.response?.data?.detail || "Failed to send invitation",

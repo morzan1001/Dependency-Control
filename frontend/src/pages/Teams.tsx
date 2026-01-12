@@ -132,6 +132,7 @@ export default function TeamsPage() {
       </div>
 
       <EditTeamDialog 
+        key={selectedTeam?._id}
         team={selectedTeam} 
         isOpen={isEditOpen} 
         onClose={() => setIsEditOpen(false)} 

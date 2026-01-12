@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { userApi } from '@/api/users';
 import { User } from '@/types/user';
@@ -17,19 +17,10 @@ interface UserDetailsCardProps {
 
 export function UserDetailsCard({ user, notificationChannels }: UserDetailsCardProps) {
   const queryClient = useQueryClient();
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [slackUsername, setSlackUsername] = useState('');
-  const [mattermostUsername, setMattermostUsername] = useState('');
-
-  useEffect(() => {
-    if (user) {
-      setUsername(user.username);
-      setEmail(user.email);
-      setSlackUsername(user.slack_username || '');
-      setMattermostUsername(user.mattermost_username || '');
-    }
-  }, [user]);
+  const [username, setUsername] = useState(user?.username || '');
+  const [email, setEmail] = useState(user?.email || '');
+  const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
+  const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
 
   const updateProfileMutation = useMutation({
     mutationFn: () => userApi.updateMe({ 

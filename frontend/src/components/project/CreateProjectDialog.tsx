@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ApiError } from "@/api/client";
 import { useCreateProject } from "@/hooks/queries/use-projects";
 import { useTeams } from "@/hooks/queries/use-teams";
 import { useAppConfig } from "@/hooks/queries/use-system";
@@ -72,8 +73,8 @@ export function CreateProjectDialog({
           setCreatedProjectData(data);
           toast.success("Project created successfully");
         },
-        onError: (error: any) => {
-            const description = error?.response?.data?.detail || "An error occurred";
+        onError: (error) => {
+            const description = (error as ApiError)?.response?.data?.detail || "An error occurred";
             toast.error("Failed to create project", {
                 description
             });

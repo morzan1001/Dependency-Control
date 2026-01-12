@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
@@ -68,37 +68,34 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
-  const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>({})
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
+  
+  const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>(() => {
+    let prefs: Record<string, string[]> = {}
+    if (!project || !user) return prefs;
+    
+    const userId = user._id || user.id;
+    
+    if (project.enforce_notification_settings) {
+        prefs = project.owner_notification_preferences || {}
+    } else {
+        if (project.owner_id === userId) {
+          prefs = project.owner_notification_preferences || {}
+        } else if (project.members) {
+          const member = project.members.find(m => m.user_id === userId)
+          if (member) {
+            prefs = member.notification_preferences || {}
+          }
+        }
+    }
+    return prefs;
+  })
 
   // Use centralized hooks for better caching and consistency
   const { data: teams } = useTeams();
   const { data: branches } = useProjectBranches(projectId);
   const { data: appConfig } = useAppConfig();
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
-
-  useEffect(() => {
-    if (project && user) {
-      let prefs: Record<string, string[]> = {}
-      const userId = user._id || user.id;
-      
-      setEnforceNotificationSettings(project.enforce_notification_settings || false)
-
-      if (project.enforce_notification_settings) {
-          prefs = project.owner_notification_preferences || {}
-      } else {
-          if (project.owner_id === userId) {
-            prefs = project.owner_notification_preferences || {}
-          } else if (project.members) {
-            const member = project.members.find(m => m.user_id === userId)
-            if (member) {
-              prefs = member.notification_preferences || {}
-            }
-          }
-      }
-      setNotificationPrefs(prefs)
-    }
-  }, [project, user])
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),
@@ -490,11 +487,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             {hasPermission('project:update') && (
                 <Button 
                     onClick={() => updateNotificationSettingsMutation.mutate({ 
-                        id: project._id as any,
+                        id: project._id,
                         settings: {
                             notification_preferences: notificationPrefs,
                             enforce_notification_settings: enforceNotificationSettings
-                        } as any
+                        }
                     })}
                     disabled={updateNotificationSettingsMutation.isPending}
                 >

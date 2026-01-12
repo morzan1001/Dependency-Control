@@ -111,7 +111,7 @@ export default function Broadcasts() {
          setImpactCount(result.recipient_count) // usually 0 for advisory unless logic changes
          setImpactProjectCount(result.project_count || 0)
       }
-    } catch (err) {
+    } catch {
       // Error handling is done by mutation hook, but we can add specific logic here
     } finally {
       setIsCalculating(false)

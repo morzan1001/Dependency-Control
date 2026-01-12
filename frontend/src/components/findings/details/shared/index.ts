@@ -4,5 +4,5 @@
 export { DetailSection } from './DetailSection'
 export { BadgeList } from './BadgeList'
 export { ReferencesList } from './ReferencesList'
-export { RiskBadge, getRiskVariant } from './RiskBadge'
-export { FileLocation, buildLocationString } from './FileLocation'
+export { RiskBadge } from './RiskBadge'
+export { FileLocation } from './FileLocation'

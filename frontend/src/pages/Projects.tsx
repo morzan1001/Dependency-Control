@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useProjects } from '@/hooks/queries/use-projects';
 import { useAppConfig } from '@/hooks/queries/use-system';
 import { useAuth } from '@/context/useAuth';
@@ -31,10 +31,12 @@ export default function ProjectsPage() {
 
   const debouncedSearch = useDebounce(search, 300);
 
-  // Reset page when search changes
-  useEffect(() => {
+  // Reset page when search changes using the recommended "adjust state during render" pattern
+  const [prevSearch, setPrevSearch] = useState(debouncedSearch);
+  if (debouncedSearch !== prevSearch) {
+    setPrevSearch(debouncedSearch);
     setPage(1);
-  }, [debouncedSearch]);
+  }
 
   const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjects(
     debouncedSearch,

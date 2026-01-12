@@ -53,7 +53,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
         onSuccess: () => {
              toast.success("Success", { description: "User updated successfully." });
         },
-        onError: (error: any) => {
+        onError: (error) => {
              toast.error("Error", { description: (error as ApiError).response?.data?.detail || "Failed to update user." });
         }
     });
@@ -64,7 +64,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
           onSuccess: () => {
               toast.success("User Migrated", { description: "User authentication provider set to 'local'. You can now reset their password." });
           },
-          onError: (error: any) => {
+          onError: (error) => {
               toast.error("Migration Failed", { description: (error as ApiError).response?.data?.detail || "Failed to migrate user." });
           }
       });
@@ -72,7 +72,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
 
   const handleResetPassword = (userId: string) => {
       resetPasswordMutation.mutate(userId, {
-          onSuccess: (data: any) => {
+          onSuccess: (data: { email_sent?: boolean; reset_link?: string }) => {
             if (data.email_sent) {
                 toast.success("Password Reset Initiated", { description: "An email with the reset link has been sent to the user." });
             } else {
@@ -80,7 +80,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
             }
             setResetLink(data.reset_link || null);
           },
-          onError: (error: any) => {
+          onError: (error) => {
               toast.error("Reset Failed", { description: (error as ApiError).response?.data?.detail || "Failed to initiate password reset." });
           }
       });
@@ -91,7 +91,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
           onSuccess: () => {
               toast.success("2FA Disabled", { description: "Two-Factor Authentication has been disabled for this user." });
           },
-          onError: (error: any) => {
+          onError: (error) => {
               toast.error("Action Failed", { description: (error as ApiError).response?.data?.detail || "Failed to disable 2FA." });
           }
       });
@@ -335,6 +335,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
       </Dialog>
 
       <UserPermissionsDialog 
+        key={user?._id || user?.id}
         user={user} 
         open={isPermissionDialogOpen} 
         onOpenChange={setIsPermissionDialogOpen} 

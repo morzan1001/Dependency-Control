@@ -41,7 +41,4 @@ export function RiskBadge({ level, uppercase = true }: RiskBadgeProps) {
     )
 }
 
-/**
- * Utility function to get the badge variant for external use.
- */
-export { getRiskVariant }
+

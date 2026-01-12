@@ -49,6 +49,7 @@ export default function Dashboard() {
   // Virtual Scroll Setup
   const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
   
+  // eslint-disable-next-line
   const rowVirtualizer = useVirtualizer({
     count: projectList.length,
     getScrollElement: () => scrollContainer,

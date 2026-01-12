@@ -81,6 +81,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const allResults = data ? data.pages.flatMap((d) => d.items) : []
   const totalCount = data?.pages[0]?.total ?? 0
 
+  // eslint-disable-next-line
   const rowVirtualizer = useVirtualizer({
     count: hasNextPage ? allResults.length + 1 : allResults.length,
     getScrollElement: () => scrollContainer,

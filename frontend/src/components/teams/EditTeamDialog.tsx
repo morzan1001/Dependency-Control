@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useUpdateTeam } from '@/hooks/queries/use-teams';
 import { Team } from '@/types/team';
 import { Button } from '@/components/ui/button';
@@ -21,16 +21,9 @@ interface EditTeamDialogProps {
 }
 
 export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  const [name, setName] = useState(team?.name || '');
+  const [description, setDescription] = useState(team?.description || '');
   const updateTeamMutation = useUpdateTeam();
-
-  useEffect(() => {
-    if (team) {
-      setName(team.name);
-      setDescription(team.description || '');
-    }
-  }, [team]);
 
   const handleUpdateTeam = (e: React.FormEvent) => {
     e.preventDefault();

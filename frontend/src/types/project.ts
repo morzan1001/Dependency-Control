@@ -17,7 +17,7 @@ export interface EnhancedStats {
   info?: number;
   unknown?: number;
   risk_score?: number;
-  [key: string]: any; // for other properties
+  [key: string]: unknown; // for other properties
 }
 
 export interface Project {
