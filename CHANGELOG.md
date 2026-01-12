@@ -1,3 +1,19 @@
+# Release 1.3.7
+
+## 🚀 Features
+
+- feat: add loading spinner to FindingsTable for better UX (#0)
+
+## 🐛 Fixes
+
+- fix: handle None overall_score in process_quality function (#0)
+
+## 📦 Build & CI
+
+- chore: bump version to 1.3.7 (#0)
+
+
+
 # Release 1.3.6
 
 
