@@ -1,3 +1,11 @@
+# Release 1.3.5
+
+## 🚀 Features
+
+- feat: add package suggestion feature and improve broadcasts UI (#0)
+
+
+
 # Release 1.3.4
 
 ## 🚀 Features
