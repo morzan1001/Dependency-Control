@@ -1,3 +1,11 @@
+# Release 1.3.8
+
+## 📦 Build & CI
+
+- chore: bump version to 1.3.8 and update UserTable imports (#0)
+
+
+
 # Release 1.3.7
 
 ## 🚀 Features
