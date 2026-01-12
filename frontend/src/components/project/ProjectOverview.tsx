@@ -216,7 +216,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
             </div>
           </CardHeader>
           <CardContent className="pl-2">
-            <div className="h-[300px]">
+            <div className="h-[300px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trendData}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -250,7 +250,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
             <CardDescription>Based on unique findings</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px]">
+            <div className="h-[300px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
@@ -285,23 +285,25 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                     <CardTitle>Severity Distribution by Branch</CardTitle>
                     <CardDescription>Breakdown of findings per branch</CardDescription>
                 </CardHeader>
-                <CardContent className="h-[400px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={branchStats} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="name" />
-                            <YAxis />
-                            <Tooltip 
-                                contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
-                                itemStyle={{ color: 'hsl(var(--foreground))' }}
-                            />
-                            <Legend />
-                            <Bar dataKey="critical" stackId="a" fill="#ef4444" />
-                            <Bar dataKey="high" stackId="a" fill="#f97316" />
-                            <Bar dataKey="medium" stackId="a" fill="#eab308" />
-                            <Bar dataKey="low" stackId="a" fill="#3b82f6" />
-                        </BarChart>
-                    </ResponsiveContainer>
+                <CardContent>
+                    <div className="h-[400px] w-full min-w-0">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={branchStats} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="name" />
+                                <YAxis />
+                                <Tooltip 
+                                    contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
+                                    itemStyle={{ color: 'hsl(var(--foreground))' }}
+                                />
+                                <Legend />
+                                <Bar dataKey="critical" stackId="a" fill="#ef4444" />
+                                <Bar dataKey="high" stackId="a" fill="#f97316" />
+                                <Bar dataKey="medium" stackId="a" fill="#eab308" />
+                                <Bar dataKey="low" stackId="a" fill="#3b82f6" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
                 </CardContent>
             </Card>
         </div>

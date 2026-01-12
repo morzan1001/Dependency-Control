@@ -140,7 +140,7 @@ export default function Dashboard() {
             {isLoadingStats ? (
                 <Skeleton className="h-[300px] w-full rounded-xl" />
             ) : (
-                <div className="h-[300px] w-full">
+                <div className="h-[300px] w-full min-w-0">
                     <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
