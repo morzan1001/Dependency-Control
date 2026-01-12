@@ -25,6 +25,7 @@ from app.models.invitation import ProjectInvitation
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.system import SystemSettings
 from app.models.user import User
+from app.models.waiver import Waiver
 from app.schemas.project import (
     ProjectApiKeyResponse,
     ProjectCreate,
@@ -34,6 +35,7 @@ from app.schemas.project import (
     ProjectNotificationSettings,
     ProjectUpdate,
 )
+from app.schemas.waiver import WaiverResponse
 
 router = APIRouter()
 
@@ -1726,5 +1728,21 @@ async def delete_project(
 
     # 4. Delete project
     await db.projects.delete_one({"_id": project_id})
+
+
+@router.get("/{project_id}/waivers", response_model=List[WaiverResponse])
+async def get_project_waivers(
+    project_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    Get all waivers for a specific project.
+    """
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+    
+    waivers = await db.waivers.find({"project_id": project_id}).to_list(1000)
+    return [Waiver(**w) for w in waivers]
+
 
     return None
