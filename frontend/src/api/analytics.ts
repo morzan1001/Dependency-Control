@@ -9,6 +9,7 @@ import {
     VulnerabilityHotspot,
     HotspotsQueryParams,
     AdvancedSearchResponse,
+    AdvancedSearchOptions,
     VulnerabilitySearchResponse,
     VulnerabilitySearchOptions,
     ComponentFinding,
@@ -70,17 +71,7 @@ export const analyticsApi = {
       
     searchDependenciesAdvanced: async (
         query: string, 
-        options?: {
-          version?: string;
-          type?: string;
-          source_type?: string;
-          has_vulnerabilities?: boolean;
-          project_ids?: string[];
-          sort_by?: string;
-          sort_order?: 'asc' | 'desc';
-          skip?: number;
-          limit?: number;
-        }
+        options?: AdvancedSearchOptions
     ): Promise<AdvancedSearchResponse> => {
         const params = new URLSearchParams();
         params.append('q', query);

@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { useProjectBranches } from '@/hooks/queries/use-projects'
+import { useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
@@ -121,16 +121,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     }
   })
 
-  const updateNotificationSettingsMutation = useMutation({
-    mutationFn: (settings: Record<string, string[]>) => projectApi.updateNotificationSettings(projectId, { notification_preferences: settings }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project', projectId] })
-      toast.success("Notification settings updated")
-    },
-    onError: () => {
-      toast.error("Failed to update notification settings")
-    }
-  })
+  const updateNotificationSettingsMutation = useUpdateProjectNotifications()
 
   const rotateKeyMutation = useMutation({
     mutationFn: () => projectApi.rotateApiKey(projectId),
@@ -492,6 +483,9 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                             notification_preferences: notificationPrefs,
                             enforce_notification_settings: enforceNotificationSettings
                         }
+                    }, {
+                        onSuccess: () => toast.success("Notification settings updated"),
+                        onError: () => toast.error("Failed to update notification settings")
                     })}
                     disabled={updateNotificationSettingsMutation.isPending}
                 >

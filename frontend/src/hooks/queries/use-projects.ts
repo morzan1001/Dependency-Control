@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { projectApi } from '@/api/projects';
-import { ProjectCreate, ProjectUpdate } from '@/types/project';
+import { ProjectCreate, ProjectUpdate, ProjectNotificationSettings } from '@/types/project';
 
 // Centralized Query Keys
 export const projectKeys = {
@@ -88,7 +88,7 @@ export const useRotateProjectApiKey = () => {
 export const useUpdateProjectNotifications = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ id, settings }: { id: string, settings: unknown }) => projectApi.updateNotificationSettings(id, settings),
+        mutationFn: ({ id, settings }: { id: string, settings: ProjectNotificationSettings }) => projectApi.updateNotificationSettings(id, settings),
         onSuccess: (_, { id }) => {
             queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
         }

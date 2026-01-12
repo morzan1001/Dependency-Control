@@ -60,17 +60,19 @@ interface SastIssueEntry {
     severity: string
     title: string
     description: string
-    details: Record<string, unknown>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    details: Record<string, any>
 }
 
 interface SastDetails {
     sast_findings?: SastIssueEntry[];
-    start?: { line: number };
-    end?: { line: number };
+    start?: { line: number; column?: number };
+    end?: { line: number; column?: number };
     line?: number;
     rule_id?: string;
     check_id?: string;
-    [key: string]: unknown;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    [key: string]: any;
 }
 
 interface SastDetailsViewProps {

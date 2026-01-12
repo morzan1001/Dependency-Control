@@ -418,3 +418,15 @@ export interface RecommendationsResponse {
   recommendations: Recommendation[];
   summary: RecommendationsSummary;
 }
+
+export interface AdvancedSearchOptions {
+    version?: string;
+    type?: string;
+    source_type?: string;
+    has_vulnerabilities?: boolean;
+    project_ids?: string[];
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+    skip?: number;
+    limit?: number;
+}

@@ -1,6 +1,6 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { analyticsApi } from '@/api/analytics';
-import { HotspotsQueryParams, VulnerabilitySearchOptions } from '@/types/analytics';
+import { HotspotsQueryParams, VulnerabilitySearchOptions, AdvancedSearchOptions } from '@/types/analytics';
 
 export const analyticsKeys = {
     all: ['analytics'] as const,
@@ -76,7 +76,7 @@ export const useVulnerabilityHotspots = (params: HotspotsQueryParams) => {
     });
 }
 
-export const useAdvancedSearch = (query: string, options?: unknown) => {
+export const useAdvancedSearch = (query: string, options?: AdvancedSearchOptions) => {
     return useQuery({
         queryKey: analyticsKeys.advancedSearch(query, options),
         queryFn: () => analyticsApi.searchDependenciesAdvanced(query, options),

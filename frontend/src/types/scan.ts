@@ -29,6 +29,15 @@ export type FindingType =
   | "quality"
   | "other";
 
+export interface ScanAnalysisResult {
+  _id: string;
+  analyzer_name: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  result: any;
+  created_at?: string;
+  scan_id?: string;
+}
+
 export interface ReachabilityInfo {
   is_reachable?: boolean;
   analysis_level?: string;
