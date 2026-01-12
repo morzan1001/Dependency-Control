@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { scanApi } from '@/api/scans'
 import { Finding } from '@/types/scan'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { FindingDetailsModal } from '@/components/FindingDetailsModal'
 import { ArrowUp, ArrowDown, Shield, AlertTriangle, Loader2 } from 'lucide-react';
@@ -187,7 +186,9 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                     key={virtualRow.index}
                                     data-index={virtualRow.index}
                                     ref={rowVirtualizer.measureElement}
-                                    className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
+                                    className={`border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
+                                        finding?.type === 'system_warning' ? 'bg-destructive/5 hover:bg-destructive/10 border-l-2 border-l-destructive' : ''
+                                    }`}
                                 >
                                     {isLoaderRow ? (
                                         <TableCell colSpan={6} className="p-4 text-center">
@@ -287,7 +288,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                             </TableCell>
                                             <TableCell className="p-4 align-middle">
                                                 <div className="flex flex-wrap gap-1">
-                                                    <Badge variant="outline">{finding.type}</Badge>
+                                                    <FindingTypeBadge type={finding.type} />
                                                     {/* Show additional absorbed finding types */}
                                                     {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }, idx: number) => (
                                                         <FindingTypeBadge key={idx} type={addType.type} />

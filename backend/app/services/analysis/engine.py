@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+from pymongo import UpdateOne
 
 from app.models.project import Project
 from app.services.aggregator import ResultAggregator
@@ -117,6 +118,12 @@ async def process_analyzer(
         return f"{analyzer_name}: Success"
     except Exception as e:
         logger.error(f"Analysis {analyzer_name} failed: {e}")
+        # Report failure to aggregator so it appears in findings
+        aggregator.aggregate(
+            analyzer_name, 
+            {"error": str(e)}, 
+            source=f"System: {analyzer_name}"
+        )
         return f"{analyzer_name}: Failed"
 
 
@@ -218,6 +225,9 @@ async def run_analysis(
         del current_sbom
 
     # 1. Fetch and Aggregate External Results (TruffleHog, OpenGrep, etc.)
+    # We mark the time BEFORE loading external results to detect race conditions later
+    external_load_start = datetime.now(timezone.utc)
+    
     external_results_cursor = db.analysis_results.find({"scan_id": scan_id})
     async for res in external_results_cursor:
         name = res["analyzer_name"]
@@ -239,7 +249,8 @@ async def run_analysis(
         logger.info(
             f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata"
         )
-
+        
+        bulk_ops = []
         for key, enrichment_data in dependency_enrichments.items():
             # key format: "name@version"
             parts = key.rsplit("@", 1)
@@ -248,10 +259,19 @@ async def run_analysis(
             name, version = parts
 
             if enrichment_data:
-                await db.dependencies.update_many(
-                    {"scan_id": scan_id, "name": name, "version": version},
-                    {"$set": enrichment_data},
+                bulk_ops.append(
+                    UpdateOne(
+                        {"scan_id": scan_id, "name": name, "version": version},
+                        {"$set": enrichment_data},
+                    )
                 )
+        
+        if bulk_ops:
+            try:
+                await db.dependencies.bulk_write(bulk_ops, ordered=False)
+                logger.info(f"Bulk updated {len(bulk_ops)} dependencies.")
+            except Exception as e:
+                logger.error(f"Failed to bulk update dependencies: {e}")
 
     # Fetch waivers
     waivers = []
@@ -415,6 +435,29 @@ async def run_analysis(
         "completed_at": datetime.now(timezone.utc),
     }
 
+    # Race Condition Check: Did new results arrive while we were processing?
+    # Specifically, after we started loading external results.
+    current_scan_state = await db.scans.find_one({"_id": scan_id}, {"last_result_at": 1})
+    last_result_at = current_scan_state.get("last_result_at") if current_scan_state else None
+    
+    if last_result_at and last_result_at >= external_load_start:
+        logger.warning(
+            f"Race condition detected for scan {scan_id}. "
+            f"New results arrived at {last_result_at} (Analysis load start: {external_load_start}). "
+            f"Rescheduling scan."
+        )
+        # Reset to pending so it gets picked up again
+        await db.scans.update_one(
+            {"_id": scan_id},
+            {
+                "$set": {
+                    "status": "pending",
+                    # We do NOT unset received_results/last_result_at here, keep them for the next run
+                }
+            }
+        )
+        return False
+
     await db.scans.update_one(
         {"_id": scan_id},
         {
@@ -475,3 +518,5 @@ async def run_analysis(
             await send_scan_notifications(
                 scan_id, project, aggregated_findings, results_summary, db
             )
+
+    return True

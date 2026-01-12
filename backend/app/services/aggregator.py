@@ -240,14 +240,17 @@ class ResultAggregator:
 
         for f in current_findings:
             if f.type == FindingType.SAST:
-                # Group SAST findings by component (file) and line number
+                # Group SAST findings by component (file), line number, AND rule_id
+                # This prevents merging distinct issues (e.g. different secrets) that happen to be on the same line.
+                # We only want to merge the SAME issue detected by multiple scanners.
                 line = f.details.get("line")
                 start_line = f.details.get("start", {}).get("line")
                 effective_line = line or start_line or 0
+                rule_id = f.details.get("rule_id", "unknown")
 
                 # Normalize component path to avoid slight mismatches (e.g. ./file vs file)
                 # But component should be normalized by ingest already.
-                sast_key = (f.component, effective_line)
+                sast_key = (f.component, effective_line, rule_id)
 
                 if sast_key not in sast_groups:
                     sast_groups[sast_key] = []
@@ -736,7 +739,12 @@ class ResultAggregator:
 
         # Determine a merged description
         if len(findings) > 1:
-            description = f"Multiple SAST issues found at this location by {len(merged_scanners)} scanners."
+            # If rules are same (due to grouping), use the first one's description but indicate multi-scanner
+            # Since we now group by rule_id, the description should be consistent.
+            description = base.description
+            # Append scanner count if multiple scanners found it
+            if len(merged_scanners) > 1:
+                description += f" (Confirmed by {len(merged_scanners)} scanners)"
         else:
             description = base.description
 

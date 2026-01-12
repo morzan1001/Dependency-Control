@@ -120,12 +120,19 @@ class AnalysisWorkerManager:
                     sbom_refs = scan.get("sbom_refs", [])
 
                     # Run the actual analysis
-                    await run_analysis(
+                    success = await run_analysis(
                         scan_id=scan_id,
                         sboms=sbom_refs,
                         active_analyzers=project.get("active_analyzers", []),
                         db=db,
                     )
+                    
+                    if not success:
+                        logger.info(f"Scan {scan_id} requires re-processing (race condition). Re-queueing.")
+                        await self.queue.put(scan_id)
+                        self.queue.task_done()
+                        continue
+
                     # run_analysis updates the status to 'completed' upon success.
 
                 except Exception as e:

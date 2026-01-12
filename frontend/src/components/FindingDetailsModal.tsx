@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
 import { Finding, NestedVulnerability } from "@/types/scan"
-import { AlertTriangle, ExternalLink, Shield, ShieldAlert } from "lucide-react"
+import { AlertTriangle, ExternalLink, Shield, ShieldAlert, ServerCrash } from "lucide-react"
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
 import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
@@ -571,7 +571,33 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 <MaintainerRiskDetailsView details={finding.details} />
                             )}
 
-                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && finding.type !== 'outdated' && finding.type !== 'quality' && finding.type !== 'license' && !(finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info) && (
+                            {finding.type === 'system_warning' && (
+                                <div className="space-y-4">
+                                    <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+                                        <div className="flex items-start gap-3">
+                                            <ServerCrash className="h-5 w-5 text-destructive mt-0.5" />
+                                            <div>
+                                                <h4 className="font-medium text-destructive">Scanner Failure</h4>
+                                                <p className="text-sm text-destructive/90 mt-1">
+                                                    {finding.description}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {finding.details?.error_details && (
+                                        <DetailSection label="Error Details">
+                                            <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs font-mono border whitespace-pre-wrap">
+                                                {typeof finding.details.error_details === 'string' 
+                                                    ? finding.details.error_details 
+                                                    : JSON.stringify(finding.details.error_details, null, 2)}
+                                            </pre>
+                                        </DetailSection>
+                                    )}
+                                </div>
+                            )}
+
+                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && finding.type !== 'outdated' && finding.type !== 'quality' && finding.type !== 'license' && finding.type !== 'system_warning' && !(finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info) && (
                                 <DetailSection label="Additional Details">
                                     <AdditionalDetailsView details={finding.details} />
                                 </DetailSection>

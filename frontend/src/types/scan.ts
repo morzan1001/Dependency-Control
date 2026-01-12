@@ -240,6 +240,7 @@ export interface FindingDetails {
   maintenance_warning_text?: string;
   scorecard?: Record<string, unknown>;
   maintainer_risk?: Record<string, unknown>;
+  error_details?: string | Record<string, unknown>;
 }
 
 export interface Finding {
