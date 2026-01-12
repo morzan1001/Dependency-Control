@@ -54,7 +54,7 @@ class GHSAData(BaseModel):
     github_url: str = ""  # Direct link to GitHub Advisory
     aliases: List[str] = Field(default_factory=list)  # All related IDs (CVEs, etc.)
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def advisory_url(self) -> str:
         """Get the GitHub Advisory URL."""

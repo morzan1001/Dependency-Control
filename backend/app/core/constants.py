@@ -288,3 +288,13 @@ SYSTEM_PERMISSIONS = [
     PERMISSION_PROJECT_CREATE,
     PERMISSION_NOTIFICATIONS_BROADCAST,
 ]
+
+
+# ==============================================================================
+# EXTERNAL SERVICE URLS
+# ==============================================================================
+
+EPSS_API_URL = "https://api.first.org/data/v1/epss"
+KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+GHSA_API_URL = "https://api.github.com/advisories"
+

@@ -438,7 +438,7 @@ async def get_impact_analysis(
     enrichments = {}
     if all_cves:
         try:
-            from app.services.vulnerability_enrichment import get_cve_enrichment
+            from app.services.enrichment import get_cve_enrichment
 
             enrichments = await get_cve_enrichment(all_cves)
         except Exception as e:
@@ -745,7 +745,7 @@ async def get_vulnerability_hotspots(
     enrichments = {}
     if all_cves:
         try:
-            from app.services.vulnerability_enrichment import get_cve_enrichment
+            from app.services.enrichment import get_cve_enrichment
 
             enrichments = await get_cve_enrichment(list(set(all_cves)))
         except Exception as e:
