@@ -39,7 +39,10 @@ def require_analytics_permission(user: User, permission: str):
     if not check_analytics_permission(user, permission):
         raise HTTPException(
             status_code=403,
-            detail=f"Analytics permission required: {permission}. Grant 'analytics:read' for full analytics access or '{permission}' for this specific feature.",
+            detail=(
+                f"Analytics permission required: {permission}. Grant 'analytics:read' "
+                f"for full analytics access or '{permission}' for this specific feature."
+            ),
         )
 
 

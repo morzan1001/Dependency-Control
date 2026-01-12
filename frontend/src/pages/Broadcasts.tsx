@@ -2,6 +2,8 @@ import { useState, useEffect } from "react"
 import { useBroadcast, useBroadcastHistory } from "@/hooks/queries/use-broadcast"
 import { AdvisoryPackage, NotificationChannel } from "@/types/broadcast"
 import { useTeams } from "@/hooks/queries/use-teams"
+import { useNotificationChannels } from "@/hooks/queries/use-system"
+import { PackageAutocomplete } from "@/components/ui/package-autocomplete"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
@@ -26,6 +28,7 @@ export default function Broadcasts() {
   const { mutateAsync: sendBroadcast, isPending } = useBroadcast()
   const { data: teams } = useTeams() // For team selection
   const { data: history, refetch: refetchHistory } = useBroadcastHistory()
+  const { data: availableChannels } = useNotificationChannels()
 
   // Form State
   const [activeTab, setActiveTab] = useState<string>("announcement")
@@ -185,7 +188,7 @@ export default function Broadcasts() {
               <CardDescription>Force the message to be sent via selected channels (overrides user preferences)</CardDescription>
             </CardHeader>
           <CardContent className="flex gap-6">
-             {["email", "slack", "mattermost", "teams"].map((c) => (
+             {(availableChannels || ["email"]).map((c) => (
                 <div key={c} className="flex items-center space-x-2">
                   <Checkbox 
                     id={`channel-${c}`} 
@@ -234,10 +237,6 @@ export default function Broadcasts() {
               {announcementTarget === "teams" && (
                 <div className="space-y-2">
                   <Label>Select Teams</Label>
-                  <Select
-                     disabled={!!teams && selectedTeams.length > 0} 
-                  >
-                  </Select>
                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 border p-4 rounded-md h-40 overflow-y-auto">
                       {teams?.map((team) => (
                          <div key={team.id || team._id} className="flex items-center space-x-2">
@@ -329,10 +328,10 @@ export default function Broadcasts() {
                     <div key={index} className="flex gap-3 items-end p-3 border rounded-md bg-muted/20">
                         <div className="flex-1 space-y-2">
                             <Label className="text-xs">Package Name</Label>
-                            <Input 
-                                placeholder="e.g. log4j-core" 
+                            <PackageAutocomplete 
                                 value={pkg.name}
-                                onChange={(e) => updatePackage(index, 'name', e.target.value)}
+                                onValueChange={(val) => updatePackage(index, 'name', val)}
+                                placeholder="e.g. log4j-core"
                             />
                         </div>
                         <div className="w-32 space-y-2">

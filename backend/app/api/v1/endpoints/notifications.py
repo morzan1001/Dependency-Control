@@ -1,8 +1,8 @@
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 import logging
 import markdown
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from packaging.version import parse as parse_version
 
@@ -53,6 +53,29 @@ async def get_broadcast_history(
         )
         for h in history
     ]
+
+
+@router.get("/packages/suggest", response_model=List[str])
+async def suggest_packages(
+    q: str = Query(..., min_length=2, description="Search query for package name"),
+    current_user: User = Depends(
+        deps.PermissionChecker(["notifications:broadcast", "system:manage"])
+    ),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    Suggest package names for advisories based on existing dependencies.
+    """
+    pipeline: List[Dict[str, Any]] = [
+        {"$match": {"name": {"$regex": q, "$options": "i"}}},
+        {"$group": {"_id": "$name"}},
+        {"$sort": {"_id": 1}},
+        {"$limit": 20},
+        {"$project": {"_id": 0, "name": "$_id"}},
+    ]
+
+    results = await db.dependencies.aggregate(pipeline).to_list(20)
+    return [r["name"] for r in results]
 
 
 @router.post("/broadcast", response_model=BroadcastResult)

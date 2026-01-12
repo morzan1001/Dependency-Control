@@ -49,6 +49,12 @@ export const PERMISSION_GROUPS = [
     ]
   },
   {
+    title: "Notifications & Broadcasts",
+    permissions: [
+      { id: "notifications:broadcast", label: "Manage Broadcasts", description: "Send system-wide broadcast notifications" },
+    ]
+  },
+  {
     title: "Security & Compliance",
     permissions: [
       { id: "waiver:read_all", label: "Read All Waivers", description: "View all waivers in the system" },

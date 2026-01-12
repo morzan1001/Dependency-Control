@@ -55,7 +55,7 @@ export interface ScanFindingsResponse {
 
 export const scanApi = {
     getRecent: async () => {
-        const response = await api.get<Scan[]>('/projects/scans/', { params: { limit: 5, sort_by: 'created_at', sort_order: 'desc' } });
+        const response = await api.get<Scan[]>('/projects/scans', { params: { limit: 5, sort_by: 'created_at', sort_order: 'desc' } });
         return response.data;
     },
 

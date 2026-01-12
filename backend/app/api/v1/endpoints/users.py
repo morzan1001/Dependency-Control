@@ -183,7 +183,10 @@ async def update_user(
         if has_admin_perm:
             raise HTTPException(
                 status_code=400,
-                detail="Admins cannot set passwords directly. Please use the 'Reset Password' feature to send a reset link.",
+                detail=(
+                    "Admins cannot set passwords directly. Please use the "
+                    "'Reset Password' feature to send a reset link."
+                ),
             )
 
         del update_data["password"]
@@ -319,7 +322,11 @@ async def update_password_me(
         notification_service.email_provider.send,
         destination=current_user.email,
         subject="Security Alert: Password Changed",
-        message=f"Hello {current_user.username},\n\nYour password for Dependency Control was successfully changed.\n\nIf you did not initiate this change, please contact your administrator immediately.",
+        message=(
+            f"Hello {current_user.username},\n\nYour password for Dependency Control "
+            "was successfully changed.\n\nIf you did not initiate this change, "
+            "please contact your administrator immediately."
+        ),
         html_message=templates.get_password_changed_template(
             username=current_user.username,
             login_link=f"{settings.FRONTEND_BASE_URL}/login",
@@ -434,7 +441,11 @@ async def enable_2fa(
         notification_service.email_provider.send,
         destination=current_user.email,
         subject="Security Alert: 2FA Enabled",
-        message=f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) has been enabled for your account.\n\nIf you did not initiate this change, please contact your administrator immediately.",
+        message=(
+            f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) "
+            "has been enabled for your account.\n\nIf you did not initiate this change, "
+            "please contact your administrator immediately."
+        ),
         html_message=templates.get_2fa_enabled_template(
             username=current_user.username, project_name=settings.PROJECT_NAME
         ),
@@ -470,7 +481,11 @@ async def disable_2fa(
         notification_service.email_provider.send,
         destination=current_user.email,
         subject="Security Alert: 2FA Disabled",
-        message=f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) has been disabled for your account.\n\nIf you did not initiate this change, please contact your administrator immediately.",
+        message=(
+            f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) "
+            "has been disabled for your account.\n\nIf you did not initiate this change, "
+            "please contact your administrator immediately."
+        ),
         html_message=templates.get_2fa_disabled_template(
             username=current_user.username, project_name=settings.PROJECT_NAME
         ),
@@ -510,7 +525,11 @@ async def admin_disable_2fa(
                 notification_service.email_provider.send,
                 destination=user["email"],
                 subject="Security Alert: 2FA Disabled by Admin",
-                message=f"Hello {user['username']},\n\nTwo-Factor Authentication (2FA) has been disabled for your account by an administrator.\n\nIf you did not request this, please contact your administrator immediately.",
+                message=(
+                    f"Hello {user['username']},\n\nTwo-Factor Authentication (2FA) "
+                    "has been disabled for your account by an administrator.\n\n"
+                    "If you did not request this, please contact your administrator immediately."
+                ),
                 html_message=templates.get_2fa_disabled_template(
                     username=user["username"], project_name=settings.PROJECT_NAME
                 ),

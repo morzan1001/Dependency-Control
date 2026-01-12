@@ -441,6 +441,9 @@ async def login_oidc_callback(
     if not system_config.oidc_enabled:
         raise HTTPException(status_code=400, detail="OIDC is not enabled")
 
+    if not system_config.oidc_token_endpoint or not system_config.oidc_userinfo_endpoint:
+        raise HTTPException(status_code=500, detail="OIDC endpoints not configured")
+
     redirect_uri = str(request.url_for("login_oidc_callback"))
 
     token_data = {
@@ -463,7 +466,10 @@ async def login_oidc_callback(
             )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. Please check your system configuration.",
+                detail=(
+                    f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. "
+                    "Please check your system configuration."
+                ),
             )
 
         if response.status_code != 200:
@@ -487,7 +493,9 @@ async def login_oidc_callback(
             )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}.",
+                detail=(
+                    f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}."
+                ),
             )
 
         if user_info_response.status_code != 200:
@@ -495,6 +503,8 @@ async def login_oidc_callback(
             raise HTTPException(status_code=400, detail="Failed to retrieve user info")
 
         user_info = user_info_response.json()
+        if not isinstance(user_info, dict):
+            raise HTTPException(status_code=500, detail="Invalid user info response")
 
     email = user_info.get("email")
     if not email:
@@ -517,6 +527,8 @@ async def login_oidc_callback(
 
         await db.users.insert_one(new_user.model_dump(by_alias=True))
         user = await db.users.find_one({"_id": new_user.id})
+        if not user:
+            raise HTTPException(status_code=500, detail="Failed to create user")
 
     # Check 2FA enforcement (same logic as login)
     permissions = user.get("permissions", [])

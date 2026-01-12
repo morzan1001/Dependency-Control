@@ -1,7 +1,6 @@
 from collections import defaultdict
 from typing import List, Dict, Any
 
-from app.core.constants import EPSS_HIGH_THRESHOLD
 from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,

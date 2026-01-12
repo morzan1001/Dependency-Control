@@ -35,10 +35,6 @@ class LicenseCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
-# Import Severity from central models to avoid duplication
-from app.models.finding import Severity
-
-
 @dataclass
 class LicenseInfo:
     """Detailed information about a license."""

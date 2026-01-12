@@ -33,3 +33,11 @@ export const useBroadcastHistory = () => {
     queryFn: () => broadcastApi.getHistory()
   });
 };
+export const usePackageSuggestions = (q: string) => {
+  return useQuery({
+    queryKey: ['packageSuggestions', q],
+    queryFn: () => broadcastApi.suggestPackages(q),
+    enabled: q.length >= 2,
+    staleTime: 60 * 1000,
+  });
+};

@@ -8,15 +8,6 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.core.config import settings
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-
-logger = logging.getLogger(__name__)
-
 from app.api import health
 from app.api.v1.endpoints import (
     analytics,
@@ -36,6 +27,14 @@ from app.api.v1.endpoints import (
 )
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

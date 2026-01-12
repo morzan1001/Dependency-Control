@@ -9,5 +9,9 @@ export const broadcastApi = {
   getHistory: async (): Promise<BroadcastHistoryItem[]> => {
     const response = await api.get<BroadcastHistoryItem[]>('/notifications/history');
     return response.data;
+  },
+  suggestPackages: async (q: string): Promise<string[]> => {
+    const response = await api.get<string[]>('/notifications/packages/suggest', { params: { q } });
+    return response.data;
   }
 };
