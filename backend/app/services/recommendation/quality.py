@@ -24,7 +24,10 @@ def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
         version = f.get("version", "")
         details = f.get("details", {})
 
-        overall_score = details.get("overall_score", 0)
+        overall_score = details.get("overall_score")
+        if overall_score is None:
+            overall_score = 0.0
+
         critical_issues = details.get("critical_issues", [])
         failed_checks = details.get("failed_checks", [])
         project_url = details.get("project_url", "")
