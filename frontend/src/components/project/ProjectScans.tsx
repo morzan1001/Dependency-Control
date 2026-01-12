@@ -62,16 +62,6 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-12 w-full" />
-      </div>
-    )
-  }
-
   const scanList = scans || []
   const hasMore = scanList.length === limit
 
@@ -142,7 +132,17 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {scanList.map((scan) => (
+              {isLoading && Array.from({ length: 5 }).map((_, i) => (
+                  <TableRow key={i}>
+                      <TableCell><Skeleton className="h-6 w-32" /></TableCell>
+                      <TableCell><Skeleton className="h-6 w-16" /></TableCell>
+                      <TableCell><Skeleton className="h-6 w-24" /></TableCell>
+                      <TableCell><Skeleton className="h-6 w-24" /></TableCell>
+                      <TableCell><Skeleton className="h-6 w-24" /></TableCell>
+                      <TableCell><Skeleton className="h-6 w-20" /></TableCell>
+                  </TableRow>
+              ))}
+              {!isLoading && scanList.map((scan) => (
                 <TableRow 
                   key={scan._id} 
                   className="cursor-pointer hover:bg-muted/50"
@@ -301,9 +301,9 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                   </TableCell>
                 </TableRow>
               ))}
-              {scanList.length === 0 && (
+              {!isLoading && scanList.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     No scans found.
                   </TableCell>
                 </TableRow>

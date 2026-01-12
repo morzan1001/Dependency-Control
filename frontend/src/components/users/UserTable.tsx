@@ -2,7 +2,7 @@ import { ApiError } from '@/api/client';
 import { User } from '@/types/user';
 import { useDeleteUser, useInviteUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
-import { Check, X, Trash2, ChevronLeft, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react';
+import { Check, X, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -11,6 +11,14 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { toast } from "sonner"
 import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
@@ -78,40 +86,40 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
   return (
     <>
       <div className="relative w-full overflow-auto">
-        <table className="w-full caption-bottom text-sm">
-          <thead className="[&_tr]:border-b">
-            <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => handleSort('username')}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('username')}>
                 <div className="flex items-center">
                   Username
                   {renderSortIcon('username')}
                 </div>
-              </th>
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => handleSort('email')}>
+              </TableHead>
+              <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('email')}>
                 <div className="flex items-center">
                   Email
                   {renderSortIcon('email')}
                 </div>
-              </th>
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
+              </TableHead>
+              <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
                 <div className="flex items-center">
                   Status
                   {renderSortIcon('status')}
                 </div>
-              </th>
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">2FA</th>
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Permissions</th>
-              <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="[&_tr:last-child]:border-0">
+              </TableHead>
+              <TableHead>2FA</TableHead>
+              <TableHead>Permissions</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {users?.map((user: User) => (
-              <tr 
+              <TableRow 
                 key={user._id || user.id} 
-                className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
+                className="cursor-pointer"
                 onClick={() => onSelectUser(user)}
               >
-                <td className="p-4 align-middle font-medium">
+                <TableCell className="font-medium">
                   <div className="flex items-center gap-2">
                     {user.username}
                     {user.auth_provider && user.auth_provider !== 'local' && (
@@ -120,9 +128,9 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                       </span>
                     )}
                   </div>
-                </td>
-                <td className="p-4 align-middle">{user.email}</td>
-                <td className="p-4 align-middle">
+                </TableCell>
+                <TableCell>{user.email}</TableCell>
+                <TableCell>
                   {user.status === 'invited' ? (
                     <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800">
                       Invited
@@ -136,15 +144,15 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                       Inactive
                     </span>
                   )}
-                </td>
-                <td className="p-4 align-middle">
+                </TableCell>
+                <TableCell>
                     {user.totp_enabled ? (
                         <Check className="h-4 w-4 text-green-500" />
                     ) : (
                         <X className="h-4 w-4 text-red-500" />
                     )}
-                </td>
-                <td className="p-4 align-middle">
+                </TableCell>
+                <TableCell>
                   <div className="flex gap-1 flex-wrap">
                     {user.permissions.map((perm) => (
                       <span key={perm} className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
@@ -152,8 +160,8 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                       </span>
                     ))}
                   </div>
-                </td>
-                <td className="p-4 align-middle" onClick={(e) => e.stopPropagation()}>
+                </TableCell>
+                <TableCell onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2">
                     {user.status === 'invited' && hasPermission('user:manage') && (
                        <Button 
@@ -182,11 +190,11 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                       </Button>
                     )}
                   </div>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       {!(page === 0 && (!users || users.length < limit)) && (
         <div className="flex items-center justify-end space-x-2 py-4">
