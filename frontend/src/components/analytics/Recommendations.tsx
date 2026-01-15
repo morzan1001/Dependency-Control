@@ -124,7 +124,6 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
     color: 'text-yellow-500',
     bgColor: 'bg-yellow-500/10',
   },
-  // Dependency Health & Hygiene
   outdated_dependency: {
     icon: Clock,
     label: 'Outdated Dependency',
@@ -149,7 +148,6 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
     color: 'text-gray-600',
     bgColor: 'bg-gray-600/10',
   },
-  // Trend-based
   recurring_vulnerability: {
     icon: RefreshCw,
     label: 'Recurring Issue',
@@ -188,9 +186,6 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
     color: 'text-red-500',
     bgColor: 'bg-red-500/10',
   },
-  // ================================================================
-  // NEW: Hotspot & Actionable Recommendations
-  // ================================================================
   critical_hotspot: {
     icon: Zap,
     label: 'Critical Hotspot',

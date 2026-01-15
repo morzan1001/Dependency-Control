@@ -77,6 +77,27 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
     const lastItemIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]?.index : -1
 
     useEffect(() => {
+        if (!scrollContainer) return
+        rowVirtualizer.measure()
+    }, [scrollContainer, allRows.length, rowVirtualizer])
+
+    useEffect(() => {
+        if (!parentRef.current || typeof ResizeObserver === 'undefined') return
+
+        const observer = new ResizeObserver(() => {
+            rowVirtualizer.measure()
+        })
+
+        observer.observe(parentRef.current)
+
+        if (scrollContainer) {
+            observer.observe(scrollContainer)
+        }
+
+        return () => observer.disconnect()
+    }, [parentRef, scrollContainer, rowVirtualizer])
+
+    useEffect(() => {
         if (lastItemIndex === -1) {
             return
         }

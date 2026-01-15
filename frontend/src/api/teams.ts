@@ -8,7 +8,6 @@ export const teamApi = {
     params.append('sort_by', sortBy);
     params.append('sort_order', sortOrder);
     const response = await api.get<Team[]>('/teams/', { params });
-    // Map _id to id if needed, or stick to backend structure
     return response.data; 
   },
 

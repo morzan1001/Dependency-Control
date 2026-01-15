@@ -1,7 +1,6 @@
 import { api } from '@/api/client';
 import { Scan, Finding, ScanAnalysisResult } from '@/types/scan';
 
-// Sbom Types (Moved from lib/api.ts)
 export interface SbomToolComponent {
   name: string;
 }

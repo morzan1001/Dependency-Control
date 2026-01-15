@@ -2,7 +2,6 @@ import { api } from '@/api/client';
 import { User, UserCreate, UserUpdate, UserUpdateMe, SystemInvitation } from '@/types/user';
 
 export const userApi = {
-  // --- Standard User Operations ---
   getAll: async (skip = 0, limit = 20, search?: string, sortBy = 'username', sortOrder = 'asc') => {
     const params = new URLSearchParams();
     params.append('skip', skip.toString());
@@ -48,8 +47,6 @@ export const userApi = {
     return response.data;
   },
 
-
-  // --- Admin User Operations ---
   adminMigrateToLocal: async (userId: string) => {
     const response = await api.post<User>(`/users/${userId}/migrate`);
     return response.data;
@@ -65,7 +62,6 @@ export const userApi = {
     return response.data;
   },
 
-  // --- Invitation Operations ---
   getPendingInvitations: async () => {
     const response = await api.get<SystemInvitation[]>('/invitations/system');
     return response.data;

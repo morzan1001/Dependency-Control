@@ -17,10 +17,6 @@ export const systemApi = {
     return response.data;
   },
 
-  /**
-   * Get lightweight, non-sensitive app configuration for authenticated users.
-   * Use this instead of getSettings for components that only need config data.
-   */
   getAppConfig: async () => {
     const response = await api.get<AppConfig>('/system/app-config');
     return response.data;

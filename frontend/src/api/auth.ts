@@ -20,11 +20,6 @@ export const authApi = {
     return response.data;
   },
 
-  refreshToken: async (token: string) => {
-    const response = await api.post<Token>('/login/refresh-token', { refresh_token: token });
-    return response.data;
-  },
-
   signup: async (data: UserCreate) => {
     // Note: UserCreate matches { username, email, password } structure generally
     // But endpoint expects { username, email, password } specifically.
