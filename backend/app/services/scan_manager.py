@@ -68,18 +68,6 @@ class ScanManager:
                 {"project_id": str(self.project.id), "pipeline_id": data.pipeline_id}
             )
 
-        # Fallback: If ingest provides NO pipeline_id, try to match by commit_hash
-        # This allows scanners running outside of CI (or without pipeline context) 
-        # to attach results to the CI scan of the same commit.
-        if not existing_scan and not data.pipeline_id and data.commit_hash:
-             existing_scan = await self.db.scans.find_one(
-                {
-                    "project_id": str(self.project.id), 
-                    "commit_hash": data.commit_hash,
-                },
-                sort=[("created_at", -1)]
-             )
-
         if existing_scan:
             scan_id = existing_scan["_id"]
             # Update metadata
