@@ -1,3 +1,24 @@
+# Release 1.4.1
+
+## 🚀 Features
+
+- feat: add endpoint to retrieve waivers for a specific project (#0)
+- feat: add migration endpoint for SSO users to local accounts (#0)
+- feat: enhance scan result handling and aggregation logic (#0)
+- feat: implement fast loop for stale scan aggregation and enhance SAST details display (#0)
+- feat: improve scan analysis handling and enhance finding details display (#0)
+
+## 🐛 Fixes
+
+- fix: ensure charts have minimum width for better responsiveness (#0)
+
+## 📦 Build & CI
+
+- chore: release v1.4.0 [skip ci] (#0)
+- chore: update version to 1.4.1 and enhance dashboard URL handling in notifications (#0)
+
+
+
 # Release 1.3.9
 
 

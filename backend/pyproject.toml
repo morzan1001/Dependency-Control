@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "dependency-checks"
-version = "1.3.9"
+version = "1.4.1"
 description = "Backend for Dependency Control System"
 authors = ["Matthias Duve <morzan1001@gmail.com>"]
 license = "MIT"
