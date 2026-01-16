@@ -95,9 +95,11 @@ async def broadcast_message(
 
     # 0. Check settings for dashboard url
     settings_data = await db.system_settings.find_one({"_id": "current"})
-    dashboard_url = "http://localhost:5173"
-    if settings_data and settings_data.get("dashboard_url"):
-        dashboard_url = settings_data.get("dashboard_url")
+    dashboard_url = settings_data.get("dashboard_url") if settings_data else None
+    if not dashboard_url:
+        logger.warning(
+            "Dashboard URL not configured; notifications will omit dashboard links"
+        )
 
     # Determine forced channels
     forced_channels = payload.channels if payload.channels else None
@@ -284,11 +286,15 @@ async def broadcast_message(
 
                 for p in projects_data:
                     findings_str = ", ".join(p["findings"])
-                    p_link = f"{dashboard_url}/projects/{p['id']}"
-
-                    projects_html_parts.append(
-                        f"<li><strong><a href='{p_link}'>{p['name']}</a></strong>: {findings_str}</li>"
-                    )
+                    if dashboard_url:
+                        p_link = f"{dashboard_url}/projects/{p['id']}"
+                        projects_html_parts.append(
+                            f"<li><strong><a href='{p_link}'>{p['name']}</a></strong>: {findings_str}</li>"
+                        )
+                    else:
+                        projects_html_parts.append(
+                            f"<li><strong>{p['name']}</strong>: {findings_str}</li>"
+                        )
                     projects_text_parts.append(f"- {p['name']}: {findings_str}")
 
                 # Build Context Message
@@ -313,6 +319,14 @@ async def broadcast_message(
                     "padding: 15px; margin-bottom: 20px; border-radius: 4px;"
                 )
 
+                dashboard_button = (
+                    f"<p style=\"margin-top: 20px;\">"
+                    f"<a href=\"{dashboard_url}\" style=\"{btn_style}\">View Dashboard</a>"
+                    f"</p>"
+                    if dashboard_url
+                    else ""
+                )
+
                 final_html = f"""
                 <div style="font-family: Arial, sans-serif; color: #333;">
                     <h2>Security Advisory</h2>
@@ -322,9 +336,7 @@ async def broadcast_message(
                     <h3>Your Affected Projects ({len(projects_data)})</h3>
                     <p>The following projects you own are using the affected package versions:</p>
                     {findings_list_html}
-                    <p style="margin-top: 20px;">
-                        <a href="{dashboard_url}" style="{btn_style}">View Dashboard</a>
-                    </p>
+                    {dashboard_button}
                 </div>
                 """
 

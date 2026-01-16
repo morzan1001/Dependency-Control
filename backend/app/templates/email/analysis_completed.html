@@ -16,7 +16,9 @@
     <li>Policy Violations: {{ stats.policy_violations }}</li>
 </ul>
 
+{% if link %}
 <div style="text-align: center;">
     <a href="{{ link }}" class="button">View Analysis</a>
 </div>
+{% endif %}
 {% endblock %}

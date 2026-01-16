@@ -18,7 +18,9 @@
     {% endfor %}
 </ul>
 
+{% if link %}
 <div style="margin-top: 30px;">
     <a href="{{ link }}" class="button" style="display: inline-block; background-color: #dc3545; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">View Project</a>
 </div>
+{% endif %}
 {% endblock %}
