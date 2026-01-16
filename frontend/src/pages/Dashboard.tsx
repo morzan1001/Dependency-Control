@@ -159,8 +159,16 @@ export default function Dashboard() {
                         tickFormatter={(value) => `${value}`}
                         />
                         <Tooltip 
-                            cursor={{fill: 'transparent'}}
-                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                            cursor={{ fill: 'transparent' }}
+                            contentStyle={{
+                              borderRadius: '8px',
+                              border: '1px solid hsl(var(--border))',
+                              backgroundColor: 'hsl(var(--popover))',
+                              color: 'hsl(var(--popover-foreground))',
+                              boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                            }}
+                            labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
+                            itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
                         />
                         <Bar dataKey="risk" fill="currentColor" radius={[4, 4, 0, 0]} className="fill-primary" barSize={40} />
                     </BarChart>
