@@ -1,30 +1,21 @@
-import { PaginatedResponse } from './common';
+import { PaginatedResponse, ObjectId } from './common';
+import { EnhancedStats } from './scan';
+
+export type { EnhancedStats };
 
 export interface ProjectMember {
-  user_id: string;
+  user_id: ObjectId;
   username?: string;
   role: string;
   notification_preferences?: Record<string, string[]>;
   inherited_from?: string;
 }
 
-// Stats interfaces (simplified for now, ideally imported from stats.ts or similar)
-export interface EnhancedStats {
-  critical?: number;
-  high?: number;
-  medium?: number;
-  low?: number;
-  info?: number;
-  unknown?: number;
-  risk_score?: number;
-  [key: string]: unknown; // for other properties
-}
-
 export interface Project {
-  _id: string;
+  _id: ObjectId;
   name: string;
-  owner_id: string;
-  team_id?: string;
+  owner_id: ObjectId;
+  team_id?: ObjectId;
   members?: ProjectMember[];
   active_analyzers?: string[];
   retention_days?: number;
@@ -64,7 +55,7 @@ export interface ProjectUpdate {
 }
 
 export interface ProjectApiKeyResponse {
-  project_id: string;
+  project_id: ObjectId;
   api_key: string;
   note: string;
 }

@@ -143,8 +143,12 @@ export const analyticsApi = {
     },
     
     getProjectRecommendations: async (projectId: string, scanId?: string) => {
-        const params = scanId ? `?scan_id=${scanId}` : '';
-        const response = await api.get<RecommendationsResponse>(`/analytics/projects/${projectId}/recommendations${params}`);
+        const params = new URLSearchParams();
+        if (scanId) params.append('scan_id', scanId);
+        const response = await api.get<RecommendationsResponse>(
+            `/analytics/projects/${projectId}/recommendations`,
+            { params }
+        );
         return response.data;
     }
 }

@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
+import { formatDate } from '@/lib/utils'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -77,7 +78,7 @@ export default function Dashboard() {
       value: dashboardStats?.total_high.toString() || "0",
       icon: Activity,
       description: "Across all projects",
-      className: "text-orange-500"
+      className: "text-severity-high"
     },
     {
       title: "Avg Risk Score",
@@ -206,7 +207,7 @@ export default function Dashboard() {
                                         </p>
                                     </div>
                                     <div className="ml-auto font-medium text-sm text-muted-foreground">
-                                        {new Date(scan.created_at).toLocaleDateString()}
+                                        {formatDate(scan.created_at)}
                                     </div>
                                 </div>
                             ))}
@@ -280,14 +281,14 @@ export default function Dashboard() {
                                         >
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_id || '-'}</td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? new Date(project.last_scan_at).toLocaleDateString() : 'Never'}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? formatDate(project.last_scan_at) : 'Never'}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-orange-500 font-bold">{project.stats?.high || 0}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-high font-bold">{project.stats?.high || 0}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
                                                 <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
                                                     (project.stats?.critical || 0) > 0 ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80' :
-                                                    (project.stats?.high || 0) > 0 ? 'bg-orange-500 text-white hover:bg-orange-500/80' :
-                                                    'bg-green-500 text-white hover:bg-green-500/80'
+                                                    (project.stats?.high || 0) > 0 ? 'bg-severity-high text-severity-high-foreground hover:bg-severity-high/80' :
+                                                    'bg-success text-success-foreground hover:bg-success/80'
                                                 }`}>
                                                     {(project.stats?.critical || 0) > 0 ? 'Critical' : (project.stats?.high || 0) > 0 ? 'High Risk' : 'Secure'}
                                                 </span>

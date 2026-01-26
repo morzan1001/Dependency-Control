@@ -1,6 +1,6 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -52,18 +52,23 @@ async def create_waiver(
     return waiver
 
 
-@router.get("/", response_model=List[WaiverResponse])
+@router.get("/", response_model=Dict[str, Any])
 async def list_waivers(
     project_id: Optional[str] = None,
     finding_id: Optional[str] = None,
     package_name: Optional[str] = None,
+    search: Optional[str] = Query(None, description="Search in package name, reason, or finding ID"),
+    sort_by: str = Query("created_at", description="Field to sort by"),
+    sort_order: str = Query("desc", description="Sort order: asc or desc"),
+    skip: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(50, ge=1, le=500, description="Number of items to return"),
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    List waivers.
+    List waivers with pagination.
     """
-    query = {}
+    query: Dict[str, Any] = {}
 
     # Permission check logic
     has_read_all = (
@@ -111,8 +116,37 @@ async def list_waivers(
     if package_name:
         query["package_name"] = package_name
 
-    waivers = await db.waivers.find(query).to_list(1000)
-    return [Waiver(**w) for w in waivers]
+    if search:
+        search_query = {"$regex": search, "$options": "i"}
+        # Need to combine with existing $or if present
+        search_or = [
+            {"package_name": search_query},
+            {"reason": search_query},
+            {"finding_id": search_query},
+        ]
+        if "$or" in query:
+            # Wrap existing query with $and to combine with search
+            query = {"$and": [query, {"$or": search_or}]}
+        else:
+            query["$or"] = search_or
+
+    # Get total count
+    total = await db.waivers.count_documents(query)
+
+    # Sort direction
+    sort_direction = 1 if sort_order == "asc" else -1
+
+    # Fetch paginated results
+    cursor = db.waivers.find(query).sort(sort_by, sort_direction).skip(skip).limit(limit)
+    waivers = await cursor.to_list(limit)
+
+    return {
+        "items": [Waiver(**w).model_dump() for w in waivers],
+        "total": total,
+        "page": (skip // limit) + 1,
+        "size": limit,
+        "pages": (total + limit - 1) // limit if limit > 0 else 0,
+    }
 
 
 @router.delete("/{waiver_id}", status_code=204)

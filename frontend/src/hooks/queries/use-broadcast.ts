@@ -2,6 +2,13 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { broadcastApi } from '@/api/broadcast';
 import { BroadcastRequest } from '@/types/broadcast';
 import { toast } from 'sonner';
+import { getErrorMessage } from '@/lib/utils';
+
+export const broadcastKeys = {
+  all: ['broadcast'] as const,
+  history: () => [...broadcastKeys.all, 'history'] as const,
+  suggestions: (query: string) => [...broadcastKeys.all, 'suggestions', query] as const,
+};
 
 export const useBroadcast = () => {
   return useMutation({
@@ -19,9 +26,8 @@ export const useBroadcast = () => {
       }
     },
     onError: (error) => {
-       const err = error as { response?: { data?: { detail?: string } } };
        toast.error("Failed to send broadcast", {
-        description: err.response?.data?.detail || "An unexpected error occurred."
+        description: getErrorMessage(error)
        })
     }
   });
@@ -29,13 +35,14 @@ export const useBroadcast = () => {
 
 export const useBroadcastHistory = () => {
   return useQuery({
-    queryKey: ['broadcast-history'],
+    queryKey: broadcastKeys.history(),
     queryFn: () => broadcastApi.getHistory()
   });
 };
+
 export const usePackageSuggestions = (q: string) => {
   return useQuery({
-    queryKey: ['packageSuggestions', q],
+    queryKey: broadcastKeys.suggestions(q),
     queryFn: () => broadcastApi.suggestPackages(q),
     enabled: q.length >= 2,
     staleTime: 60 * 1000,

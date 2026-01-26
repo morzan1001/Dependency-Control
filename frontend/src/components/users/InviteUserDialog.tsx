@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useInviteUser } from '@/hooks/queries/use-users';
 import { useAppConfig } from '@/hooks/queries/use-system';
-import { ApiError } from '@/api/client';
+import { getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,9 +45,8 @@ export function InviteUserDialog() {
         }
       },
       onError: (error) => {
-          const apiError = error as ApiError;
           toast.error("Error", {
-            description: apiError.response?.data?.detail || "Failed to send invitation",
+            description: getErrorMessage(error),
           });
       }
     });

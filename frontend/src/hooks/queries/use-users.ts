@@ -10,7 +10,6 @@ export const userKeys = {
   invitations: ['invitations'] as const,
 };
 
-// --- Queries ---
 export const useUsers = (
   skip: number = 0, 
   limit: number = 20, 
@@ -39,7 +38,6 @@ export const usePendingInvitations = () => {
   });
 };
 
-// --- Mutations ---
 export const useCreateUser = () => {
   const queryClient = useQueryClient();
   return useMutation({
@@ -92,7 +90,6 @@ export const useInviteUser = () => {
   });
 };
 
-// --- Admin Actions ---
 export const useAdminMigrateUser = () => {
   const queryClient = useQueryClient();
   return useMutation({

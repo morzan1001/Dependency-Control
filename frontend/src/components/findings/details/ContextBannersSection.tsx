@@ -1,8 +1,9 @@
 import React from 'react'
 import { Badge } from '@/components/ui/badge'
-import { ContextBanner } from '@/components/findings/ContextBanner'
+import { ContextBanner } from '../ContextBanner'
 import type { Finding } from '@/types/scan'
 import { formatScorecardCriticalIssue } from '@/lib/finding-utils'
+import { formatDate } from '@/lib/utils'
 import {
   Activity,
   Calendar,
@@ -10,7 +11,6 @@ import {
   ExternalLink,
   Scale,
   ShieldAlert,
-  Wrench,
 } from 'lucide-react'
 
 interface ContextBannersSectionProps {
@@ -87,7 +87,7 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
               Version cycle <span className="font-mono font-medium">{info.cycle}</span>{' '}
             </span>
           )}
-          {info.eol_date && <span>reached EOL on {new Date(info.eol_date).toLocaleDateString()}</span>}
+          {info.eol_date && <span>reached EOL on {formatDate(info.eol_date)}</span>}
           {info.latest_version && (
             <span>
               . Consider upgrading to <span className="font-mono font-medium">{info.latest_version}</span>
@@ -110,10 +110,10 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
           {(criticalCount > 0 || highCount > 0) && (
             <span className="ml-2">
               ({criticalCount > 0 && (
-                <span className="text-red-600 font-medium">{criticalCount} Critical</span>
+                <span className="text-severity-critical font-medium">{criticalCount} Critical</span>
               )}
               {criticalCount > 0 && highCount > 0 && ', '}
-              {highCount > 0 && <span className="text-orange-600 font-medium">{highCount} High</span>})
+              {highCount > 0 && <span className="text-severity-high font-medium">{highCount} High</span>})
             </span>
           )}
         </span>
@@ -188,15 +188,6 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
         </ContextBanner>
       )
     }
-  }
-
-  // 7. Maintenance Warning (legacy)
-  if (finding.details?.maintenance_warning && !finding.details?.scorecard_context) {
-    banners.push(
-      <ContextBanner key="maintenance" icon={Wrench} title="Maintenance Warning" variant="warning">
-        <span>{finding.details.maintenance_warning_text || 'This package may have maintenance concerns.'}</span>
-      </ContextBanner>
-    )
   }
 
   if (banners.length === 0) return null

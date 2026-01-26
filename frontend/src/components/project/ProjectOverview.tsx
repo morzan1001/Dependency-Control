@@ -7,6 +7,8 @@ import { Activity, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThreatIntelligenceDashboard } from '@/components/ThreatIntelligenceDashboard'
+import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
+import { formatDate } from '@/lib/utils'
 
 interface ProjectOverviewProps {
   projectId: string
@@ -14,7 +16,7 @@ interface ProjectOverviewProps {
 }
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
-  const { data: scans, isLoading } = useProjectScans(projectId, 1, 100)
+  const { data: scans, isLoading } = useProjectScans(projectId, 1, MAX_SCANS_FOR_CHARTS)
 
   const { data: waivers } = useProjectWaivers(projectId)
 
@@ -128,7 +130,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const trendMap = new Map<string, TrendEntry>()
   
   sortedScans.forEach(scan => {
-      const date = new Date(scan.created_at).toLocaleDateString()
+      const date = formatDate(scan.created_at)
       const risk = (scan.stats?.critical || 0) + (scan.stats?.high || 0)
       
       if (!trendMap.has(date)) {
@@ -195,7 +197,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
             <ShieldCheck className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{waivers?.length || 0}</div>
+            <div className="text-2xl font-bold">{waivers?.pages?.[0]?.total || 0}</div>
           </CardContent>
         </Card>
       </div>

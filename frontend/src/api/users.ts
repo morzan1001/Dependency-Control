@@ -77,7 +77,7 @@ export const userApi = {
     return response.data;
   },
   
-  delete: async (userId: string) => {
+  delete: async (userId: string): Promise<void> => {
     await api.delete(`/users/${userId}`);
   }
 };

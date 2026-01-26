@@ -1,4 +1,5 @@
 import { useLayoutEffect, useState, useRef, RefObject } from 'react'
+import { logger } from '@/lib/logger'
 
 interface ScrollContainerResult {
   parentRef: RefObject<HTMLDivElement | null>
@@ -29,7 +30,7 @@ export function useScrollContainer(): ScrollContainerResult {
     
     if (!container) {
       // Fallback: try window scroll if no main container found
-      console.warn('useScrollContainer: No <main> container found, falling back to window scroll')
+      logger.warn('useScrollContainer: No <main> container found, falling back to window scroll')
       return
     }
 

@@ -11,7 +11,6 @@ import {
   XCircle,
 } from 'lucide-react'
 
-// License category display configuration
 const LICENSE_CATEGORY_CONFIG: Record<
   string,
   {
@@ -24,56 +23,55 @@ const LICENSE_CATEGORY_CONFIG: Record<
 > = {
   permissive: {
     label: 'Permissive',
-    color: 'text-green-600',
-    bgColor: 'bg-green-50 border-green-200',
+    color: 'text-success',
+    bgColor: 'bg-green-50 border-green-200 dark:bg-green-950/50 dark:border-green-800',
     icon: CheckCircle2,
     description: 'No restrictions on commercial use',
   },
   public_domain: {
     label: 'Public Domain',
-    color: 'text-green-600',
-    bgColor: 'bg-green-50 border-green-200',
+    color: 'text-success',
+    bgColor: 'bg-green-50 border-green-200 dark:bg-green-950/50 dark:border-green-800',
     icon: CheckCircle2,
     description: 'No restrictions whatsoever',
   },
   weak_copyleft: {
     label: 'Weak Copyleft',
-    color: 'text-blue-600',
-    bgColor: 'bg-blue-50 border-blue-200',
+    color: 'text-info',
+    bgColor: 'bg-blue-50 border-blue-200 dark:bg-blue-950/50 dark:border-blue-800',
     icon: Info,
     description: 'Modifications to library must be shared',
   },
   strong_copyleft: {
     label: 'Strong Copyleft',
-    color: 'text-orange-600',
-    bgColor: 'bg-orange-50 border-orange-200',
+    color: 'text-warning',
+    bgColor: 'bg-orange-50 border-orange-200 dark:bg-orange-950/50 dark:border-orange-800',
     icon: AlertTriangle,
     description: 'Entire work must be open-sourced if distributed',
   },
   network_copyleft: {
     label: 'Network Copyleft',
-    color: 'text-red-600',
-    bgColor: 'bg-red-50 border-red-200',
+    color: 'text-destructive',
+    bgColor: 'bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-800',
     icon: XCircle,
     description: 'Source disclosure triggered by network access',
   },
   proprietary: {
     label: 'Proprietary',
-    color: 'text-red-600',
-    bgColor: 'bg-red-50 border-red-200',
+    color: 'text-destructive',
+    bgColor: 'bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-800',
     icon: XCircle,
     description: 'May have commercial restrictions',
   },
   unknown: {
     label: 'Unknown',
-    color: 'text-gray-600',
-    bgColor: 'bg-gray-50 border-gray-200',
+    color: 'text-muted-foreground',
+    bgColor: 'bg-gray-50 border-gray-200 dark:bg-gray-800/50 dark:border-gray-700',
     icon: AlertTriangle,
     description: 'License not recognized - manual review needed',
   },
 }
 
-// Component for rendering license compliance details
 export function LicenseDetailsView({ details }: { details: FindingDetails }) {
   const license = (details.license as string) || 'Unknown'
   const licenseUrl = details.license_url as string | undefined
@@ -131,10 +129,10 @@ export function LicenseDetailsView({ details }: { details: FindingDetails }) {
       {recommendation && (
         <div className="space-y-2">
           <h4 className="text-sm font-medium flex items-center gap-2">
-            <Lightbulb className="h-4 w-4 text-amber-500" />
+            <Lightbulb className="h-4 w-4 text-amber-500 dark:text-amber-400" />
             Recommendation
           </h4>
-          <div className="p-4 rounded-lg border border-amber-200 bg-amber-50/50">
+          <div className="p-4 rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/30">
             <p className="text-sm leading-relaxed whitespace-pre-wrap">{recommendation}</p>
           </div>
         </div>
@@ -146,13 +144,13 @@ export function LicenseDetailsView({ details }: { details: FindingDetails }) {
         {obligations.length > 0 && (
           <div className="space-y-2">
             <h4 className="text-sm font-medium flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-blue-500" />
+              <CheckCircle2 className="h-4 w-4 text-blue-500 dark:text-blue-400" />
               Obligations ({obligations.length})
             </h4>
-            <div className="p-3 rounded-lg border bg-blue-50/50 space-y-2">
+            <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/30 space-y-2">
               {obligations.map((obligation, idx) => (
                 <div key={idx} className="flex items-start gap-2 text-sm">
-                  <span className="text-blue-500 mt-0.5">•</span>
+                  <span className="text-blue-500 dark:text-blue-400 mt-0.5">•</span>
                   <span>{obligation}</span>
                 </div>
               ))}
@@ -164,13 +162,13 @@ export function LicenseDetailsView({ details }: { details: FindingDetails }) {
         {risks.length > 0 && (
           <div className="space-y-2">
             <h4 className="text-sm font-medium flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-red-500" />
+              <AlertTriangle className="h-4 w-4 text-destructive" />
               Risks ({risks.length})
             </h4>
-            <div className="p-3 rounded-lg border border-red-200 bg-red-50/50 space-y-2">
+            <div className="p-3 rounded-lg border border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30 space-y-2">
               {risks.map((risk, idx) => (
                 <div key={idx} className="flex items-start gap-2 text-sm">
-                  <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                  <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
                   <span>{risk}</span>
                 </div>
               ))}

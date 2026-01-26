@@ -2,7 +2,7 @@ import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Users as UsersIcon, UserPlus, Trash2, Edit } from 'lucide-react';
+import { UserPlus, Trash2, Edit } from 'lucide-react';
 
 interface TeamCardProps {
   team: Team;
@@ -26,10 +26,10 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete 
         </CardTitle>
         <div className="flex items-center gap-1">
             {hasPermission('team:update') && (
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8" 
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
                 onClick={(e: React.MouseEvent) => {
                   e.stopPropagation();
                   onEdit(team);
@@ -38,24 +38,11 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete 
                   <Edit className="h-4 w-4" />
               </Button>
             )}
-            {hasPermission('team:update') && (
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8" 
-                onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  onManageMembers(team);
-                }}
-              >
-                  <UsersIcon className="h-4 w-4" />
-              </Button>
-            )}
             {hasPermission('team:delete') && (
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8 text-destructive hover:text-destructive/90" 
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-destructive hover:text-destructive/90"
                 onClick={(e: React.MouseEvent) => {
                   e.stopPropagation();
                   onDelete(team._id);

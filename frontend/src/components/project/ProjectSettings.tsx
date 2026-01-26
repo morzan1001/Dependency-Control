@@ -8,7 +8,7 @@ import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { User } from '@/types/user'
-import { ApiError } from '@/api/client'
+import { getErrorMessage } from '@/lib/utils'
 import { useAuth } from '@/context/useAuth'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -74,7 +74,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     let prefs: Record<string, string[]> = {}
     if (!project || !user) return prefs;
     
-    const userId = user._id || user.id;
+    const userId = user.id;
     
     if (project.enforce_notification_settings) {
         prefs = project.owner_notification_preferences || {}
@@ -103,8 +103,8 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       toast.success("Project Deleted", { description: "The project has been permanently deleted." })
       navigate('/projects')
     },
-    onError: (error: ApiError) => {
-      toast.error("Delete Failed", { description: error.response?.data?.detail || "Failed to delete project." })
+    onError: (error) => {
+      toast.error("Delete Failed", { description: getErrorMessage(error) })
     }
   })
 
@@ -114,9 +114,9 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Project updated successfully")
     },
-    onError: (error: ApiError) => {
+    onError: (error) => {
       toast.error("Failed to update project", {
-        description: error.response?.data?.detail || "An error occurred"
+        description: getErrorMessage(error)
       })
     }
   })
@@ -130,9 +130,9 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       setIsApiKeyDialogOpen(true)
       toast.success("API Key rotated successfully")
     },
-    onError: (error: ApiError) => {
+    onError: (error) => {
       toast.error("Failed to rotate API key", {
-        description: error.response?.data?.detail || "An error occurred"
+        description: getErrorMessage(error)
       })
     }
   })
@@ -259,7 +259,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                             type="number" 
                             min="1"
                             value={retentionDays} 
-                            onChange={(e) => setRetentionDays(parseInt(e.target.value))} 
+                            onChange={(e) => setRetentionDays(parseInt(e.target.value) || 90)} 
                         />
                     )}
                 </div>
@@ -297,7 +297,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                         type="number" 
                                         min="1"
                                         value={rescanInterval || 24} 
-                                        onChange={(e) => setRescanInterval(parseInt(e.target.value))} 
+                                        onChange={(e) => setRescanInterval(parseInt(e.target.value) || 24)} 
                                     />
                                     <p className="text-xs text-muted-foreground">
                                         How often to re-scan the project.

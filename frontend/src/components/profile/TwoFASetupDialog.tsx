@@ -28,13 +28,17 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: TwoFASetupDialo
   const [otpCode, setOtpCode] = useState('');
   const [password, setPassword] = useState('');
 
+  const handleClose = () => {
+    setOtpCode('');
+    setPassword('');
+    onClose();
+  };
+
   const enable2FAMutation = useMutation({
     mutationFn: ({ code, password }: { code: string, password: string }) => authApi.enable2FA(code, password),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
-      onClose();
-      setOtpCode('');
-      setPassword('');
+      handleClose();
       toast.success("2FA Enabled", {
         description: "Two-factor authentication has been enabled.",
       });
@@ -51,7 +55,7 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: TwoFASetupDialo
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Setup Two-Factor Authentication</DialogTitle>
@@ -74,6 +78,9 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: TwoFASetupDialo
                 value={otpCode}
                 onChange={(e) => setOtpCode(e.target.value)}
                 placeholder="123456"
+                maxLength={6}
+                inputMode="numeric"
+                autoComplete="one-time-code"
               />
             </div>
             <div className="grid gap-2">
@@ -89,7 +96,7 @@ export function TwoFASetupDialog({ setupData, isOpen, onClose }: TwoFASetupDialo
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={handleClose}>Cancel</Button>
           <Button 
             onClick={handleEnable2FA} 
             disabled={!otpCode || !password || enable2FAMutation.isPending}

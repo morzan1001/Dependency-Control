@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { AdditionalDetailsView } from '@/components/findings/details/AdditionalDetailsView'
-import { DetailSection } from '@/components/findings/details/shared'
+import { AdditionalDetailsView } from './AdditionalDetailsView'
+import { DetailSection } from './shared'
 import type { FindingDetails } from '@/types/scan'
 import {
   formatScorecardCriticalIssue,
@@ -25,8 +25,8 @@ import {
   Shield,
   User,
 } from 'lucide-react'
+import { formatDate } from '@/lib/utils'
 
-// Types for maintainer risk details
 interface MaintainerRisk {
   type: string
   severity?: string
@@ -48,7 +48,6 @@ interface MaintainerInfo {
   project_urls?: Record<string, string> | null
 }
 
-// Component for rendering quality findings (OpenSSF Scorecard details)
 export function QualityDetailsView({ details }: { details: FindingDetails }) {
   const overallScore = details.overall_score as number
   const failedChecks = (details.failed_checks as Array<{ name: string; score: number }>) || []
@@ -57,12 +56,10 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
   const recommendation = details.recommendation as string
   const checksSummary = details.checks_summary as Record<string, number>
 
-  // Only show scorecard section if we have a valid score
   const hasValidScore = overallScore !== undefined && overallScore !== null && !isNaN(overallScore)
 
   return (
     <div className="space-y-4">
-      {/* Score Overview - only show if we have a valid score */}
       {hasValidScore && (
         <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
           <div
@@ -154,12 +151,12 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
 
       {/* Recommendation */}
       {recommendation && (
-        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-          <h4 className="text-sm font-medium text-blue-800 mb-1 flex items-center gap-2">
+        <div className="p-3 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <h4 className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-1 flex items-center gap-2">
             <Lightbulb className="h-4 w-4" />
             Recommendations
           </h4>
-          <p className="text-sm text-blue-700">
+          <p className="text-sm text-blue-700 dark:text-blue-400">
             {recommendation.split(' • ').map((rec, idx) => (
               <span key={idx} className="block">
                 • {rec}
@@ -185,7 +182,6 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
   )
 }
 
-// Component for rendering maintainer risk details
 export function MaintainerRiskDetailsView({ details }: { details: FindingDetails }) {
   const risks = (details.risks as MaintainerRisk[]) || []
   const maintainerInfo = (details.maintainer_info as MaintainerInfo) || {}
@@ -287,7 +283,7 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
                   <Calendar className="h-4 w-4 text-muted-foreground mt-0.5" />
                   <div>
                     <p className="text-xs text-muted-foreground">Last Release</p>
-                    <p className="text-sm font-medium">{new Date(maintainerInfo.latest_release_date!).toLocaleDateString()}</p>
+                    <p className="text-sm font-medium">{formatDate(maintainerInfo.latest_release_date)}</p>
                     {maintainerInfo.days_since_release && (
                       <p className="text-xs text-muted-foreground">{maintainerInfo.days_since_release} days ago</p>
                     )}
@@ -348,7 +344,6 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
   )
 }
 
-// Interface for quality issue entry (from aggregated quality findings)
 interface QualityIssueEntry {
   id: string
   type: string
@@ -359,7 +354,6 @@ interface QualityIssueEntry {
   details: Record<string, unknown>
 }
 
-// Component for rendering aggregated quality findings (similar to vulnerabilities)
 export function AggregatedQualityView({ details }: { details: FindingDetails }) {
   const qualityIssues = (details.quality_issues as QualityIssueEntry[]) || []
   const overallScore = details.overall_score as number | undefined
@@ -367,24 +361,7 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
   const issueCount = (details.issue_count as number) || qualityIssues.length
   const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set())
 
-  // Helper to check for valid scorecard score
-  const hasValidScorecardScore = (d: Record<string, unknown>) => {
-    const score = d.overall_score as number | undefined
-    return score !== undefined && score !== null && !isNaN(score)
-  }
-
-  // Legacy support: if no quality_issues array, check for old structure
   if (qualityIssues.length === 0) {
-    // Check for legacy scorecard structure - only if we have a valid score
-    const scorecardDetails = (details.scorecard as Record<string, unknown>) || details
-    if (hasValidScorecardScore(scorecardDetails)) {
-      return <QualityDetailsView details={scorecardDetails as unknown as FindingDetails} />
-    }
-    // Check for legacy maintainer_risk structure
-    if (details.risks || details.maintainer_risk) {
-      const maintDetails = (details.maintainer_risk as Record<string, unknown>) || details
-      return <MaintainerRiskDetailsView details={maintDetails as unknown as FindingDetails} />
-    }
     return null
   }
 

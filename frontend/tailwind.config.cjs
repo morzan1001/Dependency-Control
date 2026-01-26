@@ -51,6 +51,42 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Status colors
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
+        },
+        // Severity colors
+        severity: {
+          critical: {
+            DEFAULT: "hsl(var(--severity-critical))",
+            foreground: "hsl(var(--severity-critical-foreground))",
+          },
+          high: {
+            DEFAULT: "hsl(var(--severity-high))",
+            foreground: "hsl(var(--severity-high-foreground))",
+          },
+          medium: {
+            DEFAULT: "hsl(var(--severity-medium))",
+            foreground: "hsl(var(--severity-medium-foreground))",
+          },
+          low: {
+            DEFAULT: "hsl(var(--severity-low))",
+            foreground: "hsl(var(--severity-low-foreground))",
+          },
+          info: {
+            DEFAULT: "hsl(var(--severity-info))",
+            foreground: "hsl(var(--severity-info-foreground))",
+          },
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

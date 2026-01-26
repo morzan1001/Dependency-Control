@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
@@ -21,6 +22,16 @@ export function UserDetailsCard({ user, notificationChannels }: UserDetailsCardP
   const [email, setEmail] = useState(user?.email || '');
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
+  const [prevUserId, setPrevUserId] = useState<string | undefined>(user?.id);
+
+  // Sync state when user prop changes (React 19 pattern: adjust state during render)
+  if (user && user.id !== prevUserId) {
+    setPrevUserId(user.id);
+    setUsername(user.username || '');
+    setEmail(user.email || '');
+    setSlackUsername(user.slack_username || '');
+    setMattermostUsername(user.mattermost_username || '');
+  }
 
   const updateProfileMutation = useMutation({
     mutationFn: () => userApi.updateMe({ 
@@ -113,13 +124,9 @@ export function UserDetailsCard({ user, notificationChannels }: UserDetailsCardP
             <Label>Status</Label>
             <div className="flex items-center gap-2">
               {user?.is_active ? (
-                <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
-                  Active
-                </span>
+                <Badge variant="default">Active</Badge>
               ) : (
-                <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
-                  Inactive
-                </span>
+                <Badge variant="destructive">Inactive</Badge>
               )}
             </div>
           </div>

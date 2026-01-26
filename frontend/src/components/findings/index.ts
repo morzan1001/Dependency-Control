@@ -8,3 +8,7 @@ export { ContextBanner, ContextAlert, type BannerVariant, type ContextBannerProp
 export { FindingTypeBadge, FindingTypeBadges } from './FindingTypeBadge'
 export { CopyableCode, CopyableText } from './CopyableCode'
 export { CollapsibleReferences, ReferenceLinks } from './CollapsibleReferences'
+
+// Main findings components
+export { FindingsTable } from './FindingsTable'
+export { FindingDetailsModal } from './FindingDetailsModal'

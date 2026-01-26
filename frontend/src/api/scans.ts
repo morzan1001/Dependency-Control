@@ -52,6 +52,24 @@ export interface ScanFindingsResponse {
   pages: number;
 }
 
+export interface ScanStats {
+  total?: number;
+  critical?: number;
+  high?: number;
+  medium?: number;
+  low?: number;
+  info?: number;
+  unknown?: number;
+  security?: number;
+  secret?: number;
+  sast?: number;
+  compliance?: number;
+  quality?: number;
+  other?: number;
+  by_type?: Record<string, number>;
+  [key: string]: number | Record<string, number> | undefined;
+}
+
 export const scanApi = {
     getRecent: async () => {
         const response = await api.get<Scan[]>('/projects/scans', { params: { limit: 5, sort_by: 'created_at', sort_order: 'desc' } });
@@ -81,7 +99,6 @@ export const scanApi = {
     },
 
     getResults: async (scanId: string) => {
-        // Note: AnalysisResult type might be needed if strictly typed, but sticking to general or importing if available
         const response = await api.get<ScanAnalysisResult[]>(`/projects/scans/${scanId}/results`);
         return response.data;
     },
@@ -96,8 +113,8 @@ export const scanApi = {
         return response.data;
     },
       
-    getStats: async (scanId: string) => {
-        const response = await api.get<Record<string, number>>(`/projects/scans/${scanId}/stats`);
+    getStats: async (scanId: string): Promise<ScanStats> => {
+        const response = await api.get<ScanStats>(`/projects/scans/${scanId}/stats`);
         return response.data;
     }
 }

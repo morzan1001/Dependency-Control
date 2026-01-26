@@ -12,6 +12,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { formatEpssScore } from '@/lib/finding-utils'
 
 interface ImpactAnalysisProps {
   onSelectComponent?: (result: ImpactAnalysisResult) => void;
@@ -23,19 +24,14 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
   // Calculate max impact score for relative sizing
   const maxImpact = results?.reduce((max, r) => Math.max(max, r.fix_impact_score), 0) || 1
 
-  const formatEpssScore = (score?: number) => {
-    if (score === undefined || score === null) return null
-    return `${(score * 100).toFixed(1)}%`
-  }
-
   const getExploitMaturityColor = (maturity?: string) => {
     if (!maturity || maturity === 'unknown') return 'text-muted-foreground'
     const colors: Record<string, string> = {
-      'active': 'text-red-500',
-      'weaponized': 'text-red-600',
-      'high': 'text-orange-500',
-      'medium': 'text-yellow-500',
-      'low': 'text-blue-500',
+      'active': 'text-severity-critical',
+      'weaponized': 'text-severity-critical',
+      'high': 'text-severity-high',
+      'medium': 'text-severity-medium',
+      'low': 'text-severity-low',
     }
     return colors[maturity] || 'text-muted-foreground'
   }
@@ -264,8 +260,8 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                             <TooltipTrigger asChild>
                               <div className="flex flex-col items-center">
                                 <span className={`font-medium ${
-                                  r.max_epss_score >= 0.1 ? 'text-red-500' :
-                                  r.max_epss_score >= 0.01 ? 'text-orange-500' : 'text-muted-foreground'
+                                  r.max_epss_score >= 0.1 ? 'text-severity-critical' :
+                                  r.max_epss_score >= 0.01 ? 'text-severity-high' : 'text-muted-foreground'
                                 }`}>
                                   {formatEpssScore(r.max_epss_score)}
                                 </span>
@@ -350,7 +346,7 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <div className="flex items-center gap-1 text-green-500">
+                              <div className="flex items-center gap-1 text-success">
                                 <CheckCircle className="h-4 w-4" />
                               </div>
                             </TooltipTrigger>

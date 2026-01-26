@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CheckCircle2, XCircle } from 'lucide-react'
+import { getErrorMessage } from '@/lib/utils'
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams()
@@ -12,7 +13,7 @@ export default function VerifyEmail() {
   const { mutate: verify, isPending, isSuccess, isError, error, data } = useVerifyEmail()
   
   const status = isPending ? 'loading' : isSuccess ? 'success' : isError ? 'error' : 'loading'
-  const message = error ? (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Failed to verify email.' : data?.message || ''
+  const message = error ? getErrorMessage(error) : data?.message || ''
 
   useEffect(() => {
     if (token) {
@@ -29,7 +30,7 @@ export default function VerifyEmail() {
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
             {displayStatus === 'loading' && <Skeleton className="h-12 w-12 rounded-full" />}
-            {displayStatus === 'success' && <CheckCircle2 className="h-12 w-12 text-green-500" />}
+            {displayStatus === 'success' && <CheckCircle2 className="h-12 w-12 text-success" />}
             {displayStatus === 'error' && <XCircle className="h-12 w-12 text-destructive" />}
           </div>
           <CardTitle>Email Verification</CardTitle>

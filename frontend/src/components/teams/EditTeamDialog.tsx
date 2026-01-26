@@ -23,16 +23,30 @@ interface EditTeamDialogProps {
 export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
   const [name, setName] = useState(team?.name || '');
   const [description, setDescription] = useState(team?.description || '');
+  const [prevTeamId, setPrevTeamId] = useState<string | null>(team?._id || null);
   const updateTeamMutation = useUpdateTeam();
+
+  // Sync state when team prop changes (React 19 pattern: adjust state during render)
+  if (team && team._id !== prevTeamId) {
+    setPrevTeamId(team._id);
+    setName(team.name || '');
+    setDescription(team.description || '');
+  }
+
+  const handleClose = () => {
+    setName('');
+    setDescription('');
+    onClose();
+  };
 
   const handleUpdateTeam = (e: React.FormEvent) => {
     e.preventDefault();
     if (team) {
       updateTeamMutation.mutate(
         { id: team._id, data: { name, description } },
-        { 
+        {
           onSuccess: () => {
-             onClose();
+             handleClose();
              toast.success("Team updated successfully");
           }
         }
@@ -41,7 +55,7 @@ export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[425px]">
         <form onSubmit={handleUpdateTeam}>
           <DialogHeader>

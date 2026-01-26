@@ -67,10 +67,10 @@ resetPasswordMutation.mutate({ token, newPassword }, {
 
   if (!token) {
       return (
-        <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+        <div className="flex min-h-screen items-center justify-center bg-muted/50 px-4 py-12 sm:px-6 lg:px-8">
             <Card className="w-full max-w-md">
                 <CardHeader>
-                    <CardTitle className="text-center text-red-600">Invalid Link</CardTitle>
+                    <CardTitle className="text-center text-destructive">Invalid Link</CardTitle>
                     <CardDescription className="text-center">
                         The password reset link is invalid or missing a token.
                     </CardDescription>
@@ -86,7 +86,7 @@ resetPasswordMutation.mutate({ token, newPassword }, {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+    <div className="flex min-h-screen items-center justify-center bg-muted/50 px-4 py-12 sm:px-6 lg:px-8">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-center">Reset Password</CardTitle>

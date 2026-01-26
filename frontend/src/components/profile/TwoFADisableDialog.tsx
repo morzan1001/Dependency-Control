@@ -25,12 +25,16 @@ export function TwoFADisableDialog({ isOpen, onClose }: TwoFADisableDialogProps)
   const queryClient = useQueryClient();
   const [password, setPassword] = useState('');
 
+  const handleClose = () => {
+    setPassword('');
+    onClose();
+  };
+
   const disable2FAMutation = useMutation({
     mutationFn: (password: string) => authApi.disable2FA(password),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me'] });
-      onClose();
-      setPassword('');
+      handleClose();
       toast.success("2FA Disabled", {
         description: "Two-factor authentication has been disabled.",
       });
@@ -47,7 +51,7 @@ export function TwoFADisableDialog({ isOpen, onClose }: TwoFADisableDialogProps)
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Disable Two-Factor Authentication</DialogTitle>
@@ -68,7 +72,7 @@ export function TwoFADisableDialog({ isOpen, onClose }: TwoFADisableDialogProps)
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={handleClose}>Cancel</Button>
           <Button 
             variant="destructive" 
             onClick={handleDisable2FA}

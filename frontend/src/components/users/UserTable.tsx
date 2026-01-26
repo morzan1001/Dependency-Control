@@ -1,4 +1,4 @@
-import { ApiError } from '@/api/client';
+import { getErrorMessage } from '@/lib/utils';
 import { User } from '@/types/user';
 import { useDeleteUser, useInviteUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
@@ -51,7 +51,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
         },
         onError: (error) => {
           toast.error("Failed to delete user", {
-            description: (error as ApiError).response?.data?.detail || "An error occurred"
+            description: getErrorMessage(error)
           })
         }
       });
@@ -64,7 +64,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
         },
         onError: (error) => {
           toast.error("Failed to resend invitation", {
-            description: (error as ApiError).response?.data?.detail || "An error occurred"
+            description: getErrorMessage(error)
           })
         }
       });
@@ -115,7 +115,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
           <TableBody>
             {users?.map((user: User) => (
               <TableRow 
-                key={user._id || user.id} 
+                key={user.id} 
                 className="cursor-pointer"
                 onClick={() => onSelectUser(user)}
               >
@@ -233,7 +233,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
             <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)}>Cancel</Button>
             <Button 
                 variant="destructive" 
-                onClick={() => userToDelete && handleDeleteUser(userToDelete._id || userToDelete.id)}
+                onClick={() => userToDelete && handleDeleteUser(userToDelete.id)}
                 disabled={deleteUserMutation.isPending}
             >
               {deleteUserMutation.isPending ? "Deleting..." : "Delete"}

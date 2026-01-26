@@ -48,7 +48,7 @@ export default function ResendVerification() {
                 <Input id="email" name="email" type="email" required />
               </div>
               {message && (
-                <div className="text-sm text-green-600">
+                <div className="text-sm text-success">
                   {message}
                 </div>
               )}

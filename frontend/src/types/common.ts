@@ -6,7 +6,13 @@ export interface PaginatedResponse<T> {
   pages: number;
 }
 
-export interface ApiErrorResponse {
-  detail?: string;
-  message?: string;
+export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NEGLIGIBLE' | 'INFO' | 'UNKNOWN';
+
+export type ObjectId = string;
+
+export interface SeverityBreakdown {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
 }

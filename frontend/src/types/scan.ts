@@ -1,3 +1,7 @@
+import { Severity } from './common';
+
+export type { Severity };
+
 export interface PipelineMetadata {
   CI_COMMIT_BRANCH?: string;
   CI_DEFAULT_BRANCH?: string;
@@ -14,8 +18,6 @@ export interface PipelineMetadata {
   CI_PROJECT_NAME?: string;
 }
 
-export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "NEGLIGIBLE" | "INFO" | "UNKNOWN";
-
 export type FindingType = 
   | "vulnerability"
   | "license"
@@ -29,11 +31,19 @@ export type FindingType =
   | "quality"
   | "other";
 
+export interface AnalyzerResultData {
+  status?: string;
+  findings?: unknown[];
+  summary?: Record<string, string | number | boolean>;
+  metadata?: Record<string, string | number | boolean | null>;
+  raw_output?: string;
+  [key: string]: string | number | boolean | null | undefined | unknown[] | Record<string, unknown>;
+}
+
 export interface ScanAnalysisResult {
   _id: string;
   analyzer_name: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  result: any;
+  result: AnalyzerResultData;
   created_at?: string;
   scan_id?: string;
 }
@@ -72,13 +82,21 @@ export interface NestedVulnerability {
     published_date?: string;
     last_modified_date?: string;
     cwe_ids?: string[];
-    [key: string]: unknown;
+    [key: string]: string | string[] | number | boolean | null | undefined;
   };
   in_kev?: boolean;
   kev_ransomware_use?: string;
   kev_date_added?: string;
   kev_required_action?: string;
   reachability?: ReachabilityInfo;
+}
+
+export interface QualityIssueDetails {
+  check_name?: string;
+  check_score?: number;
+  reason?: string;
+  documentation_url?: string;
+  [key: string]: string | number | boolean | undefined;
 }
 
 export interface QualityIssue {
@@ -88,7 +106,7 @@ export interface QualityIssue {
   description?: string;
   scanners?: string[];
   source?: string;
-  details?: Record<string, unknown>;
+  details?: QualityIssueDetails;
 }
 
 export interface VulnerabilityInfoSummary {
@@ -140,12 +158,42 @@ export interface ScorecardContext {
   project_url?: string;
 }
 
-export interface SecretDetails {
-  detector?: string;
-  decoder?: string;
-  verified?: boolean;
-  redacted?: string;
-  line?: number;
+export interface FindingMetadata {
+  scanner_version?: string;
+  scan_timestamp?: string;
+  source_file?: string;
+  source_line?: number;
+  category?: string;
+  tags?: string[];
+  [key: string]: string | number | boolean | string[] | undefined;
+}
+
+export interface ScorecardData {
+  overall_score?: number;
+  checks?: Array<{
+    name: string;
+    score: number;
+    reason?: string;
+  }>;
+  date?: string;
+  repository_url?: string;
+  [key: string]: string | number | boolean | null | undefined | Array<{ name: string; score: number; reason?: string }>;
+}
+
+export interface MaintainerRiskData {
+  risk_level?: 'low' | 'medium' | 'high' | 'critical';
+  factors?: string[];
+  last_commit_date?: string;
+  maintainer_count?: number;
+  is_abandoned?: boolean;
+  [key: string]: string | string[] | number | boolean | null | undefined;
+}
+
+export interface ErrorDetails {
+  code?: string;
+  message?: string;
+  stack?: string;
+  [key: string]: string | number | boolean | undefined;
 }
 
 export interface FindingDetails {
@@ -186,7 +234,7 @@ export interface FindingDetails {
   check_id?: string;
   start?: { line?: number; column?: number };
   end?: { line?: number; column?: number };
-  metadata?: Record<string, unknown>;
+  metadata?: FindingMetadata;
   cwe_ids?: string[];
   published_date?: string;
   last_modified_date?: string;
@@ -238,9 +286,9 @@ export interface FindingDetails {
   };
   maintenance_warning?: boolean;
   maintenance_warning_text?: string;
-  scorecard?: Record<string, unknown>;
-  maintainer_risk?: Record<string, unknown>;
-  error_details?: string | Record<string, unknown>;
+  scorecard?: ScorecardData;
+  maintainer_risk?: MaintainerRiskData;
+  error_details?: string | ErrorDetails;
 }
 
 export interface Finding {
@@ -304,6 +352,20 @@ export interface PrioritizedCounts {
   deprioritized_count: number;
 }
 
+export interface SbomData {
+  format?: string;
+  version?: string;
+  source?: string;
+  component_count?: number;
+  components?: Array<{
+    name: string;
+    version?: string;
+    type?: string;
+    purl?: string;
+  }>;
+  [key: string]: string | number | boolean | null | undefined | Array<{ name: string; version?: string; type?: string; purl?: string }>;
+}
+
 export interface EnhancedStats {
   critical?: number;
   high?: number;
@@ -339,8 +401,8 @@ export interface Scan {
   ignored_count?: number;
   stats?: EnhancedStats | null;
   completed_at?: string;
-  sbom?: Record<string, unknown>;
-  sboms?: Record<string, unknown>[];
+  sbom?: SbomData;
+  sboms?: SbomData[];
   sbom_refs?: string[];
   is_rescan?: boolean;
   original_scan_id?: string;

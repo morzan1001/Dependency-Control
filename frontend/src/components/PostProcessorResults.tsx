@@ -36,6 +36,8 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { getSeverityBadgeVariant } from "@/lib/finding-utils";
+import { formatDateTime } from "@/lib/utils";
 
 // Type definitions
 interface EPSSKEVSummary {
@@ -157,13 +159,13 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-full bg-red-100 dark:bg-red-900">
-                <ShieldAlert className="h-6 w-6 text-red-600 dark:text-red-400" />
+                <ShieldAlert className="h-6 w-6 text-severity-critical" />
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">In CISA KEV</p>
                 <p className="text-2xl font-bold">{data.kev_matches}</p>
                 {data.kev_ransomware > 0 && (
-                  <p className="text-xs text-red-500 flex items-center gap-1">
+                  <p className="text-xs text-severity-critical flex items-center gap-1">
                     <Skull className="h-3 w-3" /> {data.kev_ransomware} Ransomware
                   </p>
                 )}
@@ -176,7 +178,7 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-full bg-orange-100 dark:bg-orange-900">
-                <TrendingUp className="h-6 w-6 text-orange-600 dark:text-orange-400" />
+                <TrendingUp className="h-6 w-6 text-severity-high" />
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Avg EPSS Score</p>
@@ -263,28 +265,28 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
           <div className="grid gap-4 md:grid-cols-3">
             <div className="flex items-center justify-between p-4 rounded-lg bg-red-50 dark:bg-red-950">
               <div>
-                <p className="text-sm font-medium text-red-700 dark:text-red-300">High (&gt;10%)</p>
-                <p className="text-xs text-red-600 dark:text-red-400">Likely to be exploited</p>
+                <p className="text-sm font-medium text-severity-critical">High (&gt;10%)</p>
+                <p className="text-xs text-severity-critical">Likely to be exploited</p>
               </div>
-              <span className="text-2xl font-bold text-red-600 dark:text-red-400">
+              <span className="text-2xl font-bold text-severity-critical">
                 {data.epss_scores.high}
               </span>
             </div>
             <div className="flex items-center justify-between p-4 rounded-lg bg-yellow-50 dark:bg-yellow-950">
               <div>
-                <p className="text-sm font-medium text-yellow-700 dark:text-yellow-300">Medium (1-10%)</p>
-                <p className="text-xs text-yellow-600 dark:text-yellow-400">Moderate probability</p>
+                <p className="text-sm font-medium text-severity-medium">Medium (1-10%)</p>
+                <p className="text-xs text-severity-medium">Moderate probability</p>
               </div>
-              <span className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
+              <span className="text-2xl font-bold text-severity-medium">
                 {data.epss_scores.medium}
               </span>
             </div>
             <div className="flex items-center justify-between p-4 rounded-lg bg-green-50 dark:bg-green-950">
               <div>
-                <p className="text-sm font-medium text-green-700 dark:text-green-300">Low (&lt;1%)</p>
-                <p className="text-xs text-green-600 dark:text-green-400">Low probability</p>
+                <p className="text-sm font-medium text-success">Low (&lt;1%)</p>
+                <p className="text-xs text-success">Low probability</p>
               </div>
-              <span className="text-2xl font-bold text-green-600 dark:text-green-400">
+              <span className="text-2xl font-bold text-success">
                 {data.epss_scores.low}
               </span>
             </div>
@@ -296,7 +298,7 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
       {data.kev_details.length > 0 && (
         <Card className="border-red-200 dark:border-red-800">
           <CardHeader className="bg-red-50 dark:bg-red-950">
-            <CardTitle className="text-base flex items-center gap-2 text-red-700 dark:text-red-300">
+            <CardTitle className="text-base flex items-center gap-2 text-severity-critical">
               <ShieldAlert className="h-4 w-4" />
               CISA Known Exploited Vulnerabilities ({data.kev_details.length})
             </CardTitle>
@@ -400,7 +402,7 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
 
       {/* Timestamp */}
       <p className="text-xs text-muted-foreground text-right">
-        Enriched at: {new Date(data.timestamp).toLocaleString()}
+        Enriched at: {formatDateTime(data.timestamp)}
       </p>
     </div>
   );
@@ -408,16 +410,6 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
 
 // Reachability Results Component
 export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
-  const getSeverityBadge = (severity: string) => {
-    switch (severity.toLowerCase()) {
-      case "critical": return "destructive";
-      case "high": return "destructive";
-      case "medium": return "default";
-      case "low": return "secondary";
-      default: return "outline";
-    }
-  };
-
   const totalAnalyzed = 
     data.reachability_levels.confirmed + 
     data.reachability_levels.likely + 
@@ -450,7 +442,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-full bg-red-100 dark:bg-red-900">
-                <AlertCircle className="h-6 w-6 text-red-600 dark:text-red-400" />
+                <AlertCircle className="h-6 w-6 text-severity-critical" />
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Reachable</p>
@@ -467,12 +459,12 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-full bg-green-100 dark:bg-green-900">
-                <ShieldCheck className="h-6 w-6 text-green-600 dark:text-green-400" />
+                <ShieldCheck className="h-6 w-6 text-success" />
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Unreachable</p>
                 <p className="text-2xl font-bold">{data.reachability_levels.unreachable}</p>
-                <p className="text-xs text-green-600 dark:text-green-400">Can be deprioritized</p>
+                <p className="text-xs text-success">Can be deprioritized</p>
               </div>
             </div>
           </CardContent>
@@ -482,7 +474,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
               <div className="p-3 rounded-full bg-gray-100 dark:bg-gray-800">
-                <AlertTriangle className="h-6 w-6 text-gray-600 dark:text-gray-400" />
+                <AlertTriangle className="h-6 w-6 text-severity-info" />
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Unknown</p>
@@ -599,7 +591,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
       {data.reachable_vulnerabilities.length > 0 && (
         <Card className="border-red-200 dark:border-red-800">
           <CardHeader className="bg-red-50 dark:bg-red-950">
-            <CardTitle className="text-base flex items-center gap-2 text-red-700 dark:text-red-300">
+            <CardTitle className="text-base flex items-center gap-2 text-severity-critical">
               <AlertCircle className="h-4 w-4" />
               Reachable Vulnerabilities ({data.reachable_vulnerabilities.length})
             </CardTitle>
@@ -611,7 +603,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-red-50/50 dark:bg-red-950/50 hover:bg-red-100/50 dark:hover:bg-red-900/50 transition-colors">
                     <div className="flex items-center gap-4">
                       <span className="font-mono text-sm">{vuln.cve}</span>
-                      <Badge variant={getSeverityBadge(vuln.severity)} className="capitalize">
+                      <Badge variant={getSeverityBadgeVariant(vuln.severity)} className="capitalize">
                         {vuln.severity}
                       </Badge>
                       <Badge 
@@ -658,7 +650,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
       {data.unreachable_vulnerabilities.length > 0 && (
         <Card className="border-green-200 dark:border-green-800">
           <CardHeader className="bg-green-50 dark:bg-green-950">
-            <CardTitle className="text-base flex items-center gap-2 text-green-700 dark:text-green-300">
+            <CardTitle className="text-base flex items-center gap-2 text-success">
               <ShieldCheck className="h-4 w-4" />
               Unreachable Vulnerabilities ({data.unreachable_vulnerabilities.length})
             </CardTitle>
@@ -676,7 +668,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
                       {vuln.component}@{vuln.version}
                     </span>
                   </div>
-                  <Badge variant={getSeverityBadge(vuln.severity)} className="capitalize">
+                  <Badge variant={getSeverityBadgeVariant(vuln.severity)} className="capitalize">
                     {vuln.severity}
                   </Badge>
                 </div>
@@ -693,7 +685,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
 
       {/* Timestamp */}
       <p className="text-xs text-muted-foreground text-right">
-        Analyzed at: {new Date(data.timestamp).toLocaleString()}
+        Analyzed at: {formatDateTime(data.timestamp)}
       </p>
     </div>
   );

@@ -10,10 +10,6 @@ import { Button } from './button'
 import { Card, CardContent } from './card'
 import { Skeleton } from './skeleton'
 
-// ============================================================================
-// LOADING STATES
-// ============================================================================
-
 interface LoadingStateProps {
   message?: string
   className?: string
@@ -120,10 +116,6 @@ export function CardSkeleton({ showHeader = true, lines = 3, className = '' }: C
   )
 }
 
-// ============================================================================
-// ERROR STATES
-// ============================================================================
-
 interface ErrorStateProps {
   title?: string
   message?: string
@@ -168,10 +160,6 @@ export function InlineError({ message, className = '' }: { message: string; clas
     </div>
   )
 }
-
-// ============================================================================
-// EMPTY STATES
-// ============================================================================
 
 type EmptyStateVariant = 'default' | 'search' | 'data' | 'file'
 

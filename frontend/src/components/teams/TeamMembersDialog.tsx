@@ -1,7 +1,7 @@
 import { useUpdateTeamMember, useRemoveTeamMember } from '@/hooks/queries/use-teams';
 import { Team } from '@/types/team';
 import { Button } from '@/components/ui/button';
-import { UserMinus } from 'lucide-react';
+import { UserMinus, Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { toast } from "sonner"
+import { TEAM_ROLES } from '@/lib/constants';
 
 interface TeamMembersDialogProps {
   team: Team | null;
@@ -65,8 +66,8 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Select 
-                        defaultValue={member.role} 
+                      <Select
+                        value={member.role}
                         onValueChange={(value) => {
                             if (team) {
                                 updateMemberMutation.mutate(
@@ -75,22 +76,26 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                                 );
                             }
                         }}
+                        disabled={updateMemberMutation.isPending}
                       >
                         <SelectTrigger className="w-[120px]">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="member">Member</SelectItem>
-                          <SelectItem value="admin">Admin</SelectItem>
-                          <SelectItem value="owner">Owner</SelectItem>
+                          {TEAM_ROLES.map((role) => (
+                            <SelectItem key={role.value} value={role.value}>
+                              {role.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </TableCell>
                     <TableCell>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         className="text-destructive"
+                        disabled={removeMemberMutation.isPending}
                         onClick={() => {
                             if (team) {
                                 removeMemberMutation.mutate(
@@ -100,11 +105,22 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                             }
                         }}
                       >
-                        <UserMinus className="h-4 w-4" />
+                        {removeMemberMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <UserMinus className="h-4 w-4" />
+                        )}
                       </Button>
                     </TableCell>
                   </TableRow>
                 ))}
+                {team?.members.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="text-center text-muted-foreground">
+                      No members in this team.
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           </div>

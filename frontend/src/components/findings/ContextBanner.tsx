@@ -23,10 +23,10 @@ const variantStyles: Record<BannerVariant, string> = {
 }
 
 const iconStyles: Record<BannerVariant, string> = {
-  info: 'text-blue-500 dark:text-blue-400',
-  warning: 'text-amber-500 dark:text-amber-400',
-  danger: 'text-red-500 dark:text-red-400',
-  success: 'text-green-500 dark:text-green-400',
+  info: 'text-info',
+  warning: 'text-warning',
+  danger: 'text-destructive',
+  success: 'text-success',
 }
 
 export function ContextBanner({ icon: Icon, title, children, variant, action }: ContextBannerProps) {

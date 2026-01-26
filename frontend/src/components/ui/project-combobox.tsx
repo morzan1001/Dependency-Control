@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { useProjects } from '@/hooks/queries/use-projects'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { Check, ChevronsUpDown, Search, X, Folder } from 'lucide-react'
 import { useDebounce } from '@/hooks/use-debounce'
+import { useClickOutside } from '@/hooks/use-click-outside'
+import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
 interface ProjectComboboxProps {
   value: string
@@ -23,7 +25,7 @@ export function ProjectCombobox({
 }: ProjectComboboxProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const debouncedSearch = useDebounce(search, 300)
+  const debouncedSearch = useDebounce(search, DEBOUNCE_DELAY_MS)
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -34,15 +36,8 @@ export function ProjectCombobox({
   const selectedProject = projects.find(p => p._id === value)
 
   // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+  const handleClose = useCallback(() => setOpen(false), [])
+  useClickOutside(containerRef, handleClose, open)
 
   // Handle keyboard navigation
   const handleKeyDown = (e: React.KeyboardEvent) => {

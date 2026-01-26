@@ -5,8 +5,8 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/context/useAuth'
 import { useSignup, useLogin } from '@/hooks/queries/use-auth'
-import { AxiosError } from 'axios'
 import { useNavigate, Link } from 'react-router-dom'
+import { getErrorMessage } from '@/lib/utils'
 
 export default function Signup() {
   const [isLoading, setIsLoading] = useState(false)
@@ -52,12 +52,7 @@ export default function Signup() {
       },
       onError: (err) => {
         setIsLoading(false)
-        const error = err as AxiosError<{ detail: string }>
-        if (error.response) {
-          setError(error.response.data?.detail || `Signup failed with status ${error.response.status}`);
-        } else {
-          setError('Network error or server unreachable');
-        }
+        setError(getErrorMessage(err))
       }
     })
   }

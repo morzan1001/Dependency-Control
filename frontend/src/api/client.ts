@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosHeaders } from 'axios';
 import { logger } from '@/lib/logger';
+import { API_TIMEOUT_MS, API_REFRESH_TIMEOUT_MS } from '@/lib/constants';
 
 declare module 'axios' {
   export interface AxiosRequestConfig {
@@ -11,14 +12,12 @@ declare module 'axios' {
   }
 }
 
-// Standard API error response shape
 export interface ApiErrorData {
   detail?: string;
   message?: string;
   code?: string;
 }
 
-// Type-safe API error
 export type ApiError = AxiosError<ApiErrorData>;
 
 interface RuntimeConfig {
@@ -40,6 +39,7 @@ const getBaseUrl = () => {
 
 export const api = axios.create({
   baseURL: getBaseUrl(),
+  timeout: API_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -47,6 +47,7 @@ export const api = axios.create({
 
 const refreshClient = axios.create({
   baseURL: getBaseUrl(),
+  timeout: API_REFRESH_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -59,39 +60,50 @@ export const setLogoutCallback = (callback: () => void) => {
 };
 
 let refreshPromise: Promise<string | null> | null = null;
+let isRefreshing = false;
 
-const refreshAccessToken = async () => {
+const refreshAccessToken = async (): Promise<string | null> => {
   const refreshToken = localStorage.getItem('refresh_token');
   if (!refreshToken) {
     return null;
   }
 
-  if (!refreshPromise) {
-    refreshPromise = refreshClient
-      .post('/login/refresh-token', { refresh_token: refreshToken })
-      .then((response) => {
-        const { access_token, refresh_token } = response.data as {
-          access_token: string;
-          refresh_token: string;
-        };
-        localStorage.setItem('token', access_token);
-        localStorage.setItem('refresh_token', refresh_token);
-        return access_token;
-      })
-      .catch((err) => {
-        logger.error('Token refresh failed', err);
-        return null;
-      })
-      .finally(() => {
-        refreshPromise = null;
-      });
+  if (refreshPromise) {
+    return refreshPromise;
   }
+
+  isRefreshing = true;
+
+  refreshPromise = refreshClient
+    .post('/login/refresh-token', { refresh_token: refreshToken })
+    .then((response) => {
+      const data = response.data;
+      if (!data || typeof data.access_token !== 'string' || typeof data.refresh_token !== 'string') {
+        throw new Error('Invalid token response structure');
+      }
+      const { access_token, refresh_token } = data as {
+        access_token: string;
+        refresh_token: string;
+      };
+      localStorage.setItem('token', access_token);
+      localStorage.setItem('refresh_token', refresh_token);
+      return access_token;
+    })
+    .catch((err) => {
+      logger.error('Token refresh failed', err instanceof Error ? err.message : 'Unknown error');
+      localStorage.removeItem('token');
+      localStorage.removeItem('refresh_token');
+      return null;
+    })
+    .finally(() => {
+      refreshPromise = null;
+      isRefreshing = false;
+    });
 
   return refreshPromise;
 };
 
 api.interceptors.request.use((config) => {
-  // logger.debug(`Request: ${config.method?.toUpperCase()} ${config.url}`);
   const token = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -114,16 +126,21 @@ api.interceptors.response.use(
 
       if (!originalRequest._retry && !isAuthEndpoint) {
         originalRequest._retry = true;
-        const newAccessToken = await refreshAccessToken();
-        if (newAccessToken) {
-          const headers = AxiosHeaders.from(originalRequest.headers);
-          headers.set('Authorization', `Bearer ${newAccessToken}`);
-          originalRequest.headers = headers;
-          return api(originalRequest);
+
+        try {
+          const newAccessToken = await refreshAccessToken();
+          if (newAccessToken) {
+            const headers = AxiosHeaders.from(originalRequest.headers);
+            headers.set('Authorization', `Bearer ${newAccessToken}`);
+            originalRequest.headers = headers;
+            return api(originalRequest);
+          }
+        } catch {
+          // Refresh failed
         }
       }
 
-      if (logoutCallback) {
+      if (logoutCallback && !isRefreshing) {
         logoutCallback();
       }
     }

@@ -21,8 +21,6 @@ export const authApi = {
   },
 
   signup: async (data: UserCreate) => {
-    // Note: UserCreate matches { username, email, password } structure generally
-    // But endpoint expects { username, email, password } specifically.
     const response = await api.post<User>('/signup', data);
     return response.data;
   },

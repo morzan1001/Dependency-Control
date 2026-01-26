@@ -1,49 +1,68 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone } from 'lucide-react'
+import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { useAuth } from '@/context/useAuth'
+import { useAuth } from '@/context'
+import { ANALYTICS_PERMISSIONS } from '@/lib/constants'
+
+interface NavItem {
+  href: string
+  label: string
+  icon: LucideIcon
+  show: boolean
+}
 
 export default function DashboardLayout() {
   const location = useLocation()
   const { logout, hasPermission } = useAuth()
 
-  const navItems = [
-    { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  ]
+  const hasAnyPermission = (permissions: readonly string[]) =>
+    permissions.some(p => hasPermission(p))
 
-  if (hasPermission('project:read') || hasPermission('project:read_all')) {
-    navItems.push({ href: '/projects', label: 'Projects', icon: FolderGit2 })
-  }
-
-  // Analytics requires analytics permissions
-  const hasAnalyticsAccess = hasPermission('analytics:read') || 
-    hasPermission('analytics:summary') || 
-    hasPermission('analytics:dependencies') ||
-    hasPermission('analytics:tree') ||
-    hasPermission('analytics:impact') ||
-    hasPermission('analytics:hotspots') ||
-    hasPermission('analytics:search')
-  
-  if (hasAnalyticsAccess) {
-    navItems.push({ href: '/analytics', label: 'Analytics', icon: BarChart3 })
-  }
-
-  if (hasPermission('team:read') || hasPermission('team:read_all')) {
-    navItems.push({ href: '/teams', label: 'Teams', icon: Users })
-  }
-
-  if (hasPermission('user:manage') || hasPermission('user:read_all')) {
-    navItems.push({ href: '/users', label: 'Users', icon: UserCog })
-  }
-
-  if (hasPermission('notifications:broadcast') || hasPermission('system:manage')) {
-    navItems.push({ href: '/broadcasts', label: 'Broadcasts', icon: Megaphone })
-  }
-
-  if (hasPermission('system:manage')) {
-    navItems.push({ href: '/settings', label: 'Settings', icon: Settings })
-  }
+  const navItems: NavItem[] = [
+    {
+      href: '/dashboard',
+      label: 'Dashboard',
+      icon: LayoutDashboard,
+      show: true
+    },
+    {
+      href: '/projects',
+      label: 'Projects',
+      icon: FolderGit2,
+      show: hasPermission('project:read') || hasPermission('project:read_all')
+    },
+    {
+      href: '/analytics',
+      label: 'Analytics',
+      icon: BarChart3,
+      show: hasAnyPermission(ANALYTICS_PERMISSIONS)
+    },
+    {
+      href: '/teams',
+      label: 'Teams',
+      icon: Users,
+      show: hasPermission('team:read') || hasPermission('team:read_all')
+    },
+    {
+      href: '/users',
+      label: 'Users',
+      icon: UserCog,
+      show: hasPermission('user:manage') || hasPermission('user:read_all')
+    },
+    {
+      href: '/broadcasts',
+      label: 'Broadcasts',
+      icon: Megaphone,
+      show: hasPermission('notifications:broadcast') || hasPermission('system:manage')
+    },
+    {
+      href: '/settings',
+      label: 'Settings',
+      icon: Settings,
+      show: hasPermission('system:manage')
+    },
+  ].filter(item => item.show)
 
   return (
     <div className="flex h-screen bg-background">

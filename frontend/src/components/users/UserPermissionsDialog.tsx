@@ -1,5 +1,5 @@
-import { ApiError } from '@/api/client';
-import { User } from '@/types/user'; 
+import { User } from '@/types/user';
+import { getErrorMessage } from '@/lib/utils'; 
 import { useUpdateUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -38,7 +38,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
   const handleSave = () => {
     if (!user) return;
     updateUserMutation.mutate({
-      id: user._id || user.id,
+      id: user.id,
       data: { permissions: selectedPermissions }
     }, {
       onSuccess: () => {
@@ -49,7 +49,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
       },
       onError: (error) => {
         toast.error("Error", {
-          description: (error as ApiError).response?.data?.detail || "Failed to update user permissions.",
+          description: getErrorMessage(error),
         });
       },
     });

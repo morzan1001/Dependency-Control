@@ -1,10 +1,12 @@
 import * as React from 'react'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { usePackageSuggestions } from '@/hooks/queries/use-broadcast'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { Check, Loader2 } from 'lucide-react'
 import { useDebounce } from '@/hooks/use-debounce'
+import { useClickOutside } from '@/hooks/use-click-outside'
+import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
 
 interface PackageAutocompleteProps {
   value: string
@@ -21,7 +23,7 @@ export function PackageAutocomplete({
 }: PackageAutocompleteProps) {
   const [open, setOpen] = useState(false)
   const [inputValue, setInputValue] = useState(value)
-  const debouncedSearch = useDebounce(inputValue, 300)
+  const debouncedSearch = useDebounce(inputValue, DEBOUNCE_DELAY_MS)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Sync internal input with prop value changes
@@ -33,15 +35,8 @@ export function PackageAutocomplete({
   const { data: suggestions, isLoading } = usePackageSuggestions(debouncedSearch)
 
   // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+  const handleClose = useCallback(() => setOpen(false), [])
+  useClickOutside(containerRef, handleClose, open)
 
   const handleSelect = (pkgName: string) => {
     onValueChange(pkgName)
@@ -94,7 +89,7 @@ export function PackageAutocomplete({
            
            {!isLoading && (!suggestions || suggestions.length === 0) && (
              <div className="p-2 text-sm text-muted-foreground italic">
-                No found, using custom input.
+                No results found, using custom input.
              </div>
            )}
         </div>

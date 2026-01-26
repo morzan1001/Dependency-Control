@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { SettingsTabProps } from "./types"
+import { SettingsTabProps } from "@/types/system"
 
 export function GeneralSettingsTab({
   formData,
@@ -44,14 +44,14 @@ export function GeneralSettingsTab({
               type="number"
               min="0"
               value={formData.project_limit_per_user ?? 0} 
-              onChange={(e) => handleInputChange('project_limit_per_user', parseInt(e.target.value))}
+              onChange={(e) => handleInputChange('project_limit_per_user', parseInt(e.target.value) || 0)}
             />
             <p className="text-sm text-muted-foreground">
               Maximum number of projects a user can create. Set to 0 for unlimited.
             </p>
           </div>
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
-            {isPending ? "Saving..." : "Save Changes"}
+            {isPending ? "Saving..." : "Save General Settings"}
           </Button>
         </CardContent>
       </Card>
@@ -91,7 +91,7 @@ export function GeneralSettingsTab({
                 type="number"
                 min="0"
                 value={formData.global_retention_days ?? 90} 
-                onChange={(e) => handleInputChange('global_retention_days', parseInt(e.target.value))}
+                onChange={(e) => handleInputChange('global_retention_days', parseInt(e.target.value) || 0)}
               />
               <p className="text-sm text-muted-foreground">
                 Set to 0 to disable deletion (keep data forever).
@@ -100,7 +100,7 @@ export function GeneralSettingsTab({
           )}
           
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
-            {isPending ? "Saving..." : "Save Changes"}
+            {isPending ? "Saving..." : "Save Retention Settings"}
           </Button>
         </CardContent>
       </Card>
@@ -155,7 +155,7 @@ export function GeneralSettingsTab({
                     type="number"
                     min="1"
                     value={formData.global_rescan_interval ?? 24} 
-                    onChange={(e) => handleInputChange('global_rescan_interval', parseInt(e.target.value))}
+                    onChange={(e) => handleInputChange('global_rescan_interval', parseInt(e.target.value) || 1)}
                   />
                 </div>
               )}
@@ -163,7 +163,7 @@ export function GeneralSettingsTab({
           )}
           
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
-            {isPending ? "Saving..." : "Save Changes"}
+            {isPending ? "Saving..." : "Save Rescan Settings"}
           </Button>
         </CardContent>
       </Card>

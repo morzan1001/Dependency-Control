@@ -4,6 +4,7 @@ import { jwtDecode } from 'jwt-decode'
 
 import { setLogoutCallback } from '@/api/client'
 import { userApi } from '@/api/users'
+import { logger } from '@/lib/logger'
 
 import { AuthContext } from './auth-context'
 
@@ -21,17 +22,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [permissions, setPermissions] = useState<string[]>([])
   const navigate = useNavigate()
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem('token')
     localStorage.removeItem('refresh_token')
     setIsAuthenticated(false)
     setPermissions([])
     navigate('/login')
-  }
+  }, [navigate])
 
-  const hasPermission = (permission: string) => {
+  const hasPermission = useCallback((permission: string) => {
     return permissions.includes('*') || permissions.includes(permission)
-  }
+  }, [permissions])
 
   useEffect(() => {
     setLogoutCallback(logout)
@@ -50,16 +51,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await userApi.getMe()
         setIsAuthenticated(true)
       } catch (error) {
-        console.error('Auth init failed', error)
+        logger.error('Auth init failed', error)
         setIsAuthenticated(false)
+        setPermissions([])
       } finally {
         setIsLoading(false)
       }
     }
 
     initAuth()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [logout])
 
   const login = useCallback((accessToken: string, refreshToken: string, skipNavigation = false) => {
     localStorage.setItem('token', accessToken)
@@ -79,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
     } catch (e) {
-      console.error('Failed to decode token on login', e)
+      logger.error('Failed to decode token on login', e)
     }
 
     setIsAuthenticated(true)

@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 import { Project } from '@/types/project';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AVAILABLE_ANALYZERS } from '@/lib/constants';
+import { formatDate } from '@/lib/utils';
 import { CreateProjectDialog } from '@/components/project/CreateProjectDialog';
 import {
   Select,
@@ -134,26 +135,26 @@ export default function ProjectsPage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                    <div className="flex items-center gap-2 text-sm text-red-500">
+                    <div className="flex items-center gap-2 text-sm text-severity-critical">
                         <AlertCircle className="h-4 w-4" />
                         <span className="font-bold">{project.stats?.critical || 0}</span> Critical
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-orange-500">
+                    <div className="flex items-center gap-2 text-sm text-severity-high">
                         <AlertTriangle className="h-4 w-4" />
                         <span className="font-bold">{project.stats?.high || 0}</span> High
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-yellow-500">
+                    <div className="flex items-center gap-2 text-sm text-severity-medium">
                         <Info className="h-4 w-4" />
                         <span className="font-bold">{project.stats?.medium || 0}</span> Medium
                     </div>
-                    <div className="flex items-center gap-2 text-sm text-blue-500">
+                    <div className="flex items-center gap-2 text-sm text-severity-low">
                         <Info className="h-4 w-4" />
                         <span className="font-bold">{project.stats?.low || 0}</span> Low
                     </div>
                 </div>
                 
                 <div className="mt-4 text-xs text-muted-foreground">
-                    Last scan: {project.last_scan_at ? new Date(project.last_scan_at).toLocaleDateString() : 'Never'}
+                    Last scan: {project.last_scan_at ? formatDate(project.last_scan_at) : 'Never'}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1">
                     {project.active_analyzers?.slice(0, 6).map(analyzerId => {

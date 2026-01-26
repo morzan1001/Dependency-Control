@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import type { FindingDetails } from '@/types/scan'
 import { AlertTriangle, Building, Calendar, ExternalLink, FileText, User } from 'lucide-react'
+import { formatDate } from '@/lib/utils'
 
 export function AdditionalDetailsView({ details }: { details: FindingDetails }) {
   // Skip rendering for these redundant fields that are shown elsewhere
@@ -54,14 +55,9 @@ export function AdditionalDetailsView({ details }: { details: FindingDetails }) 
 
     // Handle dates
     if (key.includes('date') || key === 'eol' || key === 'end_of_life') {
-      const dateStr = String(value)
-      try {
-        const date = new Date(dateStr)
-        if (!isNaN(date.getTime())) {
-          return <span>{date.toLocaleDateString()}</span>
-        }
-      } catch {
-        // Fall through to default
+      const formatted = formatDate(String(value))
+      if (formatted !== 'N/A' && formatted !== String(value)) {
+        return <span>{formatted}</span>
       }
     }
 

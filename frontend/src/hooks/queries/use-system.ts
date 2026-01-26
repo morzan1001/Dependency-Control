@@ -3,8 +3,11 @@ import { systemApi } from '@/api/system';
 import { SystemSettings } from '@/types/system';
 
 export const systemKeys = {
-  settings: ['systemSettings'] as const,
-  appConfig: ['appConfig'] as const,
+  all: ['system'] as const,
+  settings: () => [...systemKeys.all, 'settings'] as const,
+  appConfig: () => [...systemKeys.all, 'appConfig'] as const,
+  publicConfig: () => [...systemKeys.all, 'publicConfig'] as const,
+  notificationChannels: () => [...systemKeys.all, 'notificationChannels'] as const,
 };
 
 /**
@@ -13,7 +16,7 @@ export const systemKeys = {
  */
 export const useSystemSettings = () => {
   return useQuery({
-    queryKey: systemKeys.settings,
+    queryKey: systemKeys.settings(),
     queryFn: systemApi.getSettings,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
@@ -24,9 +27,9 @@ export const useUpdateSystemSettings = () => {
   return useMutation({
     mutationFn: (data: Partial<SystemSettings>) => systemApi.updateSettings(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: systemKeys.settings });
+      queryClient.invalidateQueries({ queryKey: systemKeys.settings() });
       // Also invalidate app config since some values might have changed
-      queryClient.invalidateQueries({ queryKey: systemKeys.appConfig });
+      queryClient.invalidateQueries({ queryKey: systemKeys.appConfig() });
     },
   });
 };
@@ -46,7 +49,7 @@ interface UseAppConfigOptions {
 export const useAppConfig = (options: UseAppConfigOptions = {}) => {
   const { enabled = true } = options;
   return useQuery({
-    queryKey: systemKeys.appConfig,
+    queryKey: systemKeys.appConfig(),
     queryFn: systemApi.getAppConfig,
     staleTime: 5 * 60 * 1000, // 5 minutes
     enabled,
@@ -55,7 +58,7 @@ export const useAppConfig = (options: UseAppConfigOptions = {}) => {
 
 export const usePublicConfig = () => {
   return useQuery({
-    queryKey: ['publicConfig'],
+    queryKey: systemKeys.publicConfig(),
     queryFn: systemApi.getPublicConfig,
     staleTime: 10 * 60 * 1000, // 10 minutes - rarely changes
   });
@@ -63,7 +66,7 @@ export const usePublicConfig = () => {
 
 export const useNotificationChannels = () => {
   return useQuery({
-    queryKey: ['notificationChannels'],
+    queryKey: systemKeys.notificationChannels(),
     queryFn: systemApi.getNotificationChannels,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });

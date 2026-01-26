@@ -1,12 +1,22 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { projectApi } from '@/api/projects';
 import { ProjectCreate, ProjectUpdate, ProjectNotificationSettings } from '@/types/project';
+import type { ApiError } from '@/api/client';
+
+// Project list filter interface
+interface ProjectListFilters {
+  search: string;
+  page: number;
+  limit: number;
+  sortBy: string;
+  sortOrder: 'asc' | 'desc';
+}
 
 // Centralized Query Keys
 export const projectKeys = {
   all: ['projects'] as const,
   lists: () => [...projectKeys.all, 'list'] as const,
-  list: (filters: Record<string, unknown>) => [...projectKeys.lists(), filters] as const,
+  list: (filters: ProjectListFilters) => [...projectKeys.lists(), filters] as const,
   details: () => [...projectKeys.all, 'detail'] as const,
   detail: (id: string) => [...projectKeys.details(), id] as const,
   branches: (id: string) => [...projectKeys.detail(id), 'branches'] as const,
@@ -19,10 +29,11 @@ export const useProjects = (
   sortBy: string = 'created_at',
   sortOrder: 'asc' | 'desc' = 'desc'
 ) => {
-  return useQuery({
+  return useQuery<Awaited<ReturnType<typeof projectApi.getAll>>, ApiError>({
     queryKey: projectKeys.list({ search, page, limit, sortBy, sortOrder }),
     queryFn: () => projectApi.getAll(search, (page - 1) * limit, limit, sortBy, sortOrder),
     placeholderData: keepPreviousData,
+    retry: 2,
   });
 };
 

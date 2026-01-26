@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
-import { ApiError } from '@/api/client'
+import { getErrorMessage } from '@/lib/utils'
 import { Project } from '@/types/project'
 import { useAuth } from '@/context/useAuth'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -56,9 +56,9 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
       setInviteRole("viewer")
       toast.success("Member invited successfully")
     },
-    onError: (error: ApiError) => {
+    onError: (error) => {
       toast.error("Failed to invite member", {
-        description: error.response?.data?.detail || "An error occurred"
+        description: getErrorMessage(error)
       })
     }
   })
@@ -69,9 +69,9 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Member role updated")
     },
-    onError: (error: ApiError) => {
+    onError: (error) => {
       toast.error("Failed to update member role", {
-        description: error.response?.data?.detail || "An error occurred"
+        description: getErrorMessage(error)
       })
     }
   })
@@ -82,9 +82,9 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
       queryClient.invalidateQueries({ queryKey: ['project', projectId] })
       toast.success("Member removed")
     },
-    onError: (error: ApiError) => {
+    onError: (error) => {
       toast.error("Failed to remove member", {
-        description: error.response?.data?.detail || "An error occurred"
+        description: getErrorMessage(error)
       })
     }
   })
@@ -162,8 +162,8 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Select 
-                    defaultValue={member.role} 
+                  <Select
+                    value={member.role}
                     onValueChange={(value) => updateMemberMutation.mutate({ userId: member.user_id, role: value })}
                     disabled={member.user_id === project.owner_id || !hasPermission('project:update') || !!member.inherited_from}
                   >

@@ -1,6 +1,7 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { analyticsApi } from '@/api/analytics';
 import { HotspotsQueryParams, VulnerabilitySearchOptions, AdvancedSearchOptions } from '@/types/analytics';
+import type { ApiError } from '@/api/client';
 
 export const analyticsKeys = {
     all: ['analytics'] as const,
@@ -11,7 +12,7 @@ export const analyticsKeys = {
     impactAnalysis: (limit: number) => [...analyticsKeys.all, 'impact-analysis', { limit }] as const,
     hotspots: (params: HotspotsQueryParams) => [...analyticsKeys.all, 'hotspots', params] as const,
     search: (query: string, version?: string) => [...analyticsKeys.all, 'search', { query, version }] as const,
-    advancedSearch: (query: string, options?: unknown) => [...analyticsKeys.all, 'search-advanced', { query, options }] as const,
+    advancedSearch: (query: string, options?: AdvancedSearchOptions) => [...analyticsKeys.all, 'search-advanced', { query, options }] as const,
     vulnerabilitySearch: (query: string, options?: VulnerabilitySearchOptions) => [...analyticsKeys.all, 'search-vulnerabilities', { query, options }] as const,
     componentFindings: (component: string, version?: string) => [...analyticsKeys.all, 'component-findings', { component, version }] as const,
     dependencyMetadata: (component: string, version?: string, type?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }] as const,
@@ -20,10 +21,11 @@ export const analyticsKeys = {
 }
 
 export const useDashboardStats = () => {
-    return useQuery({
+    return useQuery<Awaited<ReturnType<typeof analyticsApi.getDashboardStats>>, ApiError>({
         queryKey: analyticsKeys.dashboardStats(),
         queryFn: analyticsApi.getDashboardStats,
         staleTime: 2 * 60 * 1000, // 2 minutes - stats are expensive to compute
+        retry: 2,
     });
 }
 

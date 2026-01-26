@@ -1,4 +1,7 @@
 import { Finding } from './scan';
+import { Severity, SeverityBreakdown } from './common';
+
+export type { Severity, SeverityBreakdown };
 
 export interface DashboardStats {
     total_projects: number;
@@ -25,13 +28,6 @@ export interface SearchResult {
   source_target?: string;
   layer_digest?: string;
   locations?: string[];
-}
-
-export interface SeverityBreakdown {
-  critical: number;
-  high: number;
-  medium: number;
-  low: number;
 }
 
 export interface DependencyUsage {
@@ -197,8 +193,6 @@ export interface AdvancedSearchResponse {
   page: number;
   size: number;
 }
-
-export type Severity = 'low' | 'medium' | 'high' | 'critical' | 'info' | 'unknown' | 'negligible';
 
 export interface VulnerabilitySearchResult {
   vulnerability_id: string;

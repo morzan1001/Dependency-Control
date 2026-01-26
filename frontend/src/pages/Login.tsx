@@ -6,8 +6,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { useLogin } from '@/hooks/queries/use-auth'
 import { usePublicConfig } from '@/hooks/queries/use-system'
 import { useAuth } from '@/context/useAuth'
-import { AxiosError } from 'axios'
 import { Link, useLocation } from 'react-router-dom'
+import { getErrorMessage } from '@/lib/utils'
 
 export default function Login() {
   const [isLoading, setIsLoading] = useState(false)
@@ -15,15 +15,12 @@ export default function Login() {
   const [showOTP, setShowOTP] = useState(false)
   const [showResendLink, setShowResendLink] = useState(false)
   
-  // Deriving state from config directly
   const { data: config } = usePublicConfig();
   const signupEnabled = config?.allow_public_registration || false;
   const oidcConfig = {
     enabled: config?.oidc_enabled || false,
     providerName: config?.oidc_provider_name || 'GitLab'
   }
-  
-  // Form State
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
 
@@ -48,30 +45,27 @@ export default function Login() {
       },
       onError: (err) => {
         setIsLoading(false)
-        const error = err as AxiosError<{ detail: string }>
-        
-        if (error.response) {
-          if (error.response.status === 401 && error.response.data?.detail === '2FA required') {
+        const axiosError = err as { response?: { status?: number; data?: { detail?: string } | string } }
+
+        if (axiosError.response?.status === 401) {
+          const detail = typeof axiosError.response.data === 'object'
+            ? axiosError.response.data?.detail
+            : undefined
+
+          if (detail === '2FA required') {
             setShowOTP(true)
             setError('Please enter your 2FA code')
-            return;
+            return
           }
 
-          if (error.response.status === 401 && error.response.data?.detail === 'Email not verified') {
+          if (detail === 'Email not verified') {
             setError('Email not verified.')
             setShowResendLink(true)
-            return;
+            return
           }
-          
-          // Handle cases where data might not be JSON (e.g. Pomerium HTML response)
-          if (typeof error.response.data === 'string') {
-               setError(`Login failed: Server returned ${error.response.status}. Check console for details.`);
-          } else {
-               setError(error.response.data?.detail || `Login failed with status ${error.response.status}`);
-          }
-        } else {
-          setError('Network error or server unreachable');
         }
+
+        setError(getErrorMessage(err))
       }
     })
   }
@@ -133,7 +127,7 @@ export default function Login() {
                 </div>
               )}
               {message && (
-                <div className="text-sm text-green-600">
+                <div className="text-sm text-success">
                   {message}
                 </div>
               )}

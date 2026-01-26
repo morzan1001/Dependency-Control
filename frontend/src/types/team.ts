@@ -1,12 +1,13 @@
+import { ObjectId } from './common';
+
 export interface TeamMember {
-  user_id: string;
+  user_id: ObjectId;
   username?: string;
   role: string;
 }
 
 export interface Team {
-  _id: string; // Using string id instead of MongoDB ObjectId type for frontend
-  id?: string; // Alias for _id for some components
+  _id: ObjectId;
   name: string;
   description?: string;
   members: TeamMember[];

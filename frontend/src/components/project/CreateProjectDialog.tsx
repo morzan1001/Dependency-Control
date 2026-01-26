@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ApiError } from "@/api/client";
+import { getErrorMessage } from "@/lib/utils";
 import { useCreateProject } from "@/hooks/queries/use-projects";
 import { useTeams } from "@/hooks/queries/use-teams";
 import { useAppConfig } from "@/hooks/queries/use-system";
@@ -65,7 +65,7 @@ export function CreateProjectDialog({
         name,
         team_id: teamId === "none" ? undefined : teamId,
         active_analyzers: analyzers,
-        retention_days: retentionDays,
+        retention_days: appConfig?.retention_mode === 'global' ? undefined : retentionDays,
       },
       {
         onSuccess: (data) => {
@@ -73,9 +73,8 @@ export function CreateProjectDialog({
           toast.success("Project created successfully");
         },
         onError: (error) => {
-            const description = (error as ApiError)?.response?.data?.detail || "An error occurred";
             toast.error("Failed to create project", {
-                description
+                description: getErrorMessage(error)
             });
         },
       }
@@ -192,7 +191,7 @@ export function CreateProjectDialog({
                 <SelectContent>
                   <SelectItem value="none">No Team (Personal)</SelectItem>
                   {teams?.map((team) => (
-                    <SelectItem key={team.id} value={team.id || ""}>
+                    <SelectItem key={team._id} value={team._id}>
                       {team.name}
                     </SelectItem>
                   ))}
@@ -202,18 +201,29 @@ export function CreateProjectDialog({
 
             <div className="space-y-2">
                 <Label htmlFor="retention">Data Retention (Days)</Label>
-                <Input
-                    id="retention"
-                    type="number"
-                    min="1"
-                    value={retentionDays}
-                    onChange={(e) => setRetentionDays(parseInt(e.target.value))}
-                    required
-                />
-                 {appConfig?.global_retention_days && appConfig.global_retention_days > 0 && (
-                    <p className="text-xs text-muted-foreground">
-                        Global default: {appConfig.global_retention_days} days. Set to 0 to use global default.
-                    </p>
+                {appConfig?.retention_mode === 'global' ? (
+                    <div className="p-3 bg-muted rounded-md text-sm border">
+                        <p className="font-medium">Managed Globally</p>
+                        <p className="text-muted-foreground mt-1">
+                            {appConfig.global_retention_days > 0
+                                ? `Data is retained for ${appConfig.global_retention_days} days.`
+                                : "Data retention is disabled (data is kept forever)."}
+                        </p>
+                    </div>
+                ) : (
+                    <>
+                        <Input
+                            id="retention"
+                            type="number"
+                            min="1"
+                            value={retentionDays}
+                            onChange={(e) => setRetentionDays(parseInt(e.target.value) || 90)}
+                            required
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            How long to keep scan data for this project.
+                        </p>
+                    </>
                 )}
             </div>
 

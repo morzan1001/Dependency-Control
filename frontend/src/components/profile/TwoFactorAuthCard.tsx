@@ -20,6 +20,12 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
   const [isDisableOpen, setIsDisableOpen] = useState(false);
   const [setupData, setSetupData] = useState<TwoFASetup | null>(null);
 
+  const handleSetupClose = () => {
+    setIsSetupOpen(false);
+    // Clear sensitive data when dialog closes
+    setSetupData(null);
+  };
+
   const setup2FAMutation = useMutation({
     mutationFn: authApi.setup2FA,
     onSuccess: (data) => {
@@ -44,12 +50,12 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
           <div className="flex items-center justify-between p-4 border rounded-lg">
             <div className="flex items-center gap-3">
               {user?.totp_enabled ? (
-                <div className="p-2 bg-green-100 rounded-full">
-                  <Shield className="h-6 w-6 text-green-600" />
+                <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-full">
+                  <Shield className="h-6 w-6 text-success" />
                 </div>
               ) : (
-                <div className="p-2 bg-yellow-100 rounded-full">
-                  <ShieldAlert className="h-6 w-6 text-yellow-600" />
+                <div className="p-2 bg-yellow-100 dark:bg-yellow-900/30 rounded-full">
+                  <ShieldAlert className="h-6 w-6 text-warning" />
                 </div>
               )}
               <div>
@@ -78,10 +84,10 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
         </CardContent>
       </Card>
 
-      <TwoFASetupDialog 
-        setupData={setupData} 
-        isOpen={isSetupOpen} 
-        onClose={() => setIsSetupOpen(false)} 
+      <TwoFASetupDialog
+        setupData={setupData}
+        isOpen={isSetupOpen}
+        onClose={handleSetupClose}
       />
 
       <TwoFADisableDialog 

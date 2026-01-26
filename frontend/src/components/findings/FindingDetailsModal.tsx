@@ -6,23 +6,24 @@ import { Finding, NestedVulnerability } from "@/types/scan"
 import { AlertTriangle, ExternalLink, Shield, ShieldAlert, ServerCrash } from "lucide-react"
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
-import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
-import { CollapsibleReferences } from '@/components/findings/CollapsibleReferences'
+import { FindingTypeBadge } from './FindingTypeBadge'
+import { CollapsibleReferences } from './CollapsibleReferences'
 import { getSeverityBadgeVariant } from '@/lib/finding-utils'
-import { ContextBannersSection } from '@/components/findings/details/ContextBannersSection'
-import { OriginBadge } from '@/components/findings/details/OriginBadge'
-import { LicenseDetailsView } from '@/components/findings/details/LicenseDetailsView'
-import { AggregatedQualityView, MaintainerRiskDetailsView } from '@/components/findings/details/QualityDetails'
-import { AdditionalDetailsView } from '@/components/findings/details/AdditionalDetailsView'
-import { WaiverForm } from '@/components/findings/details/WaiverForm'
-import { SastDetailsView, ScanContext } from '@/components/findings/details/SastDetailsView'
-import { DetailSection, FileLocation, BadgeList } from '@/components/findings/details/shared'
+import { formatDate } from '@/lib/utils'
+import { ContextBannersSection } from './details/ContextBannersSection'
+import { OriginBadge } from './details/OriginBadge'
+import { LicenseDetailsView } from './details/LicenseDetailsView'
+import { AggregatedQualityView } from './details/QualityDetails'
+import { AdditionalDetailsView } from './details/AdditionalDetailsView'
+import { WaiverForm } from './details/WaiverForm'
+import { SastDetailsView, ScanContext } from './details/SastDetailsView'
+import { DetailSection, FileLocation, BadgeList } from './details/shared'
 import {
   getFindingId,
   getFindingPackage,
   getFindingTitle,
   getFindingVersion,
-} from '@/components/findings/details/finding-details-helpers'
+} from './details/finding-details-helpers'
 
 interface FindingDetailsModalProps {
     finding: Finding | null
@@ -105,7 +106,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                     <p className="font-medium">{getFindingVersion(finding)}</p>
                                 </DetailSection>
                                 <DetailSection label="Fixed Version" compact>
-                                    <p className="font-medium text-green-600">{finding.details?.fixed_version || "None"}</p>
+                                    <p className="font-medium text-success">{finding.details?.fixed_version || "None"}</p>
                                 </DetailSection>
                                 <DetailSection label="ID" compact>
                                     <p className="font-mono text-sm">{getFindingId(finding)}</p>
@@ -186,14 +187,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     const info = relatedId.replace("EOL-", "");
                                                     label = `EOL: ${info}`;
                                                     badgeClass += "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100";
-                                                } else if (relatedId.startsWith("AGG:VULN:")) {
-                                                    // Handle legacy AGG:VULN: format
-                                                    const parts = relatedId.split(":");
-                                                    if (parts.length >= 4) {
-                                                        label = `Vuln: ${parts[2]} (${parts[3]})`;
-                                                    }
-                                                    badgeClass += "border-red-200 bg-red-50 text-red-700 hover:bg-red-100";
-                                                } else if (relatedId.includes(":") && !relatedId.startsWith("AGG:")) {
+                                                } else if (relatedId.includes(":")) {
                                                     // component:version format (vulnerabilities)
                                                     const parts = relatedId.split(":");
                                                     if (parts.length === 2) {
@@ -274,10 +268,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                             {finding.type === 'vulnerability' && (
                                 <div className="space-y-4">
                                     {(() => {
-                                        // Normalize to a list of vulnerabilities
-                                        const vulns: NestedVulnerability[] = finding.details?.vulnerabilities && finding.details.vulnerabilities.length > 0 
-                                            ? finding.details.vulnerabilities 
-                                            : [(finding.details || {}) as NestedVulnerability]; // Fallback for legacy or single vuln structure
+                                        const vulns: NestedVulnerability[] = finding.details?.vulnerabilities || []
+                                        if (vulns.length === 0) return null
 
                                         return (
                                             <div className="space-y-4">
@@ -377,8 +369,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 return (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className={`font-medium ${
-                                                                        epssScore >= 0.1 ? 'text-red-500' :
-                                                                        epssScore >= 0.01 ? 'text-orange-500' : ''
+                                                                        epssScore >= 0.1 ? 'text-severity-critical' :
+                                                                        epssScore >= 0.01 ? 'text-severity-high' : ''
                                                                     }`}>
                                                                         EPSS: {(epssScore * 100).toFixed(2)}%
                                                                     </span>
@@ -386,7 +378,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                         <span className="text-muted-foreground">(Top {(100 - epssPercentile).toFixed(0)}%)</span>
                                                                     )}
                                                                     {epssDate && (
-                                                                        <span className="text-muted-foreground text-[10px]">as of {new Date(epssDate).toLocaleDateString()}</span>
+                                                                        <span className="text-muted-foreground text-[10px]">as of {formatDate(epssDate)}</span>
                                                                     )}
                                                                 </div>
                                                                 )
@@ -402,7 +394,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                     )}
                                                                     {kevDateAdded && (
                                                                         <span className="text-muted-foreground text-[10px] ml-1">
-                                                                            (since {new Date(kevDateAdded).toLocaleDateString()})
+                                                                            (since {formatDate(kevDateAdded)})
                                                                         </span>
                                                                     )}
                                                                 </div>
@@ -415,8 +407,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 return (
                                                                 <div className={`flex items-center gap-1 px-2 py-0.5 rounded-md flex-wrap ${
                                                                     reachability?.is_reachable
-                                                                        ? 'bg-red-500/10 text-red-600'
-                                                                        : 'bg-green-500/10 text-green-600'
+                                                                        ? 'bg-red-500/10 text-severity-critical'
+                                                                        : 'bg-green-500/10 text-success'
                                                                 }`}>
                                                                     {reachability?.is_reachable ? (
                                                                         <>
@@ -466,23 +458,23 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                             {(vuln.kev_required_action || finding.details?.kev_required_action) && (
                                                                 <div className="flex items-center gap-2 w-full">
                                                                     <span className="font-medium text-muted-foreground">Required Action:</span>
-                                                                    <span className="text-red-600">{vuln.kev_required_action || finding.details?.kev_required_action}</span>
+                                                                    <span className="text-destructive">{vuln.kev_required_action || finding.details?.kev_required_action}</span>
                                                                 </div>
                                                             )}
                                                             {(vuln.exploit_maturity || finding.details?.exploit_maturity) && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium text-muted-foreground">Exploit:</span>
                                                                     <span className={`${
-                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'high' ? 'text-red-500 font-medium' :
-                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'functional' ? 'text-orange-500' :
-                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'poc' ? 'text-yellow-600' : ''
+                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'high' ? 'text-severity-critical font-medium' :
+                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'functional' ? 'text-severity-high' :
+                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'poc' ? 'text-severity-medium' : ''
                                                                     }`}>{vuln.exploit_maturity || finding.details?.exploit_maturity}</span>
                                                                 </div>
                                                             )}
                                                             {(vuln.details?.published_date || finding.details?.published_date) && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium text-muted-foreground">Published:</span>
-                                                                    <span>{new Date(vuln.details?.published_date ?? finding.details?.published_date ?? '').toLocaleDateString()}</span>
+                                                                    <span>{formatDate(vuln.details?.published_date ?? finding.details?.published_date)}</span>
                                                                 </div>
                                                             )}
                                                             {((vuln.details?.cwe_ids ?? finding.details?.cwe_ids)?.length ?? 0) > 0 && (
@@ -566,11 +558,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 <ContextBannersSection finding={finding} />
                             )}
 
-                            {/* Legacy 'other' type with maintainer_risk data */}
-                            {finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info && (
-                                <MaintainerRiskDetailsView details={finding.details} />
-                            )}
-
                             {finding.type === 'system_warning' && (
                                 <div className="space-y-4">
                                     <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
@@ -597,7 +584,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 </div>
                             )}
 
-                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && finding.type !== 'outdated' && finding.type !== 'quality' && finding.type !== 'license' && finding.type !== 'system_warning' && !(finding.type === 'other' && finding.details?.risks && finding.details?.maintainer_info) && (
+                            {finding.details && finding.type !== 'secret' && finding.type !== 'sast' && finding.type !== 'vulnerability' && finding.type !== 'outdated' && finding.type !== 'quality' && finding.type !== 'license' && finding.type !== 'system_warning' && finding.type !== 'iac' && (
                                 <DetailSection label="Additional Details">
                                     <AdditionalDetailsView details={finding.details} />
                                 </DetailSection>

@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "sonner"
+import { TEAM_ROLES } from '@/lib/constants';
 
 interface AddMemberDialogProps {
   teamId: string | null;
@@ -31,6 +32,12 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: AddMemberDialogProp
   const [role, setRole] = useState('member');
   const addMemberMutation = useAddTeamMember();
 
+  const handleClose = () => {
+    setEmail('');
+    setRole('member');
+    onClose();
+  };
+
   const handleAddMember = (e: React.FormEvent) => {
     e.preventDefault();
     if (teamId) {
@@ -38,9 +45,7 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: AddMemberDialogProp
         { teamId, data: { email, role } },
         {
           onSuccess: () => {
-            onClose();
-            setEmail('');
-            setRole('member');
+            handleClose();
             toast.success("Member added successfully");
           }
         }
@@ -49,7 +54,7 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: AddMemberDialogProp
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-[425px]">
         <form onSubmit={handleAddMember}>
           <DialogHeader>
@@ -82,9 +87,11 @@ export function AddMemberDialog({ teamId, isOpen, onClose }: AddMemberDialogProp
                       <SelectValue placeholder="Select a role" />
                   </SelectTrigger>
                   <SelectContent>
-                      <SelectItem value="member">Member</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="owner">Owner</SelectItem>
+                      {TEAM_ROLES.map((r) => (
+                        <SelectItem key={r.value} value={r.value}>
+                          {r.label}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                   </Select>
               </div>

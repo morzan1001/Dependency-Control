@@ -7,10 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Badge } from "@/components/ui/badge"
 import { Trash2, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/context/useAuth"
+import { formatDate } from "@/lib/utils"
 
 interface WebhookManagerProps {
   webhooks: Webhook[]
@@ -171,13 +173,11 @@ export function WebhookManager({
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {webhook.events.map(e => (
-                        <span key={e} className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
-                          {e}
-                        </span>
+                        <Badge key={e} variant="secondary">{e}</Badge>
                       ))}
                     </div>
                   </TableCell>
-                  <TableCell>{new Date(webhook.created_at).toLocaleDateString()}</TableCell>
+                  <TableCell>{formatDate(webhook.created_at)}</TableCell>
                   <TableCell>
                     {hasPermission(deletePermission) && (
                       <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>

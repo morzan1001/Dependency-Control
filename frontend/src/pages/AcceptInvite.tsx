@@ -5,9 +5,9 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/context/useAuth'
 import { useValidateInvitation, useAcceptInvitation, useLogin } from '@/hooks/queries/use-auth'
-import { AxiosError } from 'axios'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
+import { getErrorMessage } from '@/lib/utils'
 
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams()
@@ -32,8 +32,7 @@ export default function AcceptInvite() {
          setIsLoading(false)
        },
        onError: (err) => {
-         const error = err as AxiosError<{ detail: string }>
-         setError(error.response?.data?.detail || "Invalid or expired invitation.")
+         setError(getErrorMessage(err))
          setIsLoading(false)
        }
     })
@@ -70,8 +69,7 @@ export default function AcceptInvite() {
          })
        },
        onError: (err) => {
-          const error = err as AxiosError<{ detail: string }>
-          setError(error.response?.data?.detail || "Failed to create account.")
+          setError(getErrorMessage(err))
           setIsSubmitting(false)
        }
     })

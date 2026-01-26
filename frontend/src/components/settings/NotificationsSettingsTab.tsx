@@ -3,8 +3,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Slack, CheckCircle2 } from "lucide-react"
-import { Mattermost } from "@/components/icons/Mattermost"
+import { CheckCircle2 } from "lucide-react"
+import { Slack, Mattermost } from "@/components/icons"
 import { WebhookManager } from "@/components/WebhookManager"
 import {
   Select,
@@ -13,8 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { SettingsTabProps } from "./types"
-import { SystemSettings } from "@/types/system"
+import { SettingsTabProps, SystemSettings } from "@/types/system"
 import { Webhook, WebhookCreate } from "@/types/webhook"
 
 interface NotificationsSettingsTabProps extends SettingsTabProps {
@@ -63,12 +62,17 @@ export function NotificationsSettingsTab({
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label htmlFor="smtp-port">SMTP Port</Label>
-              <Input 
-                id="smtp-port" 
+              <Input
+                id="smtp-port"
                 type="number"
-                placeholder="587" 
+                placeholder="587"
+                min="1"
+                max="65535"
                 value={formData.smtp_port || 587}
-                onChange={(e) => handleInputChange('smtp_port', parseInt(e.target.value))}
+                onChange={(e) => {
+                  const port = parseInt(e.target.value) || 587;
+                  handleInputChange('smtp_port', Math.min(65535, Math.max(1, port)));
+                }}
               />
             </div>
             <div className="grid gap-2">

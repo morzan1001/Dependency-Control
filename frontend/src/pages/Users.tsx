@@ -9,7 +9,8 @@ import { UserTable } from '@/components/users/UserTable';
 import { UserDetailsDialog } from '@/components/users/UserDetailsDialog';
 import { Input } from '@/components/ui/input';
 import { Search } from 'lucide-react';
-import { useDebounce } from '@/hooks/use-debounce'; 
+import { useDebounce } from '@/hooks/use-debounce';
+import { DEBOUNCE_DELAY_MS, SMALL_PAGE_SIZE } from '@/lib/constants'; 
 
 export default function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -17,8 +18,8 @@ export default function UsersPage() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("username");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
-  const debouncedSearch = useDebounce(search, 500);
-  const limit = 20;
+  const debouncedSearch = useDebounce(search, DEBOUNCE_DELAY_MS);
+  const limit = SMALL_PAGE_SIZE;
   
   const { hasPermission } = useAuth();
   
@@ -52,7 +53,7 @@ export default function UsersPage() {
   ];
 
   if (error) {
-    return <div className="text-red-500">Error loading users</div>;
+    return <div className="text-destructive">Error loading users</div>;
   }
 
   return (

@@ -3,7 +3,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { SbomResponse, SbomTool, SbomToolComponent } from '@/api/scans'
 import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
-import { FindingsTable } from '@/components/FindingsTable'
+import { FindingsTable } from '@/components/findings/FindingsTable'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -16,10 +16,11 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recha
 import { toast } from "sonner"
 import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
+import { logger } from '@/lib/logger'
+import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
-// Type for scan history items
 interface ScanHistoryItem {
   _id: string;
   is_rescan?: boolean;
@@ -52,12 +53,10 @@ export default function ScanDetails() {
   
   const triggerRescanMutation = useTriggerRescan()
 
-  // Memoized scroll handler to avoid recreating on every render
   const scrollToSbom = useCallback((index: number) => {
     const sbomElement = sbomRefs.current[index]
     if (sbomElement) {
       sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      // Highlight briefly
       sbomElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
       setTimeout(() => {
         sbomElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2')
@@ -65,12 +64,10 @@ export default function ScanDetails() {
     }
   }, [])
 
-  // Scroll to SBOM when navigating from finding details
   useEffect(() => {
     if (activeTab === 'raw' && sbomParam !== null && !isSbomsLoading && scanSboms && scanSboms.length > 0) {
       const sbomIndex = parseInt(sbomParam, 10)
       if (!isNaN(sbomIndex) && sbomIndex >= 0 && sbomIndex < scanSboms.length) {
-        // Small delay to ensure DOM is rendered
         const timeoutId = setTimeout(() => scrollToSbom(sbomIndex), 100)
         return () => clearTimeout(timeoutId)
       }
@@ -99,7 +96,6 @@ export default function ScanDetails() {
     return <div>No results found</div>
   }
 
-  // Build scan context for source code links in SAST/secret findings
   const scanContext: ScanContext = {
     projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
     pipelineUrl: scan.pipeline_url,
@@ -126,12 +122,12 @@ export default function ScanDetails() {
   ].filter(d => d.value > 0);
 
   const categoryData = categoryStats ? [
-      { name: 'Security', value: categoryStats.security, color: '#ef4444' },
-      { name: 'Secrets', value: categoryStats.secret, color: '#f97316' },
-      { name: 'SAST', value: categoryStats.sast, color: '#8b5cf6' },
-      { name: 'Compliance', value: categoryStats.compliance, color: '#3b82f6' },
-      { name: 'Quality', value: categoryStats.quality, color: '#10b981' },
-      { name: 'Other', value: categoryStats.other, color: '#9ca3af' },
+      { name: 'Security', value: categoryStats.security ?? 0, color: '#ef4444' },
+      { name: 'Secrets', value: categoryStats.secret ?? 0, color: '#f97316' },
+      { name: 'SAST', value: categoryStats.sast ?? 0, color: '#8b5cf6' },
+      { name: 'Compliance', value: categoryStats.compliance ?? 0, color: '#3b82f6' },
+      { name: 'Quality', value: categoryStats.quality ?? 0, color: '#10b981' },
+      { name: 'Other', value: categoryStats.other ?? 0, color: '#9ca3af' },
   ].filter(d => d.value > 0) : [];
 
   return (
@@ -164,7 +160,7 @@ export default function ScanDetails() {
                     <SelectContent>
                         {scanHistory.map((h: ScanHistoryItem) => (
                             <SelectItem key={h._id} value={h._id}>
-                                {h.is_rescan ? 'Re-scan' : 'Original'} - {new Date(h.created_at).toLocaleString()}
+                                {h.is_rescan ? 'Re-scan' : 'Original'} - {formatDateTime(h.created_at)}
                             </SelectItem>
                         ))}
                     </SelectContent>
@@ -255,11 +251,11 @@ export default function ScanDetails() {
                                                                                     rel="noopener noreferrer"
                                                                                     className="flex items-center gap-2 text-primary hover:underline"
                                                                                 >
-                                                                                    <span className="font-medium font-mono text-xs">{scan.commit_hash.substring(0, 7)}</span>
+                                                                                    <span className="font-medium font-mono text-xs">{shortCommitHash(scan.commit_hash)}</span>
                                                                                     <ExternalLink className="h-3 w-3" />
                                                                                 </a>
                                                                             ) : (
-                                                                                <span className="font-medium font-mono text-xs">{scan.commit_hash.substring(0, 7)}</span>
+                                                                                <span className="font-medium font-mono text-xs">{shortCommitHash(scan.commit_hash)}</span>
                                                                             )
                                                                         })()}
                                 </div>
@@ -276,15 +272,15 @@ export default function ScanDetails() {
                             <span className="text-sm text-muted-foreground">Scan Started</span>
                             <div className="flex items-center gap-2">
                                 <Calendar className="h-4 w-4" />
-                                <span className="text-sm">{new Date(scan.created_at).toLocaleString()}</span>
+                                <span className="text-sm">{formatDateTime(scan.created_at)}</span>
                             </div>
                         </div>
                         {scan.completed_at && (
                             <div className="flex flex-col space-y-1">
                                 <span className="text-sm text-muted-foreground">Scan Completed</span>
                                 <div className="flex items-center gap-2">
-                                    <CheckCircle className="h-4 w-4 text-green-500" />
-                                    <span className="text-sm">{new Date(scan.completed_at).toLocaleString()}</span>
+                                    <CheckCircle className="h-4 w-4 text-success" />
+                                    <span className="text-sm">{formatDateTime(scan.completed_at)}</span>
                                 </div>
                             </div>
                         )}
@@ -293,7 +289,7 @@ export default function ScanDetails() {
                                 <span className="text-sm text-muted-foreground">Pipeline Started</span>
                                 <div className="flex items-center gap-2">
                                     <PlayCircle className="h-4 w-4 text-blue-500" />
-                                    <span className="text-sm">{new Date(scan.job_started_at).toLocaleString()}</span>
+                                    <span className="text-sm">{formatDateTime(scan.job_started_at)}</span>
                                 </div>
                             </div>
                         )}
@@ -579,7 +575,6 @@ export default function ScanDetails() {
                                     if (!sbom) return null;
                                     
                                     try {
-                                        // Determine SBOM Name (matching backend logic)
                                         if (sbom.metadata?.component?.name) {
                                             sbomName = sbom.metadata.component.name;
                                         } else if (sbom.serialNumber) {
@@ -588,15 +583,13 @@ export default function ScanDetails() {
 
                                         if (sbom.metadata?.tools) {
                                             if (Array.isArray(sbom.metadata.tools)) {
-                                                // CycloneDX 1.4
                                                 toolName = sbom.metadata.tools.map((t: SbomTool) => t.name || t.vendor).join(', ');
                                             } else if (sbom.metadata.tools.components) {
-                                                // CycloneDX 1.5
                                                 toolName = sbom.metadata.tools.components.map((c: SbomToolComponent) => c.name).join(', ');
                                             }
                                         }
                                     } catch (e) {
-                                        console.warn("Failed to extract tool name", e);
+                                        logger.warn("Failed to extract tool name", e);
                                     }
 
                                     return (

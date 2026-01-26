@@ -130,11 +130,11 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                    <div className="flex items-center gap-2 text-red-600 mb-1">
+                    <div className="flex items-center gap-2 text-severity-critical mb-1">
                       <AlertTriangle className="h-4 w-4" />
                       <span className="text-xs font-medium">Action Required</span>
                     </div>
-                    <div className="text-2xl font-bold text-red-600">
+                    <div className="text-2xl font-bold text-severity-critical">
                       {prioritized?.actionable_critical || 0}
                     </div>
                     <div className="text-xs text-muted-foreground">
@@ -157,11 +157,11 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                    <div className="flex items-center gap-2 text-orange-600 mb-1">
+                    <div className="flex items-center gap-2 text-severity-high mb-1">
                       <Activity className="h-4 w-4" />
                       <span className="text-xs font-medium">High Priority</span>
                     </div>
-                    <div className="text-2xl font-bold text-orange-600">
+                    <div className="text-2xl font-bold text-severity-high">
                       {prioritized?.actionable_high || 0}
                     </div>
                     <div className="text-xs text-muted-foreground">
@@ -263,7 +263,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               {/* KEV Status */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-red-500" />
+                  <AlertCircle className="h-4 w-4 text-severity-critical" />
                   <span className="text-sm">CISA KEV (Actively Exploited)</span>
                 </div>
                 <Badge variant={threatIntel.kev_count > 0 ? "destructive" : "secondary"}>
@@ -275,7 +275,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               {threatIntel.kev_ransomware_count > 0 && (
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Skull className="h-4 w-4 text-red-600" />
+                    <Skull className="h-4 w-4 text-severity-critical" />
                     <span className="text-sm">Used in Ransomware</span>
                   </div>
                   <Badge variant="destructive">{threatIntel.kev_ransomware_count}</Badge>
@@ -285,7 +285,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               {/* High EPSS */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <TrendingUp className="h-4 w-4 text-orange-500" />
+                  <TrendingUp className="h-4 w-4 text-severity-high" />
                   <span className="text-sm">High EPSS (&gt;10%)</span>
                 </div>
                 <Badge variant={threatIntel.high_epss_count > 0 ? "default" : "secondary"} 
@@ -297,7 +297,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               {/* Medium EPSS */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-yellow-500" />
+                  <Activity className="h-4 w-4 text-severity-medium" />
                   <span className="text-sm">Medium EPSS (1-10%)</span>
                 </div>
                 <Badge variant="secondary">{threatIntel.medium_epss_count}</Badge>
@@ -335,7 +335,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               {/* Reachable */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-red-500" />
+                  <AlertTriangle className="h-4 w-4 text-severity-critical" />
                   <span className="text-sm">Confirmed Reachable</span>
                 </div>
                 <Badge variant={reachability.reachable_count > 0 ? "destructive" : "secondary"}>
@@ -346,7 +346,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               {/* Likely Reachable */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-orange-500" />
+                  <AlertCircle className="h-4 w-4 text-severity-high" />
                   <span className="text-sm">Likely Reachable</span>
                 </div>
                 <Badge variant="secondary" className="bg-orange-500/20">
@@ -357,7 +357,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               {/* Unreachable */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  <CheckCircle2 className="h-4 w-4 text-success" />
                   <span className="text-sm">Unreachable (Safe)</span>
                 </div>
                 <Badge variant="secondary" className="bg-green-500/20 text-green-600">
@@ -379,11 +379,11 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
                 <div className="pt-2 border-t text-xs text-muted-foreground">
                   <div className="flex justify-between">
                     <span>Reachable Critical:</span>
-                    <span className="text-red-500 font-medium">{reachability.reachable_critical}</span>
+                    <span className="text-severity-critical font-medium">{reachability.reachable_critical}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Reachable High:</span>
-                    <span className="text-orange-500 font-medium">{reachability.reachable_high}</span>
+                    <span className="text-severity-high font-medium">{reachability.reachable_high}</span>
                   </div>
                 </div>
               )}

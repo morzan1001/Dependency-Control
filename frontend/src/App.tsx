@@ -20,25 +20,19 @@ import Broadcasts from './pages/Broadcasts'
 import SearchPage from './pages/Search'
 import AnalyticsPage from './pages/Analytics'
 import DashboardLayout from './layouts/DashboardLayout'
-import { AuthProvider, RequirePermission } from './context/AuthContext'
-import { useAuth } from './context/useAuth'
+import { AuthProvider, RequirePermission, useAuth } from './context'
 import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { systemApi } from '@/api/system'
 import { useState, useEffect } from 'react'
-import { AxiosError } from 'axios'
-
-interface ApiErrorResponse {
-  detail?: string;
-  message?: string;
-}
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error: Error) => {
-      const axiosError = error as AxiosError<ApiErrorResponse>
+      // Check for server errors (5xx) using error response structure
+      const axiosError = error as { response?: { status?: number } }
       if (axiosError.response?.status && axiosError.response.status >= 500) {
         toast.error("Server Error", { description: "Something went wrong on the server." })
       }

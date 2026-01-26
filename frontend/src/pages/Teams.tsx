@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTeams } from '@/hooks/queries/use-teams';
 import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
+import { useDebounce } from '@/hooks/use-debounce';
+import { DEBOUNCE_DELAY_MS } from '@/lib/constants';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -23,27 +25,18 @@ import {
 export default function TeamsPage() {
   const { hasPermission } = useAuth();
   
-  // Dialog States
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isManageMembersOpen, setIsManageMembersOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
-  
-  // Selection States
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [selectedTeamIdForAddMember, setSelectedTeamIdForAddMember] = useState<string | null>(null);
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy, setSortBy] = useState("name");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
+  const debouncedSearch = useDebounce(search, DEBOUNCE_DELAY_MS);
 
   const { data: teams, isLoading, error } = useTeams(debouncedSearch, sortBy, sortOrder);
 
@@ -84,7 +77,7 @@ export default function TeamsPage() {
   }
 
   if (error) {
-    return <div className="text-red-500">Error loading teams</div>;
+    return <div className="text-destructive">Error loading teams</div>;
   }
 
   return (

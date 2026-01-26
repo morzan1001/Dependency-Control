@@ -51,10 +51,10 @@ interface RecommendationsProps {
 }
 
 const priorityConfig = {
-  critical: { color: 'bg-red-500', textColor: 'text-red-500', label: 'Critical' },
-  high: { color: 'bg-orange-500', textColor: 'text-orange-500', label: 'High' },
-  medium: { color: 'bg-yellow-500', textColor: 'text-yellow-500', label: 'Medium' },
-  low: { color: 'bg-blue-500', textColor: 'text-blue-500', label: 'Low' },
+  critical: { color: 'bg-severity-critical', textColor: 'text-severity-critical', label: 'Critical' },
+  high: { color: 'bg-severity-high', textColor: 'text-severity-high', label: 'High' },
+  medium: { color: 'bg-severity-medium', textColor: 'text-severity-medium', label: 'Medium' },
+  low: { color: 'bg-severity-low', textColor: 'text-severity-low', label: 'Low' },
 }
 
 const typeConfig: Record<string, { icon: typeof Container; label: string; color: string; bgColor: string }> = {
@@ -67,8 +67,8 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
   direct_dependency_update: {
     icon: Package,
     label: 'Dependency Update',
-    color: 'text-green-500',
-    bgColor: 'bg-green-500/10',
+    color: 'text-success',
+    bgColor: 'bg-success/10',
   },
   transitive_fix_via_parent: {
     icon: Layers,
@@ -91,14 +91,14 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
   rotate_secrets: {
     icon: Key,
     label: 'Rotate Secrets',
-    color: 'text-red-500',
-    bgColor: 'bg-red-500/10',
+    color: 'text-destructive',
+    bgColor: 'bg-destructive/10',
   },
   remove_secrets: {
     icon: FileWarning,
     label: 'Remove Secrets',
-    color: 'text-orange-500',
-    bgColor: 'bg-orange-500/10',
+    color: 'text-severity-high',
+    bgColor: 'bg-severity-high/10',
   },
   fix_code_security: {
     icon: Code,
@@ -183,8 +183,8 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
   shared_vulnerability: {
     icon: Globe,
     label: 'Shared Vulnerability',
-    color: 'text-red-500',
-    bgColor: 'bg-red-500/10',
+    color: 'text-destructive',
+    bgColor: 'bg-destructive/10',
   },
   critical_hotspot: {
     icon: Zap,
@@ -195,8 +195,8 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
   known_exploit: {
     icon: ShieldAlert,
     label: 'Known Exploit (KEV)',
-    color: 'text-red-500',
-    bgColor: 'bg-red-500/20',
+    color: 'text-destructive',
+    bgColor: 'bg-destructive/20',
   },
   ransomware_risk: {
     icon: ShieldX,
@@ -225,8 +225,8 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
   hash_mismatch: {
     icon: Shield,
     label: 'Hash Mismatch',
-    color: 'text-red-500',
-    bgColor: 'bg-red-500/10',
+    color: 'text-destructive',
+    bgColor: 'bg-destructive/10',
   },
   eol_dependency: {
     icon: Clock,
@@ -243,8 +243,8 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
   single_update_multi_fix: {
     icon: ArrowUpCircle,
     label: 'Multi-Fix Update',
-    color: 'text-green-500',
-    bgColor: 'bg-green-500/20',
+    color: 'text-success',
+    bgColor: 'bg-success/20',
   },
   toxic_dependency: {
     icon: AlertTriangle,
@@ -261,15 +261,15 @@ const typeConfig: Record<string, { icon: typeof Container; label: string; color:
   critical_risk: {
     icon: ShieldAlert,
     label: 'Critical Risk',
-    color: 'text-red-500',
-    bgColor: 'bg-red-500/10',
+    color: 'text-destructive',
+    bgColor: 'bg-destructive/10',
   },
 }
 
 const effortConfig = {
-  low: { label: 'Low Effort', color: 'text-green-600' },
-  medium: { label: 'Medium Effort', color: 'text-yellow-600' },
-  high: { label: 'High Effort', color: 'text-red-600' },
+  low: { label: 'Low Effort', color: 'text-success' },
+  medium: { label: 'Medium Effort', color: 'text-severity-medium' },
+  high: { label: 'High Effort', color: 'text-severity-critical' },
 }
 
 function RecommendationCard({ recommendation }: { recommendation: Recommendation }) {
@@ -377,8 +377,8 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                   <div className="flex items-center justify-between">
                     <span>
                       Update <strong>{recommendation.action.package}</strong> from{' '}
-                      <span className="text-red-500">{recommendation.action.current_version}</span> to{' '}
-                      <span className="text-green-500">{recommendation.action.target_version}</span>
+                      <span className="text-destructive">{recommendation.action.current_version}</span> to{' '}
+                      <span className="text-success">{recommendation.action.target_version}</span>
                     </span>
                     <Button 
                       variant="ghost" 
@@ -434,7 +434,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
                   <div>
                     Update <strong>{recommendation.action.package}</strong> to{' '}
-                    <span className="text-green-500">{recommendation.action.target_version}</span>
+                    <span className="text-success">{recommendation.action.target_version}</span>
                   </div>
                   {recommendation.action.suggestions && (
                     <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
@@ -472,7 +472,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                   {recommendation.action.secret_type && (
                     <div>
                       <span className="text-muted-foreground">Type: </span>
-                      <code className="text-red-500">{recommendation.action.secret_type}</code>
+                      <code className="text-destructive">{recommendation.action.secret_type}</code>
                     </div>
                   )}
                   {recommendation.action.file_path && (
@@ -575,7 +575,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                   {recommendation.action.license_type && (
                     <div>
                       <span className="text-muted-foreground">License Type: </span>
-                      <code className="text-orange-500">{recommendation.action.license_type}</code>
+                      <code className="text-severity-high">{recommendation.action.license_type}</code>
                     </div>
                   )}
                   {recommendation.action.components && recommendation.action.components.length > 0 && (
@@ -632,7 +632,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                       <div>
                         <span className="font-medium">{pkg.name}</span>
                         <span className="text-muted-foreground"> v{pkg.current}</span>
-                        <span className="text-green-500"> → v{pkg.recommended_major}+</span>
+                        <span className="text-success"> → v{pkg.recommended_major}+</span>
                       </div>
                       <span className="text-xs text-muted-foreground max-w-[200px] truncate">{pkg.reason}</span>
                     </div>
@@ -662,7 +662,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                         {(pkg.versions?.length || 0) > 4 && <span className="text-muted-foreground">...</span>}
                       </div>
                       {pkg.suggestion && (
-                        <div className="text-green-500 text-xs mt-1">
+                        <div className="text-success text-xs mt-1">
                           → {pkg.suggestion}
                         </div>
                       )}
@@ -683,7 +683,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
             {recommendation.action.type === 'investigate_regression' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
-                  <TrendingDown className="h-4 w-4 text-red-500" />
+                  <TrendingDown className="h-4 w-4 text-destructive" />
                   Regression Details
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
@@ -832,7 +832,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                       <span className="font-medium">{proj.name}</span>
                       <div className="flex gap-2">
                         <Badge variant="destructive">{proj.critical} Critical</Badge>
-                        <Badge variant="outline" className="text-orange-500">{proj.high} High</Badge>
+                        <Badge variant="outline" className="text-severity-high">{proj.high} High</Badge>
                       </div>
                     </div>
                   ))}
@@ -862,7 +862,7 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
                         Versions in use: <span className="font-mono">{pkg.versions?.join(', ') || 'unknown'}</span>
                       </div>
                       {pkg.suggestion && pkg.suggestion !== 'Use latest stable' && (
-                        <div className="text-xs text-green-500 mt-1">
+                        <div className="text-xs text-success mt-1">
                           Recommended: <span className="font-mono">{pkg.suggestion}</span>
                         </div>
                       )}
@@ -1008,7 +1008,7 @@ function SummaryCard({ data }: { data: RecommendationsResponse }) {
             </h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="text-center p-3 bg-muted rounded-lg">
-                <div className="text-2xl font-bold text-green-500">
+                <div className="text-2xl font-bold text-success">
                   {data.summary.total_fixable_vulns || 0}
                 </div>
                 <div className="text-xs text-muted-foreground">Fixable</div>
@@ -1045,7 +1045,7 @@ function SummaryCard({ data }: { data: RecommendationsResponse }) {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {(data.summary.secrets_to_rotate || 0) > 0 && (
                 <div className="text-center p-3 bg-muted rounded-lg">
-                  <div className="text-2xl font-bold text-red-500">
+                  <div className="text-2xl font-bold text-destructive">
                     {data.summary.secrets_to_rotate}
                   </div>
                   <div className="text-xs text-muted-foreground">Secrets</div>
@@ -1211,7 +1211,7 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Recomme
             <Card>
               <CardContent className="py-12">
                 <div className="flex flex-col items-center gap-4 text-muted-foreground">
-                  <Shield className="h-12 w-12 text-green-500" />
+                  <Shield className="h-12 w-12 text-success" />
                   <p className="text-lg font-medium text-foreground">No vulnerabilities found!</p>
                   <p>This project has no known vulnerabilities to remediate.</p>
                 </div>

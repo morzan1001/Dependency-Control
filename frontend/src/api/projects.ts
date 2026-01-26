@@ -1,5 +1,5 @@
 import { api } from '@/api/client';
-import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings } from '@/types/project';
+import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings, ProjectMember } from '@/types/project';
 
 export const projectApi = {
   getAll: async (
@@ -65,18 +65,18 @@ export const projectApi = {
     return response.data;
   },
 
-  inviteMember: async (projectId: string, email: string, role: string) => {
-    const response = await api.post(`/projects/${projectId}/invite`, { email, role });
+  inviteMember: async (projectId: string, email: string, role: string): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>(`/projects/${projectId}/invite`, { email, role });
     return response.data;
   },
 
-  updateMember: async (projectId: string, userId: string, role: string) => {
-    const response = await api.put(`/projects/${projectId}/members/${userId}`, { role });
+  updateMember: async (projectId: string, userId: string, role: string): Promise<ProjectMember> => {
+    const response = await api.put<ProjectMember>(`/projects/${projectId}/members/${userId}`, { role });
     return response.data;
   },
 
-  removeMember: async (projectId: string, userId: string) => {
-    const response = await api.delete(`/projects/${projectId}/members/${userId}`);
+  removeMember: async (projectId: string, userId: string): Promise<{ message: string }> => {
+    const response = await api.delete<{ message: string }>(`/projects/${projectId}/members/${userId}`);
     return response.data;
   }
 };

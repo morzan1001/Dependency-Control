@@ -1,7 +1,7 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { projectApi } from '@/api/projects'
 import { useProject, useProjectBranches } from '@/hooks/queries/use-projects'
-import { useMe } from '@/hooks/queries/use-auth'
+import { useCurrentUser } from '@/hooks/queries/use-users'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Filter } from 'lucide-react'
@@ -36,7 +36,7 @@ export default function ProjectDetails() {
 
   const { data: branches } = useProjectBranches(id!)
 
-  const { data: user } = useMe()
+  const { data: user } = useCurrentUser()
 
   const allBranches = branches || []
 

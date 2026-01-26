@@ -90,10 +90,10 @@ export function SeverityDistribution() {
   }
 
   const severities = [
-    { label: 'Critical', value: severity.critical, color: 'bg-red-500' },
-    { label: 'High', value: severity.high, color: 'bg-orange-500' },
-    { label: 'Medium', value: severity.medium, color: 'bg-yellow-500' },
-    { label: 'Low', value: severity.low, color: 'bg-blue-500' },
+    { label: 'Critical', value: severity.critical, color: 'bg-severity-critical' },
+    { label: 'High', value: severity.high, color: 'bg-severity-high' },
+    { label: 'Medium', value: severity.medium, color: 'bg-severity-medium' },
+    { label: 'Low', value: severity.low, color: 'bg-severity-low' },
   ]
 
   return (
@@ -172,7 +172,7 @@ export function DependencyTypesChart() {
         {types.slice(0, 8).map((t, i) => (
           <div key={t.type} className="space-y-1">
             <div className="flex justify-between text-sm">
-              <span className="fo: { type: string; count: number; percentage: number }, i: numbermedium">{t.type}</span>
+              <span className="font-medium">{t.type}</span>
               <span className="text-muted-foreground">{t.count} ({t.percentage}%)</span>
             </div>
             <div className="h-2 bg-secondary rounded-full overflow-hidden">

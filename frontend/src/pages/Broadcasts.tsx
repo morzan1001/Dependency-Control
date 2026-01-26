@@ -30,31 +30,21 @@ export default function Broadcasts() {
   const { data: history, refetch: refetchHistory } = useBroadcastHistory()
   const { data: availableChannels } = useNotificationChannels()
 
-  // Form State
   const [activeTab, setActiveTab] = useState<string>("announcement")
-  
-  // Announcement State
   const [announcementTarget, setAnnouncementTarget] = useState<"global" | "teams">("global")
   const [selectedTeams, setSelectedTeams] = useState<string[]>([])
   const [announcementSubject, setAnnouncementSubject] = useState("")
   const [announcementMessage, setAnnouncementMessage] = useState("")
-  
-  // Advisory State
   const [advisorySubject, setAdvisorySubject] = useState("")
   const [advisoryMessage, setAdvisoryMessage] = useState("")
   const [packages, setPackages] = useState<AdvisoryPackage[]>([
     { name: "", version: "", type: "" }
   ])
-  
-  // Impact Analysis State
   const [impactCount, setImpactCount] = useState<number | null>(null)
   const [impactProjectCount, setImpactProjectCount] = useState<number | null>(null)
   const [isCalculating, setIsCalculating] = useState(false)
-
-  // Common State
   const [channels, setChannels] = useState<NotificationChannel[]>(["email"])
 
-  // Clear impacts when tab changes or major inputs change
   useEffect(() => {
     setImpactCount(null)
     setImpactProjectCount(null)
@@ -115,7 +105,7 @@ export default function Broadcasts() {
          setImpactProjectCount(result.project_count || 0)
       }
     } catch {
-      // Error handling is done by mutation hook, but we can add specific logic here
+      // Handled by mutation hook
     } finally {
       setIsCalculating(false)
     }
@@ -137,7 +127,6 @@ export default function Broadcasts() {
   }
 
   const handleSendAdvisory = async () => {
-    // Filter out empty packages
     const validPackages = packages.filter(p => p.name.trim() !== "")
     
     await sendBroadcast({
@@ -239,18 +228,16 @@ export default function Broadcasts() {
                   <Label>Select Teams</Label>
                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 border p-4 rounded-md h-40 overflow-y-auto">
                       {teams?.map((team) => (
-                         <div key={team.id || team._id} className="flex items-center space-x-2">
-                            <Checkbox 
-                               id={`team-${team.id || team._id}`}
-                               checked={selectedTeams.includes(team.id || team._id || '')}
+                         <div key={team._id} className="flex items-center space-x-2">
+                            <Checkbox
+                               id={`team-${team._id}`}
+                               checked={selectedTeams.includes(team._id)}
                                onCheckedChange={(checked) => {
-                                  const tid = team.id || team._id;
-                                  if (!tid) return;
-                                  if (checked) setSelectedTeams([...selectedTeams, tid])
-                                  else setSelectedTeams(selectedTeams.filter(id => id !== tid))
+                                  if (checked) setSelectedTeams([...selectedTeams, team._id])
+                                  else setSelectedTeams(selectedTeams.filter(id => id !== team._id))
                                }}
                             />
-                            <Label htmlFor={`team-${team.id || team._id}`}>{team.name}</Label>
+                            <Label htmlFor={`team-${team._id}`}>{team.name}</Label>
                          </div>
                       ))}
                    </div>

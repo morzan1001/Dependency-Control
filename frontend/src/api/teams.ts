@@ -26,7 +26,7 @@ export const teamApi = {
     return response.data;
   },
 
-  delete: async (id: string) => {
+  delete: async (id: string): Promise<void> => {
     await api.delete(`/teams/${id}`);
   },
 

@@ -1,5 +1,5 @@
-import { ApiError } from '@/api/client';
 import { User, UserUpdate } from '@/types/user';
+import { getErrorMessage } from '@/lib/utils';
 import { useProjects } from '@/hooks/queries/use-projects';
 import { useTeams } from '@/hooks/queries/use-teams';
 import { 
@@ -54,7 +54,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
              toast.success("Success", { description: "User updated successfully." });
         },
         onError: (error) => {
-             toast.error("Error", { description: (error as ApiError).response?.data?.detail || "Failed to update user." });
+             toast.error("Error", { description: getErrorMessage(error) });
         }
     });
   };
@@ -65,7 +65,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
               toast.success("User Migrated", { description: "User authentication provider set to 'local'. You can now reset their password." });
           },
           onError: (error) => {
-              toast.error("Migration Failed", { description: (error as ApiError).response?.data?.detail || "Failed to migrate user." });
+              toast.error("Migration Failed", { description: getErrorMessage(error) });
           }
       });
   };
@@ -81,7 +81,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
             setResetLink(data.reset_link || null);
           },
           onError: (error) => {
-              toast.error("Reset Failed", { description: (error as ApiError).response?.data?.detail || "Failed to initiate password reset." });
+              toast.error("Reset Failed", { description: getErrorMessage(error) });
           }
       });
   };
@@ -92,7 +92,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
               toast.success("2FA Disabled", { description: "Two-Factor Authentication has been disabled for this user." });
           },
           onError: (error) => {
-              toast.error("Action Failed", { description: (error as ApiError).response?.data?.detail || "Failed to disable 2FA." });
+              toast.error("Action Failed", { description: getErrorMessage(error) });
           }
       });
   };
@@ -100,7 +100,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const handleToggleStatus = () => {
     if (!user) return;
     const newStatus = !user.is_active;
-    handleUpdate(user._id || user.id, { is_active: newStatus });
+    handleUpdate(user.id, { is_active: newStatus });
   };
 
   const getUserProjects = (userId: string) => {
@@ -216,7 +216,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                             <Button 
                                 variant="outline" 
                                 size="sm" 
-                                onClick={() => handleMigrate(user._id || user.id)}
+                                onClick={() => handleMigrate(user.id)}
                                 disabled={migrateUserMutation.isPending}
                             >
                                 {migrateUserMutation.isPending ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
@@ -234,7 +234,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                             <Button 
                                 variant="outline" 
                                 size="sm" 
-                                onClick={() => handleResetPassword(user._id || user.id)}
+                                onClick={() => handleResetPassword(user.id)}
                                 disabled={resetPasswordMutation.isPending}
                             >
                                 {resetPasswordMutation.isPending ? "Sending..." : "Send Reset Email"}
@@ -258,7 +258,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                             <Button 
                                 variant="destructive" 
                                 size="sm" 
-                                onClick={() => handleDisable2FA(user._id || user.id)}
+                                onClick={() => handleDisable2FA(user.id)}
                                 disabled={disable2FAMutation.isPending}
                             >
                                 {disable2FAMutation.isPending ? "Disabling..." : "Disable 2FA"}
@@ -281,9 +281,9 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                     </div>
                   ) : errorProjects ? (
                     <div className="text-sm text-destructive">Failed to load projects.</div>
-                  ) : getUserProjects(user._id || user.id).length > 0 ? (
+                  ) : getUserProjects(user.id).length > 0 ? (
                     <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
-                      {getUserProjects(user._id || user.id).map(project => (
+                      {getUserProjects(user.id).map(project => (
                         <li 
                           key={project._id} 
                           className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
@@ -311,9 +311,9 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                     </div>
                   ) : errorTeams ? (
                     <div className="text-sm text-destructive">Failed to load teams.</div>
-                  ) : getUserTeams(user._id || user.id).length > 0 ? (
+                  ) : getUserTeams(user.id).length > 0 ? (
                     <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
-                      {getUserTeams(user._id || user.id).map(team => (
+                      {getUserTeams(user.id).map(team => (
                         <li 
                           key={team._id} 
                           className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
@@ -335,7 +335,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
       </Dialog>
 
       <UserPermissionsDialog 
-        key={user?._id || user?.id}
+        key={user?.id}
         user={user} 
         open={isPermissionDialogOpen} 
         onOpenChange={setIsPermissionDialogOpen} 

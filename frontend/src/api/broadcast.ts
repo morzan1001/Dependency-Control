@@ -1,4 +1,4 @@
-import { api } from './client';
+import { api } from '@/api/client';
 import { BroadcastRequest, BroadcastResult, BroadcastHistoryItem } from '@/types/broadcast';
 
 export const broadcastApi = {

@@ -1,6 +1,7 @@
+import { ObjectId } from './common';
+
 export interface User {
-  id: string;
-  _id?: string;
+  id: ObjectId;
   email: string;
   username: string;
   is_active: boolean;
@@ -36,7 +37,7 @@ export interface UserUpdateMe {
 }
 
 export interface SystemInvitation {
-  _id: string;
+  _id: ObjectId;
   email: string;
   token: string;
   invited_by: string;

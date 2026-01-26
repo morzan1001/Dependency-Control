@@ -3,7 +3,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
-import { SettingsTabProps } from "./types"
+import { SettingsTabProps } from "@/types/system"
 
 export function IntegrationsSettingsTab({
   formData,
@@ -156,7 +156,7 @@ export function IntegrationsSettingsTab({
             </div>
           </div>
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
-            {isPending ? "Saving..." : "Save Integrations"}
+            {isPending ? "Saving..." : "Save External Integrations"}
           </Button>
         </CardContent>
       </Card>

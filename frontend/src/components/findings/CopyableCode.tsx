@@ -3,9 +3,9 @@
  * Reusable component for displaying copyable code blocks
  */
 
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Copy, Check } from 'lucide-react'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 
 interface CopyableCodeProps {
   value: string
@@ -13,23 +13,20 @@ interface CopyableCodeProps {
 }
 
 export function CopyableCode({ value, className = '' }: CopyableCodeProps) {
-  const [copied, setCopied] = useState(false)
-  
-  const handleCopy = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    await navigator.clipboard.writeText(value)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const { copied, copy } = useCopyToClipboard()
+
+  const handleCopy = (e: React.MouseEvent<HTMLButtonElement>) => {
+    copy(value, e)
   }
-  
+
   return (
     <div className={`flex items-start gap-2 ${className}`}>
       <code className="flex-1 px-2 py-1 bg-background rounded text-xs font-mono break-all">
         {value}
       </code>
-      <Button 
-        variant="ghost" 
-        size="icon" 
+      <Button
+        variant="ghost"
+        size="icon"
         className="h-6 w-6 flex-shrink-0"
         onClick={handleCopy}
       >
@@ -43,17 +40,14 @@ export function CopyableCode({ value, className = '' }: CopyableCodeProps) {
  * Inline copyable text (smaller, inline usage)
  */
 export function CopyableText({ value, className = '' }: CopyableCodeProps) {
-  const [copied, setCopied] = useState(false)
-  
-  const handleCopy = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-    await navigator.clipboard.writeText(value)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const { copied, copy } = useCopyToClipboard()
+
+  const handleCopy = (e: React.MouseEvent<HTMLSpanElement>) => {
+    copy(value, e)
   }
-  
+
   return (
-    <span 
+    <span
       className={`inline-flex items-center gap-1 cursor-pointer hover:bg-muted/50 rounded px-1 ${className}`}
       onClick={handleCopy}
       title="Click to copy"

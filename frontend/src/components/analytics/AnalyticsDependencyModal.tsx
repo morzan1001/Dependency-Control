@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { analyticsApi } from '@/api/analytics'
 import { analyticsKeys } from '@/hooks/queries/use-analytics'
 import { DependencyMetadata, ComponentFinding } from '@/types/analytics'
-import { FindingDetailsModal } from '@/components/FindingDetailsModal'
+import { FindingDetailsModal } from '@/components/findings/FindingDetailsModal'
 import {
   Dialog,
   DialogContent,
@@ -27,7 +27,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { cn } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
 import { Link } from 'react-router-dom'
 import {
   Package,
@@ -86,12 +86,26 @@ interface AnalyticsDependencyModalProps {
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const handleCopy = async () => {
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
+
+  const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(text)
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+    // Clear any existing timeout before setting a new one
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+    timeoutRef.current = setTimeout(() => setCopied(false), 2000)
+  }, [text])
 
   return (
     <Button variant="ghost" size="icon" className="h-6 w-6" onClick={handleCopy}>
@@ -203,7 +217,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
           <AlertOctagon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="font-medium text-red-600 dark:text-red-400">
+            <p className="font-medium text-severity-critical">
               {metadata.deps_dev.known_advisories.length} Known Security {metadata.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
             </p>
             <div className="flex flex-wrap gap-1 mt-1">
@@ -279,9 +293,9 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         <div className="flex items-center gap-3 p-3 bg-background rounded-md">
           <Shield className={cn(
             "h-6 w-6",
-            (metadata.deps_dev.scorecard.overall_score ?? 0) >= 7 ? "text-green-500" :
-            (metadata.deps_dev.scorecard.overall_score ?? 0) >= 4 ? "text-amber-500" :
-            "text-red-500"
+            (metadata.deps_dev.scorecard.overall_score ?? 0) >= 7 ? "text-success" :
+            (metadata.deps_dev.scorecard.overall_score ?? 0) >= 4 ? "text-warning" :
+            "text-destructive"
           )} />
           <div className="flex-1">
             <div className="flex items-center gap-2">
@@ -296,7 +310,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               {metadata.deps_dev.scorecard.checks_count} checks evaluated
-              {metadata.deps_dev.scorecard.date && ` • ${new Date(metadata.deps_dev.scorecard.date).toLocaleDateString()}`}
+              {metadata.deps_dev.scorecard.date && ` • ${formatDate(metadata.deps_dev.scorecard.date)}`}
             </p>
           </div>
           {metadata.deps_dev?.project_url && (
@@ -460,7 +474,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             <InfoRow
               icon={Calendar}
               label="Published"
-              value={new Date(metadata.deps_dev.published_at).toLocaleDateString(undefined, {
+              value={formatDate(metadata.deps_dev.published_at, {
                 year: "numeric",
                 month: "long",
                 day: "numeric"
@@ -624,9 +638,9 @@ export function AnalyticsDependencyModal({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedFindings.map((finding, idx) => (
-                    <TableRow 
-                      key={`${finding.id}-${finding.project_id}-${idx}`}
+                  {sortedFindings.map((finding) => (
+                    <TableRow
+                      key={`${finding.id}-${finding.project_id}-${finding.scan_id}`}
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => {
                         setSelectedFinding(finding)

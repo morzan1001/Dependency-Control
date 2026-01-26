@@ -12,7 +12,7 @@ import {
   CircleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { getSeverityBgColor } from '@/lib/finding-utils'
+import { getSeverityBgColor, getSeverityColor } from '@/lib/finding-utils'
 
 interface SeverityBadgeProps {
   severity: string
@@ -27,14 +27,14 @@ interface SeverityConfig {
 
 function getSeverityConfig(severity: string): SeverityConfig {
   const configs: Record<string, SeverityConfig> = {
-    CRITICAL: { color: 'bg-red-500', icon: AlertOctagon },
-    HIGH: { color: 'bg-orange-500', icon: AlertTriangle },
-    MEDIUM: { color: 'bg-yellow-500 text-black', icon: AlertCircle },
-    LOW: { color: 'bg-blue-500', icon: Info },
-    INFO: { color: 'bg-gray-500', icon: Info },
-    UNKNOWN: { color: 'bg-gray-400', icon: CircleAlert },
+    CRITICAL: { color: 'bg-severity-critical', icon: AlertOctagon },
+    HIGH: { color: 'bg-severity-high', icon: AlertTriangle },
+    MEDIUM: { color: 'bg-severity-medium text-severity-medium-foreground', icon: AlertCircle },
+    LOW: { color: 'bg-severity-low', icon: Info },
+    INFO: { color: 'bg-severity-info', icon: Info },
+    UNKNOWN: { color: 'bg-muted', icon: CircleAlert },
   }
-  return configs[severity?.toUpperCase()] || { color: 'bg-gray-400', icon: CircleAlert }
+  return configs[severity?.toUpperCase()] || { color: 'bg-muted', icon: CircleAlert }
 }
 
 export function SeverityBadge({ severity, showIcon = true, className = '' }: SeverityBadgeProps) {
@@ -66,13 +66,5 @@ export function SeverityBadgeCompact({ severity, className = '' }: { severity: s
  * Inline text-only severity indicator
  */
 export function SeverityText({ severity, className = '' }: { severity: string; className?: string }) {
-  const colorClass = {
-    CRITICAL: 'text-red-600 dark:text-red-400',
-    HIGH: 'text-orange-600 dark:text-orange-400',
-    MEDIUM: 'text-yellow-600 dark:text-yellow-400',
-    LOW: 'text-blue-600 dark:text-blue-400',
-    INFO: 'text-gray-600 dark:text-gray-400',
-  }[severity?.toUpperCase()] || 'text-gray-500'
-
-  return <span className={`font-medium ${colorClass} ${className}`}>{severity}</span>
+  return <span className={`font-medium ${getSeverityColor(severity)} ${className}`}>{severity}</span>
 }

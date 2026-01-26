@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
+import { getErrorMessage } from "@/lib/utils"
 
 interface DeleteTeamDialogProps {
   teamId: string | null;
@@ -25,6 +26,11 @@ export function DeleteTeamDialog({ teamId, isOpen, onClose }: DeleteTeamDialogPr
         onSuccess: () => {
             onClose();
             toast.success("Team deleted successfully");
+        },
+        onError: (error) => {
+            toast.error("Failed to delete team", {
+              description: getErrorMessage(error),
+            });
         }
       });
     }

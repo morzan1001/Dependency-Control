@@ -5,7 +5,8 @@ import { scanApi } from '@/api/scans'
 import { Finding } from '@/types/scan'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Skeleton } from '@/components/ui/skeleton'
-import { FindingDetailsModal } from '@/components/FindingDetailsModal'
+import { InlineError, NoData } from '@/components/ui/state-components'
+import { FindingDetailsModal } from './FindingDetailsModal'
 import { ArrowUp, ArrowDown, Shield, AlertTriangle, Loader2 } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE, VIRTUAL_SCROLL_OVERSCAN } from '@/lib/constants';
 import {
@@ -14,10 +15,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { SeverityBadge } from '@/components/findings/SeverityBadge'
-import { FindingTypeBadge } from '@/components/findings/FindingTypeBadge'
+import { SeverityBadge } from './SeverityBadge'
+import { FindingTypeBadge } from './FindingTypeBadge'
 import { getSourceInfo } from '@/lib/finding-utils'
-import { ScanContext } from '@/components/findings/details/SastDetailsView'
+import { ScanContext } from './details/SastDetailsView'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
 
 interface FindingsTableProps {
@@ -163,9 +164,9 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                     </table>
                 </div>
             ) : isError ? (
-                <div>Error loading findings</div>
+                <InlineError message="Error loading findings" />
             ) : allRows.length === 0 ? (
-                <div className="p-4 text-center text-muted-foreground">No findings found</div>
+                <NoData entityName="findings" />
             ) : (
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
@@ -204,7 +205,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                             return (
                                 <TableRow
                                     onClick={() => !isLoaderRow && setSelectedFinding(finding)}
-                                    key={virtualRow.index}
+                                    key={isLoaderRow ? `loader-${virtualRow.index}` : finding?.id || `row-${virtualRow.index}`}
                                     data-index={virtualRow.index}
                                     ref={rowVirtualizer.measureElement}
                                     className={`border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
@@ -228,8 +229,8 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                                                 <TooltipTrigger asChild>
                                                                     <div className={`flex items-center justify-center w-5 h-5 rounded-full ${
                                                                         finding.details.reachability.is_reachable
-                                                                            ? 'bg-red-100 text-red-600'
-                                                                            : 'bg-green-100 text-green-600'
+                                                                            ? 'bg-red-100 text-severity-critical'
+                                                                            : 'bg-green-100 text-success'
                                                                     }`}>
                                                                         {finding.details.reachability.is_reachable ? (
                                                                             <AlertTriangle className="h-3 w-3" />

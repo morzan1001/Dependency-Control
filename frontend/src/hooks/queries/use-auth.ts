@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { authApi } from '@/api/auth';
 
 export const useLogin = () => {
@@ -62,13 +62,5 @@ export const useEnable2FA = () => {
 export const useDisable2FA = () => {
     return useMutation({
         mutationFn: authApi.disable2FA
-    })
-}
-
-export const useMe = () => {
-    return useQuery({
-        queryKey: ['me'],
-        queryFn: authApi.getMe,
-        retry: false
     })
 }

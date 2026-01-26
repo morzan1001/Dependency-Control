@@ -12,6 +12,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Loader2 } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
+import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
+import { formatDateTime, shortCommitHash } from '@/lib/utils'
 
 interface ProjectScansProps {
   projectId: string
@@ -32,7 +34,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
   const [sortBy, setSortBy] = useState("created_at")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
-  const limit = 20
+  const limit = DEFAULT_PAGE_SIZE
   const navigate = useNavigate()
 
   const { data: branches } = useQuery({
@@ -153,7 +155,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                       <Calendar className="h-4 w-4 text-muted-foreground" />
                       {(() => {
                           const { date } = getEffectiveScanData(scan);
-                          return new Date(date).toLocaleString();
+                          return formatDateTime(date);
                       })()}
                     </div>
                     {scan.latest_rescan_id && (
@@ -235,7 +237,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     <div className="flex items-center gap-2">
                       <GitCommit className="h-4 w-4 text-muted-foreground" />
                       {(() => {
-                        const shortSha = scan.commit_hash?.substring(0, 7)
+                        const shortSha = shortCommitHash(scan.commit_hash)
                         if (!shortSha) return <span className="font-mono text-xs">N/A</span>
 
                         const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
