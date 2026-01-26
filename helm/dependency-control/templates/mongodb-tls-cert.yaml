@@ -1,0 +1,45 @@
+{{/*
+MongoDB Community TLS Certificate
+Issued by the internal CA for TLS communication
+Created when:
+- database.type: "mongodb"
+- global.tls.enabled: true
+- global.tls.source: "certManager"
+*/}}
+{{- if and (eq .Values.database.type "mongodb") .Values.global.tls.enabled (eq .Values.global.tls.source "certManager") }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.database.cluster.name }}-tls-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  secretName: {{ .Values.database.cluster.name }}-tls
+  duration: {{ .Values.global.tls.certManager.certificate.duration | default "8760h" }}
+  renewBefore: {{ .Values.global.tls.certManager.certificate.renewBefore | default "720h" }}
+  privateKey:
+    algorithm: {{ .Values.global.tls.certManager.certificate.privateKey.algorithm | default "ECDSA" }}
+    size: {{ .Values.global.tls.certManager.certificate.privateKey.size | default 256 }}
+  usages:
+    - server auth
+    - client auth
+  commonName: {{ .Values.database.cluster.name }}
+  dnsNames:
+    # Service DNS names
+    - {{ .Values.database.cluster.name }}-svc
+    - "*.{{ .Values.database.cluster.name }}-svc"
+    # Fully qualified names
+    - {{ .Values.database.cluster.name }}-svc.{{ .Release.Namespace }}.svc.cluster.local
+    - "*.{{ .Values.database.cluster.name }}-svc.{{ .Release.Namespace }}.svc.cluster.local"
+  issuerRef:
+    {{- if .Values.global.tls.certManager.existingIssuer.name }}
+    name: {{ .Values.global.tls.certManager.existingIssuer.name }}
+    kind: {{ .Values.global.tls.certManager.existingIssuer.kind | default "Issuer" }}
+    {{- else }}
+    name: {{ include "dependency-control.fullname" . }}-internal-ca
+    kind: Issuer
+    {{- end }}
+    group: cert-manager.io
+{{- end }}

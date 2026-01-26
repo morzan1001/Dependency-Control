@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -25,6 +26,49 @@ from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
 
 logger = logging.getLogger(__name__)
+
+# Import metrics for detailed analysis tracking
+try:
+    from app.core.metrics import (
+        analysis_aggregation_duration_seconds,
+        analysis_components_parsed_total,
+        analysis_enrichment_total,
+        analysis_epss_scores,
+        analysis_errors_total,
+        analysis_findings_by_type,
+        analysis_findings_total,
+        analysis_gridfs_operations_total,
+        analysis_kev_vulnerabilities_total,
+        analysis_race_conditions_total,
+        analysis_reachable_vulnerabilities_total,
+        analysis_rescan_operations_total,
+        analysis_sbom_parse_errors_total,
+        analysis_sbom_processed_total,
+        analysis_scans_total,
+        analysis_waivers_applied_total,
+        analysis_duration_seconds,
+    )
+except ImportError:
+    # Fallback if metrics module is not available yet
+    (
+        analysis_scans_total,
+        analysis_findings_total,
+        analysis_errors_total,
+        analysis_sbom_processed_total,
+        analysis_components_parsed_total,
+        analysis_sbom_parse_errors_total,
+        analysis_gridfs_operations_total,
+        analysis_enrichment_total,
+        analysis_epss_scores,
+        analysis_kev_vulnerabilities_total,
+        analysis_reachable_vulnerabilities_total,
+        analysis_waivers_applied_total,
+        analysis_race_conditions_total,
+        analysis_rescan_operations_total,
+        analysis_aggregation_duration_seconds,
+        analysis_findings_by_type,
+        analysis_duration_seconds,
+    ) = [None] * 17
 
 
 async def _carry_over_external_results(scan_id: str, db):
@@ -87,11 +131,21 @@ async def process_analyzer(
     fallback_source: str = "unknown-sbom",
     parsed_components: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
+    analyzer_start_time = time.time()
     try:
+        # Track analyzer execution
+        if analysis_scans_total:
+            analysis_scans_total.labels(analyzer=analyzer_name).inc()
+
         # Pass parsed components to analyzer if available
         result = await analyzer.analyze(
             sbom, settings=settings, parsed_components=parsed_components
         )
+
+        # Track duration
+        if analysis_duration_seconds:
+            duration = time.time() - analyzer_start_time
+            analysis_duration_seconds.labels(analyzer=analyzer_name).observe(duration)
 
         # Store raw result
         await db.analysis_results.insert_one(
@@ -118,10 +172,13 @@ async def process_analyzer(
         return f"{analyzer_name}: Success"
     except Exception as e:
         logger.error(f"Analysis {analyzer_name} failed: {e}")
+        # Track errors
+        if analysis_errors_total:
+            analysis_errors_total.labels(analyzer=analyzer_name).inc()
         # Report failure to aggregator so it appears in findings
         aggregator.aggregate(
-            analyzer_name, 
-            {"error": str(e)}, 
+            analyzer_name,
+            {"error": str(e)},
             source=f"System: {analyzer_name}"
         )
         return f"{analyzer_name}: Failed"
@@ -134,6 +191,7 @@ async def run_analysis(
     Orchestrates the analysis process for a given SBOM scan.
     """
     logger.info(f"Starting analysis for scan {scan_id}")
+    aggregation_start_time = time.time()
     aggregator = ResultAggregator()
     results_summary = []
 
@@ -145,6 +203,11 @@ async def run_analysis(
         )
 
     # Check if this is a re-scan and carry over external results
+    current_scan = await db.scans.find_one({"_id": scan_id})
+    if current_scan and current_scan.get("is_rescan"):
+        if analysis_rescan_operations_total:
+            analysis_rescan_operations_total.inc()
+
     await _carry_over_external_results(scan_id, db)
 
     # Fetch system settings for dynamic configuration
@@ -162,13 +225,25 @@ async def run_analysis(
         if isinstance(item, dict) and item.get("type") == "gridfs_reference":
             gridfs_id = item.get("gridfs_id")
             try:
+                if analysis_gridfs_operations_total:
+                    analysis_gridfs_operations_total.labels(
+                        operation="download", status="attempt"
+                    ).inc()
                 stream = await fs.open_download_stream(ObjectId(gridfs_id))
                 content: bytes = await stream.read()
                 current_sbom = json.loads(content)
+                if analysis_gridfs_operations_total:
+                    analysis_gridfs_operations_total.labels(
+                        operation="download", status="success"
+                    ).inc()
             except Exception as gridfs_err:
                 logger.error(
                     f"Failed to fetch SBOM from GridFS {gridfs_id}: {gridfs_err}"
                 )
+                if analysis_gridfs_operations_total:
+                    analysis_gridfs_operations_total.labels(
+                        operation="download", status="error"
+                    ).inc()
                 aggregator.aggregate(
                     "system",
                     {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"},
@@ -191,10 +266,19 @@ async def run_analysis(
             logger.info(
                 f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}"
             )
+            # Track metrics
+            if analysis_sbom_processed_total:
+                analysis_sbom_processed_total.labels(
+                    format=parsed_sbom.format.value
+                ).inc()
+            if analysis_components_parsed_total:
+                analysis_components_parsed_total.inc(len(parsed_components))
         except Exception as parse_err:
             logger.warning(
                 f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing"
             )
+            if analysis_sbom_parse_errors_total:
+                analysis_sbom_parse_errors_total.inc()
 
         # Run analyzers for THIS SBOM concurrently
         tasks = []
@@ -236,6 +320,15 @@ async def run_analysis(
 
     # Save aggregated findings to the scan document
     aggregated_findings = aggregator.get_findings()
+
+    # Track findings metrics
+    if analysis_findings_by_type:
+        for finding in aggregated_findings:
+            finding_type = finding.type if hasattr(finding, 'type') else 'unknown'
+            severity = finding.severity if hasattr(finding, 'severity') else 'unknown'
+            analysis_findings_by_type.labels(
+                type=finding_type, severity=severity
+            ).inc()
 
     # Get aggregated dependency enrichments
     dependency_enrichments = aggregator.get_dependency_enrichments()
@@ -326,6 +419,26 @@ async def run_analysis(
             logger.info(
                 f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data"
             )
+
+            # Track EPSS/KEV metrics
+            if analysis_enrichment_total:
+                analysis_enrichment_total.labels(type="epss_kev").inc(
+                    len(vulnerability_findings)
+                )
+
+            # Track EPSS scores and KEV findings
+            for finding in vulnerability_findings:
+                details = finding.get("details", {})
+                epss_score = details.get("epss_score")
+                if epss_score is not None and analysis_epss_scores:
+                    try:
+                        analysis_epss_scores.observe(float(epss_score))
+                    except (ValueError, TypeError):
+                        pass
+
+                if details.get("is_kev") and analysis_kev_vulnerabilities_total:
+                    analysis_kev_vulnerabilities_total.inc()
+
         except Exception as e:
             logger.warning(f"[epss_kev] Failed to enrich findings: {e}")
 
@@ -365,6 +478,23 @@ async def run_analysis(
                 logger.info(
                     f"[reachability] Enriched {enriched_count} findings for scan {scan_id}"
                 )
+
+                # Track reachability metrics
+                if analysis_enrichment_total:
+                    analysis_enrichment_total.labels(type="reachability").inc(
+                        enriched_count
+                    )
+
+                # Track reachable vulnerabilities by level
+                if analysis_reachable_vulnerabilities_total:
+                    for finding in vulnerability_findings:
+                        details = finding.get("details", {})
+                        reachability = details.get("reachability", {})
+                        if reachability.get("is_reachable"):
+                            level = reachability.get("level", "unknown")
+                            analysis_reachable_vulnerabilities_total.labels(
+                                reachability_level=level
+                            ).inc()
             except Exception as e:
                 logger.warning(f"[reachability] Failed to enrich findings: {e}")
         else:
@@ -423,6 +553,20 @@ async def run_analysis(
         {"scan_id": scan_id, "waived": True}
     )
 
+    # Track waiver metrics
+    if analysis_waivers_applied_total:
+        # Count by waiver type
+        waiver_types = {}
+        for waiver in active_waivers:
+            waiver_type = "finding_id" if waiver.get("finding_id") else \
+                         "package" if waiver.get("package_name") else \
+                         "type" if waiver.get("finding_type") else \
+                         "vulnerability_id" if waiver.get("vulnerability_id") else "other"
+            waiver_types[waiver_type] = waiver_types.get(waiver_type, 0) + 1
+
+        for waiver_type, count in waiver_types.items():
+            analysis_waivers_applied_total.labels(type=waiver_type).inc(count)
+
     # Calculate comprehensive stats
     stats = await calculate_comprehensive_stats(db, scan_id)
 
@@ -446,6 +590,10 @@ async def run_analysis(
             f"New results arrived at {last_result_at} (Analysis load start: {external_load_start}). "
             f"Rescheduling scan."
         )
+        # Track race condition
+        if analysis_race_conditions_total:
+            analysis_race_conditions_total.inc()
+
         # Reset to pending so it gets picked up again
         await db.scans.update_one(
             {"_id": scan_id},
@@ -457,6 +605,11 @@ async def run_analysis(
             }
         )
         return False
+
+    # Track aggregation duration
+    if analysis_aggregation_duration_seconds:
+        aggregation_duration = time.time() - aggregation_start_time
+        analysis_aggregation_duration_seconds.observe(aggregation_duration)
 
     await db.scans.update_one(
         {"_id": scan_id},

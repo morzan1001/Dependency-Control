@@ -19,6 +19,8 @@ FROM nginx:alpine-slim
 RUN apk add --no-cache curl
 
 COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy default nginx.conf (can be overridden by ConfigMap mount)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 COPY env.sh /docker-entrypoint.d/40-env-config.sh
@@ -35,10 +37,7 @@ RUN chown -R 101:101 /usr/share/nginx/html && \
 # Switch to non-root user
 USER 101
 
-# Add healthcheck
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost/ || exit 1
-
-EXPOSE 80
+# Expose both ports (only one will be used at runtime based on TLS config)
+EXPOSE 80 443
 
 CMD ["nginx", "-g", "daemon off;"]

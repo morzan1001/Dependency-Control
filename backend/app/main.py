@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.core.config import settings
+from app.core.metrics import PrometheusMiddleware, metrics_endpoint
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.api import health
 from app.api.v1.endpoints import (
@@ -62,6 +63,9 @@ app = FastAPI(
 # Add GZip Middleware for response compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+# Add Prometheus Middleware for metrics collection
+app.add_middleware(PrometheusMiddleware)
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -107,6 +111,9 @@ async def shutdown_event():
     await worker_manager.stop()
     await close_mongo_connection()
 
+
+# Prometheus metrics endpoint (internal only, not exposed via Ingress)
+app.get("/metrics", include_in_schema=False)(metrics_endpoint)
 
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}", tags=["auth"])

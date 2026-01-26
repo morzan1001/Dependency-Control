@@ -1,27 +1,159 @@
-# Global settings
+# -----------------------------------------------------------------------------
+# Global Settings
+# -----------------------------------------------------------------------------
 global:
   imageRegistry: ""
   imagePullSecrets: []
 
+  # ---------------------------------------------------------------------------
+  # Internal TLS Configuration
+  # ---------------------------------------------------------------------------
+  tls:
+    enabled: false
+    # Certificate source: "certManager" or "custom"
+    # - certManager: Uses cert-manager to generate certificates from internal CA
+    # - custom: User provides their own certificates via Kubernetes secrets
+    source: "certManager"
+    # Cert-Manager Configuration (when source: certManager)
+    certManager:
+      # Use an existing Issuer/ClusterIssuer instead of creating internal CA
+      # Leave empty to create a new self-signed CA
+      existingIssuer:
+        name: ""
+        kind: "Issuer"  # or "ClusterIssuer"
+      # Certificate settings
+      certificate:
+        duration: "8760h"      # 1 year
+        renewBefore: "720h"    # 30 days before expiry
+        privateKey:
+          algorithm: "ECDSA"
+          size: 256
+    # Custom Certificates (when source: custom)
+    custom:
+      # CA certificate secret (must contain ca.crt)
+      caSecretName: ""
+      # Per-service TLS secrets (must contain tls.crt, tls.key, ca.crt)
+      backend:
+        secretName: ""
+      frontend:
+        secretName: ""
+      database:
+        secretName: ""
+      cache:
+        secretName: ""
+    # CA mount path inside containers
+    caMountPath: "/etc/ssl/certs/internal-ca"
+# Environment identifier (used for validation)
+environment: development
+
+# -----------------------------------------------------------------------------
+# Secrets Management
+# -----------------------------------------------------------------------------
+secrets:
+  # Provider: kubernetes, external-secrets
+  provider: kubernetes
+  # External Secrets configuration (when provider: external-secrets)
+  externalSecrets:
+    enabled: false
+    secretStore: vault-backend
+    clusterSecretStore: false
+    refreshInterval: 1h
+    paths:
+      backendSecretKey: "app/dependency-control/secret-key"
+      dbPassword: "app/dependency-control/db-password"
+      dbEncryptionKey: "app/dependency-control/db-encryption-key"
+      dragonflyPassword: "app/dependency-control/dragonfly-password"
+
+# -----------------------------------------------------------------------------
+# Certificate Manager (Sub-Chart)
+# -----------------------------------------------------------------------------
+cert-manager:
+  enabled: false
+  installCRDs: false
+  prometheus:
+    enabled: true
+  webhook:
+    timeoutSeconds: 4
+
+# -----------------------------------------------------------------------------
+# Database Configuration
+# -----------------------------------------------------------------------------
+database:
+  # Provider: mongodb (community operator) or percona (percona operator)
+  type: mongodb
+  # Authentication
+  auth:
+    username: dependencyuser
+    password: ""  # Leave empty to auto-generate
+    database: dependency_control
+  # Cluster Configuration
+  cluster:
+    name: dependency-db
+    replicas: 3
+    image:
+      repository: percona/percona-server-mongodb
+      tag: 8.0.17-6
+    resources:
+      limits:
+        cpu: "1"
+        memory: "2Gi"
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: ""
+  # Percona-Specific Configuration
+  percona:
+    # Percona Operator CRD version
+    crVersion: "1.18.0"
+    replicaSetName: rs0
+    # Encryption at rest
+    encryptionKey: ""  # Leave empty to auto-generate
+    # TLS mode when global.tls.enabled: requireTLS, preferTLS, allowTLS
+    tlsMode: requireTLS
+    # Automatic version upgrades (disable for production!)
+    upgradeOptions:
+      apply: "disabled"  # disabled, never, recommended, latest
+      schedule: "0 2 * * *"
+      versionServiceEndpoint: "https://check.percona.com"
+    backup:
+      enabled: false
+    pmm:
+      enabled: false
+    monitoring:
+      enabled: false
+  # MongoDB Community-Specific Configuration
+  mongodb:
+    version: "8.2.3"
+    monitoring:
+      enabled: false
+
+# -----------------------------------------------------------------------------
+# Service Account
+# -----------------------------------------------------------------------------
 serviceAccount:
   create: true
   annotations: {}
   name: ""
   automountServiceAccountToken: false
 
-# Frontend Application Settings
+# -----------------------------------------------------------------------------
+# Frontend Application
+# -----------------------------------------------------------------------------
 frontend:
   image:
     repository: ghcr.io/morzan1001/dependency-control-frontend
     pullPolicy: IfNotPresent
     tag: "latest"
-  
+
   replicaCount: 2
-  
+
   service:
     type: ClusterIP
     port: 80
-  
+
   resources:
     limits:
       cpu: 200m
@@ -33,52 +165,66 @@ frontend:
   securityContext:
     runAsUser: 101
     runAsGroup: 101
+    fsGroup: 101
     runAsNonRoot: true
-    readOnlyRootFilesystem: false # Nginx needs to write to /var/cache/nginx and /var/run
+    readOnlyRootFilesystem: false  # Nginx needs /var/cache/nginx
     allowPrivilegeEscalation: false
     capabilities:
-      drop:
-        - ALL
+      drop: [ALL]
 
   env:
     apiUrl: "/api/v1"
-        
+
   autoscaling:
     enabled: true
     minReplicas: 2
     maxReplicas: 5
     targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
 
   probes:
     liveness:
       initialDelaySeconds: 30
       periodSeconds: 10
       failureThreshold: 3
+      timeoutSeconds: 5
     readiness:
       initialDelaySeconds: 5
       periodSeconds: 5
       failureThreshold: 3
+      timeoutSeconds: 5
+    startup:
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      failureThreshold: 30
+      timeoutSeconds: 5
 
-# Backend Application Settings
+# -----------------------------------------------------------------------------
+# Backend Application
+# -----------------------------------------------------------------------------
 backend:
   image:
     repository: ghcr.io/morzan1001/dependency-control
     pullPolicy: IfNotPresent
     tag: "latest"
-  
+
   replicaCount: 2
-  
+
   service:
     type: ClusterIP
     port: 8000
-  
+
   resources:
     limits:
-      cpu: 500m
-      memory: 512Mi
+      cpu: 1000m
+      memory: 1Gi
     requests:
-      cpu: 100m
-      memory: 256Mi
+      cpu: 200m
+      memory: 512Mi
 
   securityContext:
     runAsUser: 1000
@@ -88,8 +234,7 @@ backend:
     readOnlyRootFilesystem: true
     allowPrivilegeEscalation: false
     capabilities:
-      drop:
-        - ALL
+      drop: [ALL]
 
   env:
     workerCount: 2
@@ -98,37 +243,45 @@ backend:
     accessTokenExpireMinutes: 30
     refreshTokenExpireDays: 7
     frontendBaseUrl: ""
+  # Secret key for JWT signing
+  secrets:
+    secretKey: ""  # Leave empty to auto-generate
 
   autoscaling:
     enabled: true
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 80
-    # targetMemoryUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
 
-  # Probes for High Availability
   probes:
     liveness:
       initialDelaySeconds: 30
       periodSeconds: 10
       failureThreshold: 3
+      timeoutSeconds: 5
     readiness:
       initialDelaySeconds: 5
       periodSeconds: 5
       failureThreshold: 3
+      timeoutSeconds: 5
+    startup:
+      initialDelaySeconds: 0
+      periodSeconds: 5
+      failureThreshold: 30
+      timeoutSeconds: 5
 
-  # Secrets (should be managed via external-secrets in prod, but here for demo)
-  secrets:
-    secretKey: "changeme-very-secure-key"
+  topologySpreadConstraints: []
 
-# MongoDB Community Operator Settings
+# -----------------------------------------------------------------------------
+# MongoDB Community Operator (Sub-Chart)
+# -----------------------------------------------------------------------------
 mongodb-operator:
   enabled: true
-  # Control CRD installation via the sub-chart
   community-operator-crds:
     enabled: true
   serviceAccount:
@@ -139,27 +292,32 @@ mongodb-operator:
     podLabels:
       app.kubernetes.io/name: mongodb-kubernetes-operator
 
-# MongoDB Cluster Configuration (Custom Resource)
-mongodb:
-  enabled: true
-  cluster:
-    name: mongodb-replica-set
-    members: 3
-    version: "8.2.3"
-    auth:
-      username: dependencyuser
-      password: changeme-db-password
-      database: dependency_control
-    persistence:
-      size: 10Gi
-      storageClass: "" # Use default
+# -----------------------------------------------------------------------------
+# Percona Operator (Sub-Chart)
+# -----------------------------------------------------------------------------
+psmdb-operator:
+  enabled: false
+  registerCRDs: true
+  watchNamespace: "dependency-control"
+  replicaCount: 1
+  image:
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
 
+# -----------------------------------------------------------------------------
+# DragonflyDB - Redis-compatible Cache (Sub-Chart)
+# -----------------------------------------------------------------------------
 dragonfly:
   enabled: true
   replicaCount: 2
-  password: "changeme-dragonfly-password"
-  
-  # Resource limits
+  password: ""  # Leave empty to auto-generate
+
   resources:
     limits:
       cpu: 500m
@@ -167,38 +325,32 @@ dragonfly:
     requests:
       cpu: 100m
       memory: 512Mi
-  
-  # Security context - hardened configuration
+
   podSecurityContext:
     fsGroup: 1000
     runAsUser: 1000
     runAsGroup: 1000
     runAsNonRoot: true
-  
+
   securityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: true
     runAsNonRoot: true
     runAsUser: 1000
     capabilities:
-      drop:
-        - ALL
-  
-  # Extra arguments for DragonflyDB
+      drop: [ALL]
+
   extraArgs:
     - --maxmemory=512mb
     - --cache_mode=true
     - --proactor_threads=2
-    # Must match 'password' above!
-    - --requirepass=changeme-dragonfly-password
-  
-  # Persistence (optional - disabled by default for pure cache)
+    # --requirepass needed to be set when not using autogenerate
+
   storage:
     enabled: false
     requests: 2Gi
     storageClassName: ""
-  
-  # Pod anti-affinity for spreading across nodes
+
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -208,36 +360,37 @@ dragonfly:
               matchLabels:
                 app.kubernetes.io/name: dragonfly
             topologyKey: kubernetes.io/hostname
-  
-  # Service configuration
+
   service:
     type: ClusterIP
     port: 6379
-  
-  # Monitoring
+
   serviceMonitor:
     enabled: false
     interval: "30s"
     scrapeTimeout: "10s"
 
-# Traefik Settings
+# -----------------------------------------------------------------------------
+# Traefik Ingress Controller (Sub-Chart)
+# -----------------------------------------------------------------------------
 traefik:
   enabled: true
   deployment:
-    replicas: 3
+    replicas: 2
     podDisruptionBudget:
       enabled: true
       minAvailable: 1
   affinity:
     podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/name
-                operator: In
-                values:
-                  - traefik
-          topologyKey: kubernetes.io/hostname
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values: [traefik]
+            topologyKey: kubernetes.io/hostname
   ports:
     web:
       redirections:
@@ -248,23 +401,25 @@ traefik:
     websecure:
       tls:
         enabled: true
-  # Secure headers middleware
   additionalArguments:
     - "--entrypoints.websecure.http.tls=true"
 
+# -----------------------------------------------------------------------------
+# Ingress Configuration
+# -----------------------------------------------------------------------------
 ingress:
   enabled: true
-  hostname: "api.dependencycontrol.local"
+  className: "traefik"
+  hostname: "dependencycontrol.local"
   tls: true
-  # If using cert-manager
-  # annotations:
-  #   cert-manager.io/cluster-issuer: letsencrypt-prod
-  
-  # Enable creation of Traefik Middlewares (RateLimit, SecureHeaders)
-  # Useful if using an external Traefik instance
+  annotations: {}
+  # Enable Traefik Middlewares when using external Traefik
   traefikMiddlewares:
     enabled: false
 
+# -----------------------------------------------------------------------------
+# Network Policies
+# -----------------------------------------------------------------------------
 networkPolicy:
   enabled: true
   ingress:
@@ -272,3 +427,23 @@ networkPolicy:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: traefik
+
+# -----------------------------------------------------------------------------
+# Monitoring & Observability
+# -----------------------------------------------------------------------------
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    interval: "30s"
+    scrapeTimeout: "10s"
+    tls:
+      enabled: false
+      insecureSkipVerify: false
+    relabelings: []
+  grafanaDashboard:
+    enabled: false
+    namespace: ""
+    labels:
+      grafana_dashboard: "1"
+    annotations: {}

@@ -1,0 +1,93 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+---
+# Backend ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-backend
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  selector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  endpoints:
+    {{- if and .Values.global.tls.enabled .Values.monitoring.serviceMonitor.tls.enabled }}
+    - port: https
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      scheme: https
+      tlsConfig:
+        {{- if .Values.monitoring.serviceMonitor.tls.insecureSkipVerify }}
+        insecureSkipVerify: true
+        {{- else }}
+        ca:
+          secret:
+            name: {{ include "dependency-control.caSecretName" . }}
+            key: ca.crt
+        {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml .Values.monitoring.serviceMonitor.relabelings | nindent 8 }}
+      {{- end }}
+    {{- else }}
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      scheme: http
+      {{- if .Values.monitoring.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml .Values.monitoring.serviceMonitor.relabelings | nindent 8 }}
+      {{- end }}
+    {{- end }}
+
+---
+# Frontend ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-frontend
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  selector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  endpoints:
+    {{- if and .Values.global.tls.enabled .Values.monitoring.serviceMonitor.tls.enabled }}
+    - port: https
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      scheme: https
+      tlsConfig:
+        {{- if .Values.monitoring.serviceMonitor.tls.insecureSkipVerify }}
+        insecureSkipVerify: true
+        {{- else }}
+        ca:
+          secret:
+            name: {{ include "dependency-control.caSecretName" . }}
+            key: ca.crt
+        {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml .Values.monitoring.serviceMonitor.relabelings | nindent 8 }}
+      {{- end }}
+    {{- else }}
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      scheme: http
+      {{- if .Values.monitoring.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml .Values.monitoring.serviceMonitor.relabelings | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}

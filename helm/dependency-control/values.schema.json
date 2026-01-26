@@ -1,0 +1,284 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Dependency Control Helm Chart Values",
+  "description": "Schema for validating Dependency Control Helm chart values",
+  "required": ["backend", "database", "frontend"],
+  "properties": {
+    "environment": {
+      "type": "string",
+      "enum": ["development", "staging", "production"],
+      "description": "Deployment environment identifier"
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["kubernetes", "external-secrets", "sealed-secrets"],
+          "description": "Secrets management provider"
+        },
+        "externalSecrets": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "secretStore": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clusterSecretStore": {
+              "type": "boolean"
+            },
+            "refreshInterval": {
+              "type": "string",
+              "pattern": "^[0-9]+(h|m|s)$"
+            }
+          }
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["type", "auth", "cluster"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["mongodb", "percona"],
+          "description": "Database provider type"
+        },
+        "auth": {
+          "type": "object",
+          "required": ["username", "database"],
+          "properties": {
+            "username": {
+              "type": "string",
+              "minLength": 3,
+              "description": "Database username"
+            },
+            "password": {
+              "type": "string",
+              "description": "Database password - leave empty to auto-generate"
+            },
+            "database": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Database name"
+            }
+          }
+        },
+        "cluster": {
+          "type": "object",
+          "required": ["name", "replicas"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "description": "Cluster name - must be lowercase alphanumeric with hyphens"
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "description": "Number of database replicas"
+            }
+          }
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "required": ["image", "secrets"],
+      "properties": {
+        "image": {
+          "type": "object",
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Backend container image repository"
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Image tag - 'latest' is not recommended for production"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "secrets": {
+          "type": "object",
+          "properties": {
+            "secretKey": {
+              "type": "string",
+              "description": "JWT secret key - leave empty to auto-generate"
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "requests": {
+              "type": "object",
+              "properties": {
+                "cpu": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(m|[0-9]*)$"
+                },
+                "memory": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(Mi|Gi)$"
+                }
+              }
+            },
+            "limits": {
+              "type": "object",
+              "properties": {
+                "cpu": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(m|[0-9]*)$"
+                },
+                "memory": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(Mi|Gi)$"
+                }
+              }
+            }
+          }
+        },
+        "autoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "minReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "targetCPUUtilizationPercentage": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "targetMemoryUtilizationPercentage": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "required": ["image"],
+      "properties": {
+        "image": {
+          "type": "object",
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Image tag - 'latest' is not recommended for production"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "dragonfly": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "password": {
+          "type": "string",
+          "description": "DragonflyDB password - leave empty to auto-generate"
+        },
+        "replicaCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+          "description": "Ingress hostname - must be a valid DNS name"
+        },
+        "tls": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable network policies for enhanced security"
+        }
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

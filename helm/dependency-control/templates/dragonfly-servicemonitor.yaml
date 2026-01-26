@@ -1,0 +1,26 @@
+{{- if and .Values.dragonfly.enabled .Values.dragonfly.serviceMonitor.enabled }}
+---
+# DragonflyDB ServiceMonitor for Prometheus
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dragonfly
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dragonfly
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: admin
+      path: /metrics
+      interval: {{ .Values.dragonfly.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.dragonfly.serviceMonitor.scrapeTimeout | default "10s" }}
+      scheme: http
+      {{- if .Values.dragonfly.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml .Values.dragonfly.serviceMonitor.relabelings | nindent 8 }}
+      {{- end }}
+{{- end }}

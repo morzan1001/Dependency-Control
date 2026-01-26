@@ -8,6 +8,13 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
+# Import metrics for notification tracking
+try:
+    from app.core.metrics import notifications_failed_total, notifications_sent_total
+except ImportError:
+    notifications_sent_total = None
+    notifications_failed_total = None
+
 
 class MattermostProvider(NotificationProvider):
     def __init__(self):
@@ -169,13 +176,19 @@ class MattermostProvider(NotificationProvider):
 
                 if response.status_code == 201:
                     logger.info(f"Mattermost message sent to {destination}")
+                    if notifications_sent_total:
+                        notifications_sent_total.labels(type="mattermost").inc()
                     return True
                 else:
                     logger.error(
                         f"Failed to send Mattermost notification: {response.text}"
                     )
+                    if notifications_failed_total:
+                        notifications_failed_total.labels(type="mattermost").inc()
                     return False
 
         except Exception as e:
             logger.error(f"Error sending Mattermost notification: {e}")
+            if notifications_failed_total:
+                notifications_failed_total.labels(type="mattermost").inc()
             return False

@@ -37,6 +37,18 @@ from app.services.notifications.templates import get_verification_email_template
 
 logger = logging.getLogger(__name__)
 
+# Import metrics for authentication tracking
+try:
+    from app.core.metrics import (
+        auth_2fa_verifications_total,
+        auth_login_attempts_total,
+        auth_token_validations_total,
+    )
+except ImportError:
+    auth_login_attempts_total = None
+    auth_2fa_verifications_total = None
+    auth_token_validations_total = None
+
 router = APIRouter()
 
 
@@ -66,6 +78,8 @@ async def login_access_token(
     if not user or not security.verify_password(
         form_data.password, user.get("hashed_password")
     ):
+        if auth_login_attempts_total:
+            auth_login_attempts_total.labels(status="failed").inc()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -99,11 +113,15 @@ async def login_access_token(
 
         totp = pyotp.TOTP(user["totp_secret"])
         if not totp.verify(otp, valid_window=1):
+            if auth_2fa_verifications_total:
+                auth_2fa_verifications_total.labels(result="failed").inc()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid OTP code",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        if auth_2fa_verifications_total:
+            auth_2fa_verifications_total.labels(result="success").inc()
         permissions = user.get("permissions", [])
     elif system_config.enforce_2fa:
         # User has no 2FA but it is enforced -> Issue limited token for setup
@@ -118,6 +136,9 @@ async def login_access_token(
     )
 
     refresh_token = security.create_refresh_token(user["username"])
+
+    if auth_login_attempts_total:
+        auth_login_attempts_total.labels(status="success").inc()
 
     return {
         "access_token": access_token,

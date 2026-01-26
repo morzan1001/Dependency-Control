@@ -1,0 +1,27 @@
+{{/*
+Traefik ServersTransport for internal TLS
+Configures how Traefik connects to backend services when TLS is enabled
+Only created when Traefik is used as ingress controller
+*/}}
+{{- $isTraefik := or .Values.traefik.enabled (eq (.Values.ingress.className | default "") "traefik") -}}
+{{- if and .Values.global.tls.enabled $isTraefik }}
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-transport
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  # Root CA certificates for verifying backend service certificates
+  rootCAsSecrets:
+    {{- if eq .Values.global.tls.source "certManager" }}
+    - {{ include "dependency-control.fullname" . }}-root-ca-secret
+    {{- else if .Values.global.tls.custom.caSecretName }}
+    - {{ .Values.global.tls.custom.caSecretName }}
+    {{- end }}
+  # Server name for certificate verification (optional, uses service DNS)
+  serverName: ""
+  # Disable certificate verification (NOT recommended for production)
+  insecureSkipVerify: false
+{{- end }}

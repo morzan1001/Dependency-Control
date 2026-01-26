@@ -10,6 +10,13 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
+# Import metrics for notification tracking
+try:
+    from app.core.metrics import notifications_failed_total, notifications_sent_total
+except ImportError:
+    notifications_sent_total = None
+    notifications_failed_total = None
+
 
 class SlackProvider(NotificationProvider):
     async def _refresh_token(self, system_settings: SystemSettings) -> Optional[str]:
@@ -127,10 +134,16 @@ class SlackProvider(NotificationProvider):
                 response = await client.post(url, headers=headers, json=payload)
                 if response.status_code == 200 and response.json().get("ok"):
                     logger.info(f"Slack message sent to {destination}")
+                    if notifications_sent_total:
+                        notifications_sent_total.labels(type="slack").inc()
                     return True
                 else:
                     logger.error(f"Failed to send Slack message: {response.text}")
+                    if notifications_failed_total:
+                        notifications_failed_total.labels(type="slack").inc()
                     return False
         except Exception as e:
             logger.error(f"Error sending Slack message: {e}")
+            if notifications_failed_total:
+                notifications_failed_total.labels(type="slack").inc()
             return False

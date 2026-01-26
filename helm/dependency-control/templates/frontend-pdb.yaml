@@ -1,14 +1,14 @@
-{{- if .Values.backend.podDisruptionBudget.enabled }}
+{{- if .Values.frontend.podDisruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "dependency-control.fullname" . }}-backend
+  name: {{ include "dependency-control.fullname" . }}-frontend
   labels:
     {{- include "dependency-control.labels" . | nindent 4 }}
 spec:
-  minAvailable: {{ .Values.backend.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.frontend.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels:
       {{- include "dependency-control.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: backend
+      app.kubernetes.io/component: frontend
 {{- end }}

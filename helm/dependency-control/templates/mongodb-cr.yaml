@@ -1,34 +1,43 @@
-{{- if .Values.mongodb.enabled }}
+{{- if eq .Values.database.type "mongodb" }}
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ .Values.mongodb.cluster.name }}-user-password
+  name: {{ .Values.database.cluster.name }}-user-password
   namespace: {{ .Release.Namespace }}
 type: Opaque
 stringData:
-  password: {{ .Values.mongodb.cluster.auth.password | quote }}
+  password: {{ .Values.database.auth.password | quote }}
 ---
 apiVersion: mongodbcommunity.mongodb.com/v1
 kind: MongoDBCommunity
 metadata:
-  name: {{ .Values.mongodb.cluster.name }}
+  name: {{ .Values.database.cluster.name }}
   namespace: {{ .Release.Namespace }}
 spec:
-  members: {{ .Values.mongodb.cluster.members }}
+  members: {{ .Values.database.cluster.replicas }}
   type: ReplicaSet
-  version: {{ .Values.mongodb.cluster.version }}
+  version: {{ .Values.database.mongodb.version }}
   security:
     authentication:
       modes: ["SCRAM"]
+    {{- if .Values.global.tls.enabled }}
+    tls:
+      enabled: true
+      optional: false
+      certificateKeySecretRef:
+        name: {{ .Values.database.cluster.name }}-tls
+      caCertificateSecretRef:
+        name: {{ include "dependency-control.caSecretName" . }}
+    {{- end }}
   users:
-    - name: {{ .Values.mongodb.cluster.auth.username }}
-      db: {{ .Values.mongodb.cluster.auth.database }}
+    - name: {{ .Values.database.auth.username }}
+      db: {{ .Values.database.auth.database }}
       passwordSecretRef:
-        name: {{ .Values.mongodb.cluster.name }}-user-password
+        name: {{ .Values.database.cluster.name }}-user-password
       roles:
         - name: readWrite
-          db: {{ .Values.mongodb.cluster.auth.database }}
-      scramCredentialsSecretName: {{ .Values.mongodb.cluster.name }}-scram
+          db: {{ .Values.database.auth.database }}
+      scramCredentialsSecretName: {{ .Values.database.cluster.name }}-scram
   statefulSet:
     spec:
       template:
@@ -41,15 +50,15 @@ spec:
                       - key: app
                         operator: In
                         values:
-                          - "{{ .Values.mongodb.cluster.name }}-svc"
+                          - "{{ .Values.database.cluster.name }}-svc"
                   topologyKey: "kubernetes.io/hostname"
           containers:
             - name: mongod
               resources:
-{{ toYaml .Values.mongodb.resources | indent 16 }}
+{{ toYaml .Values.database.cluster.resources | indent 16 }}
               securityContext:
                 runAsNonRoot: true
-                runAsUser: 2000 
+                runAsUser: 2000
       volumeClaimTemplates:
         - metadata:
             name: data-volume
@@ -57,8 +66,9 @@ spec:
             accessModes: [ "ReadWriteOnce" ]
             resources:
               requests:
-                storage: {{ .Values.mongodb.cluster.persistence.size }}
-            {{- if .Values.mongodb.cluster.persistence.storageClass }}
-            storageClassName: {{ .Values.mongodb.cluster.persistence.storageClass }}
+                storage: {{ .Values.database.cluster.persistence.size }}
+            {{- if .Values.database.cluster.persistence.storageClass }}
+            storageClassName: {{ .Values.database.cluster.persistence.storageClass }}
             {{- end }}
 {{- end }}
+

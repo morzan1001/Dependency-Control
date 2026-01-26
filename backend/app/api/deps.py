@@ -18,6 +18,12 @@ oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/login/access-token"
 )
 
+# Import metrics for token validation tracking
+try:
+    from app.core.metrics import auth_token_validations_total
+except ImportError:
+    auth_token_validations_total = None
+
 
 async def get_system_settings(
     db: AsyncIOMotorDatabase = Depends(get_database),
@@ -47,10 +53,14 @@ async def get_current_user(
             raise credentials_exception
         token_data = TokenPayload(sub=username, permissions=permissions)
     except (JWTError, ValidationError) as exc:
+        if auth_token_validations_total:
+            auth_token_validations_total.labels(result="invalid").inc()
         raise credentials_exception from exc
 
     user = await db.users.find_one({"username": token_data.sub})
     if user is None:
+        if auth_token_validations_total:
+            auth_token_validations_total.labels(result="user_not_found").inc()
         raise credentials_exception
 
     # Check if token was issued before last logout
@@ -60,7 +70,12 @@ async def get_current_user(
             # iat is unix timestamp, last_logout_at is datetime
             last_logout_ts = user["last_logout_at"].timestamp()
             if iat < last_logout_ts:
+                if auth_token_validations_total:
+                    auth_token_validations_total.labels(result="revoked").inc()
                 raise credentials_exception
+
+    if auth_token_validations_total:
+        auth_token_validations_total.labels(result="valid").inc()
 
     user_obj = User(**user)
 

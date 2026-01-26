@@ -1,13 +1,30 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.db.mongodb import get_database
 from app.services.analysis import run_analysis
+from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
+
+# Import metrics for worker monitoring
+try:
+    from app.core.metrics import (
+        worker_active_count,
+        worker_job_duration_seconds,
+        worker_jobs_processed_total,
+        worker_queue_size,
+    )
+except ImportError:
+    # Fallback if metrics module is not available yet
+    worker_queue_size = None
+    worker_active_count = None
+    worker_jobs_processed_total = None
+    worker_job_duration_seconds = None
 
 
 class AnalysisWorkerManager:
@@ -26,6 +43,10 @@ class AnalysisWorkerManager:
         for i in range(self.num_workers):
             task = asyncio.create_task(self.worker(f"worker-{i}"))
             self.workers.append(task)
+
+        # Update worker count metric
+        if worker_active_count:
+            worker_active_count.set(self.num_workers)
 
         # Start housekeeping task (slow: every 5 minutes)
         self.housekeeping_task = asyncio.create_task(housekeeping_loop(self))
@@ -68,7 +89,12 @@ class AnalysisWorkerManager:
     async def add_job(self, scan_id: str):
         """Adds a new scan job to the queue."""
         await self.queue.put(scan_id)
-        logger.info(f"Job {scan_id} added to queue. Queue size: {self.queue.qsize()}")
+        queue_size = self.queue.qsize()
+        logger.info(f"Job {scan_id} added to queue. Queue size: {queue_size}")
+
+        # Update queue size metric
+        if worker_queue_size:
+            worker_queue_size.set(queue_size)
 
     async def worker(self, name: str):
         """Worker loop that processes jobs from the queue."""
@@ -77,6 +103,13 @@ class AnalysisWorkerManager:
             try:
                 scan_id = await self.queue.get()
                 logger.info(f"Worker {name} picked up scan {scan_id}")
+
+                # Update queue size metric
+                if worker_queue_size:
+                    worker_queue_size.set(self.queue.qsize())
+
+                # Track job processing time
+                job_start_time = time.time()
 
                 db = await get_database()
 
@@ -134,6 +167,12 @@ class AnalysisWorkerManager:
                         continue
 
                     # run_analysis updates the status to 'completed' upon success.
+                    # Track successful job processing
+                    if worker_jobs_processed_total:
+                        worker_jobs_processed_total.labels(status="success").inc()
+                    if worker_job_duration_seconds:
+                        job_duration = time.time() - job_start_time
+                        worker_job_duration_seconds.observe(job_duration)
 
                 except Exception as e:
                     logger.error(f"Error processing scan {scan_id}: {e}")
@@ -141,6 +180,23 @@ class AnalysisWorkerManager:
                         {"_id": scan_id},
                         {"$set": {"status": "failed", "error": str(e)}},
                     )
+                    # Track failed job processing
+                    if worker_jobs_processed_total:
+                        worker_jobs_processed_total.labels(status="failed").inc()
+
+                    # Trigger analysis_failed webhook
+                    try:
+                        project = await db.projects.find_one({"_id": scan.get("project_id")})
+                        if project:
+                            await webhook_service.trigger_analysis_failed(
+                                db=db,
+                                scan_id=scan_id,
+                                project_id=str(project["_id"]),
+                                project_name=project.get("name", "Unknown"),
+                                error_message=str(e),
+                            )
+                    except Exception as webhook_err:
+                        logger.error(f"Failed to trigger analysis_failed webhook: {webhook_err}")
 
                 self.queue.task_done()
                 logger.info(f"Worker {name} finished scan {scan_id}")

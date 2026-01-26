@@ -1,0 +1,99 @@
+
+===========================================================================
+ Dependency Control {{ .Chart.Version }} has been installed!
+===========================================================================
+
+{{- $fullName := include "dependency-control.fullname" . }}
+
+CONFIGURATION SUMMARY
+---------------------
+  Environment:      {{ .Values.environment }}
+  Database Type:    {{ .Values.database.type }}
+  Internal TLS:     {{ if .Values.global.tls.enabled }}Enabled ({{ .Values.global.tls.source }}){{ else }}Disabled{{ end }}
+  Secrets Provider: {{ .Values.secrets.provider }}
+
+{{- if .Values.ingress.enabled }}
+
+ACCESS YOUR APPLICATION
+-----------------------
+{{- if .Values.ingress.tls }}
+  URL: https://{{ .Values.ingress.hostname }}
+{{- else }}
+  URL: http://{{ .Values.ingress.hostname }}
+{{- end }}
+
+  API Docs: https://{{ .Values.ingress.hostname }}/docs
+{{- else }}
+
+ACCESS YOUR APPLICATION (No Ingress)
+------------------------------------
+  # Port-forward the frontend:
+  kubectl port-forward svc/{{ $fullName }}-frontend 8080:{{ if .Values.global.tls.enabled }}443{{ else }}80{{ end }} -n {{ .Release.Namespace }}
+
+  # Port-forward the backend:
+  kubectl port-forward svc/{{ $fullName }}-backend 8000:{{ if .Values.global.tls.enabled }}8443{{ else }}8000{{ end }} -n {{ .Release.Namespace }}
+{{- end }}
+
+COMPONENTS STATUS
+-----------------
+  # Check all pods are running:
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+  # Check the backend logs:
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=backend -f
+
+  # Check the frontend logs:
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=frontend -f
+
+{{- if eq .Values.secrets.provider "kubernetes" }}
+
+SECRETS (Auto-Generated)
+------------------------
+  Secrets were auto-generated during installation.
+  To retrieve them:
+
+  # Backend Secret Key:
+  kubectl get secret {{ $fullName }}-secrets -n {{ .Release.Namespace }} -o jsonpath='{.data.secret-key}' | base64 -d
+
+  # Database Password:
+  kubectl get secret {{ $fullName }}-db-secrets -n {{ .Release.Namespace }} -o jsonpath='{.data.password}' | base64 -d
+{{- end }}
+
+{{- if .Values.global.tls.enabled }}
+
+TLS CERTIFICATES
+----------------
+{{- if eq .Values.global.tls.source "certManager" }}
+  Certificates are managed by cert-manager.
+
+  # Check certificate status:
+  kubectl get certificates -n {{ .Release.Namespace }}
+
+  # View CA certificate:
+  kubectl get secret {{ $fullName }}-root-ca-secret -n {{ .Release.Namespace }} -o jsonpath='{.data.ca\.crt}' | base64 -d
+{{- else }}
+  Using custom certificates from secrets.
+{{- end }}
+{{- end }}
+
+{{- if eq .Values.environment "production" }}
+
+PRODUCTION CHECKLIST
+--------------------
+{{- if or (eq .Values.backend.image.tag "latest") (eq .Values.frontend.image.tag "latest") }}
+  ⚠️  WARNING: Using 'latest' tag - pin to specific versions for production!
+{{- end }}
+{{- if not .Values.networkPolicy.enabled }}
+  ⚠️  WARNING: Network policies are disabled - enable for production security!
+{{- end }}
+{{- if not .Values.global.tls.enabled }}
+  ⚠️  WARNING: Internal TLS is disabled - enable for production security!
+{{- end }}
+{{- if lt (int .Values.database.cluster.replicas) 3 }}
+  ⚠️  WARNING: Database has < 3 replicas - increase for production HA!
+{{- end }}
+{{- end }}
+
+===========================================================================
+ For documentation: https://github.com/morzan1001/Dependency-Control
+===========================================================================

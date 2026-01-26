@@ -22,6 +22,8 @@ spec:
       labels:
         {{- include "dependency-control.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: frontend
+      annotations:
+        checksum/nginx-config: {{ include (print $.Template.BasePath "/frontend-configmap.yaml") . | sha256sum }}
     spec:
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -29,8 +31,46 @@ spec:
       {{- end }}
       serviceAccountName: {{ include "dependency-control.serviceAccountName" . }}
       automountServiceAccountToken: false
+      # Ensure pods are spread across nodes for HA
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - "{{ include "dependency-control.name" . }}"
+                    - key: app.kubernetes.io/component
+                      operator: In
+                      values:
+                        - frontend
+                topologyKey: "kubernetes.io/hostname"
+      {{- if .Values.frontend.securityContext.fsGroup }}
       securityContext:
         fsGroup: {{ .Values.frontend.securityContext.fsGroup }}
+        seccompProfile:
+          type: RuntimeDefault
+      {{- end }}
+      volumes:
+        # Nginx configuration from ConfigMap
+        - name: nginx-config
+          configMap:
+            name: {{ include "dependency-control.fullname" . }}-frontend-nginx
+        {{- if .Values.global.tls.enabled }}
+        # TLS certificate for serving HTTPS
+        {{- if eq .Values.global.tls.source "certManager" }}
+        - name: frontend-tls
+          secret:
+            secretName: {{ include "dependency-control.fullname" . }}-frontend-tls
+        {{- else if and (eq .Values.global.tls.source "custom") .Values.global.tls.custom.frontend.secretName }}
+        - name: frontend-tls
+          secret:
+            secretName: {{ .Values.global.tls.custom.frontend.secretName }}
+        {{- end }}
+        {{- end }}
       containers:
         - name: {{ .Chart.Name }}-frontend
           securityContext:
@@ -44,24 +84,69 @@ spec:
                 {{- toYaml .Values.frontend.securityContext.capabilities.drop | nindent 16 }}
           image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          volumeMounts:
+            # Mount nginx configuration
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+            {{- if .Values.global.tls.enabled }}
+            # Mount TLS certificates
+            {{- if or (eq .Values.global.tls.source "certManager") (and (eq .Values.global.tls.source "custom") .Values.global.tls.custom.frontend.secretName) }}
+            - name: frontend-tls
+              mountPath: /etc/nginx/certs
+              readOnly: true
+            {{- end }}
+            {{- end }}
           ports:
+            {{- if .Values.global.tls.enabled }}
+            - name: https
+              containerPort: 443
+              protocol: TCP
+            {{- else }}
             - name: http
               containerPort: 80
               protocol: TCP
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /
+              {{- if .Values.global.tls.enabled }}
+              port: https
+              scheme: HTTPS
+              {{- else }}
+              port: http
+              {{- end }}
+            initialDelaySeconds: {{ .Values.frontend.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.frontend.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.frontend.probes.startup.failureThreshold }}
+            timeoutSeconds: {{ .Values.frontend.probes.startup.timeoutSeconds }}
           livenessProbe:
             httpGet:
               path: /
+              {{- if .Values.global.tls.enabled }}
+              port: https
+              scheme: HTTPS
+              {{- else }}
               port: http
+              {{- end }}
             initialDelaySeconds: {{ .Values.frontend.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.frontend.probes.liveness.periodSeconds }}
             failureThreshold: {{ .Values.frontend.probes.liveness.failureThreshold }}
+            timeoutSeconds: {{ .Values.frontend.probes.liveness.timeoutSeconds }}
           readinessProbe:
             httpGet:
               path: /
+              {{- if .Values.global.tls.enabled }}
+              port: https
+              scheme: HTTPS
+              {{- else }}
               port: http
+              {{- end }}
             initialDelaySeconds: {{ .Values.frontend.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.frontend.probes.readiness.periodSeconds }}
             failureThreshold: {{ .Values.frontend.probes.readiness.failureThreshold }}
+            timeoutSeconds: {{ .Values.frontend.probes.readiness.timeoutSeconds }}
           env:
             - name: VITE_API_URL
               value: "{{ .Values.frontend.env.apiUrl }}"

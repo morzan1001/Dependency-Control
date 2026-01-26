@@ -1,53 +1,72 @@
 # Dependency Control Helm Chart
 
-A production-ready Helm chart for deploying the Dependency Control stack on Kubernetes, designed for high availability and security.
+SBOM management platform with HA MongoDB, DragonflyDB cache, and optional internal TLS.
 
-## Features
+## Quick Start
 
-*   **High Availability**:
-    *   **Backend**: Horizontal Pod Autoscaling (HPA), Pod Disruption Budgets (PDB), and Pod Anti-Affinity for fault tolerance.
-    *   **Database**: MongoDB Replica Set (3 members) managed via the [MongoDB Community Operator](https://github.com/mongodb/mongodb-kubernetes-operator).
-*   **Security**:
-    *   **Hardening**: Containers run as non-root, read-only root filesystems, and dropped capabilities.
-    *   **Network**: Strict Network Policies (Default Deny) to isolate components.
-*   **Ingress**: Integrated Traefik Ingress Controller with TLS support.
+```bash
+helm install dependency-control ./dependency-control -f values.yaml
+```
 
-## Prerequisites
-
-*   Kubernetes 1.19+
-*   Helm 3.0+
-
-## Installation
-
-1.  **Update Dependencies**:
-    ```bash
-    helm dependency update ./helm/dependency-control
-    ```
-
-2.  **Install Chart**:
-    ```bash
-    helm install dep-control ./helm/dependency-control \
-      --namespace dependency-control \
-      --create-namespace
-    ```
-
-## Configuration
-
-Key configuration options in `values.yaml`:
+## Key Configuration
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `backend.autoscaling.enabled` | Enable Horizontal Pod Autoscaler | `true` |
-| `backend.replicaCount` | Initial replica count | `2` |
-| `mongodb.cluster.members` | Number of MongoDB Replica Set members | `3` |
-| `networkPolicy.enabled` | Enable strict network policies | `true` |
-| `traefik.enabled` | Enable Traefik Ingress Controller | `true` |
+| `global.tls.enabled` | Enable internal TLS | `false` |
+| `global.tls.source` | `certManager` or `custom` | `certManager` |
+| `database.type` | `mongodb` or `percona` | `mongodb` |
+| `secrets.provider` | `kubernetes` or `external-secrets` | `kubernetes` |
+| `ingress.enabled` | Enable Ingress | `false` |
+| `ingress.className` | Ingress class (`traefik`, `nginx`, `pomerium`) | `traefik` |
 
-### Secrets Management
-For production environments, it is recommended to manage secrets (like `backend.secrets.secretKey` or API keys) using external tools like **External Secrets Operator** or **Sealed Secrets**, rather than passing them directly in `values.yaml`.
+## Production Example
 
-## Architecture
+```yaml
+global:
+  tls:
+    enabled: true
+    source: certManager
 
-*   **Backend**: FastAPI service handling SBOM ingestion and analysis. Scales based on CPU usage.
-*   **Workers**: Integrated async workers for processing scans (Trivy, Grype, etc.).
-*   **Database**: MongoDB Replica Set provided by the Community Operator.
+environment: production
+
+database:
+  type: percona
+  cluster:
+    replicas: 3
+
+secrets:
+  provider: external-secrets
+
+ingress:
+  enabled: true
+  className: pomerium
+  hostname: app.example.com
+  tls: true
+  annotations:
+    ingress.pomerium.io/tls_upstream: "true"
+    ingress.pomerium.io/tls_custom_ca_secret: "my-release-dependency-control-root-ca-secret"
+
+networkPolicy:
+  enabled: true
+```
+
+## Components
+
+- **Backend**: FastAPI application (Python)
+- **Frontend**: Vue.js SPA (Nginx)
+- **Database**: MongoDB (Community Operator) or Percona Server for MongoDB
+- **Cache**: DragonflyDB (Redis-compatible)
+
+## Dependencies
+
+| Chart | Purpose |
+|-------|---------|
+| `mongodb-operator` | MongoDB Community Operator |
+| `psmdb-operator` | Percona MongoDB Operator |
+| `dragonfly` | Redis-compatible cache |
+| `traefik` | Ingress controller (optional) |
+| `cert-manager` | TLS certificates (optional) |
+
+## Documentation
+
+See [values.yaml](values.yaml) for all configuration options.

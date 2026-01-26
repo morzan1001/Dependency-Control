@@ -12,6 +12,13 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
+# Import metrics for notification tracking
+try:
+    from app.core.metrics import notifications_failed_total, notifications_sent_total
+except ImportError:
+    notifications_sent_total = None
+    notifications_failed_total = None
+
 
 class EmailProvider(NotificationProvider):
     def _send_sync(
@@ -106,7 +113,11 @@ class EmailProvider(NotificationProvider):
             )
 
             logger.info(f"Email sent to {destination}")
+            if notifications_sent_total:
+                notifications_sent_total.labels(type="email").inc()
             return True
         except Exception as e:
             logger.error(f"Failed to send email to {destination}: {e}")
+            if notifications_failed_total:
+                notifications_failed_total.labels(type="email").inc()
             return False

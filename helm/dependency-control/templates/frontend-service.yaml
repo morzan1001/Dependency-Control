@@ -4,13 +4,27 @@ metadata:
   name: {{ include "dependency-control.fullname" . }}-frontend
   labels:
     {{- include "dependency-control.labels" . | nindent 4 }}
+  {{- $isTraefik := or .Values.traefik.enabled (eq (.Values.ingress.className | default "") "traefik") }}
+  {{- if and .Values.global.tls.enabled $isTraefik }}
+  annotations:
+    # Tell Traefik to use HTTPS when connecting to this service
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: {{ .Release.Namespace }}-{{ include "dependency-control.fullname" . }}-transport@kubernetescrd
+  {{- end }}
 spec:
   type: {{ .Values.frontend.service.type }}
   ports:
+    {{- if .Values.global.tls.enabled }}
+    - port: 443
+      targetPort: https
+      protocol: TCP
+      name: https
+    {{- else }}
     - port: {{ .Values.frontend.service.port }}
       targetPort: http
       protocol: TCP
       name: http
+    {{- end }}
   selector:
     {{- include "dependency-control.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: frontend

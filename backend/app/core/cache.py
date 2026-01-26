@@ -26,6 +26,21 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# Import metrics for cache monitoring
+try:
+    from app.core.metrics import (
+        cache_connected_clients,
+        cache_hits_total,
+        cache_keys_total,
+        cache_misses_total,
+    )
+except ImportError:
+    # Fallback if metrics module is not available yet
+    cache_hits_total = None
+    cache_misses_total = None
+    cache_keys_total = None
+    cache_connected_clients = None
+
 
 class CacheService:
     """
@@ -103,7 +118,11 @@ class CacheService:
             client = await self.get_client()
             data = await client.get(self._make_key(key))
             if data:
+                if cache_hits_total:
+                    cache_hits_total.inc()
                 return json.loads(data)
+            if cache_misses_total:
+                cache_misses_total.inc()
             return None
         except redis.ConnectionError:
             logger.warning("Redis connection lost, disabling cache temporarily")
@@ -282,13 +301,22 @@ class CacheService:
             info = await client.info(section="memory")
             stats = await client.info(section="stats")
 
+            # Update Prometheus metrics
+            total_keys = await client.dbsize()
+            connected_clients_count = stats.get("connected_clients", 0)
+
+            if cache_keys_total:
+                cache_keys_total.set(total_keys)
+            if cache_connected_clients:
+                cache_connected_clients.set(connected_clients_count)
+
             return {
                 "status": "healthy",
                 "available": self._available,
                 "used_memory": info.get("used_memory_human", "unknown"),
                 "used_memory_peak": info.get("used_memory_peak_human", "unknown"),
-                "connected_clients": stats.get("connected_clients", 0),
-                "total_keys": await client.dbsize(),
+                "connected_clients": connected_clients_count,
+                "total_keys": total_keys,
                 "keyspace_hits": stats.get("keyspace_hits", 0),
                 "keyspace_misses": stats.get("keyspace_misses", 0),
                 "hit_rate": self._calculate_hit_rate(

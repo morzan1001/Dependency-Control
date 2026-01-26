@@ -38,6 +38,10 @@ COPY ci-cd/scripts ./ci-cd/scripts
 # Install the project itself
 RUN poetry install --no-interaction --no-ansi
 
+# Copy entrypoint script
+COPY backend/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
 # Create a non-root user
 RUN addgroup --system --gid 1000 appgroup && \
     adduser --system --uid 1000 --gid 1000 --no-create-home appuser
@@ -57,4 +61,7 @@ RUN chown -R appuser:appgroup /app
 # Switch to non-root user
 USER appuser
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# Expose both ports (only one will be used at runtime based on TLS config)
+EXPOSE 8000 8443
+
+ENTRYPOINT ["/docker-entrypoint.sh"]

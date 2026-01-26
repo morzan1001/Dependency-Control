@@ -2,11 +2,17 @@ dependencies:
 - name: community-operator
   repository: https://mongodb.github.io/helm-charts
   version: 0.13.0
+- name: psmdb-operator
+  repository: https://percona.github.io/percona-helm-charts/
+  version: 1.21.3
 - name: dragonfly
   repository: oci://ghcr.io/dragonflydb/dragonfly/helm
   version: v1.35.1
 - name: traefik
   repository: https://traefik.github.io/charts
   version: 37.4.0
-digest: sha256:46348058734c36697ce2153662d9585dd3f3f74d0381563cfc98d66da57a761e
-generated: "2025-12-25T02:04:24.143699+01:00"
+- name: cert-manager
+  repository: https://charts.jetstack.io
+  version: v1.19.2
+digest: sha256:e0b5d3d3ec31ba1cf30fe03af9c7b129b5f9da9c2b4eb82880c0ce0099118d9a
+generated: "2026-01-26T22:32:36.99671+01:00"

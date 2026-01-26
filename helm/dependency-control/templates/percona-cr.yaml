@@ -1,0 +1,85 @@
+{{/*
+Percona Server for MongoDB Custom Resource
+Secrets are auto-generated in secrets.yaml
+*/}}
+{{- if eq .Values.database.type "percona" }}
+apiVersion: psmdb.percona.com/v1
+kind: PerconaServerMongoDB
+metadata:
+  name: {{ .Values.database.cluster.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  crVersion: {{ .Values.database.percona.crVersion | quote }}
+  image: "{{ .Values.database.cluster.image.repository }}:{{ .Values.database.cluster.image.tag }}"
+  imagePullPolicy: IfNotPresent
+  secrets:
+    users: {{ .Values.database.cluster.name }}-secrets
+    {{- if .Values.global.tls.enabled }}
+    ssl: {{ .Values.database.cluster.name }}-ssl-internal
+    sslInternal: {{ .Values.database.cluster.name }}-ssl-internal
+    {{- end }}
+    encryptionKey: {{ .Values.database.cluster.name }}-encryption-key
+  security:
+    enableEncryption: true
+    encryptionKeySecret: {{ .Values.database.cluster.name }}-encryption-key
+  upgradeOptions:
+    versionServiceEndpoint: {{ .Values.database.percona.upgradeOptions.versionServiceEndpoint }}
+    apply: {{ .Values.database.percona.upgradeOptions.apply }}
+    schedule: {{ .Values.database.percona.upgradeOptions.schedule | quote }}
+  replsets:
+  - name: {{ .Values.database.percona.replicaSetName }}
+    size: {{ .Values.database.cluster.replicas }}
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                - percona-server-mongodb
+              - key: app.kubernetes.io/instance
+                operator: In
+                values:
+                - {{ .Values.database.cluster.name }}
+              - key: replset
+                operator: In
+                values:
+                - {{ .Values.database.percona.replicaSetName }}
+            topologyKey: kubernetes.io/hostname
+    podDisruptionBudget:
+      maxUnavailable: 1
+    resources:
+      limits:
+        cpu: {{ .Values.database.cluster.resources.limits.cpu | quote }}
+        memory: {{ .Values.database.cluster.resources.limits.memory | quote }}
+      requests:
+        cpu: {{ .Values.database.cluster.resources.requests.cpu | quote }}
+        memory: {{ .Values.database.cluster.resources.requests.memory | quote }}
+    volumeSpec:
+      persistentVolumeClaim:
+        resources:
+          requests:
+            storage: {{ .Values.database.cluster.persistence.size }}
+        storageClassName: {{ .Values.database.cluster.persistence.storageClass }}
+
+  {{- if .Values.database.percona.pmm.enabled }}
+  pmm:
+    enabled: true
+    image: percona/pmm-client:2.40.0
+    serverHost: monitoring-service
+  {{- end }}
+
+  users:
+    - name: {{ .Values.database.auth.username }}
+      db: {{ .Values.database.auth.database }}
+      passwordSecretRef:
+        name: {{ .Values.database.cluster.name }}-app-user
+        key: password
+      roles:
+        - name: readWrite
+          db: {{ .Values.database.auth.database }}
+{{- end }}
+

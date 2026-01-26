@@ -1,0 +1,81 @@
+{{- if .Values.monitoring.grafanaDashboard.enabled }}
+{{- $folderAnnotation := dict "grafana_folder" "Dependency-Control" }}
+{{- $annotations := merge ($folderAnnotation) (.Values.monitoring.grafanaDashboard.annotations | default dict) }}
+---
+# Grafana Dashboard ConfigMap - Dependency Control Backend
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dashboard-backend
+  namespace: {{ .Values.monitoring.grafanaDashboard.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    {{- if .Values.monitoring.grafanaDashboard.labels }}
+    {{- toYaml .Values.monitoring.grafanaDashboard.labels | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- toYaml $annotations | nindent 4 }}
+data:
+  dependency-control-backend.json: |-
+{{ .Files.Get "dashboards/dependency-control-backend.json" | indent 4 }}
+
+{{- if eq .Values.database.type "mongodb" }}
+---
+# Grafana Dashboard ConfigMap - MongoDB
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dashboard-mongodb
+  namespace: {{ .Values.monitoring.grafanaDashboard.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    {{- if .Values.monitoring.grafanaDashboard.labels }}
+    {{- toYaml .Values.monitoring.grafanaDashboard.labels | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- toYaml $annotations | nindent 4 }}
+data:
+  mongodb.json: |-
+{{ .Files.Get "dashboards/mongodb.json" | indent 4 }}
+{{- end }}
+
+{{- if eq .Values.database.type "percona" }}
+---
+# Grafana Dashboard ConfigMap - Percona MongoDB
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dashboard-percona
+  namespace: {{ .Values.monitoring.grafanaDashboard.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    {{- if .Values.monitoring.grafanaDashboard.labels }}
+    {{- toYaml .Values.monitoring.grafanaDashboard.labels | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- toYaml $annotations | nindent 4 }}
+data:
+  percona-mongodb.json: |-
+{{ .Files.Get "dashboards/percona-mongodb.json" | indent 4 }}
+{{- end }}
+
+{{- if .Values.dragonfly.enabled }}
+---
+# Grafana Dashboard ConfigMap - DragonflyDB
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dashboard-dragonfly
+  namespace: {{ .Values.monitoring.grafanaDashboard.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    {{- if .Values.monitoring.grafanaDashboard.labels }}
+    {{- toYaml .Values.monitoring.grafanaDashboard.labels | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- toYaml $annotations | nindent 4 }}
+data:
+  dragonfly.json: |-
+{{ .Files.Get "dashboards/dragonfly.json" | indent 4 }}
+{{- end }}
+{{- end }}

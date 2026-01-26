@@ -2,6 +2,7 @@ import logging
 from typing import Any, List
 
 from app.services.notifications import notification_service
+from app.services.webhooks import webhook_service
 from app.models.project import Project
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ async def send_scan_notifications(
     db,
 ):
     """
-    Send notifications for completed scan.
+    Send notifications and trigger webhooks for completed scan.
     """
     try:
         # Always send analysis_completed notification
@@ -27,6 +28,20 @@ async def send_scan_notifications(
             + "\n".join(results_summary),
             db=db,
         )
+
+        # Trigger scan_completed webhook
+        # Get scan stats for webhook payload
+        scan = await db.scans.find_one({"_id": scan_id})
+        if scan:
+            stats = scan.get("stats", {})
+            await webhook_service.trigger_scan_completed(
+                db=db,
+                scan_id=scan_id,
+                project_id=str(project.id),
+                project_name=project.name,
+                findings_count=len(aggregated_findings),
+                stats=stats,
+            )
 
         # Check for critical vulnerabilities and send vulnerability_found notification
         # Convert Finding objects to dicts for attribute access
@@ -129,5 +144,23 @@ async def send_scan_notifications(
                     f"Sent vulnerability_found notification for project {project.name}: "
                     f"{len(kev_vulns)} KEV, {len(high_epss_vulns)} high EPSS, {len(critical_vulns)} critical/high"
                 )
+
+                # Trigger vulnerability_found webhook
+                await webhook_service.trigger_vulnerability_found(
+                    db=db,
+                    scan_id=scan_id,
+                    project_id=str(project.id),
+                    project_name=project.name,
+                    critical_count=sum(
+                        1 for v in critical_vulns if v.get("severity") == "CRITICAL"
+                    ),
+                    high_count=sum(
+                        1 for v in critical_vulns if v.get("severity") == "HIGH"
+                    ),
+                    kev_count=len(kev_vulns),
+                    high_epss_count=len(high_epss_vulns),
+                    top_vulnerabilities=top_vulns,
+                )
+
     except Exception as e:
-        logger.error(f"Failed to send notifications: {e}")
+        logger.error(f"Failed to send notifications and trigger webhooks: {e}")

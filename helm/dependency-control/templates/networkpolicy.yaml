@@ -26,7 +26,12 @@ spec:
   - to:
     - podSelector:
         matchLabels:
-          app: "{{ .Values.mongodb.cluster.name }}-svc"
+          {{- if eq .Values.database.type "mongodb" }}
+          app: "{{ .Values.database.cluster.name }}-svc"
+          {{- else }}
+          app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
+          app.kubernetes.io/name: percona-server-mongodb
+          {{- end }}
     ports:
     - protocol: TCP
       port: 27017
@@ -82,7 +87,25 @@ spec:
 {{ toYaml .from | indent 4 }}
     ports:
     - protocol: TCP
+      {{- if $.Values.global.tls.enabled }}
+      port: 8443
+      {{- else }}
       port: 8000
+      {{- end }}
+  {{- end }}
+  {{- if .Values.monitoring.serviceMonitor.enabled }}
+  - from:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - protocol: TCP
+      {{- if .Values.global.tls.enabled }}
+      port: 8443
+      {{- else }}
+      port: 8000
+      {{- end }}
   {{- end }}
 {{- end }}
 
@@ -106,7 +129,11 @@ spec:
 {{ toYaml .from | indent 4 }}
     ports:
     - protocol: TCP
+      {{- if $.Values.global.tls.enabled }}
+      port: 443
+      {{- else }}
       port: 80
+      {{- end }}
   {{- end }}
 {{- end }}
 
@@ -120,7 +147,12 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: "{{ .Values.mongodb.cluster.name }}-svc"
+      {{- if eq .Values.database.type "mongodb" }}
+      app: "{{ .Values.database.cluster.name }}-svc"
+      {{- else }}
+      app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
+      app.kubernetes.io/name: percona-server-mongodb
+      {{- end }}
   policyTypes:
   - Ingress
   ingress:
@@ -132,11 +164,20 @@ spec:
     # Allow other Mongo nodes (Replication)
     - podSelector:
         matchLabels:
-          app: "{{ .Values.mongodb.cluster.name }}-svc"
+          {{- if eq .Values.database.type "mongodb" }}
+          app: "{{ .Values.database.cluster.name }}-svc"
+          {{- else }}
+          app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
+          app.kubernetes.io/name: percona-server-mongodb
+          {{- end }}
     # Allow Operator
     - podSelector:
         matchLabels:
+          {{- if eq .Values.database.type "mongodb" }}
           app.kubernetes.io/name: mongodb-kubernetes-operator
+          {{- else }}
+          app.kubernetes.io/name: percona-server-mongodb-operator
+          {{- end }}
     ports:
     - protocol: TCP
       port: 27017
@@ -150,14 +191,24 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: "{{ .Values.mongodb.cluster.name }}-svc"
+      {{- if eq .Values.database.type "mongodb" }}
+      app: "{{ .Values.database.cluster.name }}-svc"
+      {{- else }}
+      app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
+      app.kubernetes.io/name: percona-server-mongodb
+      {{- end }}
   policyTypes:
   - Egress
   egress:
   - to:
     - podSelector:
         matchLabels:
-          app: "{{ .Values.mongodb.cluster.name }}-svc"
+          {{- if eq .Values.database.type "mongodb" }}
+          app: "{{ .Values.database.cluster.name }}-svc"
+          {{- else }}
+          app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
+          app.kubernetes.io/name: percona-server-mongodb
+          {{- end }}
     ports:
     - protocol: TCP
       port: 27017
@@ -181,7 +232,11 @@ metadata:
 spec:
   podSelector:
     matchLabels:
+      {{- if eq .Values.database.type "mongodb" }}
       app.kubernetes.io/name: mongodb-kubernetes-operator
+      {{- else }}
+      app.kubernetes.io/name: percona-server-mongodb-operator
+      {{- end }}
   policyTypes:
   - Egress
   egress:
@@ -191,10 +246,6 @@ spec:
 
 {{- if and .Values.dragonfly.enabled .Values.networkPolicy.enabled }}
 ---
-# ============================================================================
-# DragonflyDB Network Policies (Subchart)
-# ============================================================================
-
 # Allow Backend to talk to DragonflyDB (Subchart)
 kind: NetworkPolicy
 apiVersion: networking.k8s.io/v1
