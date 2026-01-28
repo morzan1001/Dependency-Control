@@ -1,21 +1,40 @@
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import CVSS_SEVERITY_SCORES
 from app.models.stats import Stats
 
 logger = logging.getLogger(__name__)
 
+# Severity level constants for MongoDB queries
+_SEVERITY_CRITICAL = "CRITICAL"
+_SEVERITY_HIGH = "HIGH"
+_SEVERITY_MEDIUM = "MEDIUM"
+_SEVERITY_LOW = "LOW"
+_SEVERITY_INFO = "INFO"
+_SEVERITY_UNKNOWN = "UNKNOWN"
 
-async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase):
+
+async def recalculate_project_stats(
+    project_id: str, db: AsyncIOMotorDatabase
+) -> Optional[Stats]:
     """
     Recalculates statistics for a project based on its latest scan and active waivers.
     This should be called whenever waivers are added, updated, or removed.
+
+    Args:
+        project_id: The ID of the project to recalculate stats for
+        db: Database connection
+
+    Returns:
+        The calculated Stats object, or None if project not found
     """
     project = await db.projects.find_one({"_id": project_id})
     if not project or not project.get("latest_scan_id"):
-        return
+        return None
 
     scan_id = project["latest_scan_id"]
     logger.info(f"Recalculating stats for project {project_id} (scan {scan_id})")
@@ -60,7 +79,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase):
             query, {"$set": {"waived": True, "waiver_reason": waiver.get("reason")}}
         )
 
-    # 4. Calculate stats
+    # 4. Calculate stats using CVSS severity scores from constants
     pipeline = [
         {"$match": {"scan_id": scan_id, "waived": False}},
         {
@@ -70,12 +89,24 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase):
                 "calculated_score": {
                     "$switch": {
                         "branches": [
-                            {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 10.0},
-                            {"case": {"$eq": ["$severity", "HIGH"]}, "then": 7.5},
-                            {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 4.0},
-                            {"case": {"$eq": ["$severity", "LOW"]}, "then": 1.0},
+                            {
+                                "case": {"$eq": ["$severity", _SEVERITY_CRITICAL]},
+                                "then": CVSS_SEVERITY_SCORES[_SEVERITY_CRITICAL],
+                            },
+                            {
+                                "case": {"$eq": ["$severity", _SEVERITY_HIGH]},
+                                "then": CVSS_SEVERITY_SCORES[_SEVERITY_HIGH],
+                            },
+                            {
+                                "case": {"$eq": ["$severity", _SEVERITY_MEDIUM]},
+                                "then": CVSS_SEVERITY_SCORES[_SEVERITY_MEDIUM],
+                            },
+                            {
+                                "case": {"$eq": ["$severity", _SEVERITY_LOW]},
+                                "then": CVSS_SEVERITY_SCORES[_SEVERITY_LOW],
+                            },
                         ],
-                        "default": 0.0,
+                        "default": CVSS_SEVERITY_SCORES[_SEVERITY_UNKNOWN],
                     }
                 },
             }
@@ -84,14 +115,24 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase):
             "$group": {
                 "_id": None,
                 "critical": {
-                    "$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}
+                    "$sum": {
+                        "$cond": [{"$eq": ["$severity", _SEVERITY_CRITICAL]}, 1, 0]
+                    }
                 },
-                "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
-                "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
-                "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
-                "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
+                "high": {
+                    "$sum": {"$cond": [{"$eq": ["$severity", _SEVERITY_HIGH]}, 1, 0]}
+                },
+                "medium": {
+                    "$sum": {"$cond": [{"$eq": ["$severity", _SEVERITY_MEDIUM]}, 1, 0]}
+                },
+                "low": {
+                    "$sum": {"$cond": [{"$eq": ["$severity", _SEVERITY_LOW]}, 1, 0]}
+                },
+                "info": {
+                    "$sum": {"$cond": [{"$eq": ["$severity", _SEVERITY_INFO]}, 1, 0]}
+                },
                 "unknown": {
-                    "$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}
+                    "$sum": {"$cond": [{"$eq": ["$severity", _SEVERITY_UNKNOWN]}, 1, 0]}
                 },
                 "risk_score": {
                     "$sum": {
@@ -131,14 +172,24 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase):
     )
 
     logger.info(f"Stats updated for project {project_id}: {stats.model_dump()}")
+    return stats
 
 
-async def recalculate_all_projects(db: AsyncIOMotorDatabase):
+async def recalculate_all_projects(db: AsyncIOMotorDatabase) -> int:
     """
     Recalculates statistics for ALL projects.
     Use with caution, as this can be resource intensive.
+
+    Args:
+        db: Database connection
+
+    Returns:
+        Number of projects recalculated
     """
     logger.info("Starting global stats recalculation")
+    count = 0
     async for project in db.projects.find({}, {"_id": 1}):
         await recalculate_project_stats(project["_id"], db)
-    logger.info("Global stats recalculation completed")
+        count += 1
+    logger.info(f"Global stats recalculation completed: {count} projects processed")
+    return count

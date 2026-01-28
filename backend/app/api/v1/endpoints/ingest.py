@@ -13,21 +13,27 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.api import deps
+from app.api.v1.helpers.ingest import process_findings_ingest
 from app.db.mongodb import get_database
 from app.models.dependency import Dependency
 from app.models.project import Project, Scan
+from app.repositories import DependencyRepository, ScanRepository
 from app.schemas.bearer import BearerIngest
-from app.schemas.ingest import SBOMIngest
+from app.schemas.ingest import (
+    FindingsIngestResponse,
+    ProjectConfigResponse,
+    SBOMIngest,
+    SBOMIngestResponse,
+    SecretScanResponse,
+)
 from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
-from app.services.aggregator import ResultAggregator
 from app.services.sbom_parser import parse_sbom
 from app.services.scan_manager import ScanManager
 
@@ -37,78 +43,21 @@ router = APIRouter()
 
 
 # =============================================================================
-# Helper Functions
-# =============================================================================
-
-
-async def _process_findings_ingest(
-    manager: ScanManager,
-    analyzer_name: str,
-    result_dict: Dict[str, Any],
-    scan_id: str,
-) -> Dict[str, Any]:
-    """
-    Common processing for findings-based ingests (TruffleHog, OpenGrep, KICS, Bearer).
-
-    1. Normalize findings via aggregator
-    2. Apply waivers
-    3. Store results
-    4. Compute stats
-    5. Register result (does NOT trigger aggregation - waits for all scanners)
-    6. Update project timestamp
-
-    Returns response dict with scan_id, findings_count, and stats.
-    
-    Note: Unlike SBOM ingestion, findings-based scanners do NOT trigger
-    the aggregation immediately. This prevents race conditions where a fast
-    scanner (e.g., SAST) completes before slower scanners (e.g., SBOM),
-    causing the scan to be marked as 'completed' prematurely.
-    
-    The aggregation is triggered either:
-    - By the SBOM scanner (which typically runs last and is the "main" analysis)
-    - By the housekeeping job if no new results arrive for a configured period
-    """
-    # Normalize findings
-    aggregator = ResultAggregator()
-    aggregator.aggregate(analyzer_name, result_dict)
-    findings = aggregator.get_findings()
-
-    # Apply waivers
-    final_findings, waived_count = await manager.apply_waivers(findings)
-
-    # Store results
-    await manager.store_results(analyzer_name, result_dict, scan_id)
-
-    # Compute stats
-    stats = ScanManager.compute_stats(final_findings)
-
-    # Register result WITHOUT triggering aggregation
-    # This updates last_result_at and received_results, and resets status
-    # to 'pending' if it was 'completed' (for late arrivals)
-    await manager.register_result(scan_id, analyzer_name, trigger_analysis=False)
-    
-    # Update project timestamp
-    await manager.update_project_last_scan()
-
-    return {
-        "scan_id": scan_id,
-        "findings_count": len(final_findings),
-        "waived_count": waived_count,
-        "stats": stats.model_dump(),
-    }
-
-
-# =============================================================================
 # Ingest Endpoints
 # =============================================================================
 
 
-@router.post("/ingest/trufflehog", summary="Ingest TruffleHog Results", status_code=200)
+@router.post(
+    "/ingest/trufflehog",
+    summary="Ingest TruffleHog Results",
+    response_model=SecretScanResponse,
+    status_code=200,
+)
 async def ingest_trufflehog(
     data: TruffleHogIngest,
     project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database),
-):
+) -> SecretScanResponse:
     """
     Ingest TruffleHog secret scan results.
     Returns a summary of findings and pipeline failure status.
@@ -120,28 +69,33 @@ async def ingest_trufflehog(
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
     # Process findings
-    response = await _process_findings_ingest(
+    response = await process_findings_ingest(
         manager, "trufflehog", result_dict, ctx.scan_id
     )
 
     # TruffleHog returns failure status if secrets found
     failed = response["findings_count"] > 0
 
-    return {
-        "status": "failed" if failed else "success",
-        "scan_id": response["scan_id"],
-        "findings_count": response["findings_count"],
-        "waived_count": response["waived_count"],
-        "message": f"Found {response['findings_count']} secrets (Waived: {response['waived_count']})",
-    }
+    return SecretScanResponse(
+        status="failed" if failed else "success",
+        scan_id=response["scan_id"],
+        findings_count=response["findings_count"],
+        waived_count=response["waived_count"],
+        message=f"Found {response['findings_count']} secrets (Waived: {response['waived_count']})",
+    )
 
 
-@router.post("/ingest/opengrep", summary="Ingest OpenGrep Results", status_code=200)
+@router.post(
+    "/ingest/opengrep",
+    summary="Ingest OpenGrep Results",
+    response_model=FindingsIngestResponse,
+    status_code=200,
+)
 async def ingest_opengrep(
     data: OpenGrepIngest,
     project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database),
-):
+) -> FindingsIngestResponse:
     """
     Ingest OpenGrep SAST scan results.
     Returns a summary of findings.
@@ -152,15 +106,23 @@ async def ingest_opengrep(
     # Prepare result dict
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
-    return await _process_findings_ingest(manager, "opengrep", result_dict, ctx.scan_id)
+    response = await process_findings_ingest(
+        manager, "opengrep", result_dict, ctx.scan_id
+    )
+    return FindingsIngestResponse(**response)
 
 
-@router.post("/ingest/kics", summary="Ingest KICS Results", status_code=200)
+@router.post(
+    "/ingest/kics",
+    summary="Ingest KICS Results",
+    response_model=FindingsIngestResponse,
+    status_code=200,
+)
 async def ingest_kics(
     data: KicsIngest,
     project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database),
-):
+) -> FindingsIngestResponse:
     """
     Ingest KICS IaC scan results.
     """
@@ -170,15 +132,21 @@ async def ingest_kics(
     # KICS uses the full model
     result_dict = data.model_dump()
 
-    return await _process_findings_ingest(manager, "kics", result_dict, ctx.scan_id)
+    response = await process_findings_ingest(manager, "kics", result_dict, ctx.scan_id)
+    return FindingsIngestResponse(**response)
 
 
-@router.post("/ingest/bearer", summary="Ingest Bearer Results", status_code=200)
+@router.post(
+    "/ingest/bearer",
+    summary="Ingest Bearer Results",
+    response_model=FindingsIngestResponse,
+    status_code=200,
+)
 async def ingest_bearer(
     data: BearerIngest,
     project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database),
-):
+) -> FindingsIngestResponse:
     """
     Ingest Bearer SAST/Data Security scan results.
     """
@@ -188,15 +156,23 @@ async def ingest_bearer(
     # Bearer uses the full model
     result_dict = data.model_dump()
 
-    return await _process_findings_ingest(manager, "bearer", result_dict, ctx.scan_id)
+    response = await process_findings_ingest(
+        manager, "bearer", result_dict, ctx.scan_id
+    )
+    return FindingsIngestResponse(**response)
 
 
-@router.post("/ingest", summary="Ingest SBOM", status_code=202)
+@router.post(
+    "/ingest",
+    summary="Ingest SBOM",
+    response_model=SBOMIngestResponse,
+    status_code=202,
+)
 async def ingest_sbom(
     data: SBOMIngest,
     project: Project = Depends(deps.get_project_for_ingest),
     db: AsyncIOMotorDatabase = Depends(get_database),
-):
+) -> SBOMIngestResponse:
     """
     Upload an SBOM for analysis.
 
@@ -204,18 +180,20 @@ async def ingest_sbom(
     The analysis will be queued and processed by background workers.
     """
     manager = ScanManager(db, project)
+    scan_repo = ScanRepository(db)
+    dep_repo = DependencyRepository(db)
 
     if not data.sboms:
         raise HTTPException(status_code=400, detail="No SBOM provided")
 
     # For SBOM, we need the scan_id before creating the scan for GridFS metadata
     # So we handle this slightly differently
-    pipeline_url = manager._build_pipeline_url(data)
+    pipeline_url = manager.build_pipeline_url(data)
 
     # Check for existing scan
     existing_scan = None
     if data.pipeline_id:
-        existing_scan = await db.scans.find_one(
+        existing_scan = await scan_repo.find_one(
             {"project_id": str(project.id), "pipeline_id": data.pipeline_id}
         )
 
@@ -225,8 +203,11 @@ async def ingest_sbom(
     fs = AsyncIOMotorGridFSBucket(db)
     sbom_refs = []
     dependencies_to_insert = []
+    warnings: list[str] = []
+    sboms_processed = 0
+    sboms_failed = 0
 
-    for sbom in data.sboms:
+    for idx, sbom in enumerate(data.sboms):
         # Upload to GridFS
         try:
             sbom_str = json.dumps(sbom)
@@ -246,6 +227,9 @@ async def ingest_sbom(
                 }
             )
         except Exception as e:
+            sboms_failed += 1
+            warning_msg = f"SBOM {idx + 1}: Failed to upload to storage"
+            warnings.append(warning_msg)
             logger.error(f"Failed to upload SBOM to GridFS: {e}")
             continue
 
@@ -291,25 +275,38 @@ async def ingest_sbom(
                 )
                 dependencies_to_insert.append(dep.model_dump(by_alias=True))
 
+            sboms_processed += 1
+
         except Exception as e:
+            sboms_failed += 1
+            warning_msg = f"SBOM {idx + 1}: Failed to parse dependencies"
+            warnings.append(warning_msg)
             logger.error(
                 f"Failed to extract dependencies from SBOM: {e}", exc_info=True
             )
+
+    # Fail if ALL SBOMs failed to process
+    if sboms_failed > 0 and sboms_processed == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"All {sboms_failed} SBOM(s) failed to process. Check server logs for details.",
+        )
 
     # Bulk insert dependencies
     if dependencies_to_insert:
         try:
             if existing_scan:
-                await db.dependencies.delete_many({"scan_id": scan_id})
-            await db.dependencies.insert_many(dependencies_to_insert)
+                await dep_repo.delete_by_scan(scan_id)
+            await dep_repo.create_many(dependencies_to_insert)
         except Exception as e:
+            warnings.append("Failed to store dependencies")
             logger.error(f"Failed to insert dependencies: {e}")
 
     # Create or update scan using manager's context
     # We need to do this after GridFS to include sbom_refs
     if existing_scan:
-        await db.scans.update_one(
-            {"_id": scan_id},
+        await scan_repo.update_raw(
+            scan_id,
             {
                 "$set": {
                     "branch": data.branch or existing_scan.get("branch"),
@@ -347,7 +344,7 @@ async def ingest_sbom(
             sbom_refs=sbom_refs,
             status="pending",
         )
-        await db.scans.insert_one(scan.model_dump(by_alias=True))
+        await scan_repo.create(scan)
 
     # Register SBOM result and trigger analysis
     # SBOM is considered the "main" scanner, so it triggers aggregation
@@ -355,22 +352,36 @@ async def ingest_sbom(
     # that may have already submitted their findings
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 
-    return {
-        "status": "queued",
-        "scan_id": scan_id,
-        "message": "Analysis queued successfully",
-    }
+    # Build response message
+    message = "Analysis queued successfully"
+    if sboms_failed > 0:
+        message = f"Analysis queued with warnings: {sboms_failed} SBOM(s) failed"
+
+    return SBOMIngestResponse(
+        status="queued",
+        scan_id=scan_id,
+        message=message,
+        sboms_processed=sboms_processed,
+        sboms_failed=sboms_failed,
+        dependencies_count=len(dependencies_to_insert),
+        warnings=warnings,
+    )
 
 
-@router.get("/ingest/config", summary="Get Project Configuration", status_code=200)
+@router.get(
+    "/ingest/config",
+    summary="Get Project Configuration",
+    response_model=ProjectConfigResponse,
+    status_code=200,
+)
 async def get_project_config(
     project: Project = Depends(deps.get_project_for_ingest),
-):
+) -> ProjectConfigResponse:
     """
     Get project configuration for CI/CD pipelines.
     Returns active analyzers and other settings.
     """
-    return {
-        "active_analyzers": project.active_analyzers,
-        "retention_days": project.retention_days,
-    }
+    return ProjectConfigResponse(
+        active_analyzers=project.active_analyzers,
+        retention_days=project.retention_days,
+    )

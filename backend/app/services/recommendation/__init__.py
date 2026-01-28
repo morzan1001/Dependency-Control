@@ -1,1 +1,2 @@
-print("This is a temporary file used for module generation")
+# Recommendation module - contains all recommendation generators
+# Individual modules are imported directly by the RecommendationEngine

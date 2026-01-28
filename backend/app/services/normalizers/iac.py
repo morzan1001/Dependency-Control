@@ -1,72 +1,43 @@
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, Union
-from app.models.finding import Finding, FindingType, Severity
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+from app.core.constants import KICS_SEVERITY_MAP
+from app.models.finding import Finding, FindingType
+from app.services.normalizers.utils import (
+    build_finding_id,
+    normalize_cwe_list,
+    safe_severity,
+)
 
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
-
-
-def _normalize_list(value: Optional[Union[str, List[str]]]) -> List[str]:
-    """Normalize a value that could be a string or list to always be a list."""
-    if not value:
-        return []
-    if isinstance(value, list):
-        return value
-    return [value]
 
 
 def normalize_kics(
     aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
 ):
     """Normalize KICS IaC scan results."""
-    # KICS JSON schema:
-    # {
-    #   "queries": [
-    #      {
-    #          "query_name": "...",
-    #          "query_id": "...",
-    #          "severity": "HIGH",
-    #          "description": "...",
-    #          "files": [
-    #               {
-    #                   "file_name": "...",
-    #                   "line": 10,
-    #                   ...
-    #               }
-    #          ]
-    #      }
-    #   ]
-    # }
-
-    severity_map = {
-        "HIGH": Severity.HIGH,
-        "MEDIUM": Severity.MEDIUM,
-        "LOW": Severity.LOW,
-        "INFO": Severity.INFO,
-        "TRACE": Severity.INFO,
-    }
-
-    queries = result.get("queries", [])
+    queries = result.get("queries") or []
     if not queries:
         return
 
     for query in queries:
-        query_name = query.get("query_name", "Unknown Issue")
-        query_id = query.get("query_id")
-        sev_str = query.get("severity", "INFO").upper()
-        severity = severity_map.get(sev_str, Severity.INFO)
-        description = query.get("description", "")
-        platform = query.get("platform", "unknown")
-        category = query.get("category", "infrastructure")
+        query_name = query.get("query_name") or "Unknown Issue"
+        query_id = query.get("query_id") or "unknown"
+        sev_str = (query.get("severity") or "INFO").upper()
+        severity = safe_severity(KICS_SEVERITY_MAP.get(sev_str, sev_str))
+        description = query.get("description") or ""
+        platform = query.get("platform") or "unknown"
+        category = query.get("category") or "infrastructure"
 
-        for f in query.get("files", []):
-            file_name = f.get("file_name", "unknown")
+        for f in query.get("files") or []:
+            file_name = f.get("file_name") or "unknown"
             line = f.get("line", 0)
             end_line = f.get("end_line") or line
 
             # Unique ID per file location
-            finding_id = f"KICS-{query_id}-{file_name}-{line}"
+            finding_id = build_finding_id("KICS", query_id, file_name, line)
 
-            # Build comprehensive details for rich frontend display
+            # Build comprehensive details
             details = {
                 "rule_id": query_id,
                 "title": query_name,
@@ -82,10 +53,11 @@ def normalize_kics(
                 # Code context
                 "code_extract": f.get("code_sample") or f.get("line_content"),
                 # CWE if available
-                "cwe_ids": _normalize_list(query.get("cwe")),
+                "cwe_ids": normalize_cwe_list(query.get("cwe")),
                 # Documentation
-                "documentation_url": query.get("description_url") or f.get("resource_url"),
-                "references": query.get("references", []),
+                "documentation_url": query.get("description_url")
+                or f.get("resource_url"),
+                "references": query.get("references") or [],
                 # Remediation
                 "full_description": description,
             }

@@ -5,7 +5,7 @@ from typing import Dict, List
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.constants import EPSS_API_URL
+from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, EPSS_API_URL
 from app.schemas.enrichment import EPSSData
 
 logger = logging.getLogger(__name__)
@@ -14,11 +14,11 @@ logger = logging.getLogger(__name__)
 class EPSSProvider:
     """Provider for Exploit Prediction Scoring System (EPSS) data."""
 
-    BATCH_SIZE = 100  # Max CVEs per EPSS API request
-
     def __init__(self, max_retries: int = 3, retry_delay: float = 1.0):
         self._max_retries = max_retries
         self._retry_delay = retry_delay
+        self._batch_size = ANALYZER_BATCH_SIZES.get("epss", 100)
+        self._timeout = ANALYZER_TIMEOUTS.get("epss", ANALYZER_TIMEOUTS["default"])
 
     async def fetch_epss_batch(
         self, client: httpx.AsyncClient, cves: List[str]
@@ -33,7 +33,7 @@ class EPSSProvider:
                 # EPSS API accepts comma-separated CVE list
                 cve_param = ",".join(cves)
                 response = await client.get(
-                    f"{EPSS_API_URL}?cve={cve_param}", timeout=30.0
+                    f"{EPSS_API_URL}?cve={cve_param}", timeout=self._timeout
                 )
                 response.raise_for_status()
 
@@ -43,12 +43,18 @@ class EPSSProvider:
                 for entry in data.get("data", []):
                     cve = entry.get("cve", "")
                     if cve:
+                        # Handle potential None values from API
+                        epss_val = entry.get("epss")
+                        percentile_val = entry.get("percentile")
                         results[cve] = EPSSData(
                             cve=cve,
-                            epss_score=float(entry.get("epss", 0)),
-                            percentile=float(entry.get("percentile", 0))
-                            * 100,  # Convert to percentage
-                            date=entry.get("date", ""),
+                            epss_score=float(epss_val) if epss_val is not None else 0.0,
+                            percentile=(
+                                float(percentile_val) * 100
+                                if percentile_val is not None
+                                else 0.0
+                            ),
+                            date=entry.get("date") or "",
                         )
 
                 # Log if some CVEs weren't found (not an error, just info)
@@ -65,6 +71,11 @@ class EPSSProvider:
                 last_error = "Timeout"
                 logger.warning(
                     f"EPSS API timeout (attempt {attempt + 1}/{self._max_retries})"
+                )
+            except httpx.ConnectError:
+                last_error = "Connection error"
+                logger.warning(
+                    f"EPSS API connection error (attempt {attempt + 1}/{self._max_retries})"
                 )
             except httpx.HTTPStatusError as e:
                 last_error = f"HTTP {e.response.status_code}"
@@ -117,8 +128,8 @@ class EPSSProvider:
                 f"Fetching EPSS data for {len(missing_cves)} CVEs ({len(cves) - len(missing_cves)} from cache)"
             )
 
-            for i in range(0, len(missing_cves), self.BATCH_SIZE):
-                batch = missing_cves[i : i + self.BATCH_SIZE]
+            for i in range(0, len(missing_cves), self._batch_size):
+                batch = missing_cves[i : i + self._batch_size]
                 batch_results = await self.fetch_epss_batch(client, batch)
 
                 # Cache each result individually in Redis
@@ -131,7 +142,7 @@ class EPSSProvider:
                     await cache_service.mset(cache_mapping, CacheTTL.EPSS_SCORE)
 
                 # Small delay between batches to be nice to the API
-                if i + self.BATCH_SIZE < len(missing_cves):
+                if i + self._batch_size < len(missing_cves):
                     await asyncio.sleep(0.5)
 
         return result

@@ -1,12 +1,16 @@
 from collections import defaultdict
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from app.schemas.recommendation import (
+    Priority,
     Recommendation,
     RecommendationType,
-    Priority,
 )
-from app.core.constants import EPSS_HIGH_THRESHOLD, SEVERITY_WEIGHTS
+from app.core.constants import (
+    EPSS_HIGH_THRESHOLD,
+    SCORECARD_LOW_THRESHOLD,
+    SEVERITY_WEIGHTS,
+)
 
 
 def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
@@ -72,6 +76,9 @@ def detect_critical_hotspots(
 
     These are the packages that "hurt" the most and fixing them has highest impact.
     """
+    if not findings:
+        return []
+
     recommendations = []
 
     # Aggregate all findings by package
@@ -167,7 +174,7 @@ def detect_critical_hotspots(
             # Check for low scorecard
             for qi in pkg_data["quality_issues"]:
                 score = qi.get("details", {}).get("scorecard_score", 10)
-                if score < 4:
+                if score < SCORECARD_LOW_THRESHOLD:
                     hotspot_reasons.append(f"Low OpenSSF Scorecard: {score}/10")
                     break
 
@@ -229,7 +236,10 @@ def detect_critical_hotspots(
         )
 
         desc_parts = [
-            f"**{hotspot['package']}@{hotspot['version']}** is a critical security hotspot that requires immediate attention."
+            (
+                f"**{hotspot['package']}@{hotspot['version']}** is a critical security "
+                "hotspot that requires immediate attention."
+            )
         ]
         desc_parts.extend(hotspot["reasons"])
 
@@ -290,6 +300,8 @@ def detect_toxic_dependencies(
     - Outdated (no updates in years)
     - Malware/Typosquatting flags
     """
+    if not findings:
+        return []
     recommendations = []
 
     # Aggregate risk factors by package
@@ -317,7 +329,7 @@ def detect_toxic_dependencies(
                 pkg["details"]["version"] = f.get("version", "unknown")
         elif finding_type == "quality":
             score = details.get("scorecard_score", 10)
-            if score < 4:
+            if score < SCORECARD_LOW_THRESHOLD:
                 if "low_scorecard" not in [r["type"] for r in pkg["risk_factors"]]:
                     pkg["risk_factors"].append(
                         {
@@ -453,6 +465,9 @@ def analyze_attack_surface(
     - Dependencies that could be replaced with built-in functionality
     - Heavy dependencies that could be replaced with lighter alternatives
     """
+    if not dependencies:
+        return []
+
     recommendations = []
 
     # Count vulnerabilities by package
@@ -490,8 +505,10 @@ def analyze_attack_surface(
                 priority=Priority.MEDIUM,
                 title="Reduce Attack Surface via Transitive Dependencies",
                 description=(
-                    f"Found {len(transitive_with_vulns)} transitive dependencies contributing {total_vulns} vulnerabilities. "
-                    f"Consider updating or replacing their parent dependencies to reduce attack surface."
+                    f"Found {len(transitive_with_vulns)} transitive dependencies "
+                    f"contributing {total_vulns} vulnerabilities. "
+                    "Consider updating or replacing their parent dependencies "
+                    "to reduce attack surface."
                 ),
                 impact={
                     "critical": 0,

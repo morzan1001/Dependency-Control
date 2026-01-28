@@ -6,276 +6,42 @@ for reachability analysis.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import get_current_user
+from app.api import deps
+from app.api.v1.helpers.callgraph import (
+    check_callgraph_access,
+    detect_format,
+    parse_generic_format,
+    parse_madge_format,
+    parse_pyan_format,
+)
 from app.db.mongodb import get_database
-from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
-from app.schemas.callgraph import CallgraphUploadRequest, CallgraphUploadResponse
+from app.models.callgraph import Callgraph
+from app.models.user import User
+from app.repositories import CallgraphRepository, ScanRepository
+from app.schemas.callgraph import (
+    CallgraphResponse,
+    CallgraphUploadRequest,
+    CallgraphUploadResponse,
+    DeleteCallgraphResponse,
+    ModuleUsageResponse,
+)
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def normalize_module_name(module: str, language: str) -> str:
-    """
-    Normalize a module/package name for consistent matching.
-
-    Examples:
-    - "./utils" -> relative path (keep as-is for now)
-    - "lodash" -> "lodash"
-    - "@org/pkg" -> "@org/pkg"
-    - "lodash/get" -> "lodash"
-    """
-    if not module:
-        return module
-
-    # Remove relative path prefixes for external module detection
-    if module.startswith("./") or module.startswith("../"):
-        return module  # Keep relative paths as-is
-
-    # For scoped packages (@org/pkg), keep full name
-    if module.startswith("@"):
-        parts = module.split("/")
-        if len(parts) >= 2:
-            return f"{parts[0]}/{parts[1]}"
-        return module
-
-    # For regular packages, extract base package name
-    if "/" in module:
-        return module.split("/")[0]
-
-    return module
-
-
-def parse_madge_format(
-    data: Dict[str, Any], language: str
-) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
-    """
-    Parse madge JSON output format.
-
-    Madge format:
-    {
-        "src/index.js": ["./utils", "lodash", "axios"],
-        "src/utils.js": ["lodash/get", "./helpers"]
-    }
-    """
-    imports = []
-    module_usage: Dict[str, ModuleUsage] = {}
-
-    for file_path, dependencies in data.items():
-        if not isinstance(dependencies, list):
-            continue
-
-        for dep in dependencies:
-            if not isinstance(dep, str):
-                continue
-
-            # Create import entry
-            imports.append(
-                ImportEntry(
-                    module=dep,
-                    file=file_path,
-                    line=0,  # Madge doesn't provide line numbers
-                    imported_symbols=[],
-                    is_dynamic=False,
-                )
-            )
-
-            # Aggregate module usage (only for external modules)
-            if not dep.startswith("./") and not dep.startswith("../"):
-                base_module = normalize_module_name(dep, language)
-                if base_module not in module_usage:
-                    module_usage[base_module] = ModuleUsage(
-                        module=base_module,
-                        import_count=0,
-                        call_count=0,
-                        import_locations=[],
-                        used_symbols=[],
-                    )
-                module_usage[base_module].import_count += 1
-                if file_path not in module_usage[base_module].import_locations:
-                    module_usage[base_module].import_locations.append(file_path)
-
-    # Madge doesn't provide call edges, only imports
-    return imports, [], module_usage
-
-
-def parse_pyan_format(
-    data: Dict[str, Any], language: str
-) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
-    """
-    Parse pyan JSON output format.
-
-    Pyan format:
-    {
-        "nodes": [{"name": "module.func", "type": "function", "file": "...", "line": 10}],
-        "edges": [{"source": "module.func", "target": "other.func", "type": "calls"}]
-    }
-    """
-    imports: List[Any] = []
-    calls: List[CallEdge] = []
-    module_usage: Dict[str, ModuleUsage] = {}
-
-    nodes = data.get("nodes", [])
-    edges = data.get("edges", [])
-
-    # Build node lookup
-    node_info = {}
-    for node in nodes:
-        name = node.get("name", "")
-        node_info[name] = {
-            "file": node.get("file", ""),
-            "line": node.get("line", 0),
-            "type": node.get("type", ""),
-        }
-
-    # Process edges as calls
-    for edge in edges:
-        source = edge.get("source", "")
-        target = edge.get("target", "")
-        edge_type = edge.get("type", "calls")
-
-        if edge_type == "calls":
-            source_info = node_info.get(source, {})
-            calls.append(
-                CallEdge(
-                    caller=source,
-                    callee=target,
-                    file=source_info.get("file", ""),
-                    line=source_info.get("line", 0),
-                    call_type="direct",
-                )
-            )
-
-            # Extract module from target
-            if "." in target:
-                module = target.rsplit(".", 1)[0]
-                base_module = normalize_module_name(module, language)
-                if base_module not in module_usage:
-                    module_usage[base_module] = ModuleUsage(
-                        module=base_module,
-                        import_count=0,
-                        call_count=0,
-                        import_locations=[],
-                        used_symbols=[],
-                    )
-                module_usage[base_module].call_count += 1
-
-                # Track used symbol
-                symbol = target.rsplit(".", 1)[-1]
-                if symbol not in module_usage[base_module].used_symbols:
-                    module_usage[base_module].used_symbols.append(symbol)
-
-    return imports, calls, module_usage
-
-
-def parse_generic_format(
-    data: Dict[str, Any], language: str
-) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
-    """
-    Parse generic callgraph format.
-    """
-    imports = []
-    calls = []
-    module_usage: Dict[str, ModuleUsage] = {}
-
-    # Parse imports
-    for imp in data.get("imports", []):
-        imports.append(
-            ImportEntry(
-                module=imp.get("module", ""),
-                file=imp.get("file", ""),
-                line=imp.get("line", 0),
-                imported_symbols=imp.get("symbols", []),
-                is_dynamic=False,
-            )
-        )
-
-        # Aggregate
-        module = imp.get("module", "")
-        if module and not module.startswith("./") and not module.startswith("../"):
-            base_module = normalize_module_name(module, language)
-            if base_module not in module_usage:
-                module_usage[base_module] = ModuleUsage(
-                    module=base_module,
-                    import_count=0,
-                    call_count=0,
-                    import_locations=[],
-                    used_symbols=[],
-                )
-            module_usage[base_module].import_count += 1
-            file_path = imp.get("file", "")
-            if file_path not in module_usage[base_module].import_locations:
-                module_usage[base_module].import_locations.append(file_path)
-            for sym in imp.get("symbols", []):
-                if sym not in module_usage[base_module].used_symbols:
-                    module_usage[base_module].used_symbols.append(sym)
-
-    # Parse calls
-    for call in data.get("calls", []):
-        calls.append(
-            CallEdge(
-                caller=f"{call.get('caller_file', '')}:{call.get('caller_function', '')}",
-                callee=f"{call.get('callee_module', '')}:{call.get('callee_function', '')}",
-                file=call.get("caller_file", ""),
-                line=call.get("line", 0),
-                call_type="direct",
-            )
-        )
-
-        # Aggregate
-        module = call.get("callee_module", "")
-        if module:
-            base_module = normalize_module_name(module, language)
-            if base_module not in module_usage:
-                module_usage[base_module] = ModuleUsage(
-                    module=base_module,
-                    import_count=0,
-                    call_count=0,
-                    import_locations=[],
-                    used_symbols=[],
-                )
-            module_usage[base_module].call_count += 1
-            func = call.get("callee_function", "")
-            if func and func not in module_usage[base_module].used_symbols:
-                module_usage[base_module].used_symbols.append(func)
-
-    return imports, calls, module_usage
-
-
-def detect_format(data: Dict[str, Any]) -> str:
-    """Auto-detect callgraph format from data structure."""
-
-    # Check for pyan/go-callvis format (has nodes and edges)
-    if "nodes" in data and "edges" in data:
-        # Check if it's pyan or go-callvis
-        nodes = data.get("nodes", [])
-        if nodes and isinstance(nodes[0], dict):
-            if "package" in nodes[0]:
-                return "go-callvis"
-            return "pyan"
-
-    # Check for generic format
-    if "imports" in data or "calls" in data:
-        return "generic"
-
-    # Check for madge format (dict of file -> dependencies)
-    if all(isinstance(v, list) for v in data.values() if v):
-        return "madge"
-
-    return "unknown"
-
-
 @router.post("/{project_id}/callgraph", response_model=CallgraphUploadResponse)
 async def upload_callgraph(
     project_id: str,
     request: CallgraphUploadRequest,
-    db=Depends(get_database),
-    current_user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: User = Depends(deps.get_current_active_user),
 ):
     """
     Upload call graph data for a project.
@@ -289,19 +55,11 @@ async def upload_callgraph(
     The callgraph is used for reachability analysis to determine
     if vulnerable code paths are actually used in the project.
     """
-    # Verify project exists and user has access
-    project = await db.projects.find_one({"_id": project_id})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Verify project exists and user has write access
+    await check_callgraph_access(project_id, current_user, db, require_write=True)
 
-    # Check access
-    if project.get("owner_id") != current_user["_id"]:
-        team_ids = project.get("team_ids", [])
-        user_teams = await db.teams.find(
-            {"_id": {"$in": team_ids}, "members.user_id": current_user["_id"]}
-        ).to_list(None)
-        if not user_teams and not current_user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Access denied")
+    scan_repo = ScanRepository(db)
+    callgraph_repo = CallgraphRepository(db)
 
     # Detect format
     format_type = request.format
@@ -350,7 +108,7 @@ async def upload_callgraph(
     scan_id = request.scan_id
     if not scan_id and request.pipeline_id:
         # Find the scan for this pipeline (consistent with other ingest endpoints)
-        existing_scan = await db.scans.find_one(
+        existing_scan = await scan_repo.find_one(
             {
                 "project_id": project_id,
                 "pipeline_id": request.pipeline_id,
@@ -397,11 +155,7 @@ async def upload_callgraph(
             "No pipeline_id or scan_id provided - callgraph may not match scans correctly"
         )
 
-    await db.callgraphs.update_one(
-        upsert_filter,
-        {"$set": callgraph.model_dump()},
-        upsert=True,
-    )
+    await callgraph_repo.upsert(upsert_filter, callgraph.model_dump())
 
     logger.info(
         f"Uploaded callgraph for project {project_id} ({match_context}): "
@@ -436,21 +190,19 @@ async def upload_callgraph(
     )
 
 
-@router.get("/{project_id}/callgraph")
+@router.get("/{project_id}/callgraph", response_model=CallgraphResponse)
 async def get_callgraph(
     project_id: str,
-    db=Depends(get_database),
-    current_user=Depends(get_current_user),
-):
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> CallgraphResponse:
     """
     Get the current callgraph for a project.
     """
-    # Verify project access
-    project = await db.projects.find_one({"_id": project_id})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    await check_callgraph_access(project_id, current_user, db)
 
-    callgraph = await db.callgraphs.find_one({"project_id": project_id})
+    callgraph_repo = CallgraphRepository(db)
+    callgraph = await callgraph_repo.get_by_project(project_id)
     if not callgraph:
         raise HTTPException(
             status_code=404, detail="No callgraph found for this project"
@@ -459,22 +211,25 @@ async def get_callgraph(
     # Remove MongoDB _id
     callgraph.pop("_id", None)
 
-    return callgraph
+    return CallgraphResponse(**callgraph)
 
 
-@router.get("/{project_id}/callgraph/modules")
+@router.get("/{project_id}/callgraph/modules", response_model=ModuleUsageResponse)
 async def get_module_usage(
     project_id: str,
-    db=Depends(get_database),
-    current_user=Depends(get_current_user),
-):
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> ModuleUsageResponse:
     """
     Get module usage summary from the callgraph.
 
     Returns a list of external modules used in the project,
     with import counts and locations.
     """
-    callgraph = await db.callgraphs.find_one({"project_id": project_id})
+    await check_callgraph_access(project_id, current_user, db)
+
+    callgraph_repo = CallgraphRepository(db)
+    callgraph = await callgraph_repo.get_by_project(project_id)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found")
 
@@ -487,25 +242,28 @@ async def get_module_usage(
         reverse=True,
     )
 
-    return {
-        "project_id": project_id,
-        "language": callgraph.get("language"),
-        "modules": [{"name": k, **v} for k, v in sorted_modules],
-    }
+    return ModuleUsageResponse(
+        project_id=project_id,
+        language=callgraph.get("language"),
+        modules=[{"name": k, "module": k, **v} for k, v in sorted_modules],
+    )
 
 
-@router.delete("/{project_id}/callgraph")
+@router.delete("/{project_id}/callgraph", response_model=DeleteCallgraphResponse)
 async def delete_callgraph(
     project_id: str,
-    db=Depends(get_database),
-    current_user=Depends(get_current_user),
-):
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> DeleteCallgraphResponse:
     """
     Delete the callgraph for a project.
     """
-    result = await db.callgraphs.delete_one({"project_id": project_id})
+    await check_callgraph_access(project_id, current_user, db, require_write=True)
 
-    if result.deleted_count == 0:
+    callgraph_repo = CallgraphRepository(db)
+    deleted_count = await callgraph_repo.delete_by_project(project_id)
+
+    if deleted_count == 0:
         raise HTTPException(status_code=404, detail="No callgraph found")
 
-    return {"success": True, "message": "Callgraph deleted"}
+    return DeleteCallgraphResponse(success=True, message="Callgraph deleted")

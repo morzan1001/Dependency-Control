@@ -1,7 +1,9 @@
 import hashlib
 from typing import Any, Dict, Optional, TYPE_CHECKING
+
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding import SecretDetails
+from app.services.normalizers.utils import build_finding_id
 
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
@@ -12,26 +14,32 @@ def normalize_trufflehog(
 ):
     """Normalize TruffleHog secret scan results."""
     # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
-    for finding in result.get("findings", []):
-        # Extract file path
+    for finding in result.get("findings") or []:
+        # Extract file path from various source metadata formats
         file_path = "unknown"
-        if finding.get("SourceMetadata") and "Data" in finding["SourceMetadata"]:
-            # Filesystem mode
-            data = finding["SourceMetadata"]["Data"]
-            if "Filesystem" in data and "file" in data["Filesystem"]:
-                file_path = data["Filesystem"]["file"]
-            elif "Git" in data and "file" in data["Git"]:
-                file_path = data["Git"]["file"]
+        source_metadata = finding.get("SourceMetadata") or {}
+        data = source_metadata.get("Data") or {}
 
-        detector = finding.get("DetectorType", "Generic Secret")
+        # Check Filesystem source
+        filesystem = data.get("Filesystem") or {}
+        if filesystem.get("file"):
+            file_path = filesystem["file"]
+        else:
+            # Check Git source
+            git = data.get("Git") or {}
+            if git.get("file"):
+                file_path = git["file"]
+
+        detector = finding.get("DetectorType") or "Generic Secret"
 
         # Create a unique ID based on detector, file path, and secret hash
-        raw_secret = finding.get("Raw", "")
+        # Note: MD5 is used here for deduplication/fingerprinting, not security
+        raw_secret = finding.get("Raw") or ""
         secret_hash = (
             hashlib.md5(raw_secret.encode()).hexdigest() if raw_secret else "nohash"
         )
 
-        finding_id = f"SECRET-{detector}-{secret_hash[:8]}"
+        finding_id = build_finding_id("SECRET", detector, secret_hash[:8])
 
         secret_details: SecretDetails = {
             "detector": detector,

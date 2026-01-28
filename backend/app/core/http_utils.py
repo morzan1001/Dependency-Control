@@ -177,10 +177,7 @@ def with_http_error_handling(
         @wraps(func)
         async def wrapper(*args, **kwargs) -> T:
             try:
-                result = func(*args, **kwargs)
-                if hasattr(result, "__await__"):
-                    return await result
-                return result
+                return await func(*args, **kwargs)
             except httpx.TimeoutException:
                 getattr(logger, log_level)(
                     f"Timeout in {func.__name__} ({service_name})"

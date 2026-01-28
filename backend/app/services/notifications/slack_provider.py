@@ -1,11 +1,15 @@
+import asyncio
 import logging
 import time
 from typing import Optional
 
 import httpx
 
+from app.core.config import settings
+from app.core.constants import SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
 from app.db.mongodb import get_database
 from app.models.system import SystemSettings
+from app.repositories.system_settings import SystemSettingsRepository
 from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
@@ -19,6 +23,13 @@ except ImportError:
 
 
 class SlackProvider(NotificationProvider):
+    def __init__(self):
+        # Lock to prevent concurrent token refresh within the same pod
+        self._refresh_lock = asyncio.Lock()
+        # Cache the refreshed token to avoid redundant refreshes
+        self._cached_token: Optional[str] = None
+        self._cached_token_expires_at: float = 0
+
     async def _refresh_token(self, system_settings: SystemSettings) -> Optional[str]:
         """
         Refreshes the Slack access token using the refresh token.
@@ -35,7 +46,9 @@ class SlackProvider(NotificationProvider):
             return None
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(
+                timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
+            ) as client:
                 response = await client.post(
                     "https://slack.com/api/oauth.v2.access",
                     data={
@@ -65,6 +78,7 @@ class SlackProvider(NotificationProvider):
 
                 # Update database
                 db = await get_database()
+                repo = SystemSettingsRepository(db)
 
                 update_data = {
                     "slack_bot_token": new_access_token,
@@ -74,9 +88,7 @@ class SlackProvider(NotificationProvider):
                 if expires_in:
                     update_data["slack_token_expires_at"] = time.time() + expires_in
 
-                await db.system_settings.update_one(
-                    {"_id": "current"}, {"$set": update_data}
-                )
+                await repo.update(update_data)
 
                 logger.info("Successfully refreshed Slack token")
                 return new_access_token
@@ -96,21 +108,42 @@ class SlackProvider(NotificationProvider):
             return False
 
         slack_token = system_settings.slack_bot_token
+        current_time = time.time()
 
         # Check for expiration and refresh if needed
-        # Buffer of 5 minutes
         if (
             system_settings.slack_token_expires_at
-            and system_settings.slack_token_expires_at < (time.time() + 300)
+            and system_settings.slack_token_expires_at
+            < (current_time + SLACK_TOKEN_EXPIRY_BUFFER_SECONDS)
         ):
-            logger.info("Slack token expired or expiring soon. Refreshing...")
-            new_token = await self._refresh_token(system_settings)
-            if new_token:
-                slack_token = new_token
+            # Check if we have a valid cached token first
+            if self._cached_token and self._cached_token_expires_at > current_time:
+                slack_token = self._cached_token
             else:
-                logger.warning(
-                    "Failed to refresh Slack token, attempting to use existing token."
-                )
+                # Use lock to prevent concurrent refresh attempts within this pod
+                async with self._refresh_lock:
+                    # Double-check after acquiring lock (another request may have refreshed)
+                    if (
+                        self._cached_token
+                        and self._cached_token_expires_at > current_time
+                    ):
+                        slack_token = self._cached_token
+                    else:
+                        logger.info(
+                            "Slack token expired or expiring soon. Refreshing..."
+                        )
+                        new_token = await self._refresh_token(system_settings)
+                        if new_token:
+                            slack_token = new_token
+                            # Cache for 1 hour minus buffer (Slack tokens typically last 12 hours)
+                            self._cached_token = new_token
+                            self._cached_token_expires_at = (
+                                current_time + 3600 - SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
+                            )
+                        else:
+                            logger.warning(
+                                "Failed to refresh Slack token, attempting to use existing token."
+                            )
 
         if not slack_token:
             logger.warning(
@@ -130,7 +163,9 @@ class SlackProvider(NotificationProvider):
         payload = {"channel": destination, "text": f"*{subject}*\n{message}"}
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(
+                timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
+            ) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 if response.status_code == 200 and response.json().get("ok"):
                     logger.info(f"Slack message sent to {destination}")

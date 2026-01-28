@@ -214,3 +214,73 @@ class VulnerabilitySearchResponse(BaseModel):
     total: int
     page: int
     size: int
+
+
+class DependencySearchResult(BaseModel):
+    """Result of a dependency search."""
+
+    project_id: str
+    project_name: str
+    package: str
+    version: str
+    type: str
+    license: Optional[str] = None
+    license_url: Optional[str] = None
+    direct: bool = False
+    purl: Optional[str] = None
+    # Source/Origin info
+    source_type: Optional[str] = None
+    source_target: Optional[str] = None
+    layer_digest: Optional[str] = None
+    found_by: Optional[str] = None
+    locations: List[str] = []
+    # Extended SBOM fields
+    cpes: List[str] = []
+    description: Optional[str] = None
+    author: Optional[str] = None
+    publisher: Optional[str] = None
+    group: Optional[str] = None
+    homepage: Optional[str] = None
+    repository_url: Optional[str] = None
+    download_url: Optional[str] = None
+    hashes: Dict[str, Any] = {}
+    properties: Dict[str, Any] = {}
+
+
+class DependencySearchResponse(BaseModel):
+    """Paginated response for dependency search."""
+
+    items: List[DependencySearchResult]
+    total: int
+    page: int
+    size: int
+
+
+# =============================================================================
+# Recommendations
+# =============================================================================
+
+
+class RecommendationResponse(BaseModel):
+    """Response model for a single recommendation."""
+
+    type: str
+    priority: str
+    title: str
+    description: str
+    impact: Dict[str, Any]
+    affected_components: List[str]
+    action: Dict[str, Any]
+    effort: str
+
+
+class RecommendationsResponse(BaseModel):
+    """Response model for recommendations endpoint."""
+
+    project_id: str
+    project_name: str
+    scan_id: str
+    total_findings: int
+    total_vulnerabilities: int
+    recommendations: List[RecommendationResponse]
+    summary: Dict[str, Any]

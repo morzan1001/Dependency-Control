@@ -10,6 +10,12 @@ Format: pkg:type/namespace/name@version?qualifiers#subpath
 from typing import Dict, NamedTuple, Optional
 from urllib.parse import unquote
 
+# Maximum lengths for PURL components to prevent DoS via unbounded strings
+MAX_PURL_LENGTH = 2048  # Total PURL length
+MAX_NAME_LENGTH = 256  # Package name
+MAX_VERSION_LENGTH = 128  # Version string
+MAX_NAMESPACE_LENGTH = 256  # Namespace/scope
+
 
 class ParsedPURL(NamedTuple):
     """Parsed PURL components."""
@@ -75,6 +81,10 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
     if not purl or not purl.startswith("pkg:"):
         return None
 
+    # Validate total length to prevent DoS
+    if len(purl) > MAX_PURL_LENGTH:
+        return None
+
     try:
         rest = purl[4:]
 
@@ -107,11 +117,16 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
 
         if "/" in rest:
             parts = rest.rsplit("/", 1)
+            if len(parts) != 2:
+                return None  # Unexpected rsplit result
             if purl_type == "maven":
                 namespace = parts[0]
                 name = parts[1]
             elif purl_type in ("npm",) and rest.startswith("@"):
-                namespace, name = rest.split("/", 1)
+                split_parts = rest.split("/", 1)
+                if len(split_parts) != 2:
+                    return None
+                namespace, name = split_parts
             elif purl_type in ("golang", "go"):
                 namespace = rest.split("/")[0]
                 name = rest
@@ -119,10 +134,22 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
                 namespace = parts[0]
                 name = parts[1]
 
+        # Unquote and validate component lengths
+        final_namespace = unquote(namespace) if namespace else None
+        final_name = unquote(name)
+
+        # Validate lengths after unquoting (URL decoding can expand strings)
+        if len(final_name) > MAX_NAME_LENGTH:
+            return None
+        if final_namespace and len(final_namespace) > MAX_NAMESPACE_LENGTH:
+            return None
+        if version and len(version) > MAX_VERSION_LENGTH:
+            return None
+
         return ParsedPURL(
             type=purl_type,
-            namespace=unquote(namespace) if namespace else None,
-            name=unquote(name),
+            namespace=final_namespace,
+            name=final_name,
             version=version,
             qualifiers=qualifiers,
             subpath=subpath,
@@ -174,3 +201,15 @@ def is_cargo(purl: str) -> bool:
 def is_nuget(purl: str) -> bool:
     """Check if PURL is a NuGet package."""
     return get_purl_type(purl) == "nuget"
+
+
+def normalize_hash_algorithm(alg: str) -> str:
+    """
+    Normalize a hash algorithm name for consistent comparison.
+
+    Converts to lowercase and removes hyphens.
+    Example: "SHA-256" -> "sha256", "SHA512" -> "sha512"
+    """
+    if not alg:
+        return ""
+    return alg.lower().replace("-", "")

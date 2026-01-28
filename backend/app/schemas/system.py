@@ -77,6 +77,19 @@ class NotificationChannels(BaseModel):
     mattermost: bool = False
 
 
+class PublicConfig(BaseModel):
+    """
+    Public configuration available without authentication.
+    Used by login/registration pages to determine available options.
+    """
+
+    allow_public_registration: bool = False
+    enforce_2fa: bool = False
+    enforce_email_verification: bool = False
+    oidc_enabled: bool = False
+    oidc_provider_name: str = "GitLab"
+
+
 class AppConfig(BaseModel):
     """
     Lightweight configuration for authenticated users.

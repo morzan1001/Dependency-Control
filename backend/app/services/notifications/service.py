@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
+from app.repositories.system_settings import SystemSettingsRepository
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.mattermost_provider import MattermostProvider
 from app.services.notifications.slack_provider import SlackProvider
@@ -63,10 +64,20 @@ class NotificationService:
             )
 
         if tasks:
-            await asyncio.gather(*tasks)
+            # Use return_exceptions=True to prevent one failure from stopping other notifications
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Notification task failed: {result}")
 
     async def notify_user(
-        self, user: User, event_type: str, subject: str, message: str, db=None
+        self,
+        user: User,
+        event_type: str,
+        subject: str,
+        message: str,
+        db=None,
+        html_message: Optional[str] = None,
     ):
         """
         Send a notification to a user based on their global preferences.
@@ -76,9 +87,8 @@ class NotificationService:
 
         system_settings = None
         if db:
-            settings_data = await db.system_settings.find_one({"_id": "current"})
-            if settings_data:
-                system_settings = SystemSettings(**settings_data)
+            repo = SystemSettingsRepository(db)
+            system_settings = await repo.get()
 
         await self._send_based_on_prefs(
             user,
@@ -87,6 +97,7 @@ class NotificationService:
             subject,
             message,
             system_settings,
+            html_message=html_message,
         )
 
     async def notify_users(
@@ -104,9 +115,8 @@ class NotificationService:
         """
         system_settings = None
         if db:
-            settings_data = await db.system_settings.find_one({"_id": "current"})
-            if settings_data:
-                system_settings = SystemSettings(**settings_data)
+            repo = SystemSettingsRepository(db)
+            system_settings = await repo.get()
 
         tasks = []
         for user in users:
@@ -130,7 +140,10 @@ class NotificationService:
             )
 
         if tasks:
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Notification task failed: {result}")
 
     async def notify_project_members(
         self,
@@ -146,10 +159,8 @@ class NotificationService:
         Send notifications to project members.
         """
         # Fetch System Settings
-        system_settings = None
-        settings_data = await db.system_settings.find_one({"_id": "current"})
-        if settings_data:
-            system_settings = SystemSettings(**settings_data)
+        repo = SystemSettingsRepository(db)
+        system_settings = await repo.get()
 
         # 1. Identify all target users and their project-specific overrides
         # Map: user_id -> specific_prefs (or None if no override)
@@ -242,7 +253,10 @@ class NotificationService:
             )
 
         if tasks:
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Notification task failed: {result}")
 
 
 notification_service = NotificationService()

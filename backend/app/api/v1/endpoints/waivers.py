@@ -1,13 +1,26 @@
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
-from app.api.v1.endpoints.projects import check_project_access
+from app.api.v1.helpers import (
+    build_pagination_response,
+    check_project_access,
+    get_user_project_ids,
+    parse_sort_direction,
+)
+from app.core.constants import (
+    PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_EDITOR,
+    PROJECT_ROLE_VIEWER,
+)
+from app.core.permissions import has_permission
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.models.waiver import Waiver
+from app.repositories import WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse
 from app.services.stats import recalculate_all_projects, recalculate_project_stats
 
@@ -27,21 +40,19 @@ async def create_waiver(
     if waiver_in.project_id:
         # Check if user has access to the project (editor or admin)
         await check_project_access(
-            waiver_in.project_id, current_user, db, required_role="editor"
+            waiver_in.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR
         )
     else:
-        # Global waiver requires superuser or specific permission
-        if (
-            "*" not in current_user.permissions
-            and "waiver:manage" not in current_user.permissions
-        ):
+        # Global waiver requires waiver:manage permission
+        if not has_permission(current_user.permissions, "waiver:manage"):
             raise HTTPException(
                 status_code=403, detail="Only admins can create global waivers"
             )
 
+    waiver_repo = WaiverRepository(db)
     waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
 
-    await db.waivers.insert_one(waiver.model_dump(by_alias=True))
+    await waiver_repo.create(waiver)
 
     # Trigger stats recalculation
     if waiver.project_id:
@@ -57,7 +68,9 @@ async def list_waivers(
     project_id: Optional[str] = None,
     finding_id: Optional[str] = None,
     package_name: Optional[str] = None,
-    search: Optional[str] = Query(None, description="Search in package name, reason, or finding ID"),
+    search: Optional[str] = Query(
+        None, description="Search in package name, reason, or finding ID"
+    ),
     sort_by: str = Query("created_at", description="Field to sort by"),
     sort_order: str = Query("desc", description="Sort order: asc or desc"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
@@ -71,38 +84,21 @@ async def list_waivers(
     query: Dict[str, Any] = {}
 
     # Permission check logic
-    has_read_all = (
-        "*" in current_user.permissions or "waiver:read_all" in current_user.permissions
-    )
-    has_read_own = "waiver:read" in current_user.permissions
+    has_read_all = has_permission(current_user.permissions, "waiver:read_all")
+    has_read_own = has_permission(current_user.permissions, "waiver:read")
 
     if not (has_read_all or has_read_own):
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     if project_id:
         # Check access to specific project
-        await check_project_access(project_id, current_user, db, required_role="viewer")
+        await check_project_access(
+            project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER
+        )
         query["project_id"] = project_id
     elif not has_read_all:
         # User can only see waivers from their projects + global waivers
-        # 1. Get all project IDs user has access to
-        user_teams = await db.teams.find(
-            {"members.user_id": str(current_user.id)}
-        ).to_list(1000)
-        team_ids = [t["_id"] for t in user_teams]
-
-        projects = await db.projects.find(
-            {
-                "$or": [
-                    {"owner_id": str(current_user.id)},
-                    {"members.user_id": str(current_user.id)},
-                    {"team_id": {"$in": team_ids}},
-                ]
-            },
-            {"_id": 1},
-        ).to_list(10000)
-
-        accessible_project_ids = [p["_id"] for p in projects]
+        accessible_project_ids = await get_user_project_ids(current_user, db)
 
         # Query: Global waivers (project_id=None) OR waivers in accessible projects
         query["$or"] = [
@@ -117,7 +113,7 @@ async def list_waivers(
         query["package_name"] = package_name
 
     if search:
-        search_query = {"$regex": search, "$options": "i"}
+        search_query = {"$regex": re.escape(search), "$options": "i"}
         # Need to combine with existing $or if present
         search_or = [
             {"package_name": search_query},
@@ -130,23 +126,21 @@ async def list_waivers(
         else:
             query["$or"] = search_or
 
+    waiver_repo = WaiverRepository(db)
+
     # Get total count
-    total = await db.waivers.count_documents(query)
+    total = await waiver_repo.count(query)
 
     # Sort direction
-    sort_direction = 1 if sort_order == "asc" else -1
+    sort_direction = parse_sort_direction(sort_order)
 
     # Fetch paginated results
-    cursor = db.waivers.find(query).sort(sort_by, sort_direction).skip(skip).limit(limit)
-    waivers = await cursor.to_list(limit)
+    waivers = await waiver_repo.find_many(
+        query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction
+    )
 
-    return {
-        "items": [Waiver(**w).model_dump() for w in waivers],
-        "total": total,
-        "page": (skip // limit) + 1,
-        "size": limit,
-        "pages": (total + limit - 1) // limit if limit > 0 else 0,
-    }
+    items = [Waiver(**w).model_dump(by_alias=True) for w in waivers]
+    return build_pagination_response(items, total, skip, limit)
 
 
 @router.delete("/{waiver_id}", status_code=204)
@@ -155,33 +149,35 @@ async def delete_waiver(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
-):
-    waiver_data = await db.waivers.find_one({"_id": waiver_id})
-    if not waiver_data:
+) -> None:
+    """
+    Delete a waiver.
+
+    For project waivers: requires waiver:delete permission or admin role on the project.
+    For global waivers: requires waiver:manage or waiver:delete permission.
+    """
+    waiver_repo = WaiverRepository(db)
+    waiver = await waiver_repo.get_by_id(waiver_id)
+    if not waiver:
         raise HTTPException(status_code=404, detail="Waiver not found")
 
-    waiver = Waiver(**waiver_data)
-
     if waiver.project_id:
-        if (
-            "*" not in current_user.permissions
-            and "waiver:delete" not in current_user.permissions
-        ):
+        if not has_permission(current_user.permissions, "waiver:delete"):
             await check_project_access(
-                waiver.project_id, current_user, db, required_role="admin"
+                waiver.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN
             )
     else:
-        if (
-            "*" not in current_user.permissions
-            and "waiver:manage" not in current_user.permissions
-            and "waiver:delete" not in current_user.permissions
+        if not has_permission(
+            current_user.permissions, ["waiver:manage", "waiver:delete"]
         ):
             raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    await db.waivers.delete_one({"_id": waiver_id})
+    await waiver_repo.delete(waiver_id)
 
     # Trigger stats recalculation
     if waiver.project_id:
         background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
     else:
         background_tasks.add_task(recalculate_all_projects, db)
+
+    return None

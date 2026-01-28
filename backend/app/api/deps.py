@@ -11,6 +11,11 @@ from app.core.config import settings
 from app.db.mongodb import get_database
 from app.models.system import SystemSettings
 from app.models.user import User
+from app.repositories import (
+    ProjectRepository,
+    SystemSettingsRepository,
+    UserRepository,
+)
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
@@ -27,11 +32,17 @@ except ImportError:
 
 async def get_system_settings(
     db: AsyncIOMotorDatabase = Depends(get_database),
+    auto_init: bool = False,
 ) -> SystemSettings:
-    settings_data = await db.system_settings.find_one({"_id": "current"})
-    if settings_data:
-        return SystemSettings(**settings_data)
-    return SystemSettings()
+    """
+    Get system settings from database.
+
+    Args:
+        db: Database connection
+        auto_init: If True, creates default settings in DB if not found
+    """
+    repo = SystemSettingsRepository(db)
+    return await repo.get(auto_init=auto_init)
 
 
 async def get_current_user(
@@ -57,7 +68,8 @@ async def get_current_user(
             auth_token_validations_total.labels(result="invalid").inc()
         raise credentials_exception from exc
 
-    user = await db.users.find_one({"username": token_data.sub})
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_username(token_data.sub)
     if user is None:
         if auth_token_validations_total:
             auth_token_validations_total.labels(result="user_not_found").inc()
@@ -99,6 +111,13 @@ async def get_current_active_user(
 
 
 class PermissionChecker:
+    """
+    FastAPI dependency for permission-based access control.
+
+    Checks if the current user has any of the required permissions.
+    No wildcard ("*") support - admins must have all permissions explicitly.
+    """
+
     def __init__(self, required_permissions: Union[str, List[str]]):
         self.required_permissions = (
             required_permissions
@@ -107,13 +126,11 @@ class PermissionChecker:
         )
 
     def __call__(self, current_user: User = Depends(get_current_active_user)) -> User:
-        if "*" in current_user.permissions:
-            return current_user
+        from app.core.permissions import has_permission
 
         # Check if user has ANY of the required permissions
-        for perm in self.required_permissions:
-            if perm in current_user.permissions:
-                return current_user
+        if has_permission(current_user.permissions, self.required_permissions):
+            return current_user
 
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -133,7 +150,8 @@ async def get_project_by_api_key(
 
     project_id, secret = x_api_key.split(".", 1)
 
-    project_data = await db.projects.find_one({"_id": project_id})
+    project_repo = ProjectRepository(db)
+    project_data = await project_repo.get_raw_by_id(project_id)
     if not project_data:
         raise HTTPException(status_code=403, detail="Invalid API Key")
 
@@ -157,12 +175,15 @@ async def get_project_for_ingest(
 ):
     from app.models.project import Project
 
+    project_repo = ProjectRepository(db)
+    user_repo = UserRepository(db)
+
     # 1. Try API Key
     if x_api_key:
         if "." not in x_api_key:
             raise HTTPException(status_code=403, detail="Invalid API Key format")
         project_id, secret = x_api_key.split(".", 1)
-        project_data = await db.projects.find_one({"_id": project_id})
+        project_data = await project_repo.get_raw_by_id(project_id)
         if not project_data or not project_data.get("api_key_hash"):
             raise HTTPException(status_code=403, detail="Invalid API Key")
         if not security.verify_password(secret, project_data["api_key_hash"]):
@@ -196,16 +217,12 @@ async def get_project_for_ingest(
         gitlab_user_email = payload.get("user_email")
 
         # Find project by gitlab_project_id
-        project_data = await db.projects.find_one(
-            {"gitlab_project_id": gitlab_project_id}
-        )
+        project_data = await project_repo.get_raw_by_gitlab_id(gitlab_project_id)
 
         if project_data:
             project = Project(**project_data)
             # Sync Teams/Members if enabled (even for existing projects)
             if settings.gitlab_sync_teams:
-                # We need project details to know if it's a group project
-                # Try to fetch details using system token
                 gitlab_project_data = await gitlab_service.get_project_details(
                     gitlab_project_id
                 )
@@ -217,9 +234,7 @@ async def get_project_for_ingest(
                     gitlab_project_data=gitlab_project_data,
                 )
                 if team_id and project.team_id != team_id:
-                    await db.projects.update_one(
-                        {"_id": project.id}, {"$set": {"team_id": team_id}}
-                    )
+                    await project_repo.update(project.id, {"team_id": team_id})
             return project
 
         # Auto-create if enabled
@@ -229,13 +244,13 @@ async def get_project_for_ingest(
 
             # Try to match user by email
             if gitlab_user_email:
-                user = await db.users.find_one({"email": gitlab_user_email})
+                user = await user_repo.get_raw_by_email(gitlab_user_email)
                 if user:
                     owner_id = str(user["_id"])
 
             # Fallback to superuser
             if not owner_id:
-                admin = await db.users.find_one({"is_superuser": True})
+                admin = await user_repo.get_first_superuser()
                 if admin:
                     owner_id = str(admin["_id"])
 
@@ -268,7 +283,7 @@ async def get_project_for_ingest(
                 if team_id:
                     new_project.team_id = team_id
 
-            await db.projects.insert_one(new_project.dict(by_alias=True))
+            await project_repo.create(new_project)
             return new_project
 
         raise HTTPException(

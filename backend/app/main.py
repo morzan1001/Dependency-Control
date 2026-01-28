@@ -40,17 +40,19 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="""
-    Dependency Control API for managing software dependencies, analyzing SBOMs, and tracking vulnerabilities.
-    
-    ## Features
-    * **Project & Team Management**: Organize projects and manage access with teams.
-    * **SBOM Ingestion**: Upload and analyze Software Bill of Materials.
-    * **Comprehensive Analysis**: Vulnerabilities (Trivy, Grype, OSV), Secrets (TruffleHog), License Compliance, Malware, End-of-Life, and Typosquatting.
-    * **Risk Management**: Handle false positives with waivers.
-    * **Integrations**: Webhooks and Notifications (Email, Slack, Mattermost).
-    * **User Management**: Secure authentication with 2FA and email verification.
+Dependency Control API for managing software dependencies, analyzing SBOMs,
+and tracking vulnerabilities.
 
-    Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
+## Features
+* **Project & Team Management**: Organize projects and manage access with teams.
+* **SBOM Ingestion**: Upload and analyze Software Bill of Materials.
+* **Comprehensive Analysis**: Vulnerabilities (Trivy, Grype, OSV), Secrets,
+  License Compliance, Malware, End-of-Life, and Typosquatting.
+* **Risk Management**: Handle false positives with waivers.
+* **Integrations**: Webhooks and Notifications (Email, Slack, Mattermost).
+* **User Management**: Secure authentication with 2FA and email verification.
+
+Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Control)
     """,
     version="1.4.1",
     license_info={

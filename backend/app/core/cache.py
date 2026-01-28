@@ -13,6 +13,7 @@ Key features:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, TypeVar
@@ -40,6 +41,104 @@ except ImportError:
     cache_misses_total = None
     cache_keys_total = None
     cache_connected_clients = None
+
+
+# =============================================================================
+# Cache TTL and Key Constants (defined before CacheService to avoid forward references)
+# =============================================================================
+
+
+class CacheTTL:
+    """Standard TTL values for different types of cached data."""
+
+    # Lock TTL for distributed locking (prevents deadlock on pod crash)
+    LOCK_DEFAULT = 30  # 30 seconds
+
+    # Global catalogs that update daily
+    KEV_CATALOG = 24 * 3600  # 24 hours
+    POPULAR_PACKAGES = 24 * 3600  # 24 hours
+
+    # Vulnerability data
+    EPSS_SCORE = 24 * 3600  # 24 hours (EPSS updates daily)
+    GHSA_DATA = 7 * 24 * 3600  # 7 days (GHSA rarely changes)
+    OSV_VULNERABILITY = 6 * 3600  # 6 hours (more volatile)
+
+    # Package metadata
+    DEPS_DEV_METADATA = 12 * 3600  # 12 hours
+    DEPS_DEV_SCORECARD = 24 * 3600  # 24 hours
+    LATEST_VERSION = 12 * 3600  # 12 hours
+    EOL_STATUS = 24 * 3600  # 24 hours
+
+    # Package hashes (immutable)
+    PACKAGE_HASH = 7 * 24 * 3600  # 7 days
+
+    # Maintainer data
+    MAINTAINER_INFO = 24 * 3600  # 24 hours
+
+    # Malware check (can change, moderate TTL)
+    MALWARE_CHECK = 6 * 3600  # 6 hours
+
+    # Negative cache (when API returns no data)
+    NEGATIVE_RESULT = 1 * 3600  # 1 hour
+
+
+class CacheKeys:
+    """Cache key builders for consistent key naming."""
+
+    @staticmethod
+    def kev_catalog() -> str:
+        return "kev:catalog"
+
+    @staticmethod
+    def epss(cve_id: str) -> str:
+        return f"epss:{cve_id}"
+
+    @staticmethod
+    def ghsa(ghsa_id: str) -> str:
+        return f"ghsa:{ghsa_id}"
+
+    @staticmethod
+    def osv(purl: str) -> str:
+        # Use hash for long PURLs
+        purl_hash = hashlib.md5(purl.encode()).hexdigest()[:16]
+        return f"osv:{purl_hash}"
+
+    @staticmethod
+    def deps_dev(system: str, package: str, version: str) -> str:
+        return f"deps:{system}:{package}:{version}"
+
+    @staticmethod
+    def deps_dev_scorecard(project_id: str) -> str:
+        return f"scorecard:{project_id}"
+
+    @staticmethod
+    def latest_version(system: str, package: str) -> str:
+        return f"latest:{system}:{package}"
+
+    @staticmethod
+    def eol(product: str) -> str:
+        return f"eol:{product}"
+
+    @staticmethod
+    def package_hash(system: str, package: str, version: str) -> str:
+        return f"hash:{system}:{package}:{version}"
+
+    @staticmethod
+    def popular_packages(registry: str) -> str:
+        return f"popular:{registry}"
+
+    @staticmethod
+    def maintainer(system: str, package: str) -> str:
+        return f"maintainer:{system}:{package}"
+
+    @staticmethod
+    def malware(registry: str, package: str, version: str) -> str:
+        return f"malware:{registry}:{package}:{version}"
+
+
+# =============================================================================
+# Cache Service
+# =============================================================================
 
 
 class CacheService:
@@ -289,6 +388,122 @@ class CacheService:
             logger.warning(f"Fetch function failed for {key}: {e}")
             raise
 
+    async def get_or_fetch_with_lock(
+        self,
+        key: str,
+        fetch_fn: Callable[[], Any],
+        ttl_seconds: Optional[int] = None,
+        lock_ttl_seconds: int = 30,
+        max_wait_seconds: float = 5.0,
+    ) -> Optional[Any]:
+        """
+        Get from cache or fetch with distributed lock to prevent cache stampede.
+
+        In a multi-pod deployment, when cache expires, all pods would normally
+        try to fetch the same data simultaneously. This method uses a Redis lock
+        to ensure only one pod fetches while others wait for the result.
+
+        Flow:
+        1. Check cache - return if hit
+        2. Try to acquire lock
+        3. If lock acquired: fetch, cache, release lock
+        4. If lock not acquired: wait and retry cache
+
+        Args:
+            key: Cache key
+            fetch_fn: Async function to call if cache miss
+            ttl_seconds: TTL for cached value
+            lock_ttl_seconds: TTL for the lock (prevents deadlock if pod crashes)
+            max_wait_seconds: Max time to wait for another pod's fetch
+
+        Returns:
+            Cached or freshly fetched value, or None if fetch fails
+        """
+        # Try cache first
+        cached = await self.get(key)
+        if cached is not None:
+            return cached
+
+        if not self._available:
+            # Redis unavailable - just fetch without locking
+            try:
+                return await fetch_fn()
+            except Exception as e:
+                logger.warning(f"Fetch failed (no cache): {key}: {e}")
+                return None
+
+        lock_key = f"lock:{key}"
+        try:
+            client = await self.get_client()
+
+            # Try to acquire distributed lock using SETNX
+            lock_acquired = await client.set(
+                self._make_key(lock_key),
+                "1",
+                nx=True,  # Only set if not exists
+                ex=lock_ttl_seconds,  # Auto-expire to prevent deadlock
+            )
+
+            if lock_acquired:
+                # This pod won the race - fetch the data
+                try:
+                    data = await fetch_fn()
+                    if data is not None:
+                        await self.set(key, data, ttl_seconds)
+                    else:
+                        # Cache negative result with short TTL
+                        await self.set(key, {}, CacheTTL.NEGATIVE_RESULT)
+                    return data
+                finally:
+                    # Always release lock
+                    await client.delete(self._make_key(lock_key))
+            else:
+                # Another pod is fetching - wait and check cache
+                wait_interval = 0.1  # 100ms
+                waited = 0.0
+
+                while waited < max_wait_seconds:
+                    await asyncio.sleep(wait_interval)
+                    waited += wait_interval
+
+                    # Check if data is now in cache
+                    cached = await self.get(key)
+                    if cached is not None:
+                        return cached
+
+                    # Check if lock was released (fetch completed but cache empty)
+                    lock_exists = await client.exists(self._make_key(lock_key))
+                    if not lock_exists:
+                        # Lock released but no data - return None (negative cache)
+                        return await self.get(key)
+
+                # Timeout - try fetching ourselves as fallback
+                logger.warning(f"Lock wait timeout for {key}, fetching anyway")
+                try:
+                    data = await fetch_fn()
+                    if data is not None:
+                        await self.set(key, data, ttl_seconds)
+                    return data
+                except Exception as e:
+                    logger.warning(f"Fallback fetch failed for {key}: {e}")
+                    return None
+
+        except redis.ConnectionError:
+            self._available = False
+            # Fallback to direct fetch
+            try:
+                return await fetch_fn()
+            except Exception as e:
+                logger.warning(f"Fetch failed (redis down): {key}: {e}")
+                return None
+        except Exception as e:
+            logger.warning(f"get_or_fetch_with_lock error for {key}: {e}")
+            # Fallback to direct fetch
+            try:
+                return await fetch_fn()
+            except Exception:
+                return None
+
     async def health_check(self) -> Dict[str, Any]:
         """
         Get cache health status and statistics.
@@ -374,91 +589,3 @@ class CacheService:
 
 # Global cache service instance
 cache_service = CacheService()
-
-
-# Cache TTL constants (in seconds) for different data types
-class CacheTTL:
-    """Standard TTL values for different types of cached data."""
-
-    # Global catalogs that update daily
-    KEV_CATALOG = 24 * 3600  # 24 hours
-    POPULAR_PACKAGES = 24 * 3600  # 24 hours
-
-    # Vulnerability data
-    EPSS_SCORE = 24 * 3600  # 24 hours (EPSS updates daily)
-    GHSA_DATA = 7 * 24 * 3600  # 7 days (GHSA rarely changes)
-    OSV_VULNERABILITY = 6 * 3600  # 6 hours (more volatile)
-
-    # Package metadata
-    DEPS_DEV_METADATA = 12 * 3600  # 12 hours
-    DEPS_DEV_SCORECARD = 24 * 3600  # 24 hours
-    LATEST_VERSION = 12 * 3600  # 12 hours
-    EOL_STATUS = 24 * 3600  # 24 hours
-
-    # Package hashes (immutable)
-    PACKAGE_HASH = 7 * 24 * 3600  # 7 days
-
-    # Maintainer data
-    MAINTAINER_INFO = 24 * 3600  # 24 hours
-
-    # Malware check (can change, moderate TTL)
-    MALWARE_CHECK = 6 * 3600  # 6 hours
-
-    # Negative cache (when API returns no data)
-    NEGATIVE_RESULT = 1 * 3600  # 1 hour
-
-
-class CacheKeys:
-    """Cache key builders for consistent key naming."""
-
-    @staticmethod
-    def kev_catalog() -> str:
-        return "kev:catalog"
-
-    @staticmethod
-    def epss(cve_id: str) -> str:
-        return f"epss:{cve_id}"
-
-    @staticmethod
-    def ghsa(ghsa_id: str) -> str:
-        return f"ghsa:{ghsa_id}"
-
-    @staticmethod
-    def osv(purl: str) -> str:
-        # Use hash for long PURLs
-        import hashlib
-
-        purl_hash = hashlib.md5(purl.encode()).hexdigest()[:16]
-        return f"osv:{purl_hash}"
-
-    @staticmethod
-    def deps_dev(system: str, package: str, version: str) -> str:
-        return f"deps:{system}:{package}:{version}"
-
-    @staticmethod
-    def deps_dev_scorecard(project_id: str) -> str:
-        return f"scorecard:{project_id}"
-
-    @staticmethod
-    def latest_version(system: str, package: str) -> str:
-        return f"latest:{system}:{package}"
-
-    @staticmethod
-    def eol(product: str) -> str:
-        return f"eol:{product}"
-
-    @staticmethod
-    def package_hash(system: str, package: str, version: str) -> str:
-        return f"hash:{system}:{package}:{version}"
-
-    @staticmethod
-    def popular_packages(registry: str) -> str:
-        return f"popular:{registry}"
-
-    @staticmethod
-    def maintainer(system: str, package: str) -> str:
-        return f"maintainer:{system}:{package}"
-
-    @staticmethod
-    def malware(registry: str, package: str, version: str) -> str:
-        return f"malware:{registry}:{package}:{version}"

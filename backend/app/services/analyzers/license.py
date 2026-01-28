@@ -14,46 +14,30 @@ License Categories:
 """
 
 import re
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.constants import LICENSE_ALIASES, UNKNOWN_LICENSE_PATTERNS
 from app.models.finding import Severity
+from app.models.license import LicenseCategory, LicenseInfo
+
 from .base import Analyzer
-
-
-class LicenseCategory(str, Enum):
-    """License categories based on restrictions."""
-
-    PERMISSIVE = "permissive"
-    WEAK_COPYLEFT = "weak_copyleft"
-    STRONG_COPYLEFT = "strong_copyleft"
-    NETWORK_COPYLEFT = "network_copyleft"  # AGPL, SSPL - triggers on network use
-    PUBLIC_DOMAIN = "public_domain"
-    PROPRIETARY = "proprietary"
-    UNKNOWN = "unknown"
-
-
-@dataclass
-class LicenseInfo:
-    """Detailed information about a license."""
-
-    spdx_id: str
-    category: LicenseCategory
-    name: str
-    description: str
-    obligations: List[str] = field(default_factory=list)
-    risks: List[str] = field(default_factory=list)
-    compatible_with_proprietary: bool = False
-    requires_attribution: bool = True
-    requires_source_disclosure: bool = False
-    viral: bool = False
-    network_clause: bool = False
 
 
 class LicenseAnalyzer(Analyzer):
     name = "license_compliance"
+
+    # Pre-computed lowercase lookup tables (built lazily)
+    _license_db_lower: Optional[Dict[str, str]] = None
+    _alias_lower: Optional[Dict[str, str]] = None
+
+    @classmethod
+    def _get_lowercase_mappings(cls) -> tuple[Dict[str, str], Dict[str, str]]:
+        """Get or build lowercase lookup tables for O(1) case-insensitive matching."""
+        if cls._license_db_lower is None:
+            cls._license_db_lower = {k.lower(): k for k in cls.LICENSE_DATABASE.keys()}
+        if cls._alias_lower is None:
+            cls._alias_lower = {k.lower(): v for k, v in LICENSE_ALIASES.items()}
+        return cls._license_db_lower, cls._alias_lower
 
     # Comprehensive license database with context
     LICENSE_DATABASE: Dict[str, LicenseInfo] = {
@@ -611,8 +595,15 @@ class LicenseAnalyzer(Analyzer):
                             severity=Severity.LOW,
                             category=LicenseCategory.UNKNOWN,
                             message="No license information found",
-                            explanation="This package does not specify a license. This could mean proprietary terms apply, or the maintainer simply forgot to include license information.",
-                            recommendation="Contact the package maintainer to clarify licensing, or review the package's source repository for license files.",
+                            explanation=(
+                                "This package does not specify a license. "
+                                "This could mean proprietary terms apply, or the maintainer "
+                                "simply forgot to include license information."
+                            ),
+                            recommendation=(
+                                "Contact the package maintainer to clarify licensing, "
+                                "or review the package's source repository for license files."
+                            ),
                             purl=comp_purl,
                         )
                     )
@@ -657,7 +648,10 @@ class LicenseAnalyzer(Analyzer):
                             severity=Severity.INFO,
                             category=LicenseCategory.UNKNOWN,
                             message=f"Unrecognized license: {lic_id}",
-                            explanation="This license identifier is not in our database. It may be a custom or uncommon license.",
+                            explanation=(
+                                "This license identifier is not in our database. "
+                                "It may be a custom or uncommon license."
+                            ),
                             recommendation="Review the license text manually to understand its terms and obligations.",
                             purl=comp_purl,
                             license_url=lic_url,
@@ -695,6 +689,7 @@ class LicenseAnalyzer(Analyzer):
         direct_license = component.get("license")
         if (
             isinstance(direct_license, str)
+            and direct_license.strip()
             and direct_license.upper() not in UNKNOWN_LICENSE_PATTERNS
         ):
             licenses.append((direct_license, None))
@@ -706,23 +701,25 @@ class LicenseAnalyzer(Analyzer):
         if not lic_id:
             return ""
 
-        # Check aliases first
+        # Check aliases first (exact match)
         if lic_id in LICENSE_ALIASES:
             return LICENSE_ALIASES[lic_id]
 
-        # Try case-insensitive alias match
-        for alias, spdx in LICENSE_ALIASES.items():
-            if alias.lower() == lic_id.lower():
-                return spdx
-
-        # Return as-is if it's already in the database
+        # Return as-is if it's already in the database (exact match)
         if lic_id in self.LICENSE_DATABASE:
             return lic_id
 
-        # Try case-insensitive match
-        for spdx_id in self.LICENSE_DATABASE.keys():
-            if spdx_id.lower() == lic_id.lower():
-                return spdx_id
+        # Use pre-computed lowercase mappings for O(1) case-insensitive matching
+        db_lower, alias_lower = self._get_lowercase_mappings()
+        lic_lower = lic_id.lower()
+
+        # Try case-insensitive alias match
+        if lic_lower in alias_lower:
+            return alias_lower[lic_lower]
+
+        # Try case-insensitive database match
+        if lic_lower in db_lower:
+            return db_lower[lic_lower]
 
         return lic_id
 
@@ -755,7 +752,10 @@ class LicenseAnalyzer(Analyzer):
                 category=license_info.category,
                 message=f"Weak copyleft license: {license_info.name}",
                 explanation=license_info.description,
-                recommendation="This license allows use in proprietary software, but modifications to this library must be shared under the same license.",
+                recommendation=(
+                    "This license allows use in proprietary software, but modifications "
+                    "to this library must be shared under the same license."
+                ),
                 obligations=license_info.obligations,
                 purl=purl,
                 license_url=lic_url,
@@ -772,7 +772,10 @@ class LicenseAnalyzer(Analyzer):
                     category=license_info.category,
                     message=f"Strong copyleft license (allowed by policy): {license_info.name}",
                     explanation=license_info.description,
-                    recommendation="Your policy allows GPL-style licenses. Ensure compliance with source disclosure requirements if distributing.",
+                    recommendation=(
+                        "Your policy allows GPL-style licenses. "
+                        "Ensure compliance with source disclosure requirements if distributing."
+                    ),
                     obligations=license_info.obligations,
                     purl=purl,
                     license_url=lic_url,
@@ -785,8 +788,18 @@ class LicenseAnalyzer(Analyzer):
                     severity=Severity.HIGH,
                     category=license_info.category,
                     message=f"Strong copyleft license: {license_info.name}",
-                    explanation=f"{license_info.description}\n\nIMPORTANT: If you distribute this software (binary or source), you must also distribute the complete source code of your entire application under the GPL.",
-                    recommendation="Options:\n• If not distributing (internal use only): GPL obligations don't apply\n• If open-sourcing your project: License your code under GPL\n• Otherwise: Find an alternative package with a permissive license",
+                    explanation=(
+                        f"{license_info.description}\n\n"
+                        "IMPORTANT: If you distribute this software (binary or source), "
+                        "you must also distribute the complete source code of your "
+                        "entire application under the GPL."
+                    ),
+                    recommendation=(
+                        "Options:\n"
+                        "• If not distributing (internal use only): GPL obligations don't apply\n"
+                        "• If open-sourcing your project: License your code under GPL\n"
+                        "• Otherwise: Find an alternative package with a permissive license"
+                    ),
                     obligations=license_info.obligations,
                     risks=license_info.risks,
                     purl=purl,
@@ -804,7 +817,10 @@ class LicenseAnalyzer(Analyzer):
                     category=license_info.category,
                     message=f"Network copyleft license (allowed by policy): {license_info.name}",
                     explanation=license_info.description,
-                    recommendation="Your policy allows AGPL-style licenses. Remember: providing network access to users triggers source disclosure.",
+                    recommendation=(
+                        "Your policy allows AGPL-style licenses. Remember: providing "
+                        "network access to users triggers source disclosure."
+                    ),
                     obligations=license_info.obligations,
                     purl=purl,
                     license_url=lic_url,
@@ -817,8 +833,20 @@ class LicenseAnalyzer(Analyzer):
                     severity=Severity.CRITICAL,
                     category=license_info.category,
                     message=f"Network copyleft license: {license_info.name}",
-                    explanation=f"{license_info.description}\n\n[CRITICAL] Unlike GPL, AGPL/SSPL obligations are triggered when users interact with the software over a network, even if you never distribute binaries. This affects SaaS, web applications, and APIs.",
-                    recommendation="This license is highly problematic for commercial/proprietary use:\n• Find an alternative package with a permissive license\n• If no alternative exists, consider isolating this component as a separate service\n• Consult with legal counsel before proceeding",
+                    explanation=(
+                        f"{license_info.description}\n\n"
+                        "[CRITICAL] Unlike GPL, AGPL/SSPL obligations are triggered when "
+                        "users interact with the software over a network, even if you "
+                        "never distribute binaries. This affects SaaS, web applications, "
+                        "and APIs."
+                    ),
+                    recommendation=(
+                        "This license is highly problematic for commercial/proprietary use:\n"
+                        "• Find an alternative package with a permissive license\n"
+                        "• If no alternative exists, consider isolating this component "
+                        "as a separate service\n"
+                        "• Consult with legal counsel before proceeding"
+                    ),
                     obligations=license_info.obligations,
                     risks=license_info.risks,
                     purl=purl,
@@ -835,7 +863,10 @@ class LicenseAnalyzer(Analyzer):
                 category=license_info.category,
                 message=f"Non-commercial or proprietary license: {license_info.name}",
                 explanation=license_info.description,
-                recommendation="This package cannot be used in commercial products. Find an alternative or obtain a commercial license.",
+                recommendation=(
+                    "This package cannot be used in commercial products. "
+                    "Find an alternative or obtain a commercial license."
+                ),
                 obligations=license_info.obligations,
                 purl=purl,
                 license_url=lic_url,

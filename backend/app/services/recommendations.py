@@ -7,8 +7,9 @@ to generate actionable remediation recommendations.
 
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from app.core.constants import MAX_DEPENDENCY_DEPTH, OUTDATED_DEPENDENCY_THRESHOLD_DAYS
 from app.schemas.recommendation import Recommendation
 
 from app.services.recommendation import (
@@ -31,6 +32,64 @@ from app.services.recommendation import (
 logger = logging.getLogger(__name__)
 
 
+def _safe_extend(
+    recommendations: List[Recommendation],
+    generator: Callable[[], List[Recommendation]],
+    module_name: str,
+) -> None:
+    """
+    Safely extend recommendations list with error handling.
+
+    Catches exceptions from individual recommendation generators
+    to prevent one failing module from stopping the entire process.
+    """
+    try:
+        result = generator()
+        if result:
+            recommendations.extend(result)
+            logger.debug(f"{module_name}: generated {len(result)} recommendations")
+    except Exception as e:
+        logger.error(f"Error in {module_name}: {e}", exc_info=True)
+
+
+def _deduplicate_recommendations(
+    recommendations: List[Recommendation],
+) -> List[Recommendation]:
+    """
+    Remove duplicate recommendations based on type and affected components.
+
+    Keeps the recommendation with the highest score when duplicates are found.
+    """
+    seen: Dict[Tuple[str, str, str], Recommendation] = {}
+
+    for rec in recommendations:
+        # Find first valid (non-empty, non-None) component for the key
+        primary_component = ""
+        for comp in rec.affected_components:
+            if comp and isinstance(comp, str) and comp.strip():
+                primary_component = comp.strip()
+                break
+
+        # Include title in key to avoid incorrectly merging different recommendations
+        # with empty/same components but different contexts
+        key = (
+            rec.type.value,
+            primary_component,
+            rec.title if not primary_component else "",
+        )
+
+        if key not in seen:
+            seen[key] = rec
+        else:
+            # Keep the one with higher score
+            existing_score = common.calculate_score(seen[key])
+            new_score = common.calculate_score(rec)
+            if new_score > existing_score:
+                seen[key] = rec
+
+    return list(seen.values())
+
+
 class RecommendationEngine:
     """
     Generates remediation recommendations based on all finding types.
@@ -38,14 +97,14 @@ class RecommendationEngine:
     """
 
     def __init__(self):
-        # Configuration kept for compatibility or future use
-        self.outdated_threshold_days = 365 * 2  # 2 years
-        self.max_dependency_depth = 5
+        # Configuration from constants (instance vars for compatibility)
+        self.outdated_threshold_days = OUTDATED_DEPENDENCY_THRESHOLD_DAYS
+        self.max_dependency_depth = MAX_DEPENDENCY_DEPTH
 
     async def generate_recommendations(
         self,
-        findings: List[Dict[str, Any]],
-        dependencies: List[Dict[str, Any]],
+        findings: Optional[List[Dict[str, Any]]] = None,
+        dependencies: Optional[List[Dict[str, Any]]] = None,
         source_target: Optional[str] = None,
         previous_scan_findings: Optional[List[Dict[str, Any]]] = None,
         scan_history: Optional[List[Dict[str, Any]]] = None,
@@ -65,10 +124,19 @@ class RecommendationEngine:
         Returns:
             List of prioritized recommendations
         """
-        recommendations = []
+        # Input validation - use empty lists if None
+        findings = findings or []
+        dependencies = dependencies or []
+
+        logger.debug(
+            f"Generating recommendations for {len(findings)} findings, "
+            f"{len(dependencies)} dependencies"
+        )
+
+        recommendations: List[Recommendation] = []
 
         # Separate findings by type
-        findings_by_type = defaultdict(list)
+        findings_by_type: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for f in findings:
             finding_type = f.get("type", "other")
             findings_by_type[finding_type].append(f)
@@ -80,97 +148,154 @@ class RecommendationEngine:
         }
 
         # 1. Process VULNERABILITIES
-        recommendations.extend(
-            vulnerabilities.process_vulnerabilities(
+        _safe_extend(
+            recommendations,
+            lambda: vulnerabilities.process_vulnerabilities(
                 findings_by_type.get("vulnerability", []),
                 dep_by_purl,
                 dep_by_name_version,
                 dependencies,
                 source_target,
-            )
+            ),
+            "vulnerabilities",
         )
 
         # 2. Process SECRETS
-        recommendations.extend(
-            secrets.process_secrets(findings_by_type.get("secret", []))
+        _safe_extend(
+            recommendations,
+            lambda: secrets.process_secrets(findings_by_type.get("secret", [])),
+            "secrets",
         )
 
         # 3. Process SAST (code security)
-        recommendations.extend(sast.process_sast(findings_by_type.get("sast", [])))
+        _safe_extend(
+            recommendations,
+            lambda: sast.process_sast(findings_by_type.get("sast", [])),
+            "sast",
+        )
 
         # 4. Process IAC (infrastructure as code)
-        recommendations.extend(iac.process_iac(findings_by_type.get("iac", [])))
+        _safe_extend(
+            recommendations,
+            lambda: iac.process_iac(findings_by_type.get("iac", [])),
+            "iac",
+        )
 
         # 5. Process LICENSE issues
-        recommendations.extend(
-            licenses.process_licenses(findings_by_type.get("license", []))
+        _safe_extend(
+            recommendations,
+            lambda: licenses.process_licenses(findings_by_type.get("license", [])),
+            "licenses",
         )
 
         # 6. Process QUALITY issues (maintainer risk, etc.)
-        recommendations.extend(
-            quality.process_quality(findings_by_type.get("quality", []))
+        _safe_extend(
+            recommendations,
+            lambda: quality.process_quality(findings_by_type.get("quality", [])),
+            "quality",
         )
 
         # 7. Dependency Hygiene (Outdated, Fragmentation, Dev-in-Prod)
-        # Assuming analyze_outdated_dependencies returns list
-        recommendations.extend(dep_analysis.analyze_outdated_dependencies(dependencies))
-        recommendations.extend(dep_analysis.analyze_version_fragmentation(dependencies))
-        recommendations.extend(dep_analysis.analyze_dev_in_production(dependencies))
+        _safe_extend(
+            recommendations,
+            lambda: dep_analysis.analyze_outdated_dependencies(dependencies),
+            "outdated_dependencies",
+        )
+        _safe_extend(
+            recommendations,
+            lambda: dep_analysis.analyze_version_fragmentation(dependencies),
+            "version_fragmentation",
+        )
+        _safe_extend(
+            recommendations,
+            lambda: dep_analysis.analyze_dev_in_production(dependencies),
+            "dev_in_production",
+        )
 
         # 8. Trends & Regressions
         if previous_scan_findings is not None:
-            recommendations.extend(
-                trends.analyze_regressions(findings, previous_scan_findings)
+            _safe_extend(
+                recommendations,
+                lambda: trends.analyze_regressions(findings, previous_scan_findings),
+                "regressions",
             )
 
         if scan_history:
-            recommendations.extend(trends.analyze_recurring_issues(scan_history))
+            _safe_extend(
+                recommendations,
+                lambda: trends.analyze_recurring_issues(scan_history),
+                "recurring_issues",
+            )
 
         # 9. Graph Analysis (Deep chains, Duplicates)
-        recommendations.extend(
-            graph.analyze_deep_dependency_chains(
+        _safe_extend(
+            recommendations,
+            lambda: graph.analyze_deep_dependency_chains(
                 dependencies, max_dependency_depth=self.max_dependency_depth
-            )
+            ),
+            "deep_dependency_chains",
         )
-        recommendations.extend(graph.analyze_duplicate_packages(dependencies))
+        _safe_extend(
+            recommendations,
+            lambda: graph.analyze_duplicate_packages(dependencies),
+            "duplicate_packages",
+        )
 
         # 10. Cross Project Insights & Scorecard Correlation
         if cross_project_data:
-            recommendations.extend(
-                insights.analyze_cross_project_patterns(
+            _safe_extend(
+                recommendations,
+                lambda: insights.analyze_cross_project_patterns(
                     findings, dependencies, cross_project_data
-                )
+                ),
+                "cross_project_patterns",
             )
 
-        recommendations.extend(
-            insights.correlate_scorecard_with_vulnerabilities(
+        _safe_extend(
+            recommendations,
+            lambda: insights.correlate_scorecard_with_vulnerabilities(
                 findings_by_type.get("vulnerability", []),
                 findings_by_type.get("quality", []),
-            )
+            ),
+            "scorecard_correlation",
         )
 
         # 11. Risks & Hotspots
-        recommendations.extend(
-            risks.detect_critical_hotspots(
+        _safe_extend(
+            recommendations,
+            lambda: risks.detect_critical_hotspots(
                 findings, dependencies, dep_by_purl, dep_by_name_version
-            )
+            ),
+            "critical_hotspots",
         )
 
-        recommendations.extend(
-            risks.detect_toxic_dependencies(
+        _safe_extend(
+            recommendations,
+            lambda: risks.detect_toxic_dependencies(
                 findings, dependencies, dep_by_purl, dep_by_name_version
-            )
+            ),
+            "toxic_dependencies",
         )
 
-        recommendations.extend(risks.analyze_attack_surface(dependencies, findings))
+        _safe_extend(
+            recommendations,
+            lambda: risks.analyze_attack_surface(dependencies, findings),
+            "attack_surface",
+        )
 
         # 12. Incidents (Malware, Exploits, Typosquatting)
-        recommendations.extend(
-            incidents.process_malware(findings_by_type.get("malware", []))
+        _safe_extend(
+            recommendations,
+            lambda: incidents.process_malware(findings_by_type.get("malware", [])),
+            "malware",
         )
 
-        recommendations.extend(
-            incidents.detect_known_exploits(findings_by_type.get("vulnerability", []))
+        _safe_extend(
+            recommendations,
+            lambda: incidents.detect_known_exploits(
+                findings_by_type.get("vulnerability", [])
+            ),
+            "known_exploits",
         )
 
         # Typosquatting
@@ -180,26 +305,48 @@ class RecommendationEngine:
             if "typosquat" in f.get("details", {}).get("risk_type", "").lower()
         ]
         if typosquat_findings:
-            recommendations.extend(incidents.process_typosquatting(typosquat_findings))
+            _safe_extend(
+                recommendations,
+                lambda: incidents.process_typosquatting(typosquat_findings),
+                "typosquatting_quality",
+            )
         if findings_by_type.get("typosquatting"):
-            recommendations.extend(
-                incidents.process_typosquatting(findings_by_type["typosquatting"])
+            _safe_extend(
+                recommendations,
+                lambda: incidents.process_typosquatting(
+                    findings_by_type["typosquatting"]
+                ),
+                "typosquatting",
             )
 
         # 13. End-of-Life Dependencies
-        recommendations.extend(
-            dep_analysis.analyze_end_of_life(findings_by_type.get("eol", []))
+        _safe_extend(
+            recommendations,
+            lambda: dep_analysis.analyze_end_of_life(findings_by_type.get("eol", [])),
+            "end_of_life",
         )
 
         # 14. Optimization (Quick Wins)
-        recommendations.extend(
-            optimization.identify_quick_wins(
+        _safe_extend(
+            recommendations,
+            lambda: optimization.identify_quick_wins(
                 findings_by_type.get("vulnerability", []), dependencies
-            )
+            ),
+            "quick_wins",
         )
+
+        # Deduplicate recommendations (keep highest scoring for each type+component)
+        before_dedup = len(recommendations)
+        recommendations = _deduplicate_recommendations(recommendations)
+        if before_dedup != len(recommendations):
+            logger.debug(
+                f"Deduplicated {before_dedup - len(recommendations)} duplicate recommendations"
+            )
 
         # Sort by priority and impact using common scoring logic
         recommendations.sort(key=lambda r: common.calculate_score(r), reverse=True)
+
+        logger.debug(f"Generated {len(recommendations)} total recommendations")
 
         return recommendations
 

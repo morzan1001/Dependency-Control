@@ -11,6 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateOne
 
 from app.models.project import Project
+from app.repositories.system_settings import SystemSettingsRepository
 from app.services.aggregator import ResultAggregator
 from app.services.analyzers import Analyzer
 from app.services.enrichment import enrich_vulnerability_findings
@@ -24,6 +25,7 @@ from app.services.analysis.stats import (
 )
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
+from app.services.analysis.types import Database, ScanDict, SystemSettingsDict
 
 logger = logging.getLogger(__name__)
 
@@ -71,20 +73,19 @@ except ImportError:
     ) = [None] * 17
 
 
-async def _carry_over_external_results(scan_id: str, db):
+async def _carry_over_external_results(
+    scan_id: str, scan_doc: Optional[ScanDict], db: Database
+) -> None:
     """
     Copies analysis results from the original scan to the re-scan for analyzers
     that are NOT part of the internal SBOM analysis (e.g. Secret Scanning, SAST).
     """
-    current_scan = await db.scans.find_one({"_id": scan_id})
     if not (
-        current_scan
-        and current_scan.get("is_rescan")
-        and current_scan.get("original_scan_id")
+        scan_doc and scan_doc.get("is_rescan") and scan_doc.get("original_scan_id")
     ):
         return
 
-    original_scan_id = current_scan.get("original_scan_id")
+    original_scan_id = scan_doc.get("original_scan_id")
     logger.info(
         f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}"
     )
@@ -100,23 +101,25 @@ async def _carry_over_external_results(scan_id: str, db):
     )
 
     async for old_result in cursor:
-        # Avoid duplicates if we already copied them (e.g. if worker restarted)
-        exists = await db.analysis_results.find_one(
+        # Use upsert to avoid race conditions when multiple workers might copy the same result
+        # The unique key is (scan_id, analyzer_name, result hash)
+        new_result = old_result.copy()
+        new_result["_id"] = str(uuid.uuid4())
+        new_result["scan_id"] = scan_id
+        new_result["created_at"] = datetime.now(timezone.utc)
+
+        # Use update_one with upsert to atomically check-and-insert
+        result = await db.analysis_results.update_one(
             {
                 "scan_id": scan_id,
                 "analyzer_name": old_result["analyzer_name"],
-                "result": old_result["result"],  # Simple content check
-            }
+                "result": old_result["result"],
+            },
+            {"$setOnInsert": new_result},
+            upsert=True,
         )
 
-        if not exists:
-            new_result = old_result.copy()
-            new_result["_id"] = str(uuid.uuid4())
-            new_result["scan_id"] = scan_id
-            # Update timestamp to reflect this is part of the new scan record
-            new_result["created_at"] = datetime.now(timezone.utc)
-
-            await db.analysis_results.insert_one(new_result)
+        if result.upserted_id:
             logger.info(f"Carried over result for {old_result['analyzer_name']}")
 
 
@@ -125,7 +128,7 @@ async def process_analyzer(
     analyzer: Analyzer,
     sbom: Dict[str, Any],
     scan_id: str,
-    db,
+    db: Database,
     aggregator: ResultAggregator,
     settings: Optional[Dict[str, Any]] = None,
     fallback_source: str = "unknown-sbom",
@@ -177,23 +180,38 @@ async def process_analyzer(
             analysis_errors_total.labels(analyzer=analyzer_name).inc()
         # Report failure to aggregator so it appears in findings
         aggregator.aggregate(
-            analyzer_name,
-            {"error": str(e)},
-            source=f"System: {analyzer_name}"
+            analyzer_name, {"error": str(e)}, source=f"System: {analyzer_name}"
         )
         return f"{analyzer_name}: Failed"
 
 
 async def run_analysis(
-    scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db
-):
+    scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db: Database
+) -> bool:
     """
     Orchestrates the analysis process for a given SBOM scan.
+
+    Args:
+        scan_id: The ID of the scan to analyze
+        sboms: List of SBOM documents or GridFS references
+        active_analyzers: List of analyzer names to run
+        db: Database connection
+
+    Returns:
+        True if analysis completed successfully, False if rescheduled due to race condition
     """
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregation_start_time = time.time()
     aggregator = ResultAggregator()
-    results_summary = []
+    results_summary: List[str] = []
+
+    # Fetch scan document ONCE at the beginning - reuse throughout the function
+    scan_doc: Optional[ScanDict] = await db.scans.find_one({"_id": scan_id})
+    if not scan_doc:
+        logger.error(f"Scan {scan_id} not found")
+        return False
+
+    project_id: Optional[str] = scan_doc.get("project_id")
 
     # 0. Cleanup previous results for internal analyzers
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
@@ -203,16 +221,15 @@ async def run_analysis(
         )
 
     # Check if this is a re-scan and carry over external results
-    current_scan = await db.scans.find_one({"_id": scan_id})
-    if current_scan and current_scan.get("is_rescan"):
+    if scan_doc.get("is_rescan"):
         if analysis_rescan_operations_total:
             analysis_rescan_operations_total.inc()
 
-    await _carry_over_external_results(scan_id, db)
+    await _carry_over_external_results(scan_id, scan_doc, db)
 
     # Fetch system settings for dynamic configuration
-    system_settings_doc = await db.system_settings.find_one({"_id": "current"})
-    system_settings = system_settings_doc if system_settings_doc else {}
+    settings_repo = SystemSettingsRepository(db)
+    system_settings: SystemSettingsDict = await settings_repo.get_raw() or {}
 
     # Initialize GridFS
     fs = AsyncIOMotorGridFSBucket(db)
@@ -311,7 +328,7 @@ async def run_analysis(
     # 1. Fetch and Aggregate External Results (TruffleHog, OpenGrep, etc.)
     # We mark the time BEFORE loading external results to detect race conditions later
     external_load_start = datetime.now(timezone.utc)
-    
+
     external_results_cursor = db.analysis_results.find({"scan_id": scan_id})
     async for res in external_results_cursor:
         name = res["analyzer_name"]
@@ -324,25 +341,21 @@ async def run_analysis(
     # Track findings metrics
     if analysis_findings_by_type:
         for finding in aggregated_findings:
-            finding_type = finding.type if hasattr(finding, 'type') else 'unknown'
-            severity = finding.severity if hasattr(finding, 'severity') else 'unknown'
-            analysis_findings_by_type.labels(
-                type=finding_type, severity=severity
-            ).inc()
+            finding_type = finding.type if hasattr(finding, "type") else "unknown"
+            severity = finding.severity if hasattr(finding, "severity") else "unknown"
+            analysis_findings_by_type.labels(type=finding_type, severity=severity).inc()
 
     # Get aggregated dependency enrichments
     dependency_enrichments = aggregator.get_dependency_enrichments()
 
-    # Fetch scan to get project_id
-    scan_doc = await db.scans.find_one({"_id": scan_id})
-    project_id = scan_doc.get("project_id") if scan_doc else None
+    # Note: project_id was already fetched at the beginning of the function
 
     # Enrich dependencies with aggregated data
     if dependency_enrichments:
         logger.info(
             f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata"
         )
-        
+
         bulk_ops = []
         for key, enrichment_data in dependency_enrichments.items():
             # key format: "name@version"
@@ -358,7 +371,7 @@ async def run_analysis(
                         {"$set": enrichment_data},
                     )
                 )
-        
+
         if bulk_ops:
             try:
                 await db.dependencies.bulk_write(bulk_ops, ordered=False)
@@ -558,10 +571,23 @@ async def run_analysis(
         # Count by waiver type
         waiver_types = {}
         for waiver in active_waivers:
-            waiver_type = "finding_id" if waiver.get("finding_id") else \
-                         "package" if waiver.get("package_name") else \
-                         "type" if waiver.get("finding_type") else \
-                         "vulnerability_id" if waiver.get("vulnerability_id") else "other"
+            waiver_type = (
+                "finding_id"
+                if waiver.get("finding_id")
+                else (
+                    "package"
+                    if waiver.get("package_name")
+                    else (
+                        "type"
+                        if waiver.get("finding_type")
+                        else (
+                            "vulnerability_id"
+                            if waiver.get("vulnerability_id")
+                            else "other"
+                        )
+                    )
+                )
+            )
             waiver_types[waiver_type] = waiver_types.get(waiver_type, 0) + 1
 
         for waiver_type, count in waiver_types.items():
@@ -581,9 +607,10 @@ async def run_analysis(
 
     # Race Condition Check: Did new results arrive while we were processing?
     # Specifically, after we started loading external results.
-    current_scan_state = await db.scans.find_one({"_id": scan_id}, {"last_result_at": 1})
-    last_result_at = current_scan_state.get("last_result_at") if current_scan_state else None
-    
+    # We need a fresh query here since last_result_at may have changed during processing
+    race_check = await db.scans.find_one({"_id": scan_id}, {"last_result_at": 1})
+    last_result_at = race_check.get("last_result_at") if race_check else None
+
     if last_result_at and last_result_at >= external_load_start:
         logger.warning(
             f"Race condition detected for scan {scan_id}. "
@@ -602,7 +629,7 @@ async def run_analysis(
                     "status": "pending",
                     # We do NOT unset received_results/last_result_at here, keep them for the next run
                 }
-            }
+            },
         )
         return False
 
@@ -631,22 +658,21 @@ async def run_analysis(
         },
     )
 
-    # Update Project stats
-    scan = await db.scans.find_one({"_id": scan_id})
-    if scan:
-        if scan.get("is_rescan") and scan.get("original_scan_id"):
-            await db.scans.update_one(
-                {"_id": scan["original_scan_id"]},
-                {
-                    "$set": {
-                        "latest_rescan_id": scan_id,
-                        "latest_run": latest_run_summary,
-                    }
-                },
-            )
+    # Update Project stats (reuse scan_doc from the beginning)
+    if scan_doc.get("is_rescan") and scan_doc.get("original_scan_id"):
+        await db.scans.update_one(
+            {"_id": scan_doc["original_scan_id"]},
+            {
+                "$set": {
+                    "latest_rescan_id": scan_id,
+                    "latest_run": latest_run_summary,
+                }
+            },
+        )
 
+    if project_id:
         await db.projects.update_one(
-            {"_id": scan["project_id"]},
+            {"_id": project_id},
             {
                 "$set": {
                     "stats": stats.model_dump(),
@@ -657,15 +683,13 @@ async def run_analysis(
         )
 
     # Integrations & Notifications
-    if scan:
-        project_data = await db.projects.find_one({"_id": scan["project_id"]})
+    if project_id:
+        project_data = await db.projects.find_one({"_id": project_id})
         if project_data:
             project = Project(**project_data)
 
             # GitLab Decoration
-            await decorate_gitlab_mr(
-                scan_id, stats, scan, project, system_settings
-            )
+            await decorate_gitlab_mr(scan_id, stats, scan_doc, project, system_settings)
 
             # Notifications
             await send_scan_notifications(

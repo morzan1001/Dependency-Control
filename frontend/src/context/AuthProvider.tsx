@@ -5,6 +5,7 @@ import { jwtDecode } from 'jwt-decode'
 import { setLogoutCallback } from '@/api/client'
 import { userApi } from '@/api/users'
 import { logger } from '@/lib/logger'
+import { hasPermission as checkPermission } from '@/lib/permissions'
 
 import { AuthContext } from './auth-context'
 
@@ -31,7 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [navigate])
 
   const hasPermission = useCallback((permission: string) => {
-    return permissions.includes('*') || permissions.includes(permission)
+    return checkPermission(permissions, permission)
   }, [permissions])
 
   useEffect(() => {

@@ -7,6 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 
+from app.core.constants import SMTP_TIMEOUT_SECONDS
 from app.models.system import SystemSettings
 from app.services.notifications.base import NotificationProvider
 
@@ -24,7 +25,7 @@ class EmailProvider(NotificationProvider):
     def _send_sync(
         self, smtp_host, smtp_port, smtp_user, smtp_password, encryption, msg
     ):
-        timeout = 60
+        timeout = SMTP_TIMEOUT_SECONDS
         try:
             if encryption == "ssl":
                 with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=timeout) as server:
@@ -33,8 +34,9 @@ class EmailProvider(NotificationProvider):
                     server.send_message(msg)
             elif encryption == "starttls":
                 with smtplib.SMTP(smtp_host, smtp_port, timeout=timeout) as server:
+                    # Always use STARTTLS when configured for security
+                    server.starttls()
                     if smtp_user and smtp_password:
-                        server.starttls()
                         server.login(smtp_user, smtp_password)
                     server.send_message(msg)
             else:  # none
@@ -69,6 +71,10 @@ class EmailProvider(NotificationProvider):
 
         if not smtp_host:
             logger.warning("SMTP_HOST not configured. Skipping email.")
+            return False
+
+        if not emails_from:
+            logger.warning("EMAILS_FROM not configured. Skipping email.")
             return False
 
         try:

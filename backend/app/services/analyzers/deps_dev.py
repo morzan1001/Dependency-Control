@@ -6,6 +6,13 @@ from urllib.parse import quote
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.constants import (
+    ANALYZER_BATCH_SIZES,
+    ANALYZER_TIMEOUTS,
+    DEPS_DEV_API_URL,
+    SCORECARD_UNMAINTAINED_THRESHOLD,
+)
+from app.models.finding import Severity
 
 from .base import Analyzer
 from .purl_utils import parse_purl
@@ -27,16 +34,10 @@ class DepsDevAnalyzer(Analyzer):
     """
 
     name = "deps_dev"
-    base_url = "https://api.deps.dev/v3alpha"
-
-    # Scorecard threshold - packages with score below this are flagged
-    SCORECARD_THRESHOLD = 5.0
+    base_url = DEPS_DEV_API_URL
 
     # Maximum concurrent requests to avoid rate limiting
-    MAX_CONCURRENT = 10
-
-    # Timeout for API requests
-    REQUEST_TIMEOUT = 10.0
+    MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("deps_dev", 10)
 
     async def analyze(
         self,
@@ -49,9 +50,15 @@ class DepsDevAnalyzer(Analyzer):
         package_metadata = {}  # component@version -> metadata
 
         # Apply custom threshold from settings if provided
-        threshold = self.SCORECARD_THRESHOLD
+        threshold = SCORECARD_UNMAINTAINED_THRESHOLD
         if settings and "scorecard_threshold" in settings:
-            threshold = float(settings["scorecard_threshold"])
+            try:
+                custom_threshold = float(settings["scorecard_threshold"])
+                # Validate threshold is in valid range (0-10 for OpenSSF Scorecard)
+                if 0 <= custom_threshold <= 10:
+                    threshold = custom_threshold
+            except (ValueError, TypeError):
+                pass  # Keep default threshold
 
         # First, check Redis cache for all components
         cached_results, uncached_components = await self._get_cached_components(
@@ -77,11 +84,12 @@ class DepsDevAnalyzer(Analyzer):
         )
 
         # Use semaphore to limit concurrent requests for uncached components
+        # Distributed locking in _check_component_with_limit prevents cache stampede
         if uncached_components:
             semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
-            results_to_cache = {}  # Collect results for batch caching
+            timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
 
-            async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 tasks = []
                 for component in uncached_components:
                     tasks.append(
@@ -99,21 +107,12 @@ class DepsDevAnalyzer(Analyzer):
                         logger.warning(f"deps_dev check failed: {result}")
                         continue
                     if result:
-                        # Collect for batch caching
-                        cache_key = self._get_cache_key_for_component(component)
-                        if cache_key:
-                            results_to_cache[cache_key] = result
-
                         # Separate scorecard issues from package metadata
                         if result.get("scorecard_issue"):
                             scorecard_issues.append(result["scorecard_issue"])
                         if result.get("metadata"):
                             key = f"{result['metadata']['name']}@{result['metadata']['version']}"
                             package_metadata[key] = result["metadata"]
-
-            # Batch cache all results at once
-            if results_to_cache:
-                await cache_service.mset(results_to_cache, CacheTTL.DEPS_DEV_METADATA)
 
         return {
             "scorecard_issues": scorecard_issues,
@@ -182,8 +181,21 @@ class DepsDevAnalyzer(Analyzer):
         component: Dict[str, Any],
         threshold: float,
     ) -> Optional[Dict[str, Any]]:
-        async with semaphore:
-            return await self._check_component(client, component, threshold)
+        """Fetch component data with concurrency limit and distributed lock."""
+        cache_key = self._get_cache_key_for_component(component)
+        if not cache_key:
+            return None
+
+        async def fetch_component() -> Optional[Dict[str, Any]]:
+            async with semaphore:
+                return await self._check_component(client, component, threshold)
+
+        # Use distributed lock to prevent multiple pods fetching same package
+        return await cache_service.get_or_fetch_with_lock(
+            key=cache_key,
+            fetch_fn=fetch_component,
+            ttl_seconds=CacheTTL.DEPS_DEV_METADATA,
+        )
 
     async def _check_component(
         self, client: httpx.AsyncClient, component: Dict[str, Any], threshold: float
@@ -287,7 +299,10 @@ class DepsDevAnalyzer(Analyzer):
 
             # Step 4: Fetch dependent count (popularity indicator)
             try:
-                dependents_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}:dependents"
+                dependents_url = (
+                    f"{self.base_url}/systems/{system}/packages/{encoded_name}"
+                    f"/versions/{encoded_version}:dependents"
+                )
                 dep_response = await client.get(dependents_url)
                 if dep_response.status_code == 200:
                     dep_data = dep_response.json()
@@ -304,6 +319,9 @@ class DepsDevAnalyzer(Analyzer):
 
         except httpx.TimeoutException:
             logger.debug(f"Timeout checking {name}@{version} on deps.dev")
+            return None
+        except httpx.ConnectError:
+            logger.debug(f"Connection error checking {name}@{version} on deps.dev")
             return None
         except Exception as e:
             logger.debug(f"Error checking {name}@{version} on deps.dev: {e}")
@@ -398,6 +416,9 @@ class DepsDevAnalyzer(Analyzer):
                 ]:
                     critical_issues.append(check_name)
 
+        # Determine severity based on score and critical issues
+        severity = self._calculate_scorecard_severity(overall_score, critical_issues)
+
         # Build warning message
         warning_parts = [f"Low OpenSSF Scorecard score: {overall_score:.1f}/10"]
 
@@ -410,10 +431,14 @@ class DepsDevAnalyzer(Analyzer):
             if len(failed_checks) > 3:
                 warning_parts[-1] += f" (+{len(failed_checks) - 3} more)"
 
+        message = ". ".join(warning_parts)
+
         return {
             "component": name,
             "version": version,
             "purl": purl,
+            "severity": severity,
+            "message": message,
             "project_url": f"https://{project_id}",
             "scorecard": {
                 "overallScore": overall_score,
@@ -423,5 +448,27 @@ class DepsDevAnalyzer(Analyzer):
             },
             "failed_checks": failed_checks,
             "critical_issues": critical_issues,
-            "warning": ". ".join(warning_parts),
+            "warning": message,  # Keep for backward compatibility
         }
+
+    def _calculate_scorecard_severity(
+        self, overall_score: float, critical_issues: List[str]
+    ) -> str:
+        """Calculate severity based on scorecard score and critical issues."""
+        # Critical issues always elevate severity
+        if (
+            "Vulnerabilities" in critical_issues
+            or "Dangerous-Workflow" in critical_issues
+        ):
+            return Severity.HIGH.value
+        if critical_issues:
+            return Severity.MEDIUM.value
+
+        # Score-based severity
+        if overall_score < 2:
+            return Severity.HIGH.value
+        elif overall_score < 4:
+            return Severity.MEDIUM.value
+        elif overall_score < 5:
+            return Severity.LOW.value
+        return Severity.INFO.value

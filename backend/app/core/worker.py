@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from typing import List, Optional
 
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
@@ -28,14 +29,16 @@ except ImportError:
 
 
 class AnalysisWorkerManager:
-    def __init__(self, num_workers: int = 2):
-        self.queue = asyncio.Queue()
-        self.num_workers = num_workers
-        self.workers = []
-        self.housekeeping_task = None
-        self.stale_scan_task = None
+    """Manages analysis worker tasks and job queue."""
 
-    async def start(self):
+    def __init__(self, num_workers: int = 2) -> None:
+        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.num_workers = num_workers
+        self.workers: List[asyncio.Task[None]] = []
+        self.housekeeping_task: Optional[asyncio.Task[None]] = None
+        self.stale_scan_task: Optional[asyncio.Task[None]] = None
+
+    async def start(self) -> None:
         """Starts the worker tasks and recovers pending jobs from DB."""
         logger.info(f"Starting {self.num_workers} analysis workers...")
 
@@ -72,7 +75,7 @@ class AnalysisWorkerManager:
         except Exception as e:
             logger.error(f"Failed to recover pending jobs: {e}")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stops all worker tasks."""
         logger.info("Stopping analysis workers...")
         for task in self.workers:
@@ -86,7 +89,7 @@ class AnalysisWorkerManager:
             self.stale_scan_task.cancel()
             logger.info("Stale scan loop stopped.")
 
-    async def add_job(self, scan_id: str):
+    async def add_job(self, scan_id: str) -> None:
         """Adds a new scan job to the queue."""
         await self.queue.put(scan_id)
         queue_size = self.queue.qsize()
@@ -96,7 +99,7 @@ class AnalysisWorkerManager:
         if worker_queue_size:
             worker_queue_size.set(queue_size)
 
-    async def worker(self, name: str):
+    async def worker(self, name: str) -> None:
         """Worker loop that processes jobs from the queue."""
         logger.info(f"Worker {name} started")
         while True:
@@ -159,9 +162,11 @@ class AnalysisWorkerManager:
                         active_analyzers=project.get("active_analyzers", []),
                         db=db,
                     )
-                    
+
                     if not success:
-                        logger.info(f"Scan {scan_id} requires re-processing (race condition). Re-queueing.")
+                        logger.info(
+                            f"Scan {scan_id} requires re-processing (race condition). Re-queueing."
+                        )
                         await self.queue.put(scan_id)
                         self.queue.task_done()
                         continue
@@ -186,7 +191,9 @@ class AnalysisWorkerManager:
 
                     # Trigger analysis_failed webhook
                     try:
-                        project = await db.projects.find_one({"_id": scan.get("project_id")})
+                        project = await db.projects.find_one(
+                            {"_id": scan.get("project_id")}
+                        )
                         if project:
                             await webhook_service.trigger_analysis_failed(
                                 db=db,
@@ -196,7 +203,9 @@ class AnalysisWorkerManager:
                                 error_message=str(e),
                             )
                     except Exception as webhook_err:
-                        logger.error(f"Failed to trigger analysis_failed webhook: {webhook_err}")
+                        logger.error(
+                            f"Failed to trigger analysis_failed webhook: {webhook_err}"
+                        )
 
                 self.queue.task_done()
                 logger.info(f"Worker {name} finished scan {scan_id}")
@@ -210,6 +219,9 @@ class AnalysisWorkerManager:
                     1
                 )  # Prevent tight loop if something is really broken
 
+
+# Type alias for external use
+WorkerManager = AnalysisWorkerManager
 
 # Global instance
 worker_manager = AnalysisWorkerManager(num_workers=settings.WORKER_COUNT)

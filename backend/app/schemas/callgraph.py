@@ -162,3 +162,49 @@ class CallgraphUploadResponse(BaseModel):
 
     # Warnings
     warnings: List[str] = []
+
+
+class ModuleUsageItem(BaseModel):
+    """Single module usage entry."""
+
+    name: str
+    module: str
+    import_count: int = 0
+    call_count: int = 0
+    import_locations: List[str] = []
+    used_symbols: List[str] = []
+
+
+class ModuleUsageResponse(BaseModel):
+    """Response for module usage endpoint."""
+
+    project_id: str
+    language: Optional[str] = None
+    modules: List[ModuleUsageItem] = []
+
+
+class CallgraphResponse(BaseModel):
+    """Response for get callgraph endpoint."""
+
+    project_id: str
+    pipeline_id: Optional[int] = None
+    branch: Optional[str] = None
+    commit_hash: Optional[str] = None
+    scan_id: Optional[str] = None
+    language: str
+    tool: Optional[str] = None
+    tool_version: Optional[str] = None
+    imports: List[Dict[str, Any]] = []
+    calls: List[Dict[str, Any]] = []
+    module_usage: Dict[str, Any] = {}
+    source_files_analyzed: int = 0
+    total_imports: int = 0
+    total_calls: int = 0
+    analysis_duration_ms: Optional[int] = None
+
+
+class DeleteCallgraphResponse(BaseModel):
+    """Response for delete callgraph endpoint."""
+
+    success: bool
+    message: str

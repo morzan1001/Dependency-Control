@@ -184,19 +184,14 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                 </div>
                 <div className="flex flex-wrap gap-1">
                     {user.permissions.length === 0 && <span className="text-sm text-muted-foreground">No permissions assigned.</span>}
-                    {user.permissions.includes('*') && (
-                        <span className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-primary text-primary-foreground hover:bg-primary/80">
-                            Administrator
-                        </span>
-                    )}
-                    {user.permissions.filter(p => p !== '*').slice(0, 5).map(p => (
+                    {user.permissions.slice(0, 5).map(p => (
                         <span key={p} className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
                             {p}
                         </span>
                     ))}
-                    {user.permissions.filter(p => p !== '*').length > 5 && (
+                    {user.permissions.length > 5 && (
                         <span className="text-xs text-muted-foreground flex items-center">
-                            +{user.permissions.filter(p => p !== '*').length - 5} more
+                            +{user.permissions.length - 5} more
                         </span>
                     )}
                 </div>

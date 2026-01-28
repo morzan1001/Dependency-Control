@@ -5,11 +5,20 @@ from typing import Any, Dict, List, Optional, Set
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.constants import (
+    ANALYZER_TIMEOUTS,
+    TOP_PYPI_PACKAGES_URL,
+    TYPOSQUATTING_SIMILARITY_THRESHOLD,
+)
+from app.models.finding import Severity
 
 from .base import Analyzer
 from .purl_utils import is_npm, is_pypi
 
 logger = logging.getLogger(__name__)
+
+# Maximum packages to store in fallback cache to prevent memory issues
+MAX_FALLBACK_PACKAGES = 10000
 
 
 class TyposquattingAnalyzer(Analyzer):
@@ -37,7 +46,7 @@ class TyposquattingAnalyzer(Analyzer):
         pypi_packages = cached_data.get(pypi_cache_key)
         npm_packages = cached_data.get(npm_cache_key)
 
-        result = {"pypi": set(), "npm": set()}
+        result: Dict[str, set] = {"pypi": set(), "npm": set()}
 
         # Load PyPI packages
         if pypi_packages:
@@ -57,20 +66,22 @@ class TyposquattingAnalyzer(Analyzer):
                 npm_cache_key, list(result["npm"]), CacheTTL.POPULAR_PACKAGES
             )
 
-        # Update fallback
+        # Update fallback with size limit to prevent memory issues
+        for registry in result:
+            if len(result[registry]) > MAX_FALLBACK_PACKAGES:
+                # Keep only a subset if too large
+                result[registry] = set(list(result[registry])[:MAX_FALLBACK_PACKAGES])
         self._popular_packages_fallback = result
         return result
 
     async def _fetch_pypi_packages(self) -> Set[str]:
         """Fetch top PyPI packages and cache in Redis."""
         cache_key = CacheKeys.popular_packages("pypi")
+        timeout = ANALYZER_TIMEOUTS.get("typosquatting", ANALYZER_TIMEOUTS["default"])
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # Source: https://github.com/hugovk/top-pypi-packages
-                resp = await client.get(
-                    "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.json"
-                )
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(TOP_PYPI_PACKAGES_URL)
                 if resp.status_code == 200:
                     data = resp.json()
                     packages = {
@@ -207,8 +218,16 @@ class TyposquattingAnalyzer(Analyzer):
                 # Calculate similarity
                 ratio = difflib.SequenceMatcher(None, name, popular).ratio()
 
-                if ratio > 0.82:  # Slightly increased threshold
+                if ratio > TYPOSQUATTING_SIMILARITY_THRESHOLD:
                     if self._is_suspicious(name, popular):
+                        # Higher similarity = more suspicious
+                        if ratio > 0.95:
+                            severity = Severity.CRITICAL.value
+                        elif ratio > 0.90:
+                            severity = Severity.HIGH.value
+                        else:
+                            severity = Severity.MEDIUM.value
+
                         issues.append(
                             {
                                 "component": component.get("name"),
@@ -216,18 +235,22 @@ class TyposquattingAnalyzer(Analyzer):
                                 "purl": purl,
                                 "imitated_package": popular,
                                 "similarity": round(ratio, 2),
+                                "severity": severity,
+                                "message": (
+                                    f"Potential typosquatting: '{component.get('name')}' "
+                                    f"is similar to popular package '{popular}'"
+                                ),
                             }
                         )
 
         return {"typosquatting_issues": issues}
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
-        # Heuristic:
-        # 1. Length difference is small
-        if abs(len(name) - len(popular)) > 2:
-            return False
+        """Check if a package name is suspiciously similar to a popular package.
 
-        # 2. Not a prefix/suffix (e.g. "react-dom" vs "react" is fine)
+        Note: Length difference check is already done in analyze() before calling this.
+        """
+        # Not a prefix/suffix (e.g. "react-dom" vs "react" is fine)
         if name.startswith(popular) or popular.startswith(name):
             return False
 

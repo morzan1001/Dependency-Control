@@ -1,13 +1,25 @@
+import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
+from app.api.v1.helpers import (
+    build_team_enrichment_pipeline,
+    check_team_access,
+    fetch_and_enrich_team,
+    find_member_in_team,
+    get_member_role,
+    get_team_with_access,
+)
+from app.core.constants import TEAM_ROLE_OWNER
+from app.core.permissions import has_permission
 from app.db.mongodb import get_database
 from app.models.team import Team, TeamMember
 from app.models.user import User
+from app.repositories import TeamRepository, UserRepository
 from app.schemas.team import (
     TeamCreate,
     TeamMemberAdd,
@@ -19,71 +31,6 @@ from app.schemas.team import (
 router = APIRouter()
 
 
-async def enrich_team_with_usernames(team_data: dict, db: AsyncIOMotorDatabase) -> dict:
-    members = team_data.get("members", [])
-    user_ids = []
-    for m in members:
-        if "user_id" in m:
-            user_ids.append(m["user_id"])
-
-    users = await db.users.find({"_id": {"$in": user_ids}}).to_list(None)
-    user_map = {u["_id"]: u["username"] for u in users}
-
-    for member in members:
-        member["username"] = user_map.get(member["user_id"])
-
-    return team_data
-
-
-async def check_team_access(
-    team_id: str,
-    user: User,
-    db: AsyncIOMotorDatabase,
-    required_role: Optional[str] = None,
-) -> Team:
-    team_data = await db.teams.find_one({"_id": team_id})
-    if not team_data:
-        raise HTTPException(status_code=404, detail="Team not found")
-
-    team = Team(**team_data)
-
-    if "*" in user.permissions:
-        return team
-
-    member_role = None
-    is_member = False
-    for member in team.members:
-        if member.user_id == str(user.id):
-            is_member = True
-            member_role = member.role
-            break
-
-    # Check for global read permission
-    if required_role is None and "team:read_all" in user.permissions:
-        return team
-
-    if not is_member:
-        raise HTTPException(status_code=403, detail="Not a member of this team")
-
-    # Check for basic read permission
-    if "team:read" not in user.permissions and "team:read_all" not in user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
-    if required_role:
-        if member_role is None:
-            raise HTTPException(
-                status_code=403, detail="Not enough permissions in this team"
-            )
-        # Role hierarchy: owner > admin > member
-        roles = ["member", "admin", "owner"]
-        if roles.index(member_role) < roles.index(required_role):
-            raise HTTPException(
-                status_code=403, detail="Not enough permissions in this team"
-            )
-
-    return team
-
-
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
 async def create_team(
     team_in: TeamCreate,
@@ -93,16 +40,18 @@ async def create_team(
     """
     Create a new team. The creator becomes the owner.
     """
+    team_repo = TeamRepository(db)
+
     team = Team(
         name=team_in.name,
         description=team_in.description,
-        members=[TeamMember(user_id=str(current_user.id), role="owner")],
+        members=[TeamMember(user_id=str(current_user.id), role=TEAM_ROLE_OWNER)],
     )
 
-    await db.teams.insert_one(team.dict(by_alias=True))
+    await team_repo.create(team)
 
     # Enrich with username for response
-    team_dict = team.dict(by_alias=True)
+    team_dict = team.model_dump(by_alias=True)
     team_dict["members"][0]["username"] = current_user.username
 
     return team_dict
@@ -119,13 +68,15 @@ async def read_teams(
     """
     List teams.
     """
+    team_repo = TeamRepository(db)
+
     query = {}
     if search:
-        query["name"] = {"$regex": search, "$options": "i"}
+        query["name"] = {"$regex": re.escape(search), "$options": "i"}
 
-    if "*" in current_user.permissions or "team:read_all" in current_user.permissions:
+    if has_permission(current_user.permissions, "team:read_all"):
         final_query = query
-    elif "team:read" in current_user.permissions:
+    elif has_permission(current_user.permissions, "team:read"):
         permission_query = {"members.user_id": str(current_user.id)}
 
         if query:
@@ -137,70 +88,8 @@ async def read_teams(
 
     sort_direction = 1 if sort_order == "asc" else -1
 
-    pipeline: List[Dict[str, Any]] = [
-        {"$match": final_query},
-        {"$sort": {sort_by: sort_direction}},
-        {
-            "$lookup": {
-                "from": "users",
-                "let": {"member_ids": "$members.user_id"},
-                "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}
-                        }
-                    },
-                    {"$project": {"_id": 1, "username": 1}},
-                ],
-                "as": "users_info",
-            }
-        },
-        {
-            "$addFields": {
-                "members": {
-                    "$map": {
-                        "input": "$members",
-                        "as": "m",
-                        "in": {
-                            "$mergeObjects": [
-                                "$$m",
-                                {
-                                    "username": {
-                                        "$let": {
-                                            "vars": {
-                                                "u": {
-                                                    "$arrayElemAt": [
-                                                        {
-                                                            "$filter": {
-                                                                "input": "$users_info",
-                                                                "cond": {
-                                                                    "$eq": [
-                                                                        {
-                                                                            "$toString": "$$this._id"
-                                                                        },
-                                                                        "$$m.user_id",
-                                                                    ]
-                                                                },
-                                                            }
-                                                        },
-                                                        0,
-                                                    ]
-                                                }
-                                            },
-                                            "in": "$$u.username",
-                                        }
-                                    }
-                                },
-                            ]
-                        },
-                    }
-                }
-            }
-        },
-        {"$project": {"users_info": 0}},
-    ]
-
-    teams = await db.teams.aggregate(pipeline).to_list(1000)
+    pipeline = build_team_enrichment_pipeline(final_query, sort_by, sort_direction)
+    teams = await team_repo.aggregate(pipeline, limit=1000)
     return teams
 
 
@@ -213,71 +102,12 @@ async def read_team(
     """
     Get team details.
     """
+    team_repo = TeamRepository(db)
+
     await check_team_access(team_id, current_user, db)
 
-    pipeline: List[Dict[str, Any]] = [
-        {"$match": {"_id": team_id}},
-        {
-            "$lookup": {
-                "from": "users",
-                "let": {"member_ids": "$members.user_id"},
-                "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}
-                        }
-                    },
-                    {"$project": {"_id": 1, "username": 1}},
-                ],
-                "as": "users_info",
-            }
-        },
-        {
-            "$addFields": {
-                "members": {
-                    "$map": {
-                        "input": "$members",
-                        "as": "m",
-                        "in": {
-                            "$mergeObjects": [
-                                "$$m",
-                                {
-                                    "username": {
-                                        "$let": {
-                                            "vars": {
-                                                "u": {
-                                                    "$arrayElemAt": [
-                                                        {
-                                                            "$filter": {
-                                                                "input": "$users_info",
-                                                                "cond": {
-                                                                    "$eq": [
-                                                                        {
-                                                                            "$toString": "$$this._id"
-                                                                        },
-                                                                        "$$m.user_id",
-                                                                    ]
-                                                                },
-                                                            }
-                                                        },
-                                                        0,
-                                                    ]
-                                                }
-                                            },
-                                            "in": "$$u.username",
-                                        }
-                                    }
-                                },
-                            ]
-                        },
-                    }
-                }
-            }
-        },
-        {"$project": {"users_info": 0}},
-    ]
-
-    result = await db.teams.aggregate(pipeline).to_list(1)
+    pipeline = build_team_enrichment_pipeline({"_id": team_id})
+    result = await team_repo.aggregate(pipeline, limit=1)
     if not result:
         raise HTTPException(status_code=404, detail="Team not found")
 
@@ -294,22 +124,16 @@ async def update_team(
     """
     Update team details. Requires 'admin' or 'owner' role.
     """
-    if (
-        "*" not in current_user.permissions
-        and "team:update" not in current_user.permissions
-    ):
-        await check_team_access(team_id, current_user, db, required_role="admin")
+    await get_team_with_access(team_id, current_user, db)
 
-    update_data = team_in.dict(exclude_unset=True)
+    team_repo = TeamRepository(db)
+
+    update_data = team_in.model_dump(exclude_unset=True)
     update_data["updated_at"] = datetime.now(timezone.utc)
 
-    await db.teams.update_one({"_id": team_id}, {"$set": update_data})
+    await team_repo.update(team_id, update_data)
 
-    updated_team = await db.teams.find_one({"_id": team_id})
-    if updated_team:
-        await enrich_team_with_usernames(updated_team, db)
-        return TeamResponse(**updated_team)
-    raise HTTPException(status_code=404, detail="Team not found")
+    return await fetch_and_enrich_team(team_id, db)
 
 
 @router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -321,12 +145,13 @@ async def delete_team(
     """
     Delete a team. Requires 'owner' role.
     """
-    if (
-        "*" not in current_user.permissions
-        and "team:delete" not in current_user.permissions
-    ):
-        await check_team_access(team_id, current_user, db, required_role="owner")
-    await db.teams.delete_one({"_id": team_id})
+    if not has_permission(current_user.permissions, "team:delete"):
+        await check_team_access(
+            team_id, current_user, db, required_role=TEAM_ROLE_OWNER
+        )
+
+    team_repo = TeamRepository(db)
+    await team_repo.delete(team_id)
     return None
 
 
@@ -340,40 +165,32 @@ async def add_team_member(
     """
     Add a member to the team. Requires 'admin' role.
     """
-    if "*" in current_user.permissions or "team:update" in current_user.permissions:
-        team_data = await db.teams.find_one({"_id": team_id})
-        if not team_data:
-            raise HTTPException(status_code=404, detail="Team not found")
-        team = Team(**team_data)
-    else:
-        team = await check_team_access(team_id, current_user, db, required_role="admin")
+    team_repo = TeamRepository(db)
+    user_repo = UserRepository(db)
 
-    user_to_add = await db.users.find_one({"email": member_in.email})
+    team = await get_team_with_access(team_id, current_user, db)
+
+    user_to_add = await user_repo.get_raw_by_email(member_in.email)
     if not user_to_add:
         raise HTTPException(status_code=404, detail="User with this email not found")
 
     user_id = str(user_to_add["_id"])
 
     # Check if already member
-    for member in team.members:
-        if member.user_id == user_id:
-            raise HTTPException(status_code=400, detail="User already in team")
+    if find_member_in_team(team, user_id) is not None:
+        raise HTTPException(status_code=400, detail="User already in team")
 
     new_member = TeamMember(user_id=user_id, role=member_in.role)
 
-    await db.teams.update_one(
-        {"_id": team_id},
+    await team_repo.update_raw(
+        team_id,
         {
             "$push": {"members": new_member.model_dump()},
             "$set": {"updated_at": datetime.now(timezone.utc)},
         },
     )
 
-    updated_team = await db.teams.find_one({"_id": team_id})
-    if updated_team:
-        await enrich_team_with_usernames(updated_team, db)
-        return TeamResponse(**updated_team)
-    raise HTTPException(status_code=404, detail="Team not found")
+    return await fetch_and_enrich_team(team_id, db)
 
 
 @router.put("/{team_id}/members/{user_id}", response_model=TeamResponse)
@@ -387,33 +204,24 @@ async def update_team_member(
     """
     Update a member's role. Requires 'admin' role.
     """
-    if "*" in current_user.permissions or "team:update" in current_user.permissions:
-        team_data = await db.teams.find_one({"_id": team_id})
-        if not team_data:
-            raise HTTPException(status_code=404, detail="Team not found")
-        team = Team(**team_data)
-    else:
-        team = await check_team_access(team_id, current_user, db, required_role="admin")
+    team_repo = TeamRepository(db)
+
+    team = await get_team_with_access(team_id, current_user, db)
 
     # Check if target user is in team
-    member_index = -1
-    for i, member in enumerate(team.members):
-        if member.user_id == user_id:
-            member_index = i
-            break
-
-    if member_index == -1:
+    member_index = find_member_in_team(team, user_id)
+    if member_index is None:
         raise HTTPException(status_code=404, detail="User not in team")
 
     # Prevent modifying owner if you are not owner (admins can't demote owners)
-    # Admins can manage members. Owners can manage everyone.
-
     # If target is owner, only owner can modify
-    if team.members[member_index].role == "owner":
-        await check_team_access(team_id, current_user, db, required_role="owner")
+    if team.members[member_index].role == TEAM_ROLE_OWNER:
+        await check_team_access(
+            team_id, current_user, db, required_role=TEAM_ROLE_OWNER
+        )
 
-    await db.teams.update_one(
-        {"_id": team_id, "members.user_id": user_id},
+    await team_repo.update_raw(
+        team_id,
         {
             "$set": {
                 f"members.{member_index}.role": member_in.role,
@@ -422,11 +230,7 @@ async def update_team_member(
         },
     )
 
-    updated_team = await db.teams.find_one({"_id": team_id})
-    if updated_team:
-        await enrich_team_with_usernames(updated_team, db)
-        return TeamResponse(**updated_team)
-    raise HTTPException(status_code=404, detail="Team not found")
+    return await fetch_and_enrich_team(team_id, db)
 
 
 @router.delete("/{team_id}/members/{user_id}", response_model=TeamResponse)
@@ -439,39 +243,23 @@ async def remove_team_member(
     """
     Remove a member from the team. Requires 'admin' role.
     """
-    if "*" in current_user.permissions or "team:update" in current_user.permissions:
-        team_data = await db.teams.find_one({"_id": team_id})
-        if not team_data:
-            raise HTTPException(status_code=404, detail="Team not found")
-        team = Team(**team_data)
-    else:
-        team = await check_team_access(team_id, current_user, db, required_role="admin")
+    team_repo = TeamRepository(db)
+    team = await get_team_with_access(team_id, current_user, db)
 
     # Check if target user is in team
-    member_exists = False
-    target_role = None
-    for member in team.members:
-        if member.user_id == user_id:
-            member_exists = True
-            target_role = member.role
-            break
-
-    if not member_exists:
+    target_role = get_member_role(team, user_id)
+    if target_role is None:
         raise HTTPException(status_code=404, detail="User not in team")
 
-    if target_role == "owner":
+    if target_role == TEAM_ROLE_OWNER:
         raise HTTPException(status_code=400, detail="Cannot remove team owner")
 
-    await db.teams.update_one(
-        {"_id": team_id},
+    await team_repo.update_raw(
+        team_id,
         {
             "$pull": {"members": {"user_id": user_id}},
             "$set": {"updated_at": datetime.now(timezone.utc)},
         },
     )
 
-    updated_team = await db.teams.find_one({"_id": team_id})
-    if updated_team:
-        await enrich_team_with_usernames(updated_team, db)
-        return TeamResponse(**updated_team)
-    raise HTTPException(status_code=404, detail="Team not found")
+    return await fetch_and_enrich_team(team_id, db)

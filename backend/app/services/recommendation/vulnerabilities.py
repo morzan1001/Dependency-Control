@@ -8,6 +8,7 @@ from app.schemas.recommendation import (
     VulnerabilityInfo,
 )
 from app.core.constants import OS_PACKAGE_TYPES
+from app.services.recommendation.common import calculate_best_fix_version
 
 
 def process_vulnerabilities(
@@ -163,7 +164,7 @@ def _analyze_base_image_vulns(
         return None
 
     # Count severities
-    severity_counts = defaultdict(int)
+    severity_counts: Dict[str, int] = defaultdict(int)
     affected_packages = set()
 
     for v in vulns:
@@ -249,16 +250,16 @@ def _analyze_direct_dependencies(
         if not fixed_versions:
             continue
 
-        # Get current version
+        # Get current version (ensure it's never None)
         current_version = (
-            component_vulns[0].current_version if component_vulns else "unknown"
-        )
+            component_vulns[0].current_version if component_vulns else None
+        ) or "unknown"
 
         # Calculate best fixed version
-        best_fix = _calculate_best_fix_version(fixed_versions)
+        best_fix = calculate_best_fix_version(fixed_versions)
 
         # Count severities and gather threat intelligence stats
-        severity_counts = defaultdict(int)
+        severity_counts: Dict[str, int] = defaultdict(int)
         cves = []
 
         # EPSS/KEV/Reachability aggregation
@@ -311,14 +312,15 @@ def _analyze_direct_dependencies(
             # KEV findings or reachable critical vulns are always critical priority
             priority = Priority.CRITICAL
         elif severity_counts.get("CRITICAL", 0) > 0:
-            # Check if critical vulns are unreachable - might downgrade
-            critical_unreachable = all(
-                v.is_reachable is False
-                for v in component_vulns
-                if v.severity == "CRITICAL"
+            # Check if ALL critical vulns are confirmed unreachable - can downgrade
+            critical_vulns = [v for v in component_vulns if v.severity == "CRITICAL"]
+            critical_all_unreachable = all(
+                v.is_reachable is False for v in critical_vulns
             )
-            if critical_unreachable and unreachable_count == len(component_vulns):
-                priority = Priority.MEDIUM  # Downgrade if all unreachable
+            # Only downgrade if we have confirmed unreachability (not just unknown)
+            if critical_all_unreachable and len(critical_vulns) > 0:
+                # Downgrade to HIGH (not MEDIUM) since critical vulns still exist
+                priority = Priority.HIGH
             else:
                 priority = Priority.CRITICAL
         elif high_epss_count > 0 or reachable_high > 0:
@@ -424,13 +426,14 @@ def _analyze_transitive_dependencies(
         if not fixed_versions:
             continue
 
+        # Get current version (ensure it's never None)
         current_version = (
-            component_vulns[0].current_version if component_vulns else "unknown"
-        )
-        best_fix = _calculate_best_fix_version(fixed_versions)
+            component_vulns[0].current_version if component_vulns else None
+        ) or "unknown"
+        best_fix = calculate_best_fix_version(fixed_versions)
 
         # Count severities and gather threat intelligence stats
-        severity_counts = defaultdict(int)
+        severity_counts: Dict[str, int] = defaultdict(int)
         kev_count = 0
         kev_ransomware_count = 0
         high_epss_count = 0
@@ -474,8 +477,13 @@ def _analyze_transitive_dependencies(
         if kev_count > 0 or reachable_critical > 0:
             priority = Priority.CRITICAL
         elif severity_counts.get("CRITICAL", 0) > 0:
-            if unreachable_count == len(component_vulns):
-                priority = Priority.MEDIUM
+            # Check if ALL critical vulns are confirmed unreachable
+            critical_vulns = [v for v in component_vulns if v.severity == "CRITICAL"]
+            critical_all_unreachable = all(
+                v.is_reachable is False for v in critical_vulns
+            )
+            if critical_all_unreachable and len(critical_vulns) > 0:
+                priority = Priority.HIGH  # Downgrade since critical are unreachable
             else:
                 priority = Priority.CRITICAL
         elif high_epss_count > 0 or reachable_high > 0:
@@ -547,7 +555,7 @@ def _analyze_no_fix_vulns(vulns: List[VulnerabilityInfo]) -> List[Recommendation
     if not vulns:
         return []
 
-    severity_counts = defaultdict(int)
+    severity_counts: Dict[str, int] = defaultdict(int)
     components = set()
     crit_high_vulns = []
 
@@ -590,27 +598,3 @@ def _analyze_no_fix_vulns(vulns: List[VulnerabilityInfo]) -> List[Recommendation
             effort="high",
         )
     ]
-
-
-def _calculate_best_fix_version(versions: List[str]) -> str:
-    """
-    Calculate the best fix version from a list of options.
-    Logic: Parse versions, find the highest one to cover all vulns.
-    For simplicity here, we take the one that looks 'largest' or just the first if complex.
-    A real implementation would use semantic version comparison.
-    """
-    if not versions:
-        return "unknown"
-
-    # Simple heuristic: longer string or last one (often highest)
-    # A proper semver sort would be better but requires a specialized library or complex logic
-    # Assuming 'versions' contains strings like "1.2.3", "2.0.0"
-
-    # Try to find the max version simply
-    try:
-        # This is a very naive sort for now, better to import semver if available
-        # But we don't have semver in standard lib.
-        # Using string length and value as proxy for now
-        return sorted(versions)[-1]
-    except Exception:
-        return versions[0]

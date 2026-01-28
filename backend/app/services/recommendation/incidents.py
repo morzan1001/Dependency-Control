@@ -1,10 +1,12 @@
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
+from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.recommendation import (
+    Priority,
     Recommendation,
     RecommendationType,
-    Priority,
 )
+from app.services.recommendation.common import extract_cve_id
 
 
 def process_malware(malware_findings: List[Dict[str, Any]]) -> List[Recommendation]:
@@ -119,18 +121,15 @@ def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommend
                 ransomware_vulns.append(f)
             else:
                 kev_vulns.append(f)
-        elif details.get("epss_score") and details.get("epss_score") >= 0.5:
+        elif (
+            details.get("epss_score")
+            and details.get("epss_score") >= EPSS_VERY_HIGH_THRESHOLD
+        ):
             high_epss_vulns.append(f)
 
     if ransomware_vulns:
         affected_packages = list(set(f.get("component", "") for f in ransomware_vulns))
-        cves = list(
-            set(
-                f.get("finding_id", "")
-                for f in ransomware_vulns
-                if f.get("finding_id", "").startswith("CVE-")
-            )
-        )
+        cves = list(set(cve for f in ransomware_vulns if (cve := extract_cve_id(f))))
 
         recommendations.append(
             Recommendation(
@@ -172,13 +171,7 @@ def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommend
 
     if kev_vulns:
         affected_packages = list(set(f.get("component", "") for f in kev_vulns))
-        cves = list(
-            set(
-                f.get("finding_id", "")
-                for f in kev_vulns
-                if f.get("finding_id", "").startswith("CVE-")
-            )
-        )
+        cves = list(set(cve for f in kev_vulns if (cve := extract_cve_id(f))))
 
         recommendations.append(
             Recommendation(
@@ -221,13 +214,7 @@ def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommend
 
     if high_epss_vulns:
         affected_packages = list(set(f.get("component", "") for f in high_epss_vulns))
-        cves = list(
-            set(
-                f.get("finding_id", "")
-                for f in high_epss_vulns
-                if f.get("finding_id", "").startswith("CVE-")
-            )
-        )
+        cves = list(set(cve for f in high_epss_vulns if (cve := extract_cve_id(f))))
 
         max_epss = max(
             f.get("details", {}).get("epss_score", 0) for f in high_epss_vulns

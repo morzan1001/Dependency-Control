@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WAIVER_STATUSES
 
 
 class WaiverCreate(BaseModel):
@@ -18,8 +20,17 @@ class WaiverCreate(BaseModel):
     package_version: Optional[str] = None
     finding_type: Optional[str] = None
     reason: str
-    status: str = "accepted_risk"
+    status: str = WAIVER_STATUS_ACCEPTED_RISK
     expiration_date: Optional[datetime] = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        if v not in WAIVER_STATUSES:
+            raise ValueError(
+                f"Invalid status. Must be one of: {', '.join(WAIVER_STATUSES)}"
+            )
+        return v
 
 
 class WaiverUpdate(BaseModel):
@@ -27,8 +38,20 @@ class WaiverUpdate(BaseModel):
     expiration_date: Optional[datetime] = None
     status: Optional[str] = None
 
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in WAIVER_STATUSES:
+            raise ValueError(
+                f"Invalid status. Must be one of: {', '.join(WAIVER_STATUSES)}"
+            )
+        return v
+
 
 class WaiverResponse(WaiverCreate):
-    id: str
+    id: str = Field(alias="_id")
     created_by: str
     created_at: datetime
+
+    class Config:
+        populate_by_name = True

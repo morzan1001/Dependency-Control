@@ -1,30 +1,40 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Optional
 
+from app.core.config import settings
+from app.core.constants import (
+    HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
+    HOUSEKEEPING_MAX_SCAN_RETRIES,
+    HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS,
+    HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
+    HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
+)
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
-from app.models.system import SystemSettings
+from app.repositories.system_settings import SystemSettingsRepository
+
+if TYPE_CHECKING:
+    from app.core.worker import WorkerManager
 
 logger = logging.getLogger(__name__)
 
 
-async def check_scheduled_rescans(worker_manager):
+async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
     """
     Checks for projects that need a periodic re-scan.
     """
     if not worker_manager:
         return
 
-    logger.info("Checking for scheduled re-scans...")
+    logger.debug("Checking for scheduled re-scans...")
     try:
         db = await get_database()
 
         # Get System Settings
-        settings_data = await db.system_settings.find_one({"_id": "current"})
-        system_settings = (
-            SystemSettings(**settings_data) if settings_data else SystemSettings()
-        )
+        repo = SystemSettingsRepository(db)
+        system_settings = await repo.get()
 
         # Iterate over all projects
         # Optimization: We could filter in the query, but logic is complex due to "None" overrides
@@ -68,7 +78,7 @@ async def check_scheduled_rescans(worker_manager):
                 )
 
                 if active_scan:
-                    # logger.info(f"Project {project.name} due for re-scan, but has active scan {active_scan['_id']}. Skipping.")
+                    # Project has active scan, skipping re-scan
                     continue
 
                 # Find the latest SUCCESSFUL scan with SBOMs
@@ -113,7 +123,7 @@ async def check_scheduled_rescans(worker_manager):
                     original_scan_id=str(latest_valid_scan["_id"]),
                 )
 
-                await db.scans.insert_one(new_scan.dict(by_alias=True))
+                await db.scans.insert_one(new_scan.model_dump(by_alias=True))
 
                 # Update original scan to point to this new pending rescan (so UI can show "Scanning...")
                 await db.scans.update_one(
@@ -136,7 +146,7 @@ async def check_scheduled_rescans(worker_manager):
         logger.error(f"Scheduled re-scan check failed: {e}")
 
 
-async def run_housekeeping():
+async def run_housekeeping() -> None:
     """
     Periodically cleans up old scan data based on project retention settings.
     """
@@ -146,10 +156,8 @@ async def run_housekeeping():
         db = await get_database()
 
         # Get System Settings
-        settings_data = await db.system_settings.find_one({"_id": "current"})
-        system_settings = (
-            SystemSettings(**settings_data) if settings_data else SystemSettings()
-        )
+        repo = SystemSettingsRepository(db)
+        system_settings = await repo.get()
 
         # Determine retention strategy
         if system_settings.retention_mode == "global":
@@ -168,16 +176,19 @@ async def run_housekeeping():
                 scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
 
                 if scan_ids_to_delete:
-                    # Bulk delete
+                    # Bulk delete all related data
                     await db.analysis_results.delete_many(
                         {"scan_id": {"$in": scan_ids_to_delete}}
                     )
                     await db.findings.delete_many(
                         {"scan_id": {"$in": scan_ids_to_delete}}
-                    )  # Also delete findings
+                    )
+                    await db.finding_records.delete_many(
+                        {"scan_id": {"$in": scan_ids_to_delete}}
+                    )
                     await db.dependencies.delete_many(
                         {"scan_id": {"$in": scan_ids_to_delete}}
-                    )  # Also delete dependencies
+                    )
                     result = await db.scans.delete_many(
                         {"_id": {"$in": scan_ids_to_delete}}
                     )
@@ -221,11 +232,14 @@ async def run_housekeeping():
                 scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
 
                 if scan_ids_to_delete:
-                    # Bulk delete for this retention group
+                    # Bulk delete all related data for this retention group
                     await db.analysis_results.delete_many(
                         {"scan_id": {"$in": scan_ids_to_delete}}
                     )
                     await db.findings.delete_many(
+                        {"scan_id": {"$in": scan_ids_to_delete}}
+                    )
+                    await db.finding_records.delete_many(
                         {"scan_id": {"$in": scan_ids_to_delete}}
                     )
                     await db.dependencies.delete_many(
@@ -236,36 +250,41 @@ async def run_housekeeping():
                     )
 
                     logger.info(
-                        f"Retention {days} days: Deleted {result.deleted_count} scans from {len(project_ids)} projects."
+                        f"Retention {days} days: Deleted {result.deleted_count} scans "
+                        f"from {len(project_ids)} projects."
                     )
 
     except Exception as e:
         logger.error(f"Housekeeping task failed: {e}")
 
 
-async def trigger_stale_pending_scans(worker_manager=None):
+async def trigger_stale_pending_scans(
+    worker_manager: Optional["WorkerManager"] = None,
+) -> None:
     """
     Finds scans that are 'pending' with results but haven't received new results
-    for a while (30 seconds), and triggers their aggregation.
-    
+    for a configured threshold, and triggers their aggregation.
+
     This handles the case where only findings-based scanners (TruffleHog, OpenGrep, etc.)
     ran without an SBOM scan, or where the SBOM scanner failed to trigger.
-    
+
     The logic:
     1. Find scans with status='pending' that have received_results (at least one scanner reported)
-    2. Check if last_result_at is older than 30 seconds
+    2. Check if last_result_at is older than threshold
     3. Trigger aggregation for these scans
     """
     if not worker_manager:
         return
 
-    logger.info("Checking for stale pending scans...")
+    logger.debug("Checking for stale pending scans...")
     try:
         db = await get_database()
-        
-        # Threshold: 30 seconds since last result
-        stale_threshold = datetime.now(timezone.utc) - timedelta(seconds=30)
-        
+
+        # Threshold since last result
+        stale_threshold = datetime.now(timezone.utc) - timedelta(
+            seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS
+        )
+
         # Find pending scans that have results but are stale
         cursor = db.scans.find(
             {
@@ -274,39 +293,43 @@ async def trigger_stale_pending_scans(worker_manager=None):
                 "received_results": {"$exists": True, "$ne": []},
             }
         )
-        
+
         count = 0
         async for scan in cursor:
             scan_id = scan["_id"]
             received = scan.get("received_results", [])
             last_result = scan.get("last_result_at")
-            
+
             logger.info(
                 f"Triggering aggregation for stale pending scan {scan_id}. "
                 f"Received results from: {received}. Last result at: {last_result}"
             )
-            
+
             await worker_manager.add_job(str(scan_id))
             count += 1
-        
+
         if count > 0:
             logger.info(f"Triggered aggregation for {count} stale pending scans.")
-            
+
     except Exception as e:
         logger.error(f"Stale pending scan check failed: {e}")
 
 
-async def recover_stuck_scans(worker_manager=None):
+async def recover_stuck_scans(
+    worker_manager: Optional["WorkerManager"] = None,
+) -> None:
     """
     Identifies scans that have been stuck in 'processing' state for too long
     and resets them to 'pending' or marks them as 'failed'.
     """
-    logger.info("Running stuck scan recovery...")
+    logger.debug("Running stuck scan recovery...")
     try:
         db = await get_database()
-        # Timeout threshold: 30 minutes
-        timeout_threshold = datetime.now(timezone.utc) - timedelta(minutes=30)
-        max_retries = 3
+        # Timeout threshold from settings
+        timeout_threshold = datetime.now(timezone.utc) - timedelta(
+            seconds=settings.HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS
+        )
+        max_retries = HOUSEKEEPING_MAX_SCAN_RETRIES
 
         # Find stuck scans
         cursor = db.scans.find(
@@ -360,31 +383,35 @@ async def recover_stuck_scans(worker_manager=None):
         logger.error(f"Stuck scan recovery failed: {e}")
 
 
-async def stale_scan_loop(worker_manager=None):
+async def stale_scan_loop(
+    worker_manager: Optional["WorkerManager"] = None,
+) -> None:
     """
     Fast loop to check for stale pending scans that need aggregation.
-    Runs every 10 seconds to quickly catch scans without SBOM trigger.
+    Runs frequently to quickly catch scans without SBOM trigger.
     """
     while True:
         try:
             await trigger_stale_pending_scans(worker_manager)
         except Exception as e:
             logger.error(f"Stale scan loop failed: {e}")
-        
-        # Check every 10 seconds for responsive aggregation
-        await asyncio.sleep(10)
+
+        await asyncio.sleep(HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS)
 
 
-async def housekeeping_loop(worker_manager=None):
+async def housekeeping_loop(
+    worker_manager: Optional["WorkerManager"] = None,
+) -> None:
     """
     Runs the housekeeping tasks.
-    - Stuck scan recovery: Every 5 minutes
-    - Scheduled re-scans: Every 5 minutes
+    - Stuck scan recovery: On each loop iteration
+    - Scheduled re-scans: On each loop iteration
     - Data retention cleanup: Every 24 hours
-    
+
     Note: Stale pending scan aggregation runs in a separate faster loop.
     """
-    last_retention_run = datetime.min
+    # Use timezone-aware datetime for consistent comparison
+    last_retention_run = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
         # Run stuck scan recovery
@@ -393,10 +420,11 @@ async def housekeeping_loop(worker_manager=None):
         # Run scheduled re-scans
         await check_scheduled_rescans(worker_manager)
 
-        # Run retention cleanup if 24 hours passed
-        if (datetime.now(timezone.utc) - last_retention_run) > timedelta(hours=24):
+        # Run retention cleanup if interval has passed (fixed 24h interval)
+        if (datetime.now(timezone.utc) - last_retention_run) > timedelta(
+            hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS
+        ):
             await run_housekeeping()
             last_retention_run = datetime.now(timezone.utc)
 
-        # Sleep for 5 minutes
-        await asyncio.sleep(5 * 60)
+        await asyncio.sleep(HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS)

@@ -1,8 +1,25 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from .purl_utils import normalize_hash_algorithm
+
 
 class Analyzer(ABC):
+    """
+    Base class for all SBOM analyzers.
+
+    Error Response Format:
+        When an analyzer encounters an error, it should return a dict with:
+        - "error": str - Human-readable error message
+        - "output": str (optional) - Raw output for debugging (e.g., CLI output)
+
+        Example:
+            {"error": "Invalid JSON output from grype", "output": "...raw output..."}
+
+        For partial failures (some components succeeded), continue processing
+        and log the error via logger.warning() or logger.debug().
+    """
+
     name: str
 
     @abstractmethod
@@ -21,6 +38,10 @@ class Analyzer(ABC):
             parsed_components: Pre-parsed components from sbom_parser (preferred)
                              Each component is a dict with: name, version, purl, type,
                              license, hashes, cpes, etc.
+
+        Returns:
+            Dict containing analyzer-specific results. On error, returns:
+            {"error": "error message", "output": "optional debug output"}
         """
         pass
 
@@ -53,15 +74,20 @@ class Analyzer(ABC):
         # 1. CycloneDX (standard 'components' list)
         if "components" in sbom:
             for comp in sbom["components"]:
+                # Skip components without a name
+                name = comp.get("name")
+                if not name or not isinstance(name, str) or not name.strip():
+                    continue
+
                 # Normalize hashes from CycloneDX format
                 hashes = {}
                 for h in comp.get("hashes", []):
                     if isinstance(h, dict) and h.get("alg") and h.get("content"):
-                        alg = h["alg"].lower().replace("-", "")
+                        alg = normalize_hash_algorithm(h["alg"])
                         hashes[alg] = h["content"]
 
                 normalized = {
-                    "name": comp.get("name"),
+                    "name": name,
                     "version": comp.get("version"),
                     "purl": comp.get("purl"),
                     "type": comp.get("type", "library"),
@@ -79,8 +105,13 @@ class Analyzer(ABC):
         # 2. Syft JSON (uses 'artifacts') - basic fallback
         if "artifacts" in sbom:
             for artifact in sbom["artifacts"]:
+                # Skip artifacts without a name
+                name = artifact.get("name")
+                if not name or not isinstance(name, str) or not name.strip():
+                    continue
+
                 comp = {
-                    "name": artifact.get("name"),
+                    "name": name,
                     "version": artifact.get("version"),
                     "purl": artifact.get("purl"),
                     "type": artifact.get("type", "library"),
@@ -97,6 +128,11 @@ class Analyzer(ABC):
         # 3. SPDX (uses 'packages') - basic fallback
         if "packages" in sbom:
             for pkg in sbom["packages"]:
+                # Skip packages without a name
+                name = pkg.get("name")
+                if not name or not isinstance(name, str) or not name.strip():
+                    continue
+
                 purl = None
                 if "externalRefs" in pkg:
                     for ref in pkg["externalRefs"]:
@@ -105,7 +141,7 @@ class Analyzer(ABC):
                             break
 
                 comp = {
-                    "name": pkg.get("name"),
+                    "name": name,
                     "version": pkg.get("versionInfo"),
                     "purl": purl,
                     "type": "library",

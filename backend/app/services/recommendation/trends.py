@@ -1,10 +1,11 @@
 from collections import defaultdict
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
+from app.core.constants import FINDING_DELTA_THRESHOLD, RECURRING_ISSUE_THRESHOLD
 from app.schemas.recommendation import (
+    Priority,
     Recommendation,
     RecommendationType,
-    Priority,
 )
 
 
@@ -51,8 +52,15 @@ def analyze_regressions(
             Recommendation(
                 type=RecommendationType.REGRESSION_DETECTED,
                 priority=Priority.HIGH if new_critical else Priority.MEDIUM,
-                title=f"Regression: {len(new_critical)} critical, {len(new_high)} high severity vulnerabilities introduced",
-                description=f"This scan detected {len(new_findings)} new findings compared to the previous scan. This may indicate dependency updates that introduced new vulnerabilities or new code with security issues.",
+                title=(
+                    f"Regression: {len(new_critical)} critical, "
+                    f"{len(new_high)} high severity vulnerabilities introduced"
+                ),
+                description=(
+                    f"This scan detected {len(new_findings)} new findings compared to "
+                    "the previous scan. This may indicate dependency updates that "
+                    "introduced new vulnerabilities or new code with security issues."
+                ),
                 impact={
                     "critical": len(new_critical),
                     "high": len(new_high),
@@ -79,7 +87,7 @@ def analyze_regressions(
                 effort="medium",
             )
         )
-    elif finding_delta > 10:
+    elif finding_delta > FINDING_DELTA_THRESHOLD:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.REGRESSION_DETECTED,
@@ -137,11 +145,11 @@ def analyze_recurring_issues(
                             "description": f.get("description", "")[:100],
                         }
 
-    # Find truly recurring issues (appear in 3+ scans)
+    # Find truly recurring issues (appear in N+ scans)
     recurring = [
         {"cve": cve, **data}
         for cve, data in finding_frequency.items()
-        if data["count"] >= 3
+        if data["count"] >= RECURRING_ISSUE_THRESHOLD
     ]
 
     if recurring:
@@ -165,7 +173,11 @@ def analyze_recurring_issues(
                 type=RecommendationType.RECURRING_VULNERABILITY,
                 priority=Priority.MEDIUM if critical_recurring else Priority.LOW,
                 title=f"{len(recurring)} vulnerabilities keep recurring across scans",
-                description="These vulnerabilities have appeared in 3 or more scans without being fixed. Consider creating waivers with justification, or addressing the root cause architecturally.",
+                description=(
+                    f"These vulnerabilities have appeared in {RECURRING_ISSUE_THRESHOLD} "
+                    "or more scans without being fixed. Consider creating waivers with "
+                    "justification, or addressing the root cause architecturally."
+                ),
                 impact={
                     "critical": len(critical_recurring),
                     "high": len(

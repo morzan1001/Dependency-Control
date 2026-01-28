@@ -7,7 +7,10 @@ when multiple backend containers run simultaneously.
 """
 
 import logging
+import re
 import time
+from contextlib import contextmanager
+from importlib.metadata import version as get_version
 from typing import Callable
 
 from fastapi import Request, Response
@@ -28,10 +31,16 @@ logger = logging.getLogger(__name__)
 # Application Info Metrics
 # =============================================================================
 
+# Get version from package metadata (pyproject.toml)
+try:
+    APP_VERSION = get_version("dependency-checks")
+except Exception:
+    APP_VERSION = "unknown"
+
 app_info = Info("dependency_control_app", "Application information")
 app_info.info(
     {
-        "version": "1.4.1",
+        "version": APP_VERSION,
         "app_name": "Dependency Control",
     }
 )
@@ -359,6 +368,24 @@ auth_2fa_verifications_total = Counter(
     ["result"],
 )
 
+auth_oidc_logins_total = Counter(
+    "auth_oidc_logins_total",
+    "Total OIDC login attempts by status",
+    ["status"],
+)
+
+auth_signups_total = Counter(
+    "auth_signups_total",
+    "Total user signups by status",
+    ["status"],
+)
+
+auth_password_resets_total = Counter(
+    "auth_password_resets_total",
+    "Total password reset completions",
+    ["status"],
+)
+
 # =============================================================================
 # Webhook Metrics
 # =============================================================================
@@ -484,8 +511,6 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
           /api/v1/projects/123 -> /api/v1/projects/{id}
           /api/v1/users/550e8400-e29b-41d4-a716-446655440000 -> /api/v1/users/{id}
         """
-        import re
-
         # Replace UUIDs
         path = re.sub(
             r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
@@ -510,7 +535,6 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
 
 def track_db_operation(collection: str, operation: str):
     """Context manager to track database operation metrics."""
-    from contextlib import contextmanager
 
     @contextmanager
     def _tracker():
@@ -518,9 +542,7 @@ def track_db_operation(collection: str, operation: str):
         try:
             yield
             duration = time.time() - start_time
-            db_operations_total.labels(
-                collection=collection, operation=operation
-            ).inc()
+            db_operations_total.labels(collection=collection, operation=operation).inc()
             db_operation_duration_seconds.labels(
                 collection=collection, operation=operation
             ).observe(duration)
@@ -534,7 +556,6 @@ def track_db_operation(collection: str, operation: str):
 
 def track_cache_operation(operation: str):
     """Context manager to track cache operation metrics."""
-    from contextlib import contextmanager
 
     @contextmanager
     def _tracker():
@@ -554,7 +575,6 @@ def track_cache_operation(operation: str):
 
 def track_external_api(service: str):
     """Context manager to track external API call metrics."""
-    from contextlib import contextmanager
 
     @contextmanager
     def _tracker():

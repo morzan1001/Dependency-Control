@@ -1,4 +1,3 @@
-import os
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -24,16 +23,29 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
 from app.api import deps
+from app.api.v1.helpers.auth import send_password_reset_email, send_verification_email
 from app.core import security
+from app.core.cache import cache_service
 from app.core.config import settings
+from app.core.constants import (
+    OIDC_HTTP_TIMEOUT_SECONDS,
+    OIDC_STATE_TTL_SECONDS,
+    TOTP_VALID_WINDOW,
+)
 from app.db.mongodb import get_database
 from app.models.system import SystemSettings
 from app.models.user import User
+from app.repositories import UserRepository
+from app.schemas.auth import (
+    EmailVerifyResponse,
+    ForgotPasswordResponse,
+    LogoutResponse,
+    PasswordResetResponse,
+    VerificationEmailResponse,
+)
 from app.schemas.token import Token, TokenPayload
 from app.schemas.user import User as UserSchema
 from app.schemas.user import UserCreate, UserPasswordReset
-from app.services.notifications.email_provider import EmailProvider
-from app.services.notifications.templates import get_verification_email_template
 
 logger = logging.getLogger(__name__)
 
@@ -42,21 +54,18 @@ try:
     from app.core.metrics import (
         auth_2fa_verifications_total,
         auth_login_attempts_total,
-        auth_token_validations_total,
+        auth_oidc_logins_total,
+        auth_password_resets_total,
+        auth_signups_total,
     )
 except ImportError:
     auth_login_attempts_total = None
     auth_2fa_verifications_total = None
-    auth_token_validations_total = None
+    auth_oidc_logins_total = None
+    auth_signups_total = None
+    auth_password_resets_total = None
 
 router = APIRouter()
-
-
-async def get_system_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
-    data = await db.system_settings.find_one({"_id": "current"})
-    if not data:
-        return SystemSettings()
-    return SystemSettings(**data)
 
 
 @router.post(
@@ -74,7 +83,12 @@ async def login_access_token(
     - **password**: User password
     - **otp**: One Time Password (if 2FA is enabled)
     """
-    user = await db.users.find_one({"username": form_data.username})
+    user_repo = UserRepository(db)
+    # Try username first, then email as fallback
+    user = await user_repo.get_raw_by_username(form_data.username)
+    if not user:
+        user = await user_repo.get_raw_by_email(form_data.username)
+
     if not user or not security.verify_password(
         form_data.password, user.get("hashed_password")
     ):
@@ -87,12 +101,14 @@ async def login_access_token(
         )
 
     if not user.get("is_active", True):
+        if auth_login_attempts_total:
+            auth_login_attempts_total.labels(status="inactive_user").inc()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user",
         )
 
-    system_config = await get_system_settings(db)
+    system_config = await deps.get_system_settings(db)
 
     # Check Email Verification
     if system_config.enforce_email_verification and not user.get("is_verified", False):
@@ -111,8 +127,18 @@ async def login_access_token(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        totp = pyotp.TOTP(user["totp_secret"])
-        if not totp.verify(otp, valid_window=1):
+        totp_secret = user.get("totp_secret")
+        if not totp_secret:
+            logger.error(
+                f"User {user.get('username')} has totp_enabled=True but no totp_secret"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="2FA configuration error. Please contact support.",
+            )
+
+        totp = pyotp.TOTP(totp_secret)
+        if not totp.verify(otp, valid_window=TOTP_VALID_WINDOW):
             if auth_2fa_verifications_total:
                 auth_2fa_verifications_total.labels(result="failed").inc()
             raise HTTPException(
@@ -176,10 +202,11 @@ async def refresh_token(
             detail="Invalid token type",
         )
 
-    user = await db.users.find_one({"username": token_data.sub})
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_username(token_data.sub)
     if not user:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
 
@@ -228,216 +255,212 @@ async def create_user(
     Create a new user in the system.
     """
     # Check if signup is enabled
-    system_config = await get_system_settings(db)
+    system_config = await deps.get_system_settings(db)
     signup_enabled = system_config.allow_public_registration
 
     if not signup_enabled:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Signup is currently disabled.",
         )
 
     if not user_in.password:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password is required for registration",
         )
 
-    user = await db.users.find_one({"username": user_in.username})
-    if user:
+    user_repo = UserRepository(db)
+
+    if await user_repo.exists_by_username(user_in.username):
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="The user with this username already exists in the system.",
         )
-    user_dict = user_in.dict()
+
+    if await user_repo.get_raw_by_email(user_in.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The user with this email already exists in the system.",
+        )
+    user_dict = user_in.model_dump()
     hashed_password = security.get_password_hash(user_dict.pop("password"))
     user_dict["hashed_password"] = hashed_password
     user_dict["is_verified"] = False
 
     new_user = User(**user_dict)
-    await db.users.insert_one(new_user.dict(by_alias=True))
+    await user_repo.create(new_user)
 
     # Send verification email if SMTP is configured
-    if settings.SMTP_HOST:
-        token = security.create_email_verification_token(new_user.email)
+    await send_verification_email(background_tasks, new_user.email)
 
-        email_provider = EmailProvider()
-        link = f"{settings.FRONTEND_BASE_URL}/verify-email?token={token}"
-
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
-        logo_path = os.path.join(project_root, "assets", "logo.png")
-
-        html_content = get_verification_email_template(link, settings.PROJECT_NAME)
-        background_tasks.add_task(
-            email_provider.send,
-            destination=new_user.email,
-            subject=f"Verify your email for {settings.PROJECT_NAME}",
-            message=f"Please verify your email by clicking this link: {link}",
-            html_message=html_content,
-            logo_path=logo_path,
-        )
+    if auth_signups_total:
+        auth_signups_total.labels(status="success").inc()
 
     return new_user
 
 
-@router.post("/logout", summary="Logout user")
+@router.post("/logout", response_model=LogoutResponse, summary="Logout user")
 async def logout(
     current_user: User = Depends(deps.get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
-) -> Any:
+) -> LogoutResponse:
     """
     Logout the current user.
     Invalidates all tokens issued before this logout by updating the user's last_logout_at timestamp.
     """
-    await db.users.update_one(
-        {"_id": current_user.id},
-        {"$set": {"last_logout_at": datetime.now(timezone.utc)}},
+    user_repo = UserRepository(db)
+    await user_repo.update(
+        current_user.id, {"last_logout_at": datetime.now(timezone.utc)}
     )
-    return {"message": "Successfully logged out"}
+    return LogoutResponse(message="Successfully logged out")
 
 
-@router.post("/send-verification-email", summary="Send verification email")
-async def send_verification_email(
+@router.post(
+    "/send-verification-email",
+    response_model=VerificationEmailResponse,
+    summary="Send verification email",
+)
+async def request_verification_email(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-) -> Any:
+) -> VerificationEmailResponse:
     """
     Send a new verification email to the current user.
     """
     if current_user.is_verified:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already verified",
         )
 
     if not settings.SMTP_HOST:
         raise HTTPException(
-            status_code=501,
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Email server not configured",
         )
 
-    token = security.create_email_verification_token(current_user.email)
-    link = f"{settings.FRONTEND_BASE_URL}/verify-email?token={token}"
+    await send_verification_email(background_tasks, current_user.email)
 
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
-    logo_path = os.path.join(project_root, "assets", "logo.png")
-
-    html_content = get_verification_email_template(link, settings.PROJECT_NAME)
-    email_provider = EmailProvider()
-    background_tasks.add_task(
-        email_provider.send,
-        destination=current_user.email,
-        subject=f"Verify your email for {settings.PROJECT_NAME}",
-        message=f"Please verify your email by clicking this link: {link}",
-        html_message=html_content,
-        logo_path=logo_path,
-    )
-
-    return {"message": "Verification email sent"}
+    return VerificationEmailResponse(message="Verification email sent")
 
 
-@router.get("/verify-email", summary="Verify email address")
+@router.get(
+    "/verify-email",
+    response_model=EmailVerifyResponse,
+    summary="Verify email address",
+)
 async def verify_email(
     token: str, db: AsyncIOMotorDatabase = Depends(get_database)
-) -> Any:
+) -> EmailVerifyResponse:
     """
     Verify email address using the token sent via email.
     """
     email = security.verify_email_verification_token(token)
     if not email:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired verification token",
         )
 
-    user = await db.users.find_one({"email": email})
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_email(email)
     if not user:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
 
+    # Inactive users cannot verify their email
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User account is inactive",
+        )
+
     if user.get("is_verified"):
-        return {"message": "Email already verified"}
+        return EmailVerifyResponse(message="Email already verified")
 
-    await db.users.update_one({"email": email}, {"$set": {"is_verified": True}})
+    await user_repo.update(user["_id"], {"is_verified": True})
 
-    return {"message": "Email successfully verified"}
+    return EmailVerifyResponse(message="Email successfully verified")
 
 
-@router.post("/resend-verification", summary="Resend verification email (Public)")
+@router.post(
+    "/resend-verification",
+    response_model=VerificationEmailResponse,
+    summary="Resend verification email (Public)",
+)
 async def resend_verification_email_public(
     background_tasks: BackgroundTasks,
     email: str = Body(..., embed=True),
     db: AsyncIOMotorDatabase = Depends(get_database),
     system_config: SystemSettings = Depends(deps.get_system_settings),
-) -> Any:
+) -> VerificationEmailResponse:
     """
     Resend verification email to the user with the given email address.
     This endpoint is public to allow unverified users to request a new token.
     """
-    user = await db.users.find_one({"email": email})
-    if not user:
-        # Return success even if user not found to prevent email enumeration
-        return {
-            "message": "If an account with this email exists, a verification email has been sent."
-        }
+    generic_response = VerificationEmailResponse(
+        message="If an account with this email exists, a verification email has been sent."
+    )
 
-    if user.get("is_verified"):
-        return {"message": "Email already verified"}
-
+    # Check SMTP first - this is a system config issue, not user-specific
     if not settings.SMTP_HOST:
         raise HTTPException(
-            status_code=501,
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Email server not configured",
         )
 
-    token = security.create_email_verification_token(user["email"])
-    link = f"{settings.FRONTEND_BASE_URL}/verify-email?token={token}"
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_email(email)
 
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
-    logo_path = os.path.join(project_root, "assets", "logo.png")
+    # Always return generic response to prevent email enumeration
+    # Only send email if user exists, is active, and is not verified
+    if user and user.get("is_active", True) and not user.get("is_verified"):
+        await send_verification_email(
+            background_tasks, user["email"], system_settings=system_config
+        )
 
-    html_content = get_verification_email_template(link, settings.PROJECT_NAME)
-    email_provider = EmailProvider()
-    background_tasks.add_task(
-        email_provider.send,
-        destination=user["email"],
-        subject=f"Verify your email for {settings.PROJECT_NAME}",
-        message=f"Please verify your email by clicking this link: {link}",
-        html_message=html_content,
-        logo_path=logo_path,
-        system_settings=system_config,
-    )
-
-    return {
-        "message": "If an account with this email exists, a verification email has been sent."
-    }
+    return generic_response
 
 
-@router.get("/login/oidc/authorize")
+@router.get(
+    "/login/oidc/authorize",
+    summary="Initiate OIDC login",
+    description="Redirects the user to the configured OIDC provider for authentication.",
+)
 async def login_oidc_authorize(
     request: Request, db: AsyncIOMotorDatabase = Depends(get_database)
 ):
-    system_config = await get_system_settings(db)
+    """
+    Initiate OIDC login flow by redirecting to the identity provider.
+    """
+    system_config = await deps.get_system_settings(db)
     if not system_config.oidc_enabled:
-        raise HTTPException(status_code=400, detail="OIDC is not enabled")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC is not enabled"
+        )
 
     if (
         not system_config.oidc_client_id
         or not system_config.oidc_authorization_endpoint
     ):
-        raise HTTPException(status_code=500, detail="OIDC is not properly configured")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OIDC is not properly configured",
+        )
 
     # Construct redirect URI (callback to backend)
     redirect_uri = str(request.url_for("login_oidc_callback"))
 
     # Generate state to prevent CSRF
     state = secrets.token_urlsafe(32)
+
+    # Store state in cache for validation in callback
+    await cache_service.set(
+        f"oidc_state:{state}", {"valid": True}, OIDC_STATE_TTL_SECONDS
+    )
 
     params = {
         "client_id": system_config.oidc_client_id,
@@ -451,19 +474,51 @@ async def login_oidc_authorize(
     return RedirectResponse(url)
 
 
-@router.get("/login/oidc/callback")
+@router.get(
+    "/login/oidc/callback",
+    summary="OIDC callback",
+    description="Handles the callback from the OIDC provider after authentication.",
+)
 async def login_oidc_callback(
     request: Request,
     code: str,
     state: Optional[str] = None,
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    system_config = await get_system_settings(db)
+    """
+    Handle OIDC callback after user authenticates with the identity provider.
+    Exchanges the authorization code for tokens and creates/updates the user.
+    """
+    system_config = await deps.get_system_settings(db)
     if not system_config.oidc_enabled:
-        raise HTTPException(status_code=400, detail="OIDC is not enabled")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC is not enabled"
+        )
 
-    if not system_config.oidc_token_endpoint or not system_config.oidc_userinfo_endpoint:
-        raise HTTPException(status_code=500, detail="OIDC endpoints not configured")
+    if (
+        not system_config.oidc_token_endpoint
+        or not system_config.oidc_userinfo_endpoint
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OIDC endpoints not configured",
+        )
+
+    # Validate OIDC state to prevent CSRF attacks
+    if not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing state parameter"
+        )
+
+    cached_state = await cache_service.get(f"oidc_state:{state}")
+    if not cached_state or not cached_state.get("valid"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired state parameter",
+        )
+
+    # Delete state after validation (one-time use)
+    await cache_service.delete(f"oidc_state:{state}")
 
     redirect_uri = str(request.url_for("login_oidc_callback"))
 
@@ -475,18 +530,26 @@ async def login_oidc_callback(
         "redirect_uri": redirect_uri,
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=OIDC_HTTP_TIMEOUT_SECONDS) as client:
         # Exchange code for token
         try:
             response = await client.post(
                 system_config.oidc_token_endpoint, data=token_data
+            )
+        except httpx.TimeoutException:
+            logger.error(
+                f"Timeout while requesting OIDC token from {system_config.oidc_token_endpoint}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="OIDC provider request timed out. Please try again.",
             )
         except httpx.RequestError as exc:
             logger.error(
                 f"An error occurred while requesting {exc.request.url!r}: {exc}"
             )
             raise HTTPException(
-                status_code=500,
+                status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=(
                     f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. "
                     "Please check your system configuration."
@@ -495,8 +558,11 @@ async def login_oidc_callback(
 
         if response.status_code != 200:
             logger.error(f"OIDC Token Error: {response.text}")
+            if auth_oidc_logins_total:
+                auth_oidc_logins_total.labels(status="token_error").inc()
             raise HTTPException(
-                status_code=400, detail="Failed to retrieve token from provider"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to retrieve token from provider",
             )
 
         tokens = response.json()
@@ -508,12 +574,20 @@ async def login_oidc_callback(
                 system_config.oidc_userinfo_endpoint,
                 headers={"Authorization": f"Bearer {access_token}"},
             )
+        except httpx.TimeoutException:
+            logger.error(
+                f"Timeout while requesting user info from {system_config.oidc_userinfo_endpoint}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="OIDC provider request timed out. Please try again.",
+            )
         except httpx.RequestError as exc:
             logger.error(
                 f"An error occurred while requesting user info {exc.request.url!r}: {exc}"
             )
             raise HTTPException(
-                status_code=500,
+                status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=(
                     f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}."
                 ),
@@ -521,35 +595,73 @@ async def login_oidc_callback(
 
         if user_info_response.status_code != 200:
             logger.error(f"OIDC User Info Error: {user_info_response.text}")
-            raise HTTPException(status_code=400, detail="Failed to retrieve user info")
+            if auth_oidc_logins_total:
+                auth_oidc_logins_total.labels(status="userinfo_error").inc()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to retrieve user info",
+            )
 
         user_info = user_info_response.json()
         if not isinstance(user_info, dict):
-            raise HTTPException(status_code=500, detail="Invalid user info response")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Invalid user info response",
+            )
 
     email = user_info.get("email")
     if not email:
+        if auth_oidc_logins_total:
+            auth_oidc_logins_total.labels(status="no_email").inc()
         raise HTTPException(
-            status_code=400, detail="Email not provided by OIDC provider"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email not provided by OIDC provider",
         )
 
     # Find or create user
-    user = await db.users.find_one({"email": email})
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_email(email)
     if not user:
+        # Generate unique username - try preferred_username first, then email prefix
+        base_username = user_info.get("preferred_username", email.split("@")[0])
+        username = base_username
+
+        # Check for username conflicts and generate unique suffix if needed
+        suffix = 0
+        while await user_repo.exists_by_username(username):
+            suffix += 1
+            username = f"{base_username}{suffix}"
+            if suffix > 100:  # Safety limit
+                # Fall back to email-based username with random suffix
+                username = f"{email.split('@')[0]}_{secrets.token_hex(4)}"
+                break
+
         # Create new user using the User model
         new_user = User(
             email=email,
-            username=user_info.get("preferred_username", email.split("@")[0]),
+            username=username,
             is_active=True,
             is_verified=True,  # Trusted provider
             auth_provider=system_config.oidc_provider_name,
             permissions=[],
         )
 
-        await db.users.insert_one(new_user.model_dump(by_alias=True))
-        user = await db.users.find_one({"_id": new_user.id})
+        await user_repo.create(new_user)
+        user = await user_repo.get_raw_by_id(new_user.id)
         if not user:
-            raise HTTPException(status_code=500, detail="Failed to create user")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create user",
+            )
+    else:
+        # Check if existing user is active
+        if not user.get("is_active", True):
+            if auth_oidc_logins_total:
+                auth_oidc_logins_total.labels(status="inactive_user").inc()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User account is inactive",
+            )
 
     # Check 2FA enforcement (same logic as login)
     permissions = user.get("permissions", [])
@@ -563,6 +675,9 @@ async def login_oidc_callback(
     )
     refresh_token = security.create_refresh_token(user["username"])
 
+    if auth_oidc_logins_total:
+        auth_oidc_logins_total.labels(status="success").inc()
+
     # Redirect to frontend with tokens
     # We'll use a hash fragment to pass the tokens securely
     base_url = settings.FRONTEND_BASE_URL.rstrip("/")
@@ -571,31 +686,101 @@ async def login_oidc_callback(
     return RedirectResponse(frontend_url)
 
 
-@router.post("/reset-password", summary="Reset password with token")
+@router.post(
+    "/forgot-password",
+    response_model=ForgotPasswordResponse,
+    summary="Request password reset",
+)
+async def forgot_password(
+    background_tasks: BackgroundTasks,
+    email: str = Body(..., embed=True),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> ForgotPasswordResponse:
+    """
+    Request a password reset email.
+    This endpoint is public and always returns success to prevent email enumeration.
+    """
+    generic_response = ForgotPasswordResponse(
+        message="If an account with this email exists, a password reset email has been sent."
+    )
+
+    # Check SMTP first - this is a system config issue
+    if not settings.SMTP_HOST:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Email server not configured",
+        )
+
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_email(email)
+
+    # Only send email if user exists and is active
+    if user and user.get("is_active", True):
+        # Don't send reset emails for OIDC users without local password
+        if user.get("auth_provider", "local") == "local" or user.get("hashed_password"):
+            await send_password_reset_email(
+                background_tasks,
+                user["email"],
+                user.get("username", "User"),
+            )
+
+    return generic_response
+
+
+@router.post(
+    "/reset-password",
+    response_model=PasswordResetResponse,
+    summary="Reset password with token",
+)
 async def reset_password(
     reset_in: UserPasswordReset, db: AsyncIOMotorDatabase = Depends(get_database)
-) -> Any:
+) -> PasswordResetResponse:
     """
     Reset password using the token received via email.
     """
     email = security.verify_password_reset_token(reset_in.token)
     if not email:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
         )
 
-    user = await db.users.find_one({"email": email})
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_email(email)
     if not user:
         raise HTTPException(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
+        )
+
+    # Check if user is active
+    if not user.get("is_active", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User account is inactive",
+        )
+
+    # Check if user can reset password (local auth or has existing password)
+    auth_provider = user.get("auth_provider", "local")
+    has_password = user.get("hashed_password") is not None
+    if auth_provider != "local" and not has_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password reset not available for {auth_provider} accounts. Please use your identity provider.",
         )
 
     hashed_password = security.get_password_hash(reset_in.new_password)
 
-    await db.users.update_one(
-        {"_id": user["_id"]}, {"$set": {"hashed_password": hashed_password}}
+    # Update password and invalidate all existing sessions
+    await user_repo.update(
+        user["_id"],
+        {
+            "hashed_password": hashed_password,
+            "last_logout_at": datetime.now(timezone.utc),
+        },
     )
 
-    return {"message": "Password successfully reset"}
+    if auth_password_resets_total:
+        auth_password_resets_total.labels(status="success").inc()
+
+    return PasswordResetResponse(message="Password successfully reset")

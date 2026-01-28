@@ -1,16 +1,43 @@
-from typing import List
+"""
+Webhook API endpoints for managing webhook configurations.
 
-from fastapi import APIRouter, Depends, HTTPException
+Provides CRUD operations for project-specific and global webhooks,
+plus webhook testing functionality.
+"""
+
+from typing import Any, Dict
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
-from app.api.v1.endpoints.projects import check_project_access
+from app.api.v1.helpers import (
+    build_pagination_response,
+    check_webhook_create_permission,
+    check_webhook_list_permission,
+    check_webhook_permission,
+    get_webhook_or_404,
+)
+from app.core.permissions import Permissions
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.models.webhook import Webhook
-from app.schemas.webhook import WebhookCreate, WebhookResponse
+from app.repositories import WebhookRepository
+from app.schemas.webhook import (
+    WebhookCreate,
+    WebhookResponse,
+    WebhookTestRequest,
+    WebhookTestResponse,
+    WebhookUpdate,
+)
+from app.services.webhooks.webhook_service import webhook_service
 
 router = APIRouter()
+
+
+# =============================================================================
+# Project Webhooks
+# =============================================================================
 
 
 @router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201)
@@ -22,56 +49,134 @@ async def create_webhook(
 ):
     """
     Create a webhook for a project.
-    """
-    if (
-        "*" not in current_user.permissions
-        and "webhook:create" not in current_user.permissions
-    ):
-        await check_project_access(project_id, current_user, db, required_role="admin")
 
+    Requires 'webhook:create' permission with project access, or project admin role.
+    """
+    await check_webhook_create_permission(project_id, current_user, db)
+
+    webhook_repo = WebhookRepository(db)
     webhook = Webhook(project_id=project_id, **webhook_in.model_dump())
 
-    await db.webhooks.insert_one(webhook.model_dump(by_alias=True))
-    return webhook
+    return await webhook_repo.create(webhook)
 
 
-@router.get("/project/{project_id}", response_model=List[WebhookResponse])
+@router.get("/project/{project_id}", response_model=Dict[str, Any])
 async def list_webhooks(
     project_id: str,
+    skip: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Number of items to return"),
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    """
+    List all webhooks for a project with pagination.
 
-    webhooks = await db.webhooks.find({"project_id": project_id}).to_list(100)
-    return [Webhook(**w) for w in webhooks]
+    Requires 'webhook:read' permission with project access, or project admin role.
+    """
+    await check_webhook_list_permission(project_id, current_user, db)
+
+    webhook_repo = WebhookRepository(db)
+    total = await webhook_repo.count_by_project(project_id)
+    webhooks = await webhook_repo.find_by_project(project_id, skip=skip, limit=limit)
+
+    items = [w.model_dump(by_alias=True) for w in webhooks]
+    return build_pagination_response(items, total, skip, limit)
+
+
+# =============================================================================
+# Global Webhooks
+# =============================================================================
 
 
 @router.post("/global/", response_model=WebhookResponse, status_code=201)
 async def create_global_webhook(
     webhook_in: WebhookCreate,
-    current_user: User = Depends(deps.PermissionChecker("system:manage")),
+    current_user: User = Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE)),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    Create a global webhook. Requires 'system:manage' permission.
+    Create a global webhook.
+
+    Global webhooks are triggered for all projects.
+    Requires 'system:manage' permission.
     """
+    webhook_repo = WebhookRepository(db)
     webhook = Webhook(project_id=None, **webhook_in.model_dump())
 
-    await db.webhooks.insert_one(webhook.model_dump(by_alias=True))
+    return await webhook_repo.create(webhook)
+
+
+@router.get("/global/", response_model=Dict[str, Any])
+async def list_global_webhooks(
+    skip: int = Query(0, ge=0, description="Number of items to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Number of items to return"),
+    current_user: User = Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE)),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    List global webhooks with pagination.
+
+    Requires 'system:manage' permission.
+    """
+    webhook_repo = WebhookRepository(db)
+    total = await webhook_repo.count_global()
+    webhooks = await webhook_repo.find_global(skip=skip, limit=limit)
+
+    items = [w.model_dump(by_alias=True) for w in webhooks]
+    return build_pagination_response(items, total, skip, limit)
+
+
+# =============================================================================
+# Webhook Management (Get, Update, Delete, Test)
+# =============================================================================
+
+
+@router.get("/{webhook_id}", response_model=WebhookResponse)
+async def get_webhook(
+    webhook_id: str,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    Get a specific webhook by ID.
+
+    Requires 'webhook:read' permission with project access, or project admin role.
+    For global webhooks: requires 'system:manage' permission.
+    """
+    webhook_repo = WebhookRepository(db)
+    webhook = await get_webhook_or_404(webhook_repo, webhook_id)
+    await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_READ)
     return webhook
 
 
-@router.get("/global/", response_model=List[WebhookResponse])
-async def list_global_webhooks(
-    current_user: User = Depends(deps.PermissionChecker("system:manage")),
+@router.patch("/{webhook_id}", response_model=WebhookResponse)
+async def update_webhook(
+    webhook_id: str,
+    webhook_update: WebhookUpdate,
+    current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    List global webhooks. Requires 'system:manage' permission.
+    Update a webhook configuration.
+
+    Only provided fields will be updated.
+    Requires 'webhook:update' permission with project access, or project admin role.
+    For global webhooks: requires 'system:manage' permission.
     """
-    webhooks = await db.webhooks.find({"project_id": None}).to_list(100)
-    return [Webhook(**w) for w in webhooks]
+    webhook_repo = WebhookRepository(db)
+    webhook = await get_webhook_or_404(webhook_repo, webhook_id)
+    await check_webhook_permission(
+        webhook, current_user, db, Permissions.WEBHOOK_UPDATE
+    )
+
+    # Build update dict with only provided fields
+    update_data = webhook_update.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Update and return updated webhook
+    updated_webhook = await webhook_repo.update(webhook_id, update_data)
+    return updated_webhook
 
 
 @router.delete("/{webhook_id}", status_code=204)
@@ -79,27 +184,44 @@ async def delete_webhook(
     webhook_id: str,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
+) -> None:
+    """
+    Delete a webhook.
+
+    Requires 'webhook:delete' permission with project access, or project admin role.
+    For global webhooks: requires 'system:manage' permission.
+    """
+    webhook_repo = WebhookRepository(db)
+    webhook = await get_webhook_or_404(webhook_repo, webhook_id)
+    await check_webhook_permission(
+        webhook, current_user, db, Permissions.WEBHOOK_DELETE
+    )
+
+    await webhook_repo.delete(webhook_id)
+
+
+@router.post("/{webhook_id}/test", response_model=WebhookTestResponse)
+async def test_webhook(
+    webhook_id: str,
+    test_request: WebhookTestRequest = WebhookTestRequest(),
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    webhook_data = await db.webhooks.find_one({"_id": webhook_id})
-    if not webhook_data:
-        raise HTTPException(status_code=404, detail="Webhook not found")
+    """
+    Send a test webhook to verify the configuration.
 
-    webhook = Webhook(**webhook_data)
+    Sends a test payload to the webhook URL and returns the result.
+    Useful for verifying webhook configuration before relying on it.
+    Requires 'webhook:update' permission with project access, or project admin role.
+    For global webhooks: requires 'system:manage' permission.
+    """
+    webhook_repo = WebhookRepository(db)
+    webhook = await get_webhook_or_404(webhook_repo, webhook_id)
+    await check_webhook_permission(
+        webhook, current_user, db, Permissions.WEBHOOK_UPDATE
+    )
 
-    if webhook.project_id:
-        if (
-            "*" not in current_user.permissions
-            and "webhook:delete" not in current_user.permissions
-        ):
-            await check_project_access(
-                webhook.project_id, current_user, db, required_role="admin"
-            )
-    else:
-        # Global webhook
-        if (
-            "*" not in current_user.permissions
-            and "system:manage" not in current_user.permissions
-        ):
-            raise HTTPException(status_code=403, detail="Not enough permissions")
+    # Send test webhook
+    result = await webhook_service.test_webhook(webhook, test_request.event_type)
 
-    await db.webhooks.delete_one({"_id": webhook_id})
+    return WebhookTestResponse(**result)

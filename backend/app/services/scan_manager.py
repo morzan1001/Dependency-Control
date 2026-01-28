@@ -12,7 +12,7 @@ This service handles:
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -45,7 +45,7 @@ class ScanManager:
         self.project = project
         self._waivers_cache: Optional[List[Dict]] = None
 
-    def _build_pipeline_url(self, data: BaseIngest) -> Optional[str]:
+    def build_pipeline_url(self, data: BaseIngest) -> Optional[str]:
         """Construct pipeline URL if not provided."""
         if data.pipeline_url:
             return data.pipeline_url
@@ -59,7 +59,7 @@ class ScanManager:
 
         Returns a ScanContext with the scan_id and whether it's new.
         """
-        pipeline_url = self._build_pipeline_url(data)
+        pipeline_url = self.build_pipeline_url(data)
 
         # Try to find existing scan for this pipeline
         existing_scan = None
@@ -131,7 +131,7 @@ class ScanManager:
         self._waivers_cache = await cursor.to_list(length=1000)
         return self._waivers_cache
 
-    def _finding_matches_waiver(self, finding: Finding, waiver: Dict) -> bool:
+    def _finding_matches_waiver(self, finding: Finding, waiver: Dict[str, Any]) -> bool:
         """Check if a finding matches a waiver."""
         # Match by finding ID
         if waiver.get("finding_id") and waiver["finding_id"] == finding.id:
@@ -147,7 +147,7 @@ class ScanManager:
 
         return False
 
-    async def apply_waivers(self, findings: List[Finding]) -> tuple[List[Finding], int]:
+    async def apply_waivers(self, findings: List[Finding]) -> Tuple[List[Finding], int]:
         """
         Apply waivers to findings.
 
@@ -196,31 +196,31 @@ class ScanManager:
     ) -> None:
         """
         Register that a scanner has submitted results.
-        
+
         This method:
         1. Updates last_result_at timestamp
         2. Adds analyzer_name to received_results list
         3. If scan was 'completed', resets status to 'pending' and triggers re-aggregation
         4. Optionally triggers the aggregation (for SBOM scanner)
-        
+
         Args:
             scan_id: The scan ID
             analyzer_name: Name of the analyzer that submitted results
             trigger_analysis: If True, trigger the aggregation worker
         """
         now = datetime.now(timezone.utc)
-        
+
         # Get current scan status
         scan = await self.db.scans.find_one({"_id": scan_id})
         if not scan:
             return
-        
+
         current_status = scan.get("status", "pending")
-        
+
         # Determine new status and whether to trigger re-aggregation
         new_status = current_status
         should_reaggregate = False
-        
+
         if current_status == "completed":
             # Late result arrived after completion - need to re-aggregate
             new_status = "pending"
@@ -229,7 +229,7 @@ class ScanManager:
                 f"Late result from {analyzer_name} for completed scan {scan_id}. "
                 f"Resetting to pending for re-aggregation."
             )
-        
+
         update_ops: Dict[str, Any] = {
             "$set": {
                 "last_result_at": now,
@@ -237,12 +237,12 @@ class ScanManager:
             },
             "$addToSet": {"received_results": analyzer_name},
         }
-        
+
         if new_status != current_status:
             update_ops["$set"]["status"] = new_status
-        
+
         await self.db.scans.update_one({"_id": scan_id}, update_ops)
-        
+
         # Trigger aggregation if:
         # 1. Explicitly requested (SBOM scanner), OR
         # 2. Late result arrived after completion

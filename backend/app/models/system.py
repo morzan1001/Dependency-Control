@@ -29,7 +29,10 @@ class SystemSettings(BaseModel):
     # Integrations
     github_token: Optional[str] = Field(
         None,
-        description="Personal Access Token for GitHub API. Increases rate limits for GHSA lookups and maintainer checks.",
+        description=(
+            "Personal Access Token for GitHub API. "
+            "Increases rate limits for GHSA lookups and maintainer checks."
+        ),
     )
     open_source_malware_api_key: Optional[str] = None
     slack_bot_token: Optional[str] = None
@@ -56,7 +59,10 @@ class SystemSettings(BaseModel):
     gitlab_url: str = "https://gitlab.com"
     gitlab_access_token: Optional[str] = Field(
         None,
-        description="Personal or Group Access Token with 'api' scope. Must have at least 'Reporter' role in the projects to post comments.",
+        description=(
+            "Personal or Group Access Token with 'api' scope. "
+            "Must have at least 'Reporter' role in the projects to post comments."
+        ),
     )
     gitlab_auto_create_projects: bool = False
     gitlab_sync_teams: bool = False

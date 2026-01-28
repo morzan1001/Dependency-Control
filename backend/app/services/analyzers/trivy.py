@@ -1,104 +1,168 @@
 import asyncio
 import json
 import logging
-import os
-import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from .base import Analyzer
+from app.models.finding import Severity
+
+from .cli_base import CLIAnalyzer
 
 logger = logging.getLogger(__name__)
 
 
-class TrivyAnalyzer(Analyzer):
+class TrivyAnalyzer(CLIAnalyzer):
     name = "trivy"
+    cli_command = "trivy"
+    empty_result_key = "Results"
 
-    async def analyze(
+    def _build_command_args(
+        self, sbom_path: str, settings: Optional[Dict[str, Any]]
+    ) -> List[str]:
+        """Build Trivy command arguments."""
+        return [
+            "trivy",
+            "sbom",
+            "--format",
+            "json",
+            "--quiet",
+            sbom_path,
+        ]
+
+    async def _preprocess_sbom(
         self,
         sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        # Create a temporary file for the SBOM
-        with tempfile.NamedTemporaryFile(
-            mode="w+", suffix=".json", delete=False
-        ) as tmp_sbom:
-            json.dump(sbom, tmp_sbom)
-            tmp_sbom_path = tmp_sbom.name
+        tmp_sbom_path: str,
+        settings: Optional[Dict[str, Any]],
+    ) -> Tuple[str, List[str]]:
+        """
+        Convert SBOM to CycloneDX if needed.
 
-        target_sbom_path = tmp_sbom_path
-        converted_sbom_path = None
+        Trivy supports CycloneDX and SPDX formats natively.
+        For other formats (like Syft JSON), we convert using syft.
+        """
+        is_cyclonedx = "bomFormat" in sbom and sbom["bomFormat"] == "CycloneDX"
+        is_spdx = "spdxVersion" in sbom
 
+        if is_cyclonedx or is_spdx:
+            return tmp_sbom_path, []
+
+        # Attempt to convert using Syft
+        logger.info(
+            "SBOM format not natively supported by Trivy (likely Syft JSON). "
+            "Attempting conversion..."
+        )
+        converted_sbom_path = tmp_sbom_path + ".cdx.json"
+
+        convert_process = await asyncio.create_subprocess_exec(
+            "syft",
+            "convert",
+            tmp_sbom_path,
+            "-o",
+            "cyclonedx-json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await convert_process.communicate()
+
+        if convert_process.returncode == 0:
+            # Write the converted output to file
+            with open(converted_sbom_path, "wb") as f:
+                f.write(stdout)
+            logger.info("Successfully converted SBOM to CycloneDX for Trivy.")
+            return converted_sbom_path, [converted_sbom_path]
+
+        logger.warning(
+            f"Syft conversion failed: {stderr.decode()}. "
+            "Proceeding with original file."
+        )
+        return tmp_sbom_path, []
+
+    def _parse_output(self, stdout: bytes) -> Dict[str, Any]:
+        """Parse Trivy JSON output and normalize vulnerabilities."""
         try:
-            # Check if conversion is needed (Trivy supports CycloneDX and SPDX)
-            is_cyclonedx = "bomFormat" in sbom and sbom["bomFormat"] == "CycloneDX"
-            is_spdx = "spdxVersion" in sbom
+            output_str = stdout.decode()
+            if not output_str.strip():
+                return {self.empty_result_key: [], "trivy_vulnerabilities": []}
 
-            if not (is_cyclonedx or is_spdx):
-                # Attempt to convert using Syft
-                logger.info(
-                    "SBOM format not natively supported by Trivy (likely Syft JSON). Attempting conversion..."
+            data = json.loads(output_str)
+            normalized_vulns = self._normalize_vulnerabilities(data)
+
+            return {
+                **data,
+                "trivy_vulnerabilities": normalized_vulns,
+            }
+        except json.JSONDecodeError:
+            output_str = stdout.decode()
+            return {
+                "error": f"Invalid JSON output from {self.name}",
+                "output": output_str,
+            }
+
+    def _normalize_vulnerabilities(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Normalize Trivy vulnerabilities with consistent severity and message."""
+        normalized = []
+        results = data.get("Results", [])
+
+        for result in results:
+            target = result.get("Target", "")
+            vulns = result.get("Vulnerabilities", [])
+
+            for vuln in vulns:
+                severity = self._map_severity(vuln.get("Severity", "UNKNOWN"))
+                vuln_id = vuln.get("VulnerabilityID", "")
+                pkg_name = vuln.get("PkgName", "")
+                installed_version = vuln.get("InstalledVersion", "")
+                fixed_version = vuln.get("FixedVersion", "")
+                title = vuln.get("Title", "")
+
+                message = self._create_message(
+                    vuln_id, pkg_name, installed_version, fixed_version, title
                 )
-                converted_sbom_path = tmp_sbom_path + ".cdx.json"
 
-                convert_process = await asyncio.create_subprocess_exec(
-                    "syft",
-                    "convert",
-                    tmp_sbom_path,
-                    "-o",
-                    "cyclonedx-json",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                normalized.append(
+                    {
+                        "id": vuln_id,
+                        "component": pkg_name,
+                        "version": installed_version,
+                        "fixed_version": fixed_version,
+                        "severity": severity,
+                        "message": message,
+                        "target": target,
+                        "title": title,
+                        "description": vuln.get("Description", ""),
+                        "references": vuln.get("References", []),
+                        "cvss": vuln.get("CVSS", {}),
+                    }
                 )
-                stdout, stderr = await convert_process.communicate()
 
-                if convert_process.returncode == 0:
-                    # Write the converted output to file
-                    with open(converted_sbom_path, "wb") as f:
-                        f.write(stdout)
-                    target_sbom_path = converted_sbom_path
-                    logger.info("Successfully converted SBOM to CycloneDX for Trivy.")
-                else:
-                    logger.warning(
-                        f"Syft conversion failed: {stderr.decode()}. Proceeding with original file."
-                    )
+        return normalized
 
-            # Run Trivy asynchronously
-            # The SBOM file is scanned
-            process = await asyncio.create_subprocess_exec(
-                "trivy",
-                "sbom",
-                "--format",
-                "json",
-                "--quiet",
-                target_sbom_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+    def _map_severity(self, trivy_severity: str) -> str:
+        """Map Trivy severity to our Severity enum."""
+        severity_map = {
+            "CRITICAL": Severity.CRITICAL.value,
+            "HIGH": Severity.HIGH.value,
+            "MEDIUM": Severity.MEDIUM.value,
+            "LOW": Severity.LOW.value,
+            "UNKNOWN": Severity.INFO.value,
+        }
+        return severity_map.get(trivy_severity.upper(), Severity.MEDIUM.value)
 
-            stdout, stderr = await process.communicate()
+    def _create_message(
+        self,
+        vuln_id: str,
+        pkg_name: str,
+        installed_version: str,
+        fixed_version: str,
+        title: str,
+    ) -> str:
+        """Create a human-readable message for the vulnerability."""
+        if title:
+            msg = f"{vuln_id}: {title}"
+        else:
+            msg = f"{vuln_id} in {pkg_name}@{installed_version}"
 
-            if process.returncode != 0:
-                error_msg = stderr.decode()
-                logger.error(f"Trivy failed: {error_msg}")
-                return {"error": "Trivy analysis failed", "details": error_msg}
+        if fixed_version:
+            msg += f" (fix available: {fixed_version})"
 
-            try:
-                output_str = stdout.decode()
-                if not output_str.strip():
-                    return {"results": []}  # Empty result
-
-                trivy_result = json.loads(output_str)
-                return trivy_result
-            except json.JSONDecodeError:
-                return {"error": "Invalid JSON output from Trivy", "output": output_str}
-
-        except Exception as e:
-            return {"error": f"Exception during Trivy analysis: {str(e)}"}
-
-        finally:
-            # Cleanup
-            if os.path.exists(tmp_sbom_path):
-                os.remove(tmp_sbom_path)
-            if converted_sbom_path and os.path.exists(converted_sbom_path):
-                os.remove(converted_sbom_path)
+        return msg

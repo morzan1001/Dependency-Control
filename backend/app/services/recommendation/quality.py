@@ -1,6 +1,7 @@
 from collections import defaultdict
 from typing import Any, Dict, List
 
+from app.core.constants import SCORECARD_LOW_THRESHOLD
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 
 
@@ -33,7 +34,7 @@ def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
         project_url = details.get("project_url", "")
 
         # Track packages with very low scores
-        if overall_score < 4.0:
+        if overall_score < SCORECARD_LOW_THRESHOLD:
             low_score_packages.append(
                 {
                     "component": component,
@@ -140,7 +141,8 @@ def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
                 priority=Priority.MEDIUM,
                 title="Review Low-Quality Dependencies",
                 description=(
-                    f"Found {len(low_score_packages)} packages with OpenSSF Scorecard scores below 4.0/10. "
+                    f"Found {len(low_score_packages)} packages with OpenSSF Scorecard "
+                    f"scores below {SCORECARD_LOW_THRESHOLD}/10. "
                     "These packages may have quality, security, or maintenance concerns."
                 ),
                 impact={

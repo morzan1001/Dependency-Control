@@ -1,14 +1,31 @@
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from app.models.system import SystemSettings
 
 
 class NotificationProvider(ABC):
     @abstractmethod
-    async def send(self, destination: str, subject: str, message: str) -> bool:
+    async def send(
+        self,
+        destination: str,
+        subject: str,
+        message: str,
+        system_settings: Optional["SystemSettings"] = None,
+        **kwargs: Any,
+    ) -> bool:
         """
         Send a notification.
-        :param destination: The destination (email address, slack channel/user id)
-        :param subject: The subject of the notification
-        :param message: The body of the notification
-        :return: True if successful, False otherwise
+
+        Args:
+            destination: The destination (email address, slack channel/user id)
+            subject: The subject of the notification
+            message: The body of the notification
+            system_settings: System configuration for the provider
+            **kwargs: Additional provider-specific arguments (e.g., html_message for email)
+
+        Returns:
+            True if successful, False otherwise
         """
         pass

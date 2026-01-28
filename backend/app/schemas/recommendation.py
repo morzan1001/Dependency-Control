@@ -75,6 +75,14 @@ class Priority(str, Enum):
     LOW = "low"
 
 
+class Effort(str, Enum):
+    """Effort level required to implement a recommendation."""
+
+    LOW = "low"  # Quick fix, minimal testing needed
+    MEDIUM = "medium"  # Some development and testing required
+    HIGH = "high"  # Significant development, testing, and coordination needed
+
+
 @dataclass
 class FindingInfo:
     """Generic information about any finding."""
@@ -149,15 +157,19 @@ class Recommendation:
     priority: Priority
     title: str
     description: str
-    impact: Dict[str, int]  # {critical: X, high: Y, ...}
+    impact: Dict[str, Any]  # {critical: X, high: Y, total: Z, ...} + optional metadata
     affected_components: List[str]
     action: Dict[str, Any]  # Specific action details
-    effort: str = "medium"  # low, medium, high
+    effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
     affected_projects: List[Dict[str, Any]] = field(
         default_factory=list
     )  # [{id, name}]
 
     def to_dict(self) -> Dict[str, Any]:
+        # Handle both Effort enum and string values
+        effort_value = (
+            self.effort.value if isinstance(self.effort, Effort) else self.effort
+        )
         return {
             "type": self.type.value,
             "priority": self.priority.value,
@@ -166,6 +178,6 @@ class Recommendation:
             "impact": self.impact,
             "affected_components": self.affected_components,
             "action": self.action,
-            "effort": self.effort,
+            "effort": effort_value,
             "affected_projects": self.affected_projects,
         }

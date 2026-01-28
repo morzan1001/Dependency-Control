@@ -4,6 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
 from app.models.finding import FindingType
 
 
@@ -20,9 +21,10 @@ class Waiver(BaseModel):
     finding_type: Optional[FindingType] = (
         None  # e.g. "vulnerability", "license", "malware", "eol"
     )
+    vulnerability_id: Optional[str] = None  # e.g. "CVE-2021-23337"
 
     reason: str
-    status: str = "accepted_risk"  # accepted_risk, false_positive
+    status: str = WAIVER_STATUS_ACCEPTED_RISK
     expiration_date: Optional[datetime] = None
     created_by: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

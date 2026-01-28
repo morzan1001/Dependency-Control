@@ -1,5 +1,7 @@
 from typing import Optional
 
+from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD
+
 
 def calculate_exploit_maturity(
     is_kev: bool, kev_ransomware: bool, epss_score: Optional[float]
@@ -10,9 +12,9 @@ def calculate_exploit_maturity(
     Levels:
     - weaponized: Active ransomware use
     - active: In CISA KEV (confirmed active exploitation)
-    - high: EPSS > 0.1 (10% chance of exploitation)
-    - medium: EPSS > 0.01 (1% chance)
-    - low: EPSS <= 0.01
+    - high: EPSS >= HIGH_THRESHOLD (10% chance of exploitation)
+    - medium: EPSS >= MEDIUM_THRESHOLD (1% chance)
+    - low: EPSS < MEDIUM_THRESHOLD
     - unknown: No data
     """
     if kev_ransomware:
@@ -20,9 +22,9 @@ def calculate_exploit_maturity(
     if is_kev:
         return "active"
     if epss_score is not None:
-        if epss_score > 0.1:
+        if epss_score >= EPSS_HIGH_THRESHOLD:
             return "high"
-        if epss_score > 0.01:
+        if epss_score >= EPSS_MEDIUM_THRESHOLD:
             return "medium"
         return "low"
     return "unknown"
@@ -64,9 +66,9 @@ def calculate_risk_score(
     # EPSS tells us the PROBABILITY of exploitation in the next 30 days
     if epss_score is not None:
         # Non-linear scaling: high EPSS scores get disproportionately more weight
-        if epss_score >= 0.1:  # Top 10% - very likely to be exploited
+        if epss_score >= EPSS_HIGH_THRESHOLD:  # Top 10% - very likely to be exploited
             epss_contribution = 20 + (min(epss_score, 1.0) * 5)
-        elif epss_score >= 0.01:  # 1-10% - moderate likelihood
+        elif epss_score >= EPSS_MEDIUM_THRESHOLD:  # 1-10% - moderate likelihood
             epss_contribution = 10 + (epss_score * 100)  # 10-20 points
         else:  # < 1% - low likelihood
             epss_contribution = epss_score * 1000  # 0-10 points

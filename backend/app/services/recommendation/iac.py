@@ -94,7 +94,7 @@ def process_iac(findings: List[Dict[str, Any]]) -> List[Recommendation]:
 
 def _get_common_iac_issues(findings: List[Dict[str, Any]]) -> List[str]:
     """Extract common IAC issue types."""
-    issues = defaultdict(int)
+    issues: Dict[str, int] = defaultdict(int)
     for f in findings:
         details = f.get("details", {})
         issue_type = (

@@ -21,6 +21,16 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.constants import (
+    ANALYZER_BATCH_SIZES,
+    ANALYZER_TIMEOUTS,
+    GITHUB_API_URL,
+    NPM_REGISTRY_URL,
+    PYPI_API_URL,
+    STALE_PACKAGE_THRESHOLD_DAYS,
+    STALE_PACKAGE_WARNING_DAYS,
+)
+from app.models.finding import Severity
 
 from .base import Analyzer
 from .purl_utils import is_npm, is_pypi, parse_purl
@@ -31,9 +41,15 @@ logger = logging.getLogger(__name__)
 class MaintainerRiskAnalyzer(Analyzer):
     name = "maintainer_risk"
 
-    # Thresholds for risk assessment
-    STALE_THRESHOLD_DAYS = 730  # 2 years without release = potentially abandoned
-    WARNING_THRESHOLD_DAYS = 365  # 1 year = warning
+    @staticmethod
+    def _parse_iso_datetime(dt_string: Optional[str]) -> Optional[datetime]:
+        """Parse ISO datetime string, handling Z suffix."""
+        if not dt_string:
+            return None
+        try:
+            return datetime.fromisoformat(dt_string.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
 
     # Free email providers (lower accountability)
     FREE_EMAIL_PROVIDERS = {
@@ -62,10 +78,10 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         # Extract GitHub token from settings for authenticated API access
         github_token = settings.get("github_token") if settings else None
+        timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
+        batch_size = ANALYZER_BATCH_SIZES.get("maintainer_risk", 10)
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Process in batches to avoid rate limiting
-            batch_size = 10
+        async with httpx.AsyncClient(timeout=timeout) as client:
 
             for i in range(0, len(components), batch_size):
                 batch = components[i : i + batch_size]
@@ -104,104 +120,72 @@ class MaintainerRiskAnalyzer(Analyzer):
         # Extract repository URL from SBOM if available
         repo_url = component.get("_repository_url") or component.get("repository_url")
 
-        risks = []
-        maintainer_info = {}
-
         # Determine registry and get cache key
         parsed = parse_purl(purl)
         registry = parsed.registry_system if parsed else None
         cache_key = CacheKeys.maintainer(registry, name) if registry else None
 
-        # Check cache first
-        if cache_key:
-            cached_info = await cache_service.get(cache_key)
-            if cached_info is not None:
-                if cached_info:  # Not a negative cache entry
-                    maintainer_info = cached_info.get("maintainer_info", {})
-                    if registry == "pypi":
-                        risks.extend(self._assess_risks(maintainer_info, "pypi"))
-                    elif registry == "npm":
-                        risks.extend(self._assess_risks(maintainer_info, "npm"))
+        if not cache_key:
+            return None
 
-                    # Check GitHub if available
-                    github_info = cached_info.get("github_info")
-                    if github_info:
-                        maintainer_info["github"] = github_info
-                        risks.extend(self._assess_github_risks(github_info))
-                else:
-                    # Negative cache - no info available
-                    return None
+        async def fetch_maintainer_data() -> Optional[Dict[str, Any]]:
+            """Fetch maintainer data from APIs."""
+            cache_data: Dict[str, Any] = {"maintainer_info": {}, "github_info": None}
 
-                if not risks:
-                    return None
+            if is_pypi(purl):
+                info = await self._check_pypi(client, name)
+                if info:
+                    cache_data["maintainer_info"] = info
 
-                max_severity = max(r.get("severity_score", 1) for r in risks)
-                overall_severity = (
-                    "CRITICAL"
-                    if max_severity >= 4
-                    else (
-                        "HIGH"
-                        if max_severity >= 3
-                        else "MEDIUM" if max_severity >= 2 else "LOW"
-                    )
-                )
-                return {
-                    "component": name,
-                    "version": version,
-                    "purl": purl,
-                    "risks": risks,
-                    "severity": overall_severity,
-                    "maintainer_info": maintainer_info,
-                }
+            elif is_npm(purl):
+                info = await self._check_npm(client, name)
+                if info:
+                    cache_data["maintainer_info"] = info
 
-        # Fetch from APIs if not cached
-        cache_data = {"maintainer_info": {}, "github_info": None}
+            # Check GitHub repository if available
+            github_repo = self._extract_github_repo(repo_url)
+            if github_repo:
+                gh_info = await self._check_github(client, github_repo, github_token)
+                if gh_info:
+                    cache_data["github_info"] = gh_info
 
-        if is_pypi(purl):
-            info = await self._check_pypi(client, name)
-            if info:
-                maintainer_info = info
-                cache_data["maintainer_info"] = info
-                risks.extend(self._assess_risks(info, "pypi"))
+            # Return None for negative cache if no data found
+            if not cache_data["maintainer_info"] and not cache_data["github_info"]:
+                return {}  # Empty dict for negative cache
 
-        elif is_npm(purl):
-            info = await self._check_npm(client, name)
-            if info:
-                maintainer_info = info
-                cache_data["maintainer_info"] = info
-                risks.extend(self._assess_risks(info, "npm"))
+            return cache_data
 
-        # Check GitHub repository if available
-        github_repo = self._extract_github_repo(repo_url)
-        if github_repo:
-            gh_info = await self._check_github(client, github_repo, github_token)
-            if gh_info:
-                maintainer_info["github"] = gh_info
-                cache_data["github_info"] = gh_info
-                risks.extend(self._assess_github_risks(gh_info))
+        # Use distributed lock to prevent multiple pods fetching same package
+        cached_info = await cache_service.get_or_fetch_with_lock(
+            key=cache_key,
+            fetch_fn=fetch_maintainer_data,
+            ttl_seconds=CacheTTL.MAINTAINER_INFO,
+        )
 
-        # Cache the result
-        if cache_key:
-            if cache_data["maintainer_info"] or cache_data["github_info"]:
-                await cache_service.set(cache_key, cache_data, CacheTTL.MAINTAINER_INFO)
-            else:
-                # Cache negative result
-                await cache_service.set(cache_key, {}, CacheTTL.NEGATIVE_RESULT)
+        if not cached_info:
+            return None
+
+        # Process the cached/fetched data
+        risks = []
+        maintainer_info = cached_info.get("maintainer_info", {})
+
+        if maintainer_info:
+            if registry == "pypi":
+                risks.extend(self._assess_risks(maintainer_info, "pypi"))
+            elif registry == "npm":
+                risks.extend(self._assess_risks(maintainer_info, "npm"))
+
+        # Check GitHub info
+        github_info = cached_info.get("github_info")
+        if github_info:
+            maintainer_info["github"] = github_info
+            risks.extend(self._assess_github_risks(github_info))
 
         if not risks:
             return None
 
-        # Determine overall severity
-        max_severity = max(r.get("severity_score", 1) for r in risks)
-        overall_severity = (
-            "CRITICAL"
-            if max_severity >= 4
-            else (
-                "HIGH"
-                if max_severity >= 3
-                else "MEDIUM" if max_severity >= 2 else "LOW"
-            )
-        )
+        overall_severity = self._calculate_overall_severity(risks)
+        message = self._create_summary_message(name, version, risks)
 
         return {
             "component": name,
@@ -209,15 +193,52 @@ class MaintainerRiskAnalyzer(Analyzer):
             "purl": purl,
             "risks": risks,
             "severity": overall_severity,
+            "message": message,
             "maintainer_info": maintainer_info,
         }
+
+    def _calculate_overall_severity(self, risks: List[Dict[str, Any]]) -> str:
+        """Calculate overall severity from individual risk scores."""
+        if not risks:
+            return Severity.LOW.value
+        max_severity = max(r.get("severity_score", 1) for r in risks)
+        if max_severity >= 4:
+            return Severity.CRITICAL.value
+        elif max_severity >= 3:
+            return Severity.HIGH.value
+        elif max_severity >= 2:
+            return Severity.MEDIUM.value
+        return Severity.LOW.value
+
+    def _create_summary_message(
+        self, name: str, version: str, risks: List[Dict[str, Any]]
+    ) -> str:
+        """Create a human-readable summary message for maintainer risks."""
+        if not risks:
+            return ""
+
+        risk_types = [r.get("type", "") for r in risks]
+        risk_count = len(risks)
+
+        # Prioritize most critical risk types in message
+        if "archived_repo" in risk_types:
+            return f"{name}@{version}: Repository is archived - no longer maintained"
+        if "stale_package" in risk_types:
+            return f"{name}@{version}: Package appears abandoned (no recent releases)"
+        if "inactive_repo" in risk_types:
+            return f"{name}@{version}: Repository has no recent activity"
+        if "single_maintainer" in risk_types:
+            return f"{name}@{version}: Single maintainer (bus factor risk)"
+
+        # Generic message for other risks
+        return f"{name}@{version} has {risk_count} maintainer risk{'s' if risk_count > 1 else ''}"
 
     async def _check_pypi(
         self, client: httpx.AsyncClient, name: str
     ) -> Optional[Dict[str, Any]]:
         """Fetch maintainer info from PyPI."""
         try:
-            response = await client.get(f"https://pypi.org/pypi/{name}/json")
+            response = await client.get(f"{PYPI_API_URL}/{name}/json")
             if response.status_code != 200:
                 return None
 
@@ -230,15 +251,9 @@ class MaintainerRiskAnalyzer(Analyzer):
             for ver, files in releases.items():
                 for f in files:
                     upload_time = f.get("upload_time_iso_8601") or f.get("upload_time")
-                    if upload_time:
-                        try:
-                            dt = datetime.fromisoformat(
-                                upload_time.replace("Z", "+00:00")
-                            )
-                            if latest_release_date is None or dt > latest_release_date:
-                                latest_release_date = dt
-                        except (ValueError, TypeError):
-                            pass
+                    dt = self._parse_iso_datetime(upload_time)
+                    if dt and (latest_release_date is None or dt > latest_release_date):
+                        latest_release_date = dt
 
             return {
                 "author": info.get("author"),
@@ -257,6 +272,12 @@ class MaintainerRiskAnalyzer(Analyzer):
                 "home_page": info.get("home_page"),
                 "project_urls": info.get("project_urls", {}),
             }
+        except httpx.TimeoutException:
+            logger.debug(f"PyPI API timeout for {name}")
+            return None
+        except httpx.ConnectError:
+            logger.debug(f"PyPI API connection error for {name}")
+            return None
         except Exception as e:
             logger.debug(f"PyPI check failed for {name}: {e}")
             return None
@@ -267,7 +288,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         """Fetch maintainer info from npm."""
         try:
             encoded_name = name.replace("/", "%2F") if "/" in name else name
-            response = await client.get(f"https://registry.npmjs.org/{encoded_name}")
+            response = await client.get(f"{NPM_REGISTRY_URL}/{encoded_name}")
             if response.status_code != 200:
                 return None
 
@@ -278,14 +299,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
             # Find latest release date
             time_info = data.get("time", {})
-            latest_release_date = None
-            if time_info.get("modified"):
-                try:
-                    latest_release_date = datetime.fromisoformat(
-                        time_info["modified"].replace("Z", "+00:00")
-                    )
-                except (ValueError, TypeError):
-                    pass
+            latest_release_date = self._parse_iso_datetime(time_info.get("modified"))
 
             return {
                 "maintainers": maintainers,
@@ -302,6 +316,12 @@ class MaintainerRiskAnalyzer(Analyzer):
                 "homepage": data.get("homepage"),
                 "repository": data.get("repository", {}).get("url"),
             }
+        except httpx.TimeoutException:
+            logger.debug(f"npm API timeout for {name}")
+            return None
+        except httpx.ConnectError:
+            logger.debug(f"npm API connection error for {name}")
+            return None
         except Exception as e:
             logger.debug(f"npm check failed for {name}: {e}")
             return None
@@ -322,7 +342,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                 headers["Authorization"] = f"Bearer {github_token}"
 
             response = await client.get(
-                f"https://api.github.com/repos/{repo}",
+                f"{GITHUB_API_URL}/repos/{repo}",
                 headers=headers,
             )
             if response.status_code != 200:
@@ -331,14 +351,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             data = response.json()
 
             # Parse dates
-            pushed_at = None
-            if data.get("pushed_at"):
-                try:
-                    pushed_at = datetime.fromisoformat(
-                        data["pushed_at"].replace("Z", "+00:00")
-                    )
-                except (ValueError, TypeError):
-                    pass
+            pushed_at = self._parse_iso_datetime(data.get("pushed_at"))
 
             return {
                 "stars": data.get("stargazers_count", 0),
@@ -350,6 +363,12 @@ class MaintainerRiskAnalyzer(Analyzer):
                     (datetime.now(timezone.utc) - pushed_at).days if pushed_at else None
                 ),
             }
+        except httpx.TimeoutException:
+            logger.debug(f"GitHub API timeout for {repo}")
+            return None
+        except httpx.ConnectError:
+            logger.debug(f"GitHub API connection error for {repo}")
+            return None
         except Exception as e:
             logger.debug(f"GitHub check failed for {repo}: {e}")
             return None
@@ -363,7 +382,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         # Check for stale packages
         days_since_release = info.get("days_since_release")
         if days_since_release:
-            if days_since_release > self.STALE_THRESHOLD_DAYS:
+            if days_since_release > STALE_PACKAGE_THRESHOLD_DAYS:
                 risks.append(
                     {
                         "type": "stale_package",
@@ -372,7 +391,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                         "detail": f"Last release: {info.get('latest_release_date')}",
                     }
                 )
-            elif days_since_release > self.WARNING_THRESHOLD_DAYS:
+            elif days_since_release > STALE_PACKAGE_WARNING_DAYS:
                 risks.append(
                     {
                         "type": "infrequent_updates",
@@ -386,7 +405,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         email = info.get("maintainer_email") or info.get("author_email")
         if email:
             domain = email.split("@")[-1].lower() if "@" in email else ""
-            if domain in self.FREE_EMAIL_PROVIDERS:
+            if domain and domain in self.FREE_EMAIL_PROVIDERS:
                 risks.append(
                     {
                         "type": "free_email_maintainer",
@@ -426,7 +445,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         # No recent activity
         days_since_push = gh_info.get("days_since_push")
-        if days_since_push and days_since_push > self.STALE_THRESHOLD_DAYS:
+        if days_since_push and days_since_push > STALE_PACKAGE_THRESHOLD_DAYS:
             risks.append(
                 {
                     "type": "inactive_repo",

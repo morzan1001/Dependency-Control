@@ -1,4 +1,5 @@
 from .base import Analyzer
+from .cli_base import CLIAnalyzer
 from .deps_dev import DepsDevAnalyzer
 from .end_of_life import EndOfLifeAnalyzer
 from .epss_kev import EPSSKEVAnalyzer
@@ -15,6 +16,7 @@ from .typosquatting import TyposquattingAnalyzer
 
 __all__ = [
     "Analyzer",
+    "CLIAnalyzer",
     "DepsDevAnalyzer",
     "EndOfLifeAnalyzer",
     "EPSSKEVAnalyzer",

@@ -1,10 +1,11 @@
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from app.schemas.recommendation import (
+    Priority,
     Recommendation,
     RecommendationType,
-    Priority,
 )
+from app.core.constants import SIMILAR_PACKAGE_GROUPS
 
 
 def analyze_deep_dependency_chains(
@@ -13,11 +14,53 @@ def analyze_deep_dependency_chains(
     """
     Identify dependencies with very deep transitive chains.
     Deep chains increase supply chain risk and make updates harder.
+    Also detects circular dependencies.
     """
+    if not dependencies:
+        return []
+
     recommendations = []
 
     # Build a simple depth map based on parent_components
-    depth_map = {}  # purl/name -> estimated depth
+    depth_map: Dict[str, int] = {}  # purl/name -> estimated depth
+    in_cycle: set = set()  # Track nodes that are part of cycles
+
+    # Build adjacency list for cycle detection
+    children_map: Dict[str, List[str]] = {}  # parent -> list of children
+    for dep in dependencies:
+        key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
+        parents = dep.get("parent_components", [])
+        for parent in parents:
+            if parent not in children_map:
+                children_map[parent] = []
+            children_map[parent].append(key)
+
+    # Detect cycles using DFS with coloring (white=0, gray=1, black=2)
+    color: Dict[str, int] = {}
+
+    def has_cycle(node: str, path: set) -> bool:
+        if node in path:
+            in_cycle.update(path)
+            return True
+        if color.get(node, 0) == 2:  # Already fully processed
+            return False
+
+        color[node] = 1  # Mark as being processed
+        path.add(node)
+
+        for child in children_map.get(node, []):
+            if has_cycle(child, path):
+                in_cycle.add(node)
+
+        path.remove(node)
+        color[node] = 2  # Mark as fully processed
+        return False
+
+    # Run cycle detection from all direct dependencies
+    for dep in dependencies:
+        key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
+        if dep.get("direct", False) and color.get(key, 0) == 0:
+            has_cycle(key, set())
 
     # First pass: direct deps have depth 1
     for dep in dependencies:
@@ -25,20 +68,20 @@ def analyze_deep_dependency_chains(
         if dep.get("direct", False):
             depth_map[key] = 1
 
-    # Iterative depth calculation
+    # Iterative depth calculation (skip nodes in cycles to avoid infinite loops)
     for _ in range(10):  # Max iterations
         changed = False
         for dep in dependencies:
             key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
             parents = dep.get("parent_components", [])
 
-            if key in depth_map:
+            if key in depth_map or key in in_cycle:
                 continue
 
-            # Calculate depth from parents
+            # Calculate depth from parents (excluding those in cycles)
             parent_depths = []
             for parent in parents:
-                if parent in depth_map:
+                if parent in depth_map and parent not in in_cycle:
                     parent_depths.append(depth_map[parent])
 
             if parent_depths:
@@ -47,6 +90,48 @@ def analyze_deep_dependency_chains(
 
         if not changed:
             break
+
+    # Warn about circular dependencies if any detected
+    if in_cycle:
+        cycle_packages = []
+        for dep in dependencies:
+            key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
+            if key in in_cycle:
+                cycle_packages.append(
+                    {"name": dep.get("name"), "version": dep.get("version")}
+                )
+
+        if cycle_packages:
+            recommendations.append(
+                Recommendation(
+                    type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
+                    priority=Priority.MEDIUM,
+                    title=f"Circular dependencies detected ({len(cycle_packages)} packages)",
+                    description=(
+                        "Circular dependencies were detected in your dependency graph. "
+                        "This can cause issues with builds, updates, and increases complexity."
+                    ),
+                    impact={
+                        "critical": 0,
+                        "high": 0,
+                        "medium": len(cycle_packages),
+                        "low": 0,
+                        "total": len(cycle_packages),
+                    },
+                    affected_components=[
+                        f"{p['name']}@{p['version']}" for p in cycle_packages[:10]
+                    ],
+                    action={
+                        "type": "resolve_circular_deps",
+                        "suggestions": [
+                            "Review the dependency graph to identify the cycle",
+                            "Consider restructuring to break the circular dependency",
+                            "Check if updated versions resolve the cycle",
+                        ],
+                    },
+                    effort="high",
+                )
+            )
 
     # Find deeply nested deps
     deep_deps = []
@@ -74,7 +159,12 @@ def analyze_deep_dependency_chains(
                 type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
                 priority=Priority.LOW,
                 title=f"Deep dependency chains detected (max depth: {max_depth})",
-                description=f"{len(deep_deps)} dependencies are nested more than {max_dependency_depth} levels deep. Deep chains increase supply chain attack surface and make dependency updates more complex.",
+                description=(
+                    f"{len(deep_deps)} dependencies are nested more than "
+                    f"{max_dependency_depth} levels deep. Deep chains increase "
+                    "supply chain attack surface and make dependency updates "
+                    "more complex."
+                ),
                 impact={
                     "critical": 0,
                     "high": 0,
@@ -115,64 +205,15 @@ def analyze_duplicate_packages(
     """
     Detect packages that likely provide similar/duplicate functionality.
     """
-    recommendations = []
+    if not dependencies:
+        return []
 
-    # Groups of packages that often duplicate functionality
-    similar_packages = [
-        {
-            "category": "HTTP Clients",
-            "packages": [
-                "axios",
-                "node-fetch",
-                "got",
-                "request",
-                "superagent",
-                "ky",
-            ],
-            "suggestion": "Consider standardizing on one HTTP client (axios or node-fetch recommended)",
-        },
-        {
-            "category": "Date/Time Libraries",
-            "packages": ["moment", "dayjs", "date-fns", "luxon"],
-            "suggestion": "Consider using only one date library (dayjs or date-fns recommended)",
-        },
-        {
-            "category": "Utility Libraries",
-            "packages": ["lodash", "underscore", "ramda"],
-            "suggestion": "Modern JavaScript often doesn't need these - consider native methods",
-        },
-        {
-            "category": "State Management",
-            "packages": ["redux", "mobx", "recoil", "zustand", "jotai", "valtio"],
-            "suggestion": "Multiple state management libraries may indicate architecture issues",
-        },
-        {
-            "category": "CSS-in-JS",
-            "packages": [
-                "styled-components",
-                "emotion",
-                "@emotion/react",
-                "@emotion/styled",
-                "glamor",
-            ],
-            "suggestion": "Standardize on one CSS-in-JS solution",
-        },
-        {
-            "category": "Form Libraries",
-            "packages": ["formik", "react-hook-form", "final-form"],
-            "suggestion": "Consider using only one form library (react-hook-form recommended)",
-        },
-        {
-            "category": "Testing Assertion",
-            "packages": ["chai", "expect", "should", "assert"],
-            "suggestion": "Use Jest's built-in expect or standardize on one assertion library",
-        },
-    ]
+    recommendations = []
 
     dep_names = {dep.get("name", "").lower() for dep in dependencies}
 
     duplicates_found = []
-    for group in similar_packages:
+    for group in SIMILAR_PACKAGE_GROUPS:
         matches = [p for p in group["packages"] if p.lower() in dep_names]
         if len(matches) >= 2:
             duplicates_found.append(
@@ -189,7 +230,11 @@ def analyze_duplicate_packages(
                 type=RecommendationType.DUPLICATE_FUNCTIONALITY,
                 priority=Priority.LOW,
                 title=f"Potential duplicate packages in {len(duplicates_found)} categories",
-                description="Multiple packages providing similar functionality were detected. Consolidating to one package per category can reduce bundle size and maintenance burden.",
+                description=(
+                    "Multiple packages providing similar functionality were detected. "
+                    "Consolidating to one package per category can reduce bundle size "
+                    "and maintenance burden."
+                ),
                 impact={
                     "critical": 0,
                     "high": 0,

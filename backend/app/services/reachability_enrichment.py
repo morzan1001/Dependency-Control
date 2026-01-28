@@ -15,18 +15,43 @@ information, helping teams prioritize truly exploitable issues.
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
-from app.core.constants import sort_by_severity
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from app.core.constants import (
+    REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS,
+    REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO,
+    REACHABILITY_CONFIDENCE_NOT_USED,
+    REACHABILITY_EXTRACTION_CONFIDENCE,
+    REACHABILITY_LEVEL_IMPORT,
+    REACHABILITY_LEVEL_NONE,
+    REACHABILITY_LEVEL_SYMBOL,
+    sort_by_severity,
+)
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
 
 
+class ReachabilityResult(TypedDict, total=False):
+    """Result of reachability analysis for a finding."""
+
+    is_reachable: bool
+    confidence_score: float
+    analysis_level: str
+    matched_symbols: List[str]
+    import_locations: List[str]
+    message: str
+    extraction_method: str
+    extraction_confidence: str
+    vulnerable_symbols: List[str]
+
+
 async def enrich_findings_with_reachability(
     findings: List[Dict[str, Any]],
     project_id: str,
-    db,
+    db: AsyncIOMotorDatabase,
     scan_id: Optional[str] = None,
 ) -> int:
     """
@@ -111,18 +136,21 @@ def _analyze_reachability(
     module_usage: Dict[str, Any],
     import_map: Dict[str, List[str]],
     language: str,
-) -> Dict[str, Any]:
+) -> ReachabilityResult:
     """
     Analyze reachability for a single finding.
 
     Two-level analysis:
     1. Import-based: Is the package imported anywhere?
     2. Symbol-based: Are vulnerable functions (extracted from CVE text) used?
+
+    Returns:
+        ReachabilityResult with analysis details
     """
-    result = {
+    result: ReachabilityResult = {
         "is_reachable": False,
         "confidence_score": 0.0,
-        "analysis_level": "none",
+        "analysis_level": REACHABILITY_LEVEL_NONE,
         "matched_symbols": [],
         "import_locations": [],
         "message": "",
@@ -139,15 +167,15 @@ def _analyze_reachability(
     if not usage and not package_in_imports:
         # Package not found in imports - not reachable
         result["is_reachable"] = False
-        result["confidence_score"] = 0.9  # High confidence it's NOT used
-        result["analysis_level"] = "import"
+        result["confidence_score"] = REACHABILITY_CONFIDENCE_NOT_USED
+        result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
         result["message"] = (
             f"Package '{component}' is not imported in any analyzed source file."
         )
         return result
 
     # Package is imported - collect import locations
-    import_locations = []
+    import_locations: List[str] = []
     if usage:
         import_locations = usage.get("import_locations", [])[:10]  # Limit to 10
     elif package_in_imports:
@@ -162,12 +190,11 @@ def _analyze_reachability(
     if not extracted.symbols:
         # No symbols extracted - can only confirm import-level reachability
         result["is_reachable"] = True
-        result["confidence_score"] = (
-            0.5  # Medium - package is imported but unknown functions
-        )
-        result["analysis_level"] = "import"
+        result["confidence_score"] = REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS
+        result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
         result["message"] = (
-            f"Package is imported in {import_count} file(s). Could not determine specific vulnerable functions."
+            f"Package is imported in {import_count} file(s). "
+            "Could not determine specific vulnerable functions."
         )
         return result
 
@@ -183,7 +210,7 @@ def _analyze_reachability(
         result["confidence_score"] = _calculate_confidence(
             extracted.confidence, "matched"
         )
-        result["analysis_level"] = "symbol"
+        result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["matched_symbols"] = matched_symbols
         result["message"] = (
             f"Vulnerable function(s) {', '.join(matched_symbols[:5])} are used in the codebase."
@@ -194,7 +221,7 @@ def _analyze_reachability(
         result["confidence_score"] = _calculate_confidence(
             extracted.confidence, "partial"
         )
-        result["analysis_level"] = "symbol"
+        result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["message"] = (
             f"Package is imported but extracted vulnerable functions "
             f"({', '.join(extracted.symbols[:3])}) were not found in direct usage. "
@@ -203,8 +230,8 @@ def _analyze_reachability(
     else:
         # Package imported but no symbol usage info
         result["is_reachable"] = True
-        result["confidence_score"] = 0.4
-        result["analysis_level"] = "import"
+        result["confidence_score"] = REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO
+        result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
         result["message"] = (
             f"Package is imported in {import_count} file(s). Symbol-level analysis not available."
         )
@@ -315,17 +342,16 @@ def _calculate_confidence(extraction_confidence: str, match_type: str) -> float:
     """
     Calculate overall confidence score.
 
-    Factors:
-    - extraction_confidence: How reliable is the symbol extraction (low/medium/high)
-    - match_type: "matched" (direct match), "partial" (imported but not matched)
-    """
-    base_scores = {
-        "high": 0.9,
-        "medium": 0.7,
-        "low": 0.5,
-    }
+    Args:
+        extraction_confidence: How reliable is the symbol extraction (low/medium/high)
+        match_type: "matched" (direct match), "partial" (imported but not matched)
 
-    extraction_score = base_scores.get(extraction_confidence, 0.5)
+    Returns:
+        Confidence score between 0.0 and 1.0
+    """
+    extraction_score = REACHABILITY_EXTRACTION_CONFIDENCE.get(
+        extraction_confidence, REACHABILITY_EXTRACTION_CONFIDENCE["low"]
+    )
 
     if match_type == "matched":
         # Direct match - high confidence
@@ -340,8 +366,8 @@ def _calculate_confidence(extraction_confidence: str, match_type: str) -> float:
 async def run_pending_reachability_for_scan(
     scan_id: str,
     project_id: str,
-    db,
-) -> dict:
+    db: AsyncIOMotorDatabase,
+) -> Dict[str, Any]:
     """
     Run pending reachability analysis for a specific scan.
 

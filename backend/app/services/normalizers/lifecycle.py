@@ -1,5 +1,7 @@
 from typing import Any, Dict, Optional, TYPE_CHECKING
+
 from app.models.finding import Finding, FindingType, Severity
+from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
@@ -8,15 +10,18 @@ if TYPE_CHECKING:
 def normalize_outdated(
     aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
 ):
-    for item in result.get("outdated_dependencies", []):
+    """Normalize outdated package findings."""
+    for item in result.get("outdated_dependencies") or []:
+        component = safe_get(item, "component", "unknown")
+
         aggregator.add_finding(
             Finding(
-                id=f"OUTDATED-{item['component']}",
+                id=build_finding_id("OUTDATED", component),
                 type=FindingType.OUTDATED,
-                severity=Severity(item.get("severity", "INFO")),
-                component=item.get("component"),
+                severity=safe_severity(item.get("severity"), default=Severity.INFO),
+                component=component,
                 version=item.get("current_version"),
-                description=item.get("message"),
+                description=item.get("message") or f"Outdated: {component}",
                 scanners=["outdated_packages"],
                 details={"fixed_version": item.get("latest_version")},
             ),
@@ -27,18 +32,20 @@ def normalize_outdated(
 def normalize_eol(
     aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
 ):
-    for item in result.get("eol_issues", []):
-        eol_info = item.get("eol_info", {})
+    """Normalize end-of-life findings."""
+    for item in result.get("eol_issues") or []:
+        eol_info = item.get("eol_info") or {}
         eol_date = eol_info.get("eol")
-        cycle = eol_info.get("cycle")
+        cycle = eol_info.get("cycle") or "unknown"
         latest = eol_info.get("latest")
+        component = safe_get(item, "component", "unknown")
 
         aggregator.add_finding(
             Finding(
-                id=f"EOL-{item['component']}-{cycle}",
+                id=build_finding_id("EOL", component, cycle),
                 type=FindingType.EOL,
                 severity=Severity.HIGH,
-                component=item.get("component"),
+                component=component,
                 version=item.get("version"),
                 description=f"End of Life reached on {eol_date} (Cycle {cycle}). Latest: {latest}",
                 scanners=["end_of_life"],

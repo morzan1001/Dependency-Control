@@ -1,7 +1,12 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from app.core.constants import get_severity_value
+from app.core.constants import (
+    AGG_KEY_QUALITY,
+    AGG_KEY_SAST,
+    AGG_KEY_VULNERABILITY,
+    get_severity_value,
+)
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.enrichment import DependencyEnrichment
 from app.schemas.finding import (
@@ -560,7 +565,7 @@ class ResultAggregator:
                             )
                         )
 
-    def _parse_version_key(self, v: str):
+    def _parse_version_key(self, v: str) -> Tuple[Union[int, str], ...]:
         """Helper to parse version string into a comparable tuple."""
         # Remove common prefixes
         v = v.lower()
@@ -568,7 +573,7 @@ class ResultAggregator:
             v = v[1:]
 
         # Split by non-alphanumeric characters
-        parts: List[int | str] = []
+        parts: List[Union[int, str]] = []
         for part in re.split(r"[^a-z0-9]+", v):
             if not part:
                 continue
@@ -654,7 +659,7 @@ class ResultAggregator:
 
         return ", ".join([vm[2] for vm in valid_majors])
 
-    def _resolve_fixed_versions(self, versions: List[str]) -> str:
+    def _resolve_fixed_versions(self, versions: List[str]) -> Optional[str]:
         """
         Resolves the best fixed version(s) considering multiple vulnerabilities and major versions.
         Replaces legacy _get_latest_version.
@@ -666,7 +671,7 @@ class ResultAggregator:
             return "unknown"
         return component.strip().lower()
 
-    def _merge_sast_findings(self, findings: List[Finding]) -> Finding:
+    def _merge_sast_findings(self, findings: List[Finding]) -> Optional[Finding]:
         """
         Merges a list of SAST findings into a single finding with a list of individual results.
         Similar to how vulnerabilities or quality issues are aggregated.
@@ -753,7 +758,7 @@ class ResultAggregator:
             id=(
                 base.id
                 if len(findings) == 1
-                else f"SAST-AGG-{base.component}-{merged_details['line']}"
+                else f"{AGG_KEY_SAST}-{base.component}-{merged_details['line']}"
             ),  # create stable ID for group
             type=FindingType.SAST,
             severity=max_severity,
@@ -960,7 +965,7 @@ class ResultAggregator:
         version_key = self._normalize_version(raw_version)
 
         # Primary key for the AGGREGATED finding (The Package)
-        agg_key = f"AGG:VULN:{comp_key}:{version_key}"
+        agg_key = f"{AGG_KEY_VULNERABILITY}:{comp_key}:{version_key}"
 
         # Combine references and urls (legacy) into single references list, deduplicated
         refs_from_details = finding.details.get("references", []) or []
@@ -1079,7 +1084,7 @@ class ResultAggregator:
         version_key = self._normalize_version(raw_version)
 
         # Primary key for the AGGREGATED quality finding
-        agg_key = f"AGG:QUALITY:{comp_key}:{version_key}"
+        agg_key = f"{AGG_KEY_QUALITY}:{comp_key}:{version_key}"
 
         # Determine quality issue type based on finding ID
         if finding.id.startswith("SCORECARD-"):

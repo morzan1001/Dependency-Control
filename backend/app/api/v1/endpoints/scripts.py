@@ -21,7 +21,36 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 SCRIPTS_DIR = Path("/app/ci-cd/scripts")
-ALLOWED_SCRIPTS = {"scanner.sh"}
+
+# Script configurations: name -> description
+SCRIPT_CONFIG = {
+    "scanner.sh": "Universal scanner script for all security scans",
+}
+ALLOWED_SCRIPTS = set(SCRIPT_CONFIG.keys())
+
+
+def validate_script_name(script_name: str) -> None:
+    """
+    Validate script name is allowed and safe from path traversal.
+
+    Raises:
+        HTTPException: 404 if script not allowed or path traversal detected
+    """
+    # Check whitelist first
+    if script_name not in ALLOWED_SCRIPTS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Script '{script_name}' not found",
+        )
+
+    # Path traversal protection: ensure resolved path is within SCRIPTS_DIR
+    script_path = (SCRIPTS_DIR / script_name).resolve()
+    if not str(script_path).startswith(str(SCRIPTS_DIR.resolve())):
+        logger.warning(f"Path traversal attempt detected for script: {script_name}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Script '{script_name}' not found",
+        )
 
 
 def get_script_version(content: str) -> str:
@@ -41,10 +70,16 @@ def get_script_content(script_name: str) -> tuple[str, str, str]:
     """
     Get script content, version, and hash.
 
+    Args:
+        script_name: Name of the script (must be validated first)
+
     Returns:
         Tuple of (content, version, sha256_hash)
+
+    Raises:
+        FileNotFoundError: If script file doesn't exist
     """
-    script_path = SCRIPTS_DIR / script_name
+    script_path = (SCRIPTS_DIR / script_name).resolve()
 
     if not script_path.exists():
         raise FileNotFoundError(f"Script {script_name} not found")
@@ -54,6 +89,29 @@ def get_script_content(script_name: str) -> tuple[str, str, str]:
     sha256_hash = compute_sha256(content)
 
     return content, version, sha256_hash
+
+
+def build_script_info(script_name: str) -> ScriptInfo:
+    """
+    Build ScriptInfo object for a script.
+
+    Args:
+        script_name: Name of the script (must be validated first)
+
+    Returns:
+        ScriptInfo object with script metadata
+
+    Raises:
+        FileNotFoundError: If script file doesn't exist
+    """
+    _, version, sha256_hash = get_script_content(script_name)
+    return ScriptInfo(
+        name=script_name,
+        version=version,
+        sha256=sha256_hash,
+        url=f"/api/v1/scripts/{script_name}",
+        description=SCRIPT_CONFIG.get(script_name, "CI/CD script"),
+    )
 
 
 @router.get(
@@ -75,32 +133,20 @@ async def get_script_hash(script_name: str) -> ScriptInfo:
     **Important:** The hash should be stored in your repository, not fetched
     dynamically. This ensures you control when script updates are applied.
     """
-    if script_name not in ALLOWED_SCRIPTS:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Script '{script_name}' not found.",
-        )
+    validate_script_name(script_name)
 
     try:
-        _, version, sha256_hash = get_script_content(script_name)
-
-        return ScriptInfo(
-            name=script_name,
-            version=version,
-            sha256=sha256_hash,
-            url=f"/api/v1/scripts/{script_name}",
-            description="Universal scanner script for all security scans",
-        )
+        return build_script_info(script_name)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
-            detail=f"Script '{script_name}' not found on server.",
+            detail=f"Script '{script_name}' not found on server",
         )
     except Exception as e:
         logger.error(f"Error getting script hash for {script_name}: {e}")
         raise HTTPException(
             status_code=500,
-            detail="Error reading script file.",
+            detail="Error reading script file",
         )
 
 
@@ -156,11 +202,7 @@ async def get_script(
     - `callgraph` - Generate and upload callgraph
     - `all` - Run all enabled scans
     """
-    if script_name not in ALLOWED_SCRIPTS:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Script '{script_name}' not found.",
-        )
+    validate_script_name(script_name)
 
     try:
         content, version, sha256_hash = get_script_content(script_name)
@@ -182,16 +224,16 @@ async def get_script(
             },
         )
     except FileNotFoundError:
-        logger.error(f"Script file not found: {SCRIPTS_DIR / script_name}")
+        logger.error(f"Script file not found: {script_name}")
         raise HTTPException(
             status_code=404,
-            detail=f"Script '{script_name}' not found on server.",
+            detail=f"Script '{script_name}' not found on server",
         )
     except Exception as e:
         logger.error(f"Error reading script {script_name}: {e}")
         raise HTTPException(
             status_code=500,
-            detail="Error reading script file.",
+            detail="Error reading script file",
         )
 
 
@@ -220,21 +262,18 @@ async def list_scripts() -> ScriptManifest:
     This ensures you control when script updates are applied to your projects.
     """
     scripts = []
+    errors = []
 
     for script_name in ALLOWED_SCRIPTS:
         try:
-            _, version, sha256_hash = get_script_content(script_name)
-            scripts.append(
-                ScriptInfo(
-                    name=script_name,
-                    version=version,
-                    sha256=sha256_hash,
-                    url=f"/api/v1/scripts/{script_name}",
-                    description="Universal scanner script for all security scans",
-                )
-            )
+            scripts.append(build_script_info(script_name))
         except Exception as e:
             logger.error(f"Error getting {script_name} info: {e}")
+            errors.append(script_name)
+
+    # Log warning if some scripts couldn't be loaded
+    if errors:
+        logger.warning(f"Failed to load scripts: {', '.join(errors)}")
 
     return ScriptManifest(
         scripts=scripts,

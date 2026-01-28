@@ -1,9 +1,9 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.constants import PROJECT_ROLES, PROJECT_ROLE_VIEWER
-from app.models.project import Project
+from app.models.project import Project, Scan
 
 
 class ProjectList(BaseModel):
@@ -109,3 +109,25 @@ class ProjectApiKeyResponse(BaseModel):
     project_id: str = Field(..., description="The unique ID of the project")
     api_key: str = Field(..., description="The generated API Key (ProjectID.Secret)")
     note: str = "This key will only be shown once. Please save it securely."
+
+
+class RecentScan(Scan):
+    """Scan with additional project name for cross-project views."""
+
+    project_name: str = Field(
+        ..., description="Name of the project this scan belongs to"
+    )
+
+
+class DashboardStats(BaseModel):
+    """Dashboard statistics for project overview."""
+
+    total_projects: int = Field(..., description="Total number of accessible projects")
+    total_critical: int = Field(
+        ..., description="Total critical findings across projects"
+    )
+    total_high: int = Field(..., description="Total high findings across projects")
+    avg_risk_score: float = Field(..., description="Average risk score across projects")
+    top_risky_projects: List[Dict[str, Any]] = Field(
+        ..., description="Top 5 projects by risk score"
+    )

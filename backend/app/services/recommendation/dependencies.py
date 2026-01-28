@@ -1,14 +1,17 @@
 import re
 from collections import defaultdict
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 from app.schemas.recommendation import (
+    Priority,
     Recommendation,
     RecommendationType,
-    Priority,
 )
 from app.services.recommendation.common import parse_version_tuple
-from app.core.constants import DEV_DEPENDENCY_PATTERNS
+from app.core.constants import (
+    DEV_DEPENDENCY_PATTERNS,
+    SIGNIFICANT_FRAGMENTATION_THRESHOLD,
+)
 
 
 def analyze_outdated_dependencies(
@@ -59,7 +62,11 @@ def analyze_outdated_dependencies(
                 type=RecommendationType.OUTDATED_DEPENDENCY,
                 priority=Priority.MEDIUM,
                 title=f"Upgrade {len(direct_outdated)} outdated direct dependencies",
-                description="Some direct dependencies are using significantly outdated major versions. Upgrading can improve security, performance, and maintainability.",
+                description=(
+                    "Some direct dependencies are using significantly outdated major "
+                    "versions. Upgrading can improve security, performance, and "
+                    "maintainability."
+                ),
                 impact={
                     "critical": 0,
                     "high": 0,
@@ -86,13 +93,16 @@ def analyze_outdated_dependencies(
             )
         )
 
-    if len(transitive_outdated) > 3:
+    if len(transitive_outdated) > SIGNIFICANT_FRAGMENTATION_THRESHOLD:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.OUTDATED_DEPENDENCY,
                 priority=Priority.LOW,
                 title=f"{len(transitive_outdated)} transitive dependencies are outdated",
-                description="Several transitive dependencies use old major versions. Updating parent packages may resolve these.",
+                description=(
+                    "Several transitive dependencies use old major versions. "
+                    "Updating parent packages may resolve these."
+                ),
                 impact={
                     "critical": 0,
                     "high": 0,
@@ -154,12 +164,18 @@ def analyze_version_fragmentation(
     # Sort by impact (more versions = worse)
     fragmented.sort(key=lambda x: x["count"], reverse=True)
 
-    # Only report if there are significant fragmentation issues (3+ versions)
-    significant_fragmented = [f for f in fragmented if f["count"] >= 3]
+    # Only report if there are significant fragmentation issues (N+ versions)
+    significant_fragmented = [
+        f for f in fragmented if f["count"] >= SIGNIFICANT_FRAGMENTATION_THRESHOLD
+    ]
 
     if significant_fragmented:
-        # High priority if many packages have 3+ versions
-        priority = Priority.MEDIUM if len(significant_fragmented) > 3 else Priority.LOW
+        # High priority if many packages have multiple versions
+        priority = (
+            Priority.MEDIUM
+            if len(significant_fragmented) > SIGNIFICANT_FRAGMENTATION_THRESHOLD
+            else Priority.LOW
+        )
 
         # Limit to top 15 most fragmented
         top_fragmented = significant_fragmented[:15]
@@ -168,13 +184,25 @@ def analyze_version_fragmentation(
             Recommendation(
                 type=RecommendationType.VERSION_FRAGMENTATION,
                 priority=priority,
-                title=f"Version fragmentation in {len(significant_fragmented)} packages ({sum(f['count'] for f in significant_fragmented)} total versions)",
-                description="These packages have 3 or more versions in your dependency tree. This can increase bundle size and cause subtle bugs. Consider deduplication or pinning to a single version.",
+                title=(
+                    f"Version fragmentation in {len(significant_fragmented)} packages "
+                    f"({sum(f['count'] for f in significant_fragmented)} total versions)"
+                ),
+                description=(
+                    f"These packages have {SIGNIFICANT_FRAGMENTATION_THRESHOLD} or more "
+                    "versions in your dependency tree. This can increase bundle size "
+                    "and cause subtle bugs. Consider deduplication or pinning to a "
+                    "single version."
+                ),
                 impact={
                     "critical": 0,
                     "high": len([f for f in significant_fragmented if f["count"] >= 5]),
                     "medium": len(
-                        [f for f in significant_fragmented if 3 <= f["count"] < 5]
+                        [
+                            f
+                            for f in significant_fragmented
+                            if SIGNIFICANT_FRAGMENTATION_THRESHOLD <= f["count"] < 5
+                        ]
                     ),
                     "low": 0,
                     "total": len(significant_fragmented),
@@ -242,7 +270,11 @@ def analyze_dev_in_production(
                 type=RecommendationType.DEV_IN_PRODUCTION,
                 priority=Priority.LOW,
                 title=f"{len(potential_dev_deps)} potential dev dependencies in production",
-                description="Some packages typically used for development/testing were detected in your build. If these are in your production bundle, consider moving them to devDependencies.",
+                description=(
+                    "Some packages typically used for development/testing were detected "
+                    "in your build. If these are in your production bundle, consider "
+                    "moving them to devDependencies."
+                ),
                 impact={
                     "critical": 0,
                     "high": 0,

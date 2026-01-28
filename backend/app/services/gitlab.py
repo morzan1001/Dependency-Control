@@ -1,17 +1,30 @@
+import hashlib
 import logging
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 from jose import jwt
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import security
+from app.core.cache import cache_service
+from app.core.constants import (
+    GITLAB_ADMIN_MIN_ACCESS,
+    GITLAB_JWKS_CACHE_TTL,
+    GITLAB_JWKS_URI_CACHE_TTL,
+)
 from app.models.system import SystemSettings
 from app.models.team import Team, TeamMember
 from app.models.user import User
+from app.repositories import TeamRepository, UserRepository
 
 logger = logging.getLogger(__name__)
+
+# Default timeout for GitLab API requests
+_GITLAB_API_TIMEOUT = 10.0
 
 
 class GitLabService:
@@ -19,16 +32,190 @@ class GitLabService:
         self.settings = settings
         self.base_url = settings.gitlab_url.rstrip("/")
         self.api_url = f"{self.base_url}/api/v4"
-        self._jwks_cache = None
-        self._jwks_cache_time = 0.0
-        self._jwks_uri_cache = None
+        # Generate a cache key prefix based on the GitLab URL
+        self._cache_key_prefix = hashlib.md5(self.base_url.encode()).hexdigest()[:8]
+
+    def _get_cache_key(self, suffix: str) -> str:
+        """Generate a cache key for this GitLab instance."""
+        return f"gitlab:{self._cache_key_prefix}:{suffix}"
+
+    def _get_auth_headers(self) -> Dict[str, str]:
+        """Build authentication headers for GitLab API requests."""
+        return {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+
+    @asynccontextmanager
+    async def _api_client(self) -> AsyncIterator[httpx.AsyncClient]:
+        """
+        Async context manager for authenticated GitLab API client.
+
+        Usage:
+            async with self._api_client() as client:
+                response = await client.get(url)
+        """
+        async with httpx.AsyncClient(timeout=_GITLAB_API_TIMEOUT) as client:
+            yield client
+
+    async def _api_get(
+        self, endpoint: str, params: Optional[Dict[str, Any]] = None
+    ) -> Optional[httpx.Response]:
+        """
+        Make an authenticated GET request to the GitLab API.
+
+        Args:
+            endpoint: API endpoint (e.g., "/projects/123")
+            params: Optional query parameters
+
+        Returns:
+            Response object if successful, None if no token configured or request failed
+        """
+        if not self.settings.gitlab_access_token:
+            return None
+
+        try:
+            async with self._api_client() as client:
+                return await client.get(
+                    f"{self.api_url}{endpoint}",
+                    headers=self._get_auth_headers(),
+                    params=params,
+                )
+        except Exception as e:
+            logger.error(f"GitLab API GET {endpoint} failed: {e}")
+            return None
+
+    async def _api_post(
+        self, endpoint: str, json_data: Optional[Dict[str, Any]] = None
+    ) -> Optional[httpx.Response]:
+        """
+        Make an authenticated POST request to the GitLab API.
+
+        Args:
+            endpoint: API endpoint (e.g., "/projects/123/notes")
+            json_data: JSON body data
+
+        Returns:
+            Response object if successful, None if no token configured or request failed
+        """
+        if not self.settings.gitlab_access_token:
+            return None
+
+        try:
+            async with self._api_client() as client:
+                return await client.post(
+                    f"{self.api_url}{endpoint}",
+                    headers=self._get_auth_headers(),
+                    json=json_data,
+                )
+        except Exception as e:
+            logger.error(f"GitLab API POST {endpoint} failed: {e}")
+            return None
+
+    async def _api_put(
+        self, endpoint: str, json_data: Optional[Dict[str, Any]] = None
+    ) -> Optional[httpx.Response]:
+        """
+        Make an authenticated PUT request to the GitLab API.
+
+        Args:
+            endpoint: API endpoint
+            json_data: JSON body data
+
+        Returns:
+            Response object if successful, None if no token configured or request failed
+        """
+        if not self.settings.gitlab_access_token:
+            return None
+
+        try:
+            async with self._api_client() as client:
+                return await client.put(
+                    f"{self.api_url}{endpoint}",
+                    headers=self._get_auth_headers(),
+                    json=json_data,
+                )
+        except Exception as e:
+            logger.error(f"GitLab API PUT {endpoint} failed: {e}")
+            return None
+
+    async def _api_get_paginated(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        max_pages: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Make paginated GET requests to the GitLab API.
+
+        Automatically fetches all pages up to max_pages.
+
+        Args:
+            endpoint: API endpoint
+            params: Optional query parameters
+            max_pages: Maximum number of pages to fetch (default 10, ~1000 items)
+
+        Returns:
+            Combined list of all items from all pages
+        """
+        if not self.settings.gitlab_access_token:
+            return []
+
+        all_items: List[Dict[str, Any]] = []
+        page = 1
+        per_page = 100  # GitLab max per_page
+
+        try:
+            async with self._api_client() as client:
+                while page <= max_pages:
+                    request_params = {
+                        **(params or {}),
+                        "page": page,
+                        "per_page": per_page,
+                    }
+                    response = await client.get(
+                        f"{self.api_url}{endpoint}",
+                        headers=self._get_auth_headers(),
+                        params=request_params,
+                    )
+
+                    if response.status_code != 200:
+                        logger.error(
+                            f"GitLab API GET {endpoint} page {page} failed: "
+                            f"{response.status_code}"
+                        )
+                        break
+
+                    items = response.json()
+                    if not items:
+                        break
+
+                    all_items.extend(items)
+
+                    # Check if there are more pages
+                    total_pages = response.headers.get("x-total-pages")
+                    if total_pages and page >= int(total_pages):
+                        break
+
+                    # If we got fewer items than per_page, we're on the last page
+                    if len(items) < per_page:
+                        break
+
+                    page += 1
+
+        except Exception as e:
+            logger.error(f"GitLab API paginated GET {endpoint} failed: {e}")
+
+        return all_items
 
     async def _get_jwks_uri(self) -> Optional[str]:
         """
         Fetches the JWKS URI from the OpenID Connect discovery document.
+        Uses Redis cache for multi-pod compatibility.
         """
-        if self._jwks_uri_cache:
-            return self._jwks_uri_cache
+        cache_key = self._get_cache_key("jwks_uri")
+
+        # Check Redis cache first
+        cached_uri = await cache_service.get(cache_key)
+        if cached_uri:
+            return cached_uri
 
         async with httpx.AsyncClient() as client:
             try:
@@ -38,8 +225,13 @@ class GitLabService:
                 )
                 if response.status_code == 200:
                     config = response.json()
-                    self._jwks_uri_cache = config.get("jwks_uri")
-                    return self._jwks_uri_cache
+                    jwks_uri = config.get("jwks_uri")
+                    if jwks_uri:
+                        # Cache in Redis for all pods
+                        await cache_service.set(
+                            cache_key, jwks_uri, ttl=GITLAB_JWKS_URI_CACHE_TTL
+                        )
+                    return jwks_uri
             except Exception as e:
                 logger.warning(f"Error fetching OIDC discovery: {e}")
 
@@ -48,11 +240,14 @@ class GitLabService:
     async def get_jwks(self) -> Optional[dict]:
         """
         Fetches and caches the JWKS from GitLab.
+        Uses Redis cache for multi-pod compatibility in Kubernetes.
         """
-        # Simple caching mechanism (e.g. 1 hour)
-        now = datetime.now(timezone.utc).timestamp()
-        if self._jwks_cache and (now - self._jwks_cache_time < 3600):
-            return self._jwks_cache
+        cache_key = self._get_cache_key("jwks")
+
+        # Check Redis cache first
+        cached_jwks = await cache_service.get(cache_key)
+        if cached_jwks:
+            return cached_jwks
 
         async with httpx.AsyncClient() as client:
             try:
@@ -62,27 +257,40 @@ class GitLabService:
                 if jwks_uri:
                     response = await client.get(jwks_uri, timeout=10.0)
                     if response.status_code == 200:
-                        self._jwks_cache = response.json()
-                        self._jwks_cache_time = now
-                        return self._jwks_cache
+                        jwks = response.json()
+                        # Cache in Redis for all pods
+                        await cache_service.set(
+                            cache_key, jwks, ttl=GITLAB_JWKS_CACHE_TTL
+                        )
+                        return jwks
 
                 # Fallback: Try common JWKS endpoints
                 for path in ["/-/jwks", "/oauth/discovery/keys"]:
                     response = await client.get(f"{self.base_url}{path}", timeout=10.0)
                     if response.status_code == 200:
-                        self._jwks_cache = response.json()
-                        self._jwks_cache_time = now
+                        jwks = response.json()
+                        # Cache in Redis for all pods
+                        await cache_service.set(
+                            cache_key, jwks, ttl=GITLAB_JWKS_CACHE_TTL
+                        )
                         logger.info(f"JWKS fetched from fallback path: {path}")
-                        return self._jwks_cache
+                        return jwks
 
                 logger.error("Failed to fetch JWKS from any known endpoint")
             except Exception as e:
                 logger.error(f"Error fetching JWKS: {e}")
         return {}
 
+    async def _invalidate_jwks_cache(self) -> None:
+        """Invalidate the JWKS cache to force a refresh on next request."""
+        cache_key = self._get_cache_key("jwks")
+        await cache_service.delete(cache_key)
+
     async def validate_oidc_token(self, token: str) -> Optional[Dict[str, Any]]:
         """
         Validates a GitLab OIDC token (JWT).
+
+        Handles key rotation by refreshing JWKS cache if key is not found.
         """
         try:
             # 1. Get Key ID from Header
@@ -102,8 +310,19 @@ class GitLabService:
                     key = k
                     break
 
+            # 4. If key not found, try refreshing cache (key rotation scenario)
             if not key:
-                logger.error(f"No matching key found for kid: {kid}")
+                logger.info(f"Key {kid} not in cache, refreshing JWKS...")
+                await self._invalidate_jwks_cache()
+                jwks = await self.get_jwks()
+
+                for k in jwks.get("keys", []):
+                    if k.get("kid") == kid:
+                        key = k
+                        break
+
+            if not key:
+                logger.error(f"No matching key found for kid: {kid} after refresh")
                 return None
 
             # 4. Verify
@@ -134,142 +353,75 @@ class GitLabService:
             return None
 
     async def get_project_details(self, project_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Fetches project details using the system token.
-        """
-        if not self.settings.gitlab_access_token:
-            return None
-
-        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.api_url}/projects/{project_id}",
-                    headers=auth_headers,
-                    timeout=10.0,
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return None
-            except Exception:
-                return None
+        """Fetches project details using the system token."""
+        response = await self._api_get(f"/projects/{project_id}")
+        if response and response.status_code == 200:
+            return response.json()
+        return None
 
     async def get_merge_requests_for_commit(
         self, project_id: int, commit_sha: str
     ) -> List[Dict[str, Any]]:
-        """
-        Fetches merge requests associated with a specific commit.
-        """
-        if not self.settings.gitlab_access_token:
-            return []
-
-        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.api_url}/projects/{project_id}/repository/commits/{commit_sha}/merge_requests",
-                    headers=auth_headers,
-                    timeout=10.0,
-                )
-                if response.status_code == 200:
-                    return response.json()
-            except Exception as e:
-                logger.error(f"Error fetching MRs for commit {commit_sha}: {e}")
+        """Fetches merge requests associated with a specific commit."""
+        response = await self._api_get(
+            f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests"
+        )
+        if response and response.status_code == 200:
+            return response.json()
         return []
 
     async def post_merge_request_comment(
         self, project_id: int, mr_iid: int, body: str
     ) -> bool:
-        """
-        Posts a comment to a merge request.
-        """
-        if not self.settings.gitlab_access_token:
-            return False
-
-        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    f"{self.api_url}/projects/{project_id}/merge_requests/{mr_iid}/notes",
-                    headers=auth_headers,
-                    json={"body": body},
-                    timeout=10.0,
-                )
-                if response.status_code == 201:
-                    return True
-                else:
-                    logger.error(
-                        f"Failed to post MR comment: {response.status_code} - {response.text}"
-                    )
-            except Exception as e:
-                logger.error(f"Error posting MR comment: {e}")
+        """Posts a comment to a merge request."""
+        response = await self._api_post(
+            f"/projects/{project_id}/merge_requests/{mr_iid}/notes",
+            json_data={"body": body},
+        )
+        if response:
+            if response.status_code == 201:
+                return True
+            logger.error(
+                f"Failed to post MR comment: {response.status_code} - {response.text}"
+            )
         return False
 
     async def get_merge_request_notes(
         self, project_id: int, mr_iid: int
     ) -> List[Dict[str, Any]]:
         """
-        Fetches notes (comments) from a merge request.
+        Fetches all notes (comments) from a merge request.
+
+        Uses pagination to fetch all notes (not just first page).
         """
-        if not self.settings.gitlab_access_token:
-            return []
-
-        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.api_url}/projects/{project_id}/merge_requests/{mr_iid}/notes",
-                    headers=auth_headers,
-                    timeout=10.0,
-                )
-                if response.status_code == 200:
-                    return response.json()
-                else:
-                    logger.error(
-                        f"Failed to fetch MR notes: {response.status_code} - {response.text}"
-                    )
-            except Exception as e:
-                logger.error(f"Error fetching MR notes: {e}")
-        return []
+        notes = await self._api_get_paginated(
+            f"/projects/{project_id}/merge_requests/{mr_iid}/notes"
+        )
+        return notes
 
     async def update_merge_request_comment(
         self, project_id: int, mr_iid: int, note_id: int, body: str
     ) -> bool:
-        """
-        Updates an existing comment on a merge request.
-        """
-        if not self.settings.gitlab_access_token:
-            return False
-
-        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.put(
-                    f"{self.api_url}/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}",
-                    headers=auth_headers,
-                    json={"body": body},
-                    timeout=10.0,
-                )
-                if response.status_code == 200:
-                    return True
-                else:
-                    logger.error(
-                        f"Failed to update MR comment: {response.status_code} - {response.text}"
-                    )
-            except Exception as e:
-                logger.error(f"Error updating MR comment: {e}")
+        """Updates an existing comment on a merge request."""
+        response = await self._api_put(
+            f"/projects/{project_id}/merge_requests/{mr_iid}/notes/{note_id}",
+            json_data={"body": body},
+        )
+        if response:
+            if response.status_code == 200:
+                return True
+            logger.error(
+                f"Failed to update MR comment: {response.status_code} - {response.text}"
+            )
         return False
 
     async def get_project_members(
         self, project_id: int
-    ) -> Optional[list[Dict[str, Any]]]:
+    ) -> Optional[List[Dict[str, Any]]]:
         """
-        Fetches project members using the system-configured gitlab_access_token.
+        Fetches all project members using the system-configured gitlab_access_token.
+
+        Uses pagination to fetch all members (not just first page).
         """
         if not self.settings.gitlab_access_token:
             logger.warning(
@@ -277,30 +429,15 @@ class GitLabService:
             )
             return None
 
-        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+        # /members/all includes inherited members (from groups)
+        members = await self._api_get_paginated(f"/projects/{project_id}/members/all")
+        return members if members else None
 
-        async with httpx.AsyncClient() as client:
-            try:
-                # /members/all includes inherited members (from groups)
-                response = await client.get(
-                    f"{self.api_url}/projects/{project_id}/members/all",
-                    headers=auth_headers,
-                    timeout=10.0,
-                )
-                if response.status_code == 200:
-                    return response.json()
-
-                logger.error(
-                    f"Failed to fetch GitLab members: {response.status_code} {response.text}"
-                )
-                return None
-            except Exception as e:
-                logger.error(f"Error fetching GitLab members: {e}")
-                return None
-
-    async def get_group_members(self, group_id: int) -> Optional[list[Dict[str, Any]]]:
+    async def get_group_members(self, group_id: int) -> Optional[List[Dict[str, Any]]]:
         """
-        Fetches group members using the system-configured gitlab_access_token.
+        Fetches all group members using the system-configured gitlab_access_token.
+
+        Uses pagination to fetch all members (not just first page).
         """
         if not self.settings.gitlab_access_token:
             logger.warning(
@@ -308,36 +445,32 @@ class GitLabService:
             )
             return None
 
-        auth_headers = {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.api_url}/groups/{group_id}/members/all",
-                    headers=auth_headers,
-                    timeout=10.0,
-                )
-                if response.status_code == 200:
-                    return response.json()
-                logger.error(
-                    f"Failed to fetch GitLab group members: {response.status_code} {response.text}"
-                )
-                return None
-            except Exception as e:
-                logger.error(f"Error fetching GitLab group members: {e}")
-                return None
+        members = await self._api_get_paginated(f"/groups/{group_id}/members/all")
+        return members if members else None
 
     async def sync_team_from_gitlab(
         self,
-        db,
+        db: AsyncIOMotorDatabase,
         gitlab_project_id: int,
-        gitlab_project_path: str,
+        gitlab_project_path: str,  # Currently unused, kept for API compatibility
         gitlab_project_data: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
         """
         Syncs GitLab project members to a local Team.
-        Returns the Team ID.
+
+        Args:
+            db: Database connection
+            gitlab_project_id: GitLab project ID
+            gitlab_project_path: GitLab project path (currently unused)
+            gitlab_project_data: Optional project data from GitLab API
+
+        Returns:
+            Team ID if sync successful, None otherwise
         """
+        _ = gitlab_project_path  # Suppress unused parameter warning
+        team_repo = TeamRepository(db)
+        user_repo = UserRepository(db)
+
         try:
             members = None
 
@@ -362,16 +495,13 @@ class GitLabService:
                     f"Failed to fetch members for group {team_name}. Skipping sync."
                 )
                 # Try to find existing team to return its ID at least
-                existing_team = await db.teams.find_one({"name": team_name})
+                existing_team = await team_repo.get_raw_by_name(team_name)
                 if existing_team:
                     return str(existing_team["_id"])
                 return None
 
-            if not members:
-                return None
-
             # Create or Update Team
-            team = await db.teams.find_one({"name": team_name})
+            team = await team_repo.get_raw_by_name(team_name)
 
             team_members = []
             for member in members:
@@ -380,13 +510,13 @@ class GitLabService:
 
                 user = None
                 if member_email:
-                    user = await db.users.find_one({"email": member_email})
+                    user = await user_repo.get_raw_by_email(member_email)
                 elif member_username:
-                    user = await db.users.find_one({"username": member_username})
+                    user = await user_repo.get_raw_by_username(member_username)
 
                 if not user and member_email:
                     # Create new user
-                    user = User(
+                    new_user = User(
                         username=member_username or member_email.split("@")[0],
                         email=member_email,
                         hashed_password=security.get_password_hash(
@@ -395,36 +525,32 @@ class GitLabService:
                         is_active=True,
                         auth_provider="gitlab",
                     )
-                    await db.users.insert_one(user.dict(by_alias=True))
-                    user = user.dict(by_alias=True)
+                    await user_repo.create(new_user)
+                    user = new_user.model_dump(by_alias=True)
 
                 if user:
                     # Map GitLab access level to role
-                    # 10: Guest, 20: Reporter, 30: Developer, 40: Maintainer, 50: Owner
+                    # See constants: GITLAB_ACCESS_GUEST (10), REPORTER (20), etc.
                     access_level = member.get("access_level", 0)
                     role = "member"
-                    if access_level >= 40:
+                    if access_level >= GITLAB_ADMIN_MIN_ACCESS:
                         role = "admin"
 
                     team_members.append(TeamMember(user_id=str(user["_id"]), role=role))
 
             if team:
-                await db.teams.update_one(
-                    {"_id": team["_id"]},
-                    {
-                        "$set": {
-                            "members": [tm.dict() for tm in team_members],
-                            "updated_at": datetime.now(timezone.utc),
-                        }
-                    },
+                await team_repo.set_members(
+                    team["_id"],
+                    [tm.model_dump() for tm in team_members],
+                    datetime.now(timezone.utc),
                 )
                 return str(team["_id"])
             elif team_members:
                 new_team = Team(
                     name=team_name, description=description, members=team_members
                 )
-                result = await db.teams.insert_one(new_team.dict(by_alias=True))
-                return str(result.inserted_id)
+                await team_repo.create(new_team)
+                return str(new_team.id)
 
         except Exception as e:
             logger.error(f"Error syncing GitLab teams: {e}")

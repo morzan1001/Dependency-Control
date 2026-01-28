@@ -10,14 +10,40 @@ Supports multiple event types:
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+from app.services.webhooks.types import (
+    AnalysisFailedPayload,
+    BaseWebhookPayload,
+    ProjectPayload,
+    ScanCompletedPayload,
+    ScanPayload,
+    TestWebhookPayload,
+    VulnerabilityFoundPayload,
+)
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.config import settings
+from app.core.constants import (
+    WEBHOOK_BACKOFF_BASE,
+    WEBHOOK_EVENT_ANALYSIS_FAILED,
+    WEBHOOK_EVENT_SCAN_COMPLETED,
+    WEBHOOK_EVENT_VULNERABILITY_FOUND,
+    WEBHOOK_HEADER_CONTENT_TYPE,
+    WEBHOOK_HEADER_EVENT,
+    WEBHOOK_HEADER_ID,
+    WEBHOOK_HEADER_SIGNATURE,
+    WEBHOOK_HEADER_TEST,
+    WEBHOOK_HEADER_TIMESTAMP,
+    WEBHOOK_HEADER_USER_AGENT,
+    WEBHOOK_USER_AGENT_VALUE,
+)
 from app.models.webhook import Webhook
 
 logger = logging.getLogger(__name__)
@@ -33,11 +59,29 @@ except ImportError:
 class WebhookService:
     """
     Service for triggering webhooks on various events.
+
+    Handles webhook delivery with retries, signature generation,
+    and delivery tracking for multi-pod deployments.
     """
 
-    def __init__(self):
-        self.timeout = 30.0  # Timeout for webhook requests
-        self.max_retries = 3
+    def __init__(
+        self,
+        timeout: Optional[float] = None,
+        max_retries: Optional[int] = None,
+    ):
+        """
+        Initialize the webhook service.
+
+        Args:
+            timeout: Timeout for webhook HTTP requests in seconds (default from settings)
+            max_retries: Maximum number of retry attempts for failed deliveries (default from settings)
+        """
+        self.timeout = (
+            timeout if timeout is not None else settings.WEBHOOK_TIMEOUT_SECONDS
+        )
+        self.max_retries = (
+            max_retries if max_retries is not None else settings.WEBHOOK_MAX_RETRIES
+        )
 
     def _generate_signature(self, secret: str, payload: str) -> str:
         """
@@ -56,8 +100,114 @@ class WebhookService:
             hashlib.sha256,
         ).hexdigest()
 
+    def _build_headers(
+        self,
+        webhook: Webhook,
+        event_type: str,
+        json_payload: str,
+        is_test: bool = False,
+    ) -> Dict[str, str]:
+        """
+        Build HTTP headers for webhook request.
+
+        Args:
+            webhook: Webhook configuration
+            event_type: Type of event being triggered
+            json_payload: JSON-encoded payload for signature generation
+            is_test: Whether this is a test request
+
+        Returns:
+            Dictionary of HTTP headers
+        """
+        timestamp = str(int(time.time()))
+
+        headers = {
+            WEBHOOK_HEADER_CONTENT_TYPE: "application/json",
+            WEBHOOK_HEADER_USER_AGENT: WEBHOOK_USER_AGENT_VALUE,
+            WEBHOOK_HEADER_EVENT: event_type,
+            WEBHOOK_HEADER_TIMESTAMP: timestamp,
+            WEBHOOK_HEADER_ID: webhook.id,
+        }
+
+        # Add test header if this is a test request
+        if is_test:
+            headers[WEBHOOK_HEADER_TEST] = "true"
+
+        # Add signature if secret is configured
+        if webhook.secret:
+            signature = self._generate_signature(webhook.secret, json_payload)
+            headers[WEBHOOK_HEADER_SIGNATURE] = f"sha256={signature}"
+
+        # Add custom headers if configured
+        if webhook.headers:
+            headers.update(webhook.headers)
+
+        return headers
+
+    def _build_base_payload(
+        self,
+        event_type: str,
+        scan_id: str,
+        project_id: str,
+        project_name: str,
+        scan_url: Optional[str] = None,
+    ) -> BaseWebhookPayload:
+        """
+        Build common payload structure used by all webhook events.
+
+        Args:
+            event_type: Type of event
+            scan_id: Scan ID
+            project_id: Project ID
+            project_name: Project name
+            scan_url: Optional URL to view scan results
+
+        Returns:
+            Base payload dictionary with typed structure
+        """
+        scan: ScanPayload = {
+            "id": scan_id,
+            "url": scan_url,
+        }
+        project: ProjectPayload = {
+            "id": project_id,
+            "name": project_name,
+        }
+        return {
+            "event": event_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "scan": scan,
+            "project": project,
+        }
+
+    async def _update_webhook_status(
+        self,
+        db: AsyncIOMotorDatabase,
+        webhook_id: str,
+        success: bool,
+    ) -> None:
+        """
+        Update webhook delivery status in database.
+
+        This is crucial for multi-pod deployments to track delivery state.
+
+        Args:
+            db: Database connection
+            webhook_id: Webhook ID to update
+            success: Whether the delivery was successful
+        """
+        try:
+            update_field = "last_triggered_at" if success else "last_failure_at"
+            await db.webhooks.update_one(
+                {"_id": webhook_id},
+                {"$set": {update_field: datetime.now(timezone.utc)}},
+            )
+        except Exception as e:
+            logger.error(f"Failed to update webhook status for {webhook_id}: {e}")
+
     async def _send_webhook(
         self,
+        db: AsyncIOMotorDatabase,
         webhook: Webhook,
         payload: Dict[str, Any],
         event_type: str,
@@ -66,6 +216,7 @@ class WebhookService:
         Send a single webhook with retries.
 
         Args:
+            db: Database connection for status updates
             webhook: Webhook configuration
             payload: Payload to send
             event_type: Type of event being triggered
@@ -73,27 +224,11 @@ class WebhookService:
         Returns:
             True if successful, False otherwise
         """
-        import json
-
         json_payload = json.dumps(payload)
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "DependencyControl-Webhook/1.0",
-            "X-Webhook-Event": event_type,
-            "X-Webhook-Timestamp": str(int(time.time())),
-        }
-
-        # Add signature if secret is configured
-        if webhook.secret:
-            signature = self._generate_signature(webhook.secret, json_payload)
-            headers["X-Webhook-Signature"] = f"sha256={signature}"
-
-        # Add custom headers if configured
-        if webhook.headers:
-            headers.update(webhook.headers)
+        headers = self._build_headers(webhook, event_type, json_payload)
 
         retry_count = 0
-        last_error = None
+        last_error: Optional[str] = None
 
         while retry_count < self.max_retries:
             try:
@@ -109,6 +244,7 @@ class WebhookService:
                             f"Webhook {webhook.id} triggered successfully for {event_type} "
                             f"(status: {response.status_code})"
                         )
+                        await self._update_webhook_status(db, webhook.id, success=True)
                         return True
                     else:
                         logger.warning(
@@ -117,7 +253,7 @@ class WebhookService:
                         )
                         last_error = f"HTTP {response.status_code}"
 
-            except httpx.TimeoutException as e:
+            except httpx.TimeoutException:
                 logger.warning(
                     f"Webhook {webhook.id} timed out for {event_type} (attempt {retry_count + 1})"
                 )
@@ -136,14 +272,15 @@ class WebhookService:
 
             retry_count += 1
             if retry_count < self.max_retries:
-                # Exponential backoff: 1s, 2s, 4s
-                await asyncio.sleep(2 ** (retry_count - 1))
+                # Exponential backoff: 1s, 2s, 4s (with base=2)
+                await asyncio.sleep(WEBHOOK_BACKOFF_BASE ** (retry_count - 1))
 
         # All retries failed
         logger.error(
             f"Webhook {webhook.id} failed after {self.max_retries} attempts for {event_type}. "
             f"Last error: {last_error}"
         )
+        await self._update_webhook_status(db, webhook.id, success=False)
         return False
 
     async def _get_webhooks_for_event(
@@ -154,32 +291,40 @@ class WebhookService:
 
         Args:
             db: Database connection
-            project_id: Project ID (None for global webhooks)
+            project_id: Project ID (None for global webhooks only)
             event_type: Type of event
 
         Returns:
             List of matching webhooks
         """
-        # Fetch project-specific webhooks
-        query = {
-            "enabled": True,
-            "events": event_type,
-        }
-
-        webhooks = []
+        webhooks: List[Webhook] = []
 
         # Project-specific webhooks
         if project_id:
-            project_query = {**query, "project_id": project_id}
+            project_query = {
+                "is_active": True,
+                "project_id": project_id,
+                "events": event_type,  # MongoDB matches if event_type is in the array
+            }
             cursor = db.webhooks.find(project_query)
             async for webhook_data in cursor:
-                webhooks.append(Webhook(**webhook_data))
+                try:
+                    webhooks.append(Webhook(**webhook_data))
+                except Exception as e:
+                    logger.error(f"Failed to parse webhook data: {e}")
 
-        # Global webhooks
-        global_query = {**query, "project_id": None}
+        # Global webhooks (project_id is None)
+        global_query = {
+            "is_active": True,
+            "project_id": None,
+            "events": event_type,
+        }
         cursor = db.webhooks.find(global_query)
         async for webhook_data in cursor:
-            webhooks.append(Webhook(**webhook_data))
+            try:
+                webhooks.append(Webhook(**webhook_data))
+            except Exception as e:
+                logger.error(f"Failed to parse global webhook data: {e}")
 
         return webhooks
 
@@ -218,10 +363,10 @@ class WebhookService:
                 )
 
             # Trigger webhooks concurrently
-            tasks = []
-            for webhook in webhooks:
-                task = self._send_webhook(webhook, payload, event_type)
-                tasks.append(task)
+            tasks = [
+                self._send_webhook(db, webhook, payload, event_type)
+                for webhook in webhooks
+            ]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -267,27 +412,27 @@ class WebhookService:
             project_id: Project ID
             project_name: Project name
             findings_count: Total number of findings
-            stats: Statistics about findings
+            stats: Statistics about findings (severity breakdown, etc.)
             scan_url: Optional URL to view scan results
         """
-        payload = {
-            "event": "scan_completed",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "scan": {
-                "id": scan_id,
-                "url": scan_url,
-            },
-            "project": {
-                "id": project_id,
-                "name": project_name,
-            },
+        base_payload = self._build_base_payload(
+            event_type=WEBHOOK_EVENT_SCAN_COMPLETED,
+            scan_id=scan_id,
+            project_id=project_id,
+            project_name=project_name,
+            scan_url=scan_url,
+        )
+        payload: ScanCompletedPayload = {
+            **base_payload,
             "findings": {
                 "total": findings_count,
                 "stats": stats,
             },
         }
 
-        await self.trigger_webhooks(db, "scan_completed", payload, project_id)
+        await self.trigger_webhooks(
+            db, WEBHOOK_EVENT_SCAN_COMPLETED, payload, project_id
+        )
 
     async def trigger_vulnerability_found(
         self,
@@ -312,22 +457,20 @@ class WebhookService:
             project_name: Project name
             critical_count: Number of critical vulnerabilities
             high_count: Number of high vulnerabilities
-            kev_count: Number of KEV vulnerabilities
-            high_epss_count: Number of high EPSS vulnerabilities
-            top_vulnerabilities: List of top vulnerabilities
+            kev_count: Number of KEV (Known Exploited Vulnerabilities)
+            high_epss_count: Number of high EPSS score vulnerabilities
+            top_vulnerabilities: List of top vulnerabilities with details
             scan_url: Optional URL to view scan results
         """
-        payload = {
-            "event": "vulnerability_found",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "scan": {
-                "id": scan_id,
-                "url": scan_url,
-            },
-            "project": {
-                "id": project_id,
-                "name": project_name,
-            },
+        base_payload = self._build_base_payload(
+            event_type=WEBHOOK_EVENT_VULNERABILITY_FOUND,
+            scan_id=scan_id,
+            project_id=project_id,
+            project_name=project_name,
+            scan_url=scan_url,
+        )
+        payload: VulnerabilityFoundPayload = {
+            **base_payload,
             "vulnerabilities": {
                 "critical": critical_count,
                 "high": high_count,
@@ -337,7 +480,9 @@ class WebhookService:
             },
         }
 
-        await self.trigger_webhooks(db, "vulnerability_found", payload, project_id)
+        await self.trigger_webhooks(
+            db, WEBHOOK_EVENT_VULNERABILITY_FOUND, payload, project_id
+        )
 
     async def trigger_analysis_failed(
         self,
@@ -356,24 +501,106 @@ class WebhookService:
             scan_id: Scan ID
             project_id: Project ID
             project_name: Project name
-            error_message: Error message
+            error_message: Error message describing the failure
             scan_url: Optional URL to view scan results
         """
-        payload = {
-            "event": "analysis_failed",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "scan": {
-                "id": scan_id,
-                "url": scan_url,
-            },
-            "project": {
-                "id": project_id,
-                "name": project_name,
-            },
+        base_payload = self._build_base_payload(
+            event_type=WEBHOOK_EVENT_ANALYSIS_FAILED,
+            scan_id=scan_id,
+            project_id=project_id,
+            project_name=project_name,
+            scan_url=scan_url,
+        )
+        payload: AnalysisFailedPayload = {
+            **base_payload,
             "error": error_message,
         }
 
-        await self.trigger_webhooks(db, "analysis_failed", payload, project_id)
+        await self.trigger_webhooks(
+            db, WEBHOOK_EVENT_ANALYSIS_FAILED, payload, project_id
+        )
+
+    async def test_webhook(
+        self,
+        webhook: Webhook,
+        event_type: str = WEBHOOK_EVENT_SCAN_COMPLETED,
+    ) -> Dict[str, Any]:
+        """
+        Send a test webhook to verify configuration.
+
+        Args:
+            webhook: Webhook configuration to test
+            event_type: Event type for the test payload
+
+        Returns:
+            Dict with success status, status_code, error, and response_time_ms
+        """
+        test_payload: TestWebhookPayload = {
+            "event": event_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "test": True,
+            "message": "This is a test webhook from DependencyControl",
+            "scan": {
+                "id": "test-scan-id",
+                "url": None,
+            },
+            "project": {
+                "id": "test-project-id",
+                "name": "Test Project",
+            },
+        }
+
+        json_payload = json.dumps(test_payload)
+        headers = self._build_headers(webhook, event_type, json_payload, is_test=True)
+
+        start_time = time.monotonic()
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    webhook.url,
+                    content=json_payload,
+                    headers=headers,
+                )
+
+                response_time_ms = (time.monotonic() - start_time) * 1000
+
+                if 200 <= response.status_code < 300:
+                    return {
+                        "success": True,
+                        "status_code": response.status_code,
+                        "error": None,
+                        "response_time_ms": round(response_time_ms, 2),
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "status_code": response.status_code,
+                        "error": f"HTTP {response.status_code}: {response.text[:200]}",
+                        "response_time_ms": round(response_time_ms, 2),
+                    }
+
+        except httpx.TimeoutException:
+            return {
+                "success": False,
+                "status_code": None,
+                "error": f"Request timed out after {self.timeout}s",
+                "response_time_ms": None,
+            }
+        except httpx.RequestError as e:
+            return {
+                "success": False,
+                "status_code": None,
+                "error": str(e),
+                "response_time_ms": None,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "status_code": None,
+                "error": f"Unexpected error: {e}",
+                "response_time_ms": None,
+            }
 
 
 # Global singleton instance

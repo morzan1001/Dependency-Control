@@ -1,10 +1,14 @@
 from collections import defaultdict
-from typing import List, Dict, Any, cast
+from typing import Any, Dict, List, cast
 
+from app.core.constants import (
+    CROSS_PROJECT_MIN_OCCURRENCES,
+    SCORECARD_UNMAINTAINED_THRESHOLD,
+)
 from app.schemas.recommendation import (
+    Priority,
     Recommendation,
     RecommendationType,
-    Priority,
 )
 from app.services.recommendation.common import parse_version_tuple
 
@@ -54,7 +58,9 @@ def correlate_scorecard_with_vulnerabilities(
         is_unmaintained = "Maintained" in critical_issues
 
         # High risk: Critical/High vuln in unmaintained or low-score package
-        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < 5.0):
+        if severity in ["CRITICAL", "HIGH"] and (
+            is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD
+        ):
             high_risk_vulns.append(
                 {
                     "component": component,
@@ -88,7 +94,7 @@ def correlate_scorecard_with_vulnerabilities(
                     f"Found {len(high_risk_vulns)} critical/high vulnerabilities in packages "
                     f"with concerning OpenSSF Scorecard ratings. "
                     f"{unmaintained_count} are in unmaintained packages, "
-                    f"{low_score_count} are in packages with scores below 5.0/10. "
+                    f"{low_score_count} are in packages with scores below {SCORECARD_UNMAINTAINED_THRESHOLD}/10. "
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={
@@ -104,7 +110,11 @@ def correlate_scorecard_with_vulnerabilities(
                     "unmaintained_count": unmaintained_count,
                 },
                 affected_components=[
-                    f"{v['component']}@{v['version']} (score: {v['scorecard_score']:.1f}/10{', UNMAINTAINED' if v['unmaintained'] else ''})"
+                    (
+                        f"{v['component']}@{v['version']} "
+                        f"(score: {v['scorecard_score']:.1f}/10"
+                        f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
+                    )
                     for v in high_risk_vulns[:10]
                 ],
                 action={
@@ -182,7 +192,7 @@ def analyze_cross_project_patterns(
     widespread_cves = [
         {"cve": cve, "projects": proj_list, "count": len(proj_list)}
         for cve, proj_list in cve_project_map.items()
-        if len(proj_list) >= 2
+        if len(proj_list) >= CROSS_PROJECT_MIN_OCCURRENCES
     ]
 
     if widespread_cves:
@@ -195,7 +205,11 @@ def analyze_cross_project_patterns(
                     Priority.HIGH if len(widespread_cves) > 5 else Priority.MEDIUM
                 ),
                 title=f"{len(widespread_cves)} vulnerabilities affect multiple projects",
-                description=f"These CVEs appear in {len(widespread_cves)} or more of your projects. Fixing them once (e.g., in a shared package or template) could benefit all affected projects.",
+                description=(
+                    f"These CVEs appear in {len(widespread_cves)} or more of your projects. "
+                    "Fixing them once (e.g., in a shared package or template) "
+                    "could benefit all affected projects."
+                ),
                 impact={
                     "critical": 0,
                     "high": len(widespread_cves),
@@ -246,7 +260,8 @@ def analyze_cross_project_patterns(
             "version_count": len(data["versions"]),
         }
         for name, data in package_usage.items()
-        if len(data["versions"]) > 1 and len(set(data["projects"])) >= 2
+        if len(data["versions"]) > 1
+        and len(set(data["projects"])) >= CROSS_PROJECT_MIN_OCCURRENCES
     ]
 
     if inconsistent_packages:
@@ -260,7 +275,11 @@ def analyze_cross_project_patterns(
                 type=RecommendationType.CROSS_PROJECT_PATTERN,
                 priority=Priority.LOW,
                 title=f"Version inconsistency across {len(inconsistent_packages)} shared packages",
-                description="These packages are used across multiple projects but with different versions. Standardizing versions can simplify maintenance and reduce security gaps.",
+                description=(
+                    "These packages are used across multiple projects but with "
+                    "different versions. Standardizing versions can simplify "
+                    "maintenance and reduce security gaps."
+                ),
                 impact={
                     "critical": 0,
                     "high": 0,
@@ -325,7 +344,11 @@ def analyze_cross_project_patterns(
                     type=RecommendationType.CROSS_PROJECT_PATTERN,
                     priority=Priority.MEDIUM,
                     title="Prioritize security fixes in most affected projects",
-                    description="Some projects have significantly more security findings than others. Consider prioritizing remediation efforts on these projects.",
+                    description=(
+                        "Some projects have significantly more security findings "
+                        "than others. Consider prioritizing remediation efforts "
+                        "on these projects."
+                    ),
                     impact={
                         "critical": sum(
                             p.get("total_critical", 0) for p in top_problematic
@@ -339,7 +362,11 @@ def analyze_cross_project_patterns(
                         ),
                     },
                     affected_components=[
-                        f"{p.get('project_name', 'Unknown')}: {p.get('total_critical', 0)} critical, {p.get('total_high', 0)} high"
+                        (
+                            f"{p.get('project_name', 'Unknown')}: "
+                            f"{p.get('total_critical', 0)} critical, "
+                            f"{p.get('total_high', 0)} high"
+                        )
                         for p in top_problematic
                     ],
                     action={

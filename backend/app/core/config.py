@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # Email
     SMTP_HOST: str | None = None
     SMTP_PORT: int | None = None
-    SMTP_user: str | None = None
+    SMTP_USER: str | None = None
     SMTP_PASSWORD: str | None = None
     SMTP_FROM_EMAIL: str = "noreply@dependency-control.com"
 
@@ -33,6 +33,24 @@ class Settings(BaseSettings):
 
     # Frontend
     FRONTEND_BASE_URL: str = "http://localhost:3000"
+
+    # =========================================================================
+    # Configurable Timeouts (deployment-dependent)
+    # =========================================================================
+    # Time (seconds) a scan can be in 'processing' before considered stuck
+    # Increase this if your analysis typically takes longer
+    HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS: int = 1800  # 30 minutes
+
+    # Timeout for webhook deliveries (depends on webhook endpoint response times)
+    WEBHOOK_TIMEOUT_SECONDS: float = 30.0
+    WEBHOOK_MAX_RETRIES: int = 3
+
+    # Timeout for notification providers (Slack, Mattermost API latency)
+    NOTIFICATION_HTTP_TIMEOUT_SECONDS: float = 30.0
+
+    # Enrichment service settings
+    ENRICHMENT_MAX_RETRIES: int = 3
+    ENRICHMENT_RETRY_DELAY: float = 1.0
 
     class Config:
         case_sensitive = True

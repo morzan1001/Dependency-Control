@@ -1,25 +1,32 @@
-from typing import Any, Dict, List, Set
+import html
 import logging
-import markdown
 from datetime import datetime
+from typing import Any, Dict, List, Set
+
+import markdown
 from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from packaging.version import parse as parse_version
 
 from app.api import deps
 from app.db.mongodb import get_database
+from app.models.broadcast import Broadcast
 from app.models.project import Project
 from app.models.user import User
-from app.models.broadcast import Broadcast
+from app.repositories import (
+    BroadcastRepository,
+    DependencyRepository,
+    ProjectRepository,
+    TeamRepository,
+    UserRepository,
+)
 from app.schemas.notification import (
+    BroadcastHistoryItem,
     BroadcastRequest,
     BroadcastResult,
-    BroadcastHistoryItem,
 )
 from app.services.notifications.service import notification_service
-from app.services.notifications.templates import (
-    get_announcement_template,
-)
+from app.services.notifications.templates import get_announcement_template
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -35,21 +42,22 @@ async def get_broadcast_history(
     """
     Get history of sent broadcasts
     """
-    cursor = db.broadcasts.find({}).sort("created_at", -1).limit(50)
-    history = await cursor.to_list(None)
+    broadcast_repo = BroadcastRepository(db)
+    history = await broadcast_repo.get_history(limit=50)
+
     return [
         BroadcastHistoryItem(
-            id=str(h["_id"]),
-            type=h["type"],
-            target_type=h["target_type"],
-            subject=h["subject"],
+            id=str(h.id),
+            type=h.type,
+            target_type=h.target_type,
+            subject=h.subject,
             created_at=(
-                h["created_at"].isoformat()
-                if isinstance(h["created_at"], datetime)
-                else str(h["created_at"])
+                h.created_at.isoformat()
+                if isinstance(h.created_at, datetime)
+                else str(h.created_at)
             ),
-            recipient_count=h.get("recipient_count", 0),
-            project_count=h.get("project_count", 0),
+            recipient_count=h.recipient_count,
+            project_count=h.project_count,
         )
         for h in history
     ]
@@ -66,6 +74,8 @@ async def suggest_packages(
     """
     Suggest package names for advisories based on existing dependencies.
     """
+    dep_repo = DependencyRepository(db)
+
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"name": {"$regex": q, "$options": "i"}}},
         {"$group": {"_id": "$name"}},
@@ -74,7 +84,7 @@ async def suggest_packages(
         {"$project": {"_id": 0, "name": "$_id"}},
     ]
 
-    results = await db.dependencies.aggregate(pipeline).to_list(20)
+    results = await dep_repo.aggregate(pipeline, limit=20)
     return [r["name"] for r in results]
 
 
@@ -89,13 +99,20 @@ async def broadcast_message(
     """
     Send a broadcast message to all users, specific teams, or owners of projects affecting a specific dependency.
     """
+    # Initialize repositories
+    user_repo = UserRepository(db)
+    team_repo = TeamRepository(db)
+    project_repo = ProjectRepository(db)
+    dep_repo = DependencyRepository(db)
+    broadcast_repo = BroadcastRepository(db)
+
     users_to_notify: List[User] = []
     project_count = 0
     unique_user_count = 0
 
     # 0. Check settings for dashboard url
-    settings_data = await db.system_settings.find_one({"_id": "current"})
-    dashboard_url = settings_data.get("dashboard_url") if settings_data else None
+    system_settings = await deps.get_system_settings(db)
+    dashboard_url = system_settings.dashboard_url
     if not dashboard_url:
         logger.warning(
             "Dashboard URL not configured; notifications will omit dashboard links"
@@ -104,14 +121,20 @@ async def broadcast_message(
     # Determine forced channels
     forced_channels = payload.channels if payload.channels else None
 
+    # Validate target_type
+    valid_target_types: List[str] = ["global", "teams", "advisory"]
+    if payload.target_type not in valid_target_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid target_type. Must be one of: {', '.join(valid_target_types)}",
+        )
+
     # Convert Markdown to HTML for the message body
     message_html_content = markdown.markdown(payload.message)
 
     if payload.target_type == "global":
         # All active users
-        users_cursor = db.users.find({"is_active": True})
-        users_list = await users_cursor.to_list(None)
-        users_to_notify = [User(**u) for u in users_list]
+        users_to_notify = await user_repo.find_many({"is_active": True}, limit=10000)
         unique_user_count = len(users_to_notify)
 
         if users_to_notify and not payload.dry_run:
@@ -136,8 +159,9 @@ async def broadcast_message(
             return BroadcastResult(recipient_count=0)
 
         # Find teams -> members -> users
-        teams_cursor = db.teams.find({"_id": {"$in": payload.target_teams}})
-        teams = await teams_cursor.to_list(None)
+        teams = await team_repo.find_many_raw(
+            {"_id": {"$in": payload.target_teams}}, limit=100
+        )
         user_ids: Set[str] = set()
 
         for t in teams:
@@ -145,11 +169,9 @@ async def broadcast_message(
                 user_ids.add(m["user_id"])
 
         if user_ids:
-            users_cursor = db.users.find(
-                {"_id": {"$in": list(user_ids)}, "is_active": True}
+            users_to_notify = await user_repo.find_many(
+                {"_id": {"$in": list(user_ids)}, "is_active": True}, limit=10000
             )
-            users_list = await users_cursor.to_list(None)
-            users_to_notify = [User(**u) for u in users_list]
             unique_user_count = len(users_to_notify)
 
             if users_to_notify and not payload.dry_run:
@@ -176,8 +198,9 @@ async def broadcast_message(
             )
 
         # 1. Get all projects with latest_scan_id
-        projects_cursor = db.projects.find({"latest_scan_id": {"$exists": True}})
-        projects_list = await projects_cursor.to_list(None)
+        projects_list = await project_repo.find_many_raw(
+            {"latest_scan_id": {"$exists": True}}, limit=10000
+        )
 
         # Map scan_id -> Project Data
         scan_map = {
@@ -194,15 +217,14 @@ async def broadcast_message(
 
         # 2. Iterate over each advisory package rule
         for pkg_rule in payload.packages:
-            query = {
+            query: Dict[str, Any] = {
                 "scan_id": {"$in": list(scan_map.keys())},
                 "name": pkg_rule.name,
             }
             if pkg_rule.type:
                 query["type"] = pkg_rule.type
 
-            deps_cursor = db.dependencies.find(query)
-            dependencies = await deps_cursor.to_list(None)
+            dependencies = await dep_repo.find_many_raw(query, limit=50000)
 
             target_version = (
                 parse_version(pkg_rule.version) if pkg_rule.version else None
@@ -216,8 +238,11 @@ async def broadcast_message(
                         # Check if dep_ver <= target_version (affected range)
                         if dep_ver <= target_version:
                             is_affected = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(
+                            f"Could not parse version '{dep.get('version')}' for "
+                            f"dependency '{dep.get('name')}': {e}"
+                        )
                 else:
                     is_affected = True
 
@@ -248,12 +273,10 @@ async def broadcast_message(
             # If teams are supported for ownership, we'd need to fetch teams -> members here too.
             # Assuming simplified 'owner_id' for now as per Project model generally used.
 
-        users_cursor = db.users.find(
-            {"_id": {"$in": list(all_owner_ids)}, "is_active": True}
+        owner_users = await user_repo.find_many(
+            {"_id": {"$in": list(all_owner_ids)}, "is_active": True}, limit=10000
         )
-        users_dict = {
-            str(u["_id"]): User(**u) for u in await users_cursor.to_list(None)
-        }
+        users_dict = {str(u.id): u for u in owner_users}
 
         for pid, project in affected_projects_map.items():
             if project.owner_id in users_dict:
@@ -285,17 +308,21 @@ async def broadcast_message(
                 projects_text_parts = []
 
                 for p in projects_data:
-                    findings_str = ", ".join(p["findings"])
+                    # Escape HTML to prevent XSS
+                    safe_name = html.escape(p["name"])
+                    safe_findings = html.escape(", ".join(p["findings"]))
                     if dashboard_url:
                         p_link = f"{dashboard_url}/projects/{p['id']}"
                         projects_html_parts.append(
-                            f"<li><strong><a href='{p_link}'>{p['name']}</a></strong>: {findings_str}</li>"
+                            f"<li><strong><a href='{p_link}'>{safe_name}</a></strong>: {safe_findings}</li>"
                         )
                     else:
                         projects_html_parts.append(
-                            f"<li><strong>{p['name']}</strong>: {findings_str}</li>"
+                            f"<li><strong>{safe_name}</strong>: {safe_findings}</li>"
                         )
-                    projects_text_parts.append(f"- {p['name']}: {findings_str}")
+                    projects_text_parts.append(
+                        f"- {p['name']}: {', '.join(p['findings'])}"
+                    )
 
                 # Build Context Message
                 findings_list_html = "<ul>" + "".join(projects_html_parts) + "</ul>"
@@ -320,8 +347,8 @@ async def broadcast_message(
                 )
 
                 dashboard_button = (
-                    f"<p style=\"margin-top: 20px;\">"
-                    f"<a href=\"{dashboard_url}\" style=\"{btn_style}\">View Dashboard</a>"
+                    f'<p style="margin-top: 20px;">'
+                    f'<a href="{dashboard_url}" style="{btn_style}">View Dashboard</a>'
                     f"</p>"
                     if dashboard_url
                     else ""
@@ -361,18 +388,16 @@ async def broadcast_message(
             created_by=str(current_user.id),
             recipient_count=unique_user_count,
             project_count=project_count,
-            packages=[p.dict() for p in payload.packages] if payload.packages else None,
+            packages=(
+                [p.model_dump() for p in payload.packages] if payload.packages else None
+            ),
             channels=payload.channels,
             teams=payload.target_teams,
         )
-        await db.broadcasts.insert_one(history_entry.dict(by_alias=True))
+        await broadcast_repo.create(history_entry)
 
     return BroadcastResult(
-        recipient_count=(
-            unique_user_count
-            if payload.target_type != "global" and payload.target_type != "teams"
-            else len(users_to_notify)
-        ),  # Fix count logic for simple types
+        recipient_count=unique_user_count,
         project_count=project_count,
         unique_user_count=unique_user_count,
     )

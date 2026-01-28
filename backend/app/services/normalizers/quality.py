@@ -1,5 +1,7 @@
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
 from app.models.finding import Finding, FindingType, Severity
+from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
@@ -13,7 +15,7 @@ def normalize_scorecard(
     Also stores scorecard data for component enrichment.
     """
     # Process package metadata (not findings, but enrichment data)
-    for key, metadata in result.get("package_metadata", {}).items():
+    for key, metadata in (result.get("package_metadata") or {}).items():
         # Populate the DependencyEnrichment structure
         name = metadata.get("name", "")
         version = metadata.get("version", "")
@@ -21,38 +23,32 @@ def normalize_scorecard(
             aggregator.enrich_from_deps_dev(name, version, metadata)
 
     # Process scorecard issues (these become findings)
-    for item in result.get("scorecard_issues", []):
-        scorecard = item.get("scorecard", {})
+    for item in result.get("scorecard_issues") or []:
+        scorecard = item.get("scorecard") or {}
         overall = scorecard.get("overallScore", 0)
-        failed_checks = item.get("failed_checks", [])
-        critical_issues = item.get("critical_issues", [])
-        project_url = item.get("project_url", "")
-        component = item.get("component", "")
-        version = item.get("version", "")
+        failed_checks: List[Dict[str, Any]] = item.get("failed_checks") or []
+        critical_issues: List[str] = item.get("critical_issues") or []
+        project_url = item.get("project_url") or ""
+        component = safe_get(item, "component", "unknown")
+        version = item.get("version") or ""
 
         # Store scorecard data for component enrichment
-        # This allows other findings to reference scorecard data
         component_key = f"{component}@{version}" if version else component
 
-        # Access cache directly via private member (or public if we open it)
-        # Using public property would be better if available
+        # Store in aggregator's scorecard cache (use public method if available)
+        scorecard_data = {
+            "overall_score": overall,
+            "failed_checks": failed_checks,
+            "critical_issues": critical_issues,
+            "project_url": project_url,
+            "checks": scorecard.get("checks") or [],
+        }
+
+        # Use public property if available, otherwise fall back to private
         if hasattr(aggregator, "scorecard_cache"):
-            aggregator.scorecard_cache[component_key] = {
-                "overall_score": overall,
-                "failed_checks": failed_checks,
-                "critical_issues": critical_issues,
-                "project_url": project_url,
-                "checks": scorecard.get("checks", []),
-            }
-        else:
-            # Fallback to direct access if property not renamed yet
-            aggregator._scorecard_cache[component_key] = {
-                "overall_score": overall,
-                "failed_checks": failed_checks,
-                "critical_issues": critical_issues,
-                "project_url": project_url,
-                "checks": scorecard.get("checks", []),
-            }
+            aggregator.scorecard_cache[component_key] = scorecard_data
+        elif hasattr(aggregator, "_scorecard_cache"):
+            aggregator._scorecard_cache[component_key] = scorecard_data
 
         # Determine severity based on score and critical issues
         if (
@@ -73,7 +69,10 @@ def normalize_scorecard(
             description_parts.append(f"Critical issues: {', '.join(critical_issues)}")
 
         if failed_checks:
-            failed_names = [f"{c['name']} ({c['score']}/10)" for c in failed_checks[:3]]
+            failed_names = [
+                f"{c.get('name', '?')} ({c.get('score', 0)}/10)"
+                for c in failed_checks[:3]
+            ]
             description_parts.append(f"Failed checks: {', '.join(failed_names)}")
             if len(failed_checks) > 3:
                 description_parts[-1] += f" (+{len(failed_checks) - 3} more)"
@@ -81,7 +80,7 @@ def normalize_scorecard(
         description = ". ".join(description_parts)
 
         # Build recommendation based on issues
-        recommendations = []
+        recommendations: List[str] = []
         for check in failed_checks:
             check_name = check.get("name", "")
             if check_name == "Maintained":
@@ -105,7 +104,7 @@ def normalize_scorecard(
 
         aggregator.add_finding(
             Finding(
-                id=f"SCORECARD-{component}",
+                id=build_finding_id("SCORECARD", component),
                 type=FindingType.QUALITY,
                 severity=severity,
                 component=component,
@@ -125,7 +124,7 @@ def normalize_scorecard(
                     ),
                     "checks_summary": {
                         check.get("name"): check.get("score")
-                        for check in scorecard.get("checks", [])
+                        for check in (scorecard.get("checks") or [])
                         if check.get("score", -1) >= 0
                     },
                 },
@@ -137,18 +136,23 @@ def normalize_scorecard(
 def normalize_typosquatting(
     aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
 ):
-    for item in result.get("typosquatting_issues", []):
+    """Normalize typosquatting detection findings."""
+    for item in result.get("typosquatting_issues") or []:
         similarity = item.get("similarity", 0)
-        imitated = item.get("imitated_package")
+        imitated = item.get("imitated_package") or "unknown"
+        component = safe_get(item, "component", "unknown")
 
         aggregator.add_finding(
             Finding(
-                id=f"TYPO-{item['component']}",
+                id=build_finding_id("TYPO", component),
                 type=FindingType.MALWARE,  # Typosquatting is a form of malware/attack
                 severity=Severity.CRITICAL,
-                component=item.get("component"),
+                component=component,
                 version=item.get("version"),
-                description=f"Possible typosquatting detected! '{item.get('component')}' is {similarity*100:.1f}% similar to popular package '{imitated}'",
+                description=(
+                    f"Possible typosquatting detected! '{component}' is "
+                    f"{similarity*100:.1f}% similar to popular package '{imitated}'"
+                ),
                 scanners=["typosquatting"],
                 details={"imitated_package": imitated, "similarity": similarity},
             ),
@@ -160,27 +164,28 @@ def normalize_maintainer_risk(
     aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
 ):
     """Normalize maintainer risk results into findings."""
-    for item in result.get("maintainer_issues", []):
-        risks = item.get("risks", [])
+    for item in result.get("maintainer_issues") or []:
+        risks: List[Dict[str, Any]] = item.get("risks") or []
+        component = safe_get(item, "component", "unknown")
 
         # Create a combined description from all risks
-        risk_messages = [r.get("message", "") for r in risks]
+        risk_messages = [r.get("message", "") for r in risks if r.get("message")]
         description = (
             "; ".join(risk_messages) if risk_messages else "Maintainer risk detected"
         )
 
         aggregator.add_finding(
             Finding(
-                id=f"MAINT-{item['component']}",
+                id=build_finding_id("MAINT", component),
                 type=FindingType.QUALITY,  # Supply chain quality issue
-                severity=Severity(item.get("severity", "MEDIUM")),
-                component=item.get("component"),
+                severity=safe_severity(item.get("severity"), default=Severity.MEDIUM),
+                component=component,
                 version=item.get("version"),
                 description=description,
                 scanners=["maintainer_risk"],
                 details={
                     "risks": risks,
-                    "maintainer_info": item.get("maintainer_info", {}),
+                    "maintainer_info": item.get("maintainer_info") or {},
                     "risk_count": len(risks),
                 },
             ),

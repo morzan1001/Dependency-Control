@@ -1,7 +1,8 @@
 import base64
 import io
 import logging
-from typing import Any, List, Optional
+import re
+from typing import List, Optional
 
 import pyotp
 import qrcode
@@ -9,10 +10,19 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
+from app.api.v1.helpers import (
+    check_admin_or_self,
+    fetch_updated_user,
+    get_logo_path,
+    get_user_or_404,
+    is_2fa_setup_mode,
+)
 from app.core import security
 from app.core.config import settings
+from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.db.mongodb import get_database
 from app.models.user import User
+from app.repositories import InvitationRepository, UserRepository
 from app.schemas.user import User as UserSchema
 from app.schemas.user import (
     User2FADisable,
@@ -25,7 +35,9 @@ from app.schemas.user import (
     UserUpdateMe,
 )
 from app.services.notifications import templates
+from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.service import notification_service
+from app.services.notifications.templates import get_password_reset_template
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -48,11 +60,18 @@ async def create_user(
             detail="Password is required when creating a user",
         )
 
-    user = await db.users.find_one({"username": user_in.username})
-    if user:
+    user_repo = UserRepository(db)
+
+    if await user_repo.exists_by_email(user_in.email):
         raise HTTPException(
             status_code=400,
-            detail="The user with this username already exists in the system.",
+            detail="A user with this email already exists in the system.",
+        )
+
+    if await user_repo.exists_by_username(user_in.username):
+        raise HTTPException(
+            status_code=400,
+            detail="A user with this username already exists in the system.",
         )
 
     user_dict = user_in.model_dump()
@@ -60,7 +79,7 @@ async def create_user(
     user_dict["hashed_password"] = hashed_password
 
     new_user = User(**user_dict)
-    await db.users.insert_one(new_user.model_dump(by_alias=True))
+    await user_repo.create(new_user)
     return new_user
 
 
@@ -78,21 +97,19 @@ async def read_users(
 ):
     query = {}
     if search:
+        escaped_search = re.escape(search)
         query = {
             "$or": [
-                {"username": {"$regex": search, "$options": "i"}},
-                {"email": {"$regex": search, "$options": "i"}},
+                {"username": {"$regex": escaped_search, "$options": "i"}},
+                {"email": {"$regex": escaped_search, "$options": "i"}},
             ]
         }
 
     sort_direction = 1 if sort_order == "asc" else -1
 
-    users = (
-        await db.users.find(query)
-        .sort(sort_by, sort_direction)
-        .skip(skip)
-        .limit(limit)
-        .to_list(limit)
+    user_repo = UserRepository(db)
+    users = await user_repo.find_many(
+        query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction
     )
     return users
 
@@ -116,25 +133,24 @@ async def update_user_me(
     """
     Update own profile.
     """
+    user_repo = UserRepository(db)
+
     # Check if email is being updated and if it's unique
     if user_in.email and user_in.email != current_user.email:
-        existing_user = await db.users.find_one({"email": user_in.email})
-        if existing_user:
+        if await user_repo.exists_by_email(user_in.email):
             raise HTTPException(status_code=400, detail="Email already registered")
 
     # Check if username is being updated and if it's unique
     if user_in.username and user_in.username != current_user.username:
-        existing_user = await db.users.find_one({"username": user_in.username})
-        if existing_user:
+        if await user_repo.exists_by_username(user_in.username):
             raise HTTPException(status_code=400, detail="Username already taken")
 
     update_data = user_in.model_dump(exclude_unset=True)
 
     if update_data:
-        await db.users.update_one({"_id": current_user.id}, {"$set": update_data})
+        await user_repo.update(current_user.id, update_data)
 
-    updated_user = await db.users.find_one({"_id": current_user.id})
-    return updated_user
+    return await fetch_updated_user(current_user.id, db)
 
 
 @router.get("/{user_id}", response_model=UserSchema)
@@ -143,19 +159,9 @@ async def read_user_by_id(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    # Check permissions: Admin OR Self
-    has_admin_perm = (
-        "*" in current_user.permissions
-        or "user:manage" in current_user.permissions
-        or "user:read" in current_user.permissions
-    )
-    if not has_admin_perm and str(current_user.id) != user_id:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
-    user = await db.users.find_one({"_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+    """Get user by ID. Requires admin permission or self."""
+    check_admin_or_self(current_user, user_id, ["user:manage", "user:read"])
+    return await get_user_or_404(user_id, db)
 
 
 @router.put("/{user_id}", response_model=UserSchema)
@@ -165,20 +171,28 @@ async def update_user(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    # Check permissions: Admin OR Self
-    has_admin_perm = (
-        "*" in current_user.permissions
-        or "user:manage" in current_user.permissions
-        or "user:update" in current_user.permissions
+    """Update user. Requires admin permission or self."""
+    has_admin_perm = check_admin_or_self(
+        current_user, user_id, ["user:manage", "user:update"]
     )
-    if not has_admin_perm and str(current_user.id) != user_id:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    user = await db.users.find_one({"_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    existing_user = await get_user_or_404(user_id, db)
 
+    user_repo = UserRepository(db)
     update_data = user_in.model_dump(exclude_unset=True)
+
+    # Check email uniqueness if being updated
+    if "email" in update_data and update_data["email"] != existing_user.get("email"):
+        if await user_repo.exists_by_email(update_data["email"]):
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Check username uniqueness if being updated
+    if "username" in update_data and update_data["username"] != existing_user.get(
+        "username"
+    ):
+        if await user_repo.exists_by_username(update_data["username"]):
+            raise HTTPException(status_code=400, detail="Username already taken")
+
     if "password" in update_data:
         if has_admin_perm:
             raise HTTPException(
@@ -188,38 +202,40 @@ async def update_user(
                     "'Reset Password' feature to send a reset link."
                 ),
             )
-
-        del update_data["password"]
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Use the /me/password endpoint to change your password.",
+            )
 
     if update_data:
-        await db.users.update_one({"_id": user_id}, {"$set": update_data})
+        await user_repo.update(user_id, update_data)
 
-    updated_user = await db.users.find_one({"_id": user_id})
-    return updated_user
+    return await fetch_updated_user(user_id, db)
 
 
-@router.post("/me/migrate", response_model=User)
+@router.post("/me/migrate", response_model=UserSchema)
 async def migrate_to_local(
     *,
     password_in: UserMigrateToLocal,
     current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(deps.get_database),
-) -> Any:
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
     """
     Migrate SSO user to local account by setting a password.
     """
-    if current_user.auth_provider == "local":
+    if current_user.auth_provider == AUTH_PROVIDER_LOCAL:
         raise HTTPException(status_code=400, detail="User is already a local account.")
 
     hashed_password = security.get_password_hash(password_in.new_password)
 
-    await db.users.update_one(
-        {"_id": current_user.id},
-        {"$set": {"hashed_password": hashed_password, "auth_provider": "local"}},
+    user_repo = UserRepository(db)
+    await user_repo.update(
+        current_user.id,
+        {"hashed_password": hashed_password, "auth_provider": AUTH_PROVIDER_LOCAL},
     )
 
-    updated_user = await db.users.find_one({"_id": current_user.id})
-    return updated_user
+    return await fetch_updated_user(current_user.id, db)
 
 
 @router.post("/{user_id}/migrate", response_model=UserSchema)
@@ -235,17 +251,15 @@ async def migrate_user_to_local(
     This does not set a password, but changes the auth_provider to 'local'.
     The admin should then trigger a password reset.
     """
-    user = await db.users.find_one({"_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = await get_user_or_404(user_id, db)
 
-    if user.get("auth_provider") == "local":
+    if user.get("auth_provider") == AUTH_PROVIDER_LOCAL:
         raise HTTPException(status_code=400, detail="User is already a local account")
 
-    await db.users.update_one({"_id": user_id}, {"$set": {"auth_provider": "local"}})
+    user_repo = UserRepository(db)
+    await user_repo.update(user_id, {"auth_provider": AUTH_PROVIDER_LOCAL})
 
-    updated_user = await db.users.find_one({"_id": user_id})
-    return updated_user
+    return await fetch_updated_user(user_id, db)
 
 
 @router.post("/{user_id}/reset-password")
@@ -263,11 +277,9 @@ async def reset_user_password(
     If SMTP is configured, sends an email.
     Always returns the link (so admin can send it manually if needed).
     """
-    user = await db.users.find_one({"_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = await get_user_or_404(user_id, db)
 
-    if user.get("auth_provider", "local") != "local":
+    if user.get("auth_provider", AUTH_PROVIDER_LOCAL) != AUTH_PROVIDER_LOCAL:
         raise HTTPException(
             status_code=400,
             detail="Cannot reset password for non-local users. Please migrate user first.",
@@ -279,14 +291,7 @@ async def reset_user_password(
     email_sent = False
     if settings.SMTP_HOST:
         try:
-            import os
-
-            from app.services.notifications.email_provider import EmailProvider
-            from app.services.notifications.templates import get_password_reset_template
-
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
-            logo_path = os.path.join(project_root, "assets", "logo.png")
+            logo_path = get_logo_path()
 
             html_content = get_password_reset_template(
                 username=user["username"], link=link, project_name=settings.PROJECT_NAME
@@ -324,7 +329,7 @@ async def update_password_me(
     """
     Update current user password.
     """
-    if current_user.auth_provider != "local":
+    if current_user.auth_provider != AUTH_PROVIDER_LOCAL:
         raise HTTPException(
             status_code=400,
             detail="SSO users cannot change password. Please migrate to local account first.",
@@ -337,31 +342,28 @@ async def update_password_me(
 
     hashed_password = security.get_password_hash(password_in.new_password)
 
-    await db.users.update_one(
-        {"_id": current_user.id}, {"$set": {"hashed_password": hashed_password}}
-    )
+    user_repo = UserRepository(db)
+    await user_repo.update(current_user.id, {"hashed_password": hashed_password})
 
-    # Send notification
-    background_tasks.add_task(
-        notification_service.email_provider.send,
-        destination=current_user.email,
-        subject="Security Alert: Password Changed",
-        message=(
-            f"Hello {current_user.username},\n\nYour password for Dependency Control "
-            "was successfully changed.\n\nIf you did not initiate this change, "
-            "please contact your administrator immediately."
-        ),
-        html_message=templates.get_password_changed_template(
-            username=current_user.username,
-            login_link=f"{settings.FRONTEND_BASE_URL}/login",
-            project_name=settings.PROJECT_NAME,
-        ),
-    )
+    # Send notification if SMTP is configured
+    if settings.SMTP_HOST:
+        background_tasks.add_task(
+            notification_service.email_provider.send,
+            destination=current_user.email,
+            subject="Security Alert: Password Changed",
+            message=(
+                f"Hello {current_user.username},\n\nYour password for {settings.PROJECT_NAME} "
+                "was successfully changed.\n\nIf you did not initiate this change, "
+                "please contact your administrator immediately."
+            ),
+            html_message=templates.get_password_changed_template(
+                username=current_user.username,
+                login_link=f"{settings.FRONTEND_BASE_URL}/login",
+                project_name=settings.PROJECT_NAME,
+            ),
+        )
 
-    updated_user = await db.users.find_one({"_id": current_user.id})
-    return updated_user
-
-
+    return await fetch_updated_user(current_user.id, db)
 
 
 @router.post("/me/2fa/setup", response_model=User2FASetup)
@@ -372,25 +374,19 @@ async def setup_2fa(
     """
     Generate a new 2FA secret and QR code.
     """
-    # Allow if user has full permissions OR if they are in setup mode
-    if (
-        "auth:setup_2fa" in current_user.permissions
-        and len(current_user.permissions) == 1
-    ):
-        pass  # Allowed
-    elif not current_user.is_active:  # Should be caught by deps but double check
+    # User must be either in 2FA setup mode or be a fully active user
+    if not is_2fa_setup_mode(current_user) and not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
 
     secret = pyotp.random_base32()
 
     # Save secret to user but don't enable yet
-    await db.users.update_one(
-        {"_id": current_user.id}, {"$set": {"totp_secret": secret}}
-    )
+    user_repo = UserRepository(db)
+    await user_repo.update(current_user.id, {"totp_secret": secret})
 
     # Generate QR Code
     totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(
-        name=current_user.email, issuer_name="DependencyControl"
+        name=current_user.email, issuer_name=settings.PROJECT_NAME
     )
 
     img = qrcode.make(totp_uri)
@@ -411,16 +407,11 @@ async def enable_2fa(
     """
     Verify OTP and enable 2FA.
     """
-    # Allow if user has full permissions OR if they are in setup mode
-    if (
-        "auth:setup_2fa" in current_user.permissions
-        and len(current_user.permissions) == 1
-    ):
-        pass  # Allowed
+    # User must be either in 2FA setup mode or be a fully active user
+    if not is_2fa_setup_mode(current_user) and not current_user.is_active:
+        raise HTTPException(status_code=400, detail="Inactive user")
 
-    user = await db.users.find_one({"_id": current_user.id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = await get_user_or_404(current_user.id, db)
 
     if not security.verify_password(verify_in.password, user["hashed_password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
@@ -434,27 +425,26 @@ async def enable_2fa(
     if not totp.verify(verify_in.code, valid_window=1):
         raise HTTPException(status_code=400, detail="Invalid OTP code")
 
-    await db.users.update_one(
-        {"_id": current_user.id}, {"$set": {"totp_enabled": True}}
-    )
+    user_repo = UserRepository(db)
+    await user_repo.update(current_user.id, {"totp_enabled": True})
 
-    # Send notification
-    background_tasks.add_task(
-        notification_service.email_provider.send,
-        destination=current_user.email,
-        subject="Security Alert: 2FA Enabled",
-        message=(
-            f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) "
-            "has been enabled for your account.\n\nIf you did not initiate this change, "
-            "please contact your administrator immediately."
-        ),
-        html_message=templates.get_2fa_enabled_template(
-            username=current_user.username, project_name=settings.PROJECT_NAME
-        ),
-    )
+    # Send notification if SMTP is configured
+    if settings.SMTP_HOST:
+        background_tasks.add_task(
+            notification_service.email_provider.send,
+            destination=current_user.email,
+            subject="Security Alert: 2FA Enabled",
+            message=(
+                f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) "
+                "has been enabled for your account.\n\nIf you did not initiate this change, "
+                "please contact your administrator immediately."
+            ),
+            html_message=templates.get_2fa_enabled_template(
+                username=current_user.username, project_name=settings.PROJECT_NAME
+            ),
+        )
 
-    updated_user = await db.users.find_one({"_id": current_user.id})
-    return updated_user
+    return await fetch_updated_user(current_user.id, db)
 
 
 @router.post("/me/2fa/disable", response_model=UserSchema)
@@ -467,34 +457,38 @@ async def disable_2fa(
     """
     Disable 2FA.
     """
-    user = await db.users.find_one({"_id": current_user.id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = await get_user_or_404(current_user.id, db)
+
+    if not user.get("totp_enabled"):
+        raise HTTPException(
+            status_code=400, detail="2FA is not enabled for your account"
+        )
 
     if not security.verify_password(disable_in.password, user["hashed_password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
 
-    await db.users.update_one(
-        {"_id": current_user.id}, {"$set": {"totp_enabled": False, "totp_secret": None}}
+    user_repo = UserRepository(db)
+    await user_repo.update(
+        current_user.id, {"totp_enabled": False, "totp_secret": None}
     )
 
-    # Send notification
-    background_tasks.add_task(
-        notification_service.email_provider.send,
-        destination=current_user.email,
-        subject="Security Alert: 2FA Disabled",
-        message=(
-            f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) "
-            "has been disabled for your account.\n\nIf you did not initiate this change, "
-            "please contact your administrator immediately."
-        ),
-        html_message=templates.get_2fa_disabled_template(
-            username=current_user.username, project_name=settings.PROJECT_NAME
-        ),
-    )
+    # Send notification if SMTP is configured
+    if settings.SMTP_HOST:
+        background_tasks.add_task(
+            notification_service.email_provider.send,
+            destination=current_user.email,
+            subject="Security Alert: 2FA Disabled",
+            message=(
+                f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) "
+                "has been disabled for your account.\n\nIf you did not initiate this change, "
+                "please contact your administrator immediately."
+            ),
+            html_message=templates.get_2fa_disabled_template(
+                username=current_user.username, project_name=settings.PROJECT_NAME
+            ),
+        )
 
-    updated_user = await db.users.find_one({"_id": current_user.id})
-    return updated_user
+    return await fetch_updated_user(current_user.id, db)
 
 
 @router.post("/{user_id}/2fa/disable", response_model=UserSchema)
@@ -509,16 +503,13 @@ async def admin_disable_2fa(
     """
     Admin only: Disable 2FA for a user (e.g. lost device).
     """
-    user = await db.users.find_one({"_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = await get_user_or_404(user_id, db)
 
     if not user.get("totp_enabled"):
         raise HTTPException(status_code=400, detail="2FA is not enabled for this user")
 
-    await db.users.update_one(
-        {"_id": user_id}, {"$set": {"totp_enabled": False, "totp_secret": None}}
-    )
+    user_repo = UserRepository(db)
+    await user_repo.update(user_id, {"totp_enabled": False, "totp_secret": None})
 
     # Send notification
     if settings.SMTP_HOST:
@@ -539,8 +530,7 @@ async def admin_disable_2fa(
         except Exception as e:
             logger.error(f"Failed to send 2FA disable email: {e}")
 
-    updated_user = await db.users.find_one({"_id": user_id})
-    return updated_user
+    return await fetch_updated_user(user_id, db)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -558,17 +548,20 @@ async def delete_user(
     if user_id == str(current_user.id):
         raise HTTPException(status_code=400, detail="Users cannot delete themselves")
 
+    user_repo = UserRepository(db)
+    invitation_repo = InvitationRepository(db)
+
     # 1. Try to find and delete a real user
-    user = await db.users.find_one({"_id": user_id})
+    user = await user_repo.get_raw_by_id(user_id)
     if user:
-        await db.users.delete_one({"_id": user_id})
+        await user_repo.delete(user_id)
         return None
 
     # 2. If not found, try to find and delete a pending invitation
     # Invitations use their _id as the user_id in the frontend list
-    invitation = await db.system_invitations.find_one({"_id": user_id})
+    invitation = await invitation_repo.get_system_invitation(user_id)
     if invitation:
-        await db.system_invitations.delete_one({"_id": user_id})
+        await invitation_repo.delete_system_invitation(user_id)
         return None
 
     # 3. If neither found, return 404

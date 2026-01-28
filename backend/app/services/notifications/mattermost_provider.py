@@ -1,8 +1,10 @@
+import asyncio
 import logging
 from typing import Optional
 
 import httpx
 
+from app.core.config import settings
 from app.models.system import SystemSettings
 from app.services.notifications.base import NotificationProvider
 
@@ -18,25 +20,36 @@ except ImportError:
 
 class MattermostProvider(NotificationProvider):
     def __init__(self):
-        self.bot_user_id: Optional[str] = None
+        self._bot_user_id: Optional[str] = None
+        # Lock to prevent concurrent bot ID fetches within the same pod
+        self._bot_id_lock = asyncio.Lock()
 
     async def _get_bot_user_id(
         self, client: httpx.AsyncClient, base_url: str, headers: dict
     ) -> Optional[str]:
-        if self.bot_user_id:
-            return self.bot_user_id
+        # Fast path: already cached
+        if self._bot_user_id:
+            return self._bot_user_id
 
-        try:
-            response = await client.get(f"{base_url}/api/v4/users/me", headers=headers)
-            if response.status_code == 200:
-                self.bot_user_id = response.json()["id"]
-                return self.bot_user_id
-            else:
-                logger.error(f"Failed to get Mattermost bot ID: {response.text}")
+        # Use lock to prevent concurrent fetches
+        async with self._bot_id_lock:
+            # Double-check after acquiring lock
+            if self._bot_user_id:
+                return self._bot_user_id
+
+            try:
+                response = await client.get(
+                    f"{base_url}/api/v4/users/me", headers=headers
+                )
+                if response.status_code == 200:
+                    self._bot_user_id = response.json()["id"]
+                    return self._bot_user_id
+                else:
+                    logger.error(f"Failed to get Mattermost bot ID: {response.text}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error getting Mattermost bot ID: {e}")
                 return None
-        except Exception as e:
-            logger.error(f"Error getting Mattermost bot ID: {e}")
-            return None
 
     async def _get_user_id_by_username(
         self, client: httpx.AsyncClient, username: str, base_url: str, headers: dict
@@ -138,7 +151,9 @@ class MattermostProvider(NotificationProvider):
         }
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(
+                timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
+            ) as client:
                 channel_id = destination
 
                 # If destination looks like a username, try to resolve it to a DM channel
@@ -146,24 +161,48 @@ class MattermostProvider(NotificationProvider):
                     user_id = await self._get_user_id_by_username(
                         client, destination, base_url, headers
                     )
-                    if user_id:
-                        dm_channel_id = await self._create_dm_channel(
-                            client, user_id, base_url, headers
+                    if not user_id:
+                        logger.error(
+                            f"Cannot send Mattermost DM: User {destination} not found"
                         )
-                        if dm_channel_id:
-                            channel_id = dm_channel_id
+                        if notifications_failed_total:
+                            notifications_failed_total.labels(type="mattermost").inc()
+                        return False
+
+                    dm_channel_id = await self._create_dm_channel(
+                        client, user_id, base_url, headers
+                    )
+                    if not dm_channel_id:
+                        logger.error(
+                            f"Cannot send Mattermost DM: Failed to create channel for {destination}"
+                        )
+                        if notifications_failed_total:
+                            notifications_failed_total.labels(type="mattermost").inc()
+                        return False
+
+                    channel_id = dm_channel_id
                 # If it looks like a channel name (starts with # or no special chars and not a UUID)
-                elif not any(
-                    c in destination for c in ["-", " "]
-                ) or destination.startswith("#"):
-                    # Simple heuristic: if it's not a UUID (which has dashes) and not a DM, try to resolve as channel name
-                    # UUIDs have 4 dashes.
-                    if destination.count("-") != 4:
-                        resolved_id = await self._get_channel_id_by_name(
-                            client, destination, base_url, headers
+                elif destination.startswith("#"):
+                    # Channel name with # prefix - must be resolved
+                    resolved_id = await self._get_channel_id_by_name(
+                        client, destination, base_url, headers
+                    )
+                    if not resolved_id:
+                        logger.error(
+                            f"Cannot send Mattermost message: Channel {destination} not found"
                         )
-                        if resolved_id:
-                            channel_id = resolved_id
+                        if notifications_failed_total:
+                            notifications_failed_total.labels(type="mattermost").inc()
+                        return False
+                    channel_id = resolved_id
+                elif destination.count("-") != 4:
+                    # Not a UUID (UUIDs have exactly 4 dashes) - try to resolve as channel name
+                    resolved_id = await self._get_channel_id_by_name(
+                        client, destination, base_url, headers
+                    )
+                    if resolved_id:
+                        channel_id = resolved_id
+                    # If not found, assume it's a valid channel ID and let Mattermost validate
 
                 payload = {
                     "channel_id": channel_id,

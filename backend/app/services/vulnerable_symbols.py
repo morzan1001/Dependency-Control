@@ -2,19 +2,16 @@
 Vulnerable Symbols Extraction
 
 Extracts vulnerable function/symbol names from structured vulnerability data.
-Relys on authoritative data from scanners (e.g. OSV ecosystem_specific fields)
+Relies on authoritative data from scanners (e.g. OSV ecosystem_specific fields)
 rather than heuristic text parsing.
 """
 
-import logging
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 
 from app.schemas.enrichment import ExtractedSymbols
 
-logger = logging.getLogger(__name__)
 
-
-def extract_symbols_from_vulnerability(vuln_data: Dict) -> ExtractedSymbols:
+def extract_symbols_from_vulnerability(vuln_data: Dict[str, Any]) -> ExtractedSymbols:
     """
     Extract symbols from a vulnerability object (from scanner results).
 
@@ -45,7 +42,7 @@ def extract_symbols_from_vulnerability(vuln_data: Dict) -> ExtractedSymbols:
                     confidence="high",
                     extraction_method="osv_ecosystem",
                 )
-            
+
             # Go specific OSV
             if "imports" in eco and isinstance(eco["imports"], list):
                 symbols = []
@@ -77,7 +74,7 @@ def extract_symbols_from_vulnerability(vuln_data: Dict) -> ExtractedSymbols:
     return ExtractedSymbols(cve=cve, package=package)
 
 
-def get_symbols_for_finding(finding: Dict) -> ExtractedSymbols:
+def get_symbols_for_finding(finding: Dict[str, Any]) -> ExtractedSymbols:
     """
     Extract vulnerable symbols for a finding from our scanner results.
 

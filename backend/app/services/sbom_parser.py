@@ -14,7 +14,16 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from app.core.constants import LICENSE_URL_PATTERNS
+from app.core.constants import (
+    APP_PACKAGE_TYPES,
+    LICENSE_URL_PATTERNS,
+    OS_PACKAGE_TYPES,
+    SOURCE_TYPE_APPLICATION,
+    SOURCE_TYPE_DIRECTORY,
+    SOURCE_TYPE_FILE,
+    SOURCE_TYPE_FILE_SYSTEM,
+    SOURCE_TYPE_IMAGE,
+)
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 
 logger = logging.getLogger(__name__)
@@ -94,7 +103,11 @@ class SBOMParser:
                 return SBOMFormat.SYFT, None
 
         # Fallback: Check for common Syft patterns
-        if sbom.get("source", {}).get("type") in ["image", "directory", "file"]:
+        if sbom.get("source", {}).get("type") in [
+            SOURCE_TYPE_IMAGE,
+            SOURCE_TYPE_DIRECTORY,
+            SOURCE_TYPE_FILE,
+        ]:
             return SBOMFormat.SYFT, None
 
         return SBOMFormat.UNKNOWN, None
@@ -239,15 +252,15 @@ class SBOMParser:
             comp_version = component.get("version", "")
 
             if comp_type == "container":
-                source_type = "image"
+                source_type = SOURCE_TYPE_IMAGE
                 source_target = (
                     f"{comp_name}:{comp_version}" if comp_version else comp_name
                 )
             elif comp_type in ["application", "library"]:
-                source_type = "application"
+                source_type = SOURCE_TYPE_APPLICATION
                 source_target = comp_name
             elif comp_type == "file":
-                source_type = "file"
+                source_type = SOURCE_TYPE_FILE
                 source_target = comp_name
 
         # Check properties for syft/trivy hints
@@ -260,48 +273,12 @@ class SBOMParser:
             elif name == "syft:source:target":
                 source_target = value
             elif name == "aquasecurity:trivy:ImageName":
-                source_type = "image"
+                source_type = SOURCE_TYPE_IMAGE
                 source_target = value
             elif "image" in name.lower() and not source_type:
-                source_type = "image"
+                source_type = SOURCE_TYPE_IMAGE
 
         return source_type, source_target
-
-    # Package types that are typically OS/system packages (from container base images)
-    OS_PACKAGE_TYPES = {
-        "deb",
-        "rpm",
-        "apk",
-        "alpm",
-        "pacman",
-        "dpkg",
-        "yum",
-        "dnf",
-        "apt",
-    }
-
-    # Package types that are typically application dependencies
-    APP_PACKAGE_TYPES = {
-        "npm",
-        "pypi",
-        "maven",
-        "gradle",
-        "cargo",
-        "gem",
-        "nuget",
-        "golang",
-        "go-module",
-        "composer",
-        "pip",
-        "poetry",
-        "yarn",
-        "pnpm",
-        "hex",
-        "cocoapods",
-        "swift",
-        "pub",
-        "hackage",
-    }
 
     def _determine_component_source(
         self,
@@ -332,15 +309,15 @@ class SBOMParser:
         effective_type = (purl_type or pkg_type or "").lower()
 
         # OS packages with layer info are definitely from the container image
-        if effective_type in self.OS_PACKAGE_TYPES:
+        if effective_type in OS_PACKAGE_TYPES:
             if layer_digest:
-                return "image"
+                return SOURCE_TYPE_IMAGE
             # OS packages without layer info - still likely from image
-            if global_source_type == "image":
-                return "image"
+            if global_source_type == SOURCE_TYPE_IMAGE:
+                return SOURCE_TYPE_IMAGE
 
         # Application packages are typically from source code, not the base image
-        if effective_type in self.APP_PACKAGE_TYPES:
+        if effective_type in APP_PACKAGE_TYPES:
             # Check if there's a location that looks like app code
             for loc in locations:
                 loc_lower = loc.lower()
@@ -362,14 +339,14 @@ class SBOMParser:
                         ".csproj",
                     ]
                 ):
-                    return "application"
+                    return SOURCE_TYPE_APPLICATION
 
             # Even without location hints, app packages are usually from the app
-            return "application"
+            return SOURCE_TYPE_APPLICATION
 
         # If we have layer info, it's from the image
         if layer_digest:
-            return "image"
+            return SOURCE_TYPE_IMAGE
 
         # Fallback to global source type
         return global_source_type
@@ -627,22 +604,22 @@ class SBOMParser:
         source_type_raw = source.get("type", "")
         source_id = source.get("id", "")
 
-        if source_type_raw == "image":
-            result.source_type = "image"
+        if source_type_raw == SOURCE_TYPE_IMAGE:
+            result.source_type = SOURCE_TYPE_IMAGE
             # Get image name from various locations
             result.source_target = (
                 source.get("target", "")
                 or source.get("metadata", {}).get("userInput", "")
                 or source.get("metadata", {}).get("imageID", "")
             )
-        elif source_type_raw == "directory":
-            result.source_type = "directory"
+        elif source_type_raw == SOURCE_TYPE_DIRECTORY:
+            result.source_type = SOURCE_TYPE_DIRECTORY
             result.source_target = source.get("target", "")
-        elif source_type_raw == "file":
-            result.source_type = "file"
+        elif source_type_raw == SOURCE_TYPE_FILE:
+            result.source_type = SOURCE_TYPE_FILE
             result.source_target = source.get("target", "")
-        elif source_type_raw == "file-system":
-            result.source_type = "file-system"
+        elif source_type_raw == SOURCE_TYPE_FILE_SYSTEM:
+            result.source_type = SOURCE_TYPE_FILE_SYSTEM
             result.source_target = source.get("target", "")
 
         # Get artifacts list for relationship analysis
@@ -684,7 +661,7 @@ class SBOMParser:
         # - OS packages are usually considered as "base image" dependencies (transitive from app perspective)
         # If no explicit relationships from source, use heuristics based on package type
 
-        if not direct_artifact_ids and result.source_type == "image":
+        if not direct_artifact_ids and result.source_type == SOURCE_TYPE_IMAGE:
             # Fallback heuristic for images without clear relationship graph:
             # Consider application-level packages as potentially direct
             for artifact in artifacts:

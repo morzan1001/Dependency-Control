@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.core.constants import ANALYZER_TIMEOUTS, EXPLOIT_MATURITY_ORDER
 from app.schemas.enrichment import GHSAData, VulnerabilityEnrichment
 from app.services.enrichment.epss import EPSSProvider
 from app.services.enrichment.ghsa import GHSAProvider
@@ -31,6 +32,7 @@ class VulnerabilityEnrichmentService:
 
     def __init__(self):
         self._http_client: Optional[httpx.AsyncClient] = None
+        self._client_lock = asyncio.Lock()  # Prevent race condition on client creation
         self._epss_provider = EPSSProvider()
         self._kev_provider = KEVProvider()
         self._ghsa_provider = GHSAProvider()
@@ -40,9 +42,16 @@ class VulnerabilityEnrichmentService:
         self._ghsa_provider.set_token(token)
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
-        if self._http_client is None or self._http_client.is_closed:
-            self._http_client = httpx.AsyncClient(timeout=30.0)
+        """Get or create HTTP client with thread-safe initialization."""
+        if self._http_client is not None and not self._http_client.is_closed:
+            return self._http_client
+
+        async with self._client_lock:
+            # Double-check after acquiring lock
+            if self._http_client is not None and not self._http_client.is_closed:
+                return self._http_client
+            timeout = ANALYZER_TIMEOUTS.get("default", 30.0)
+            self._http_client = httpx.AsyncClient(timeout=timeout)
         return self._http_client
 
     async def close(self):
@@ -163,7 +172,7 @@ class VulnerabilityEnrichmentService:
                 if finding_id not in cve_to_findings:
                     cve_to_findings[finding_id] = []
                 cve_to_findings[finding_id].append(finding)
-                if details.get("cvss_score"):
+                if details.get("cvss_score") is not None:
                     cvss_scores[finding_id] = details["cvss_score"]
 
             # Extract CVEs from vulnerabilities array (aggregated findings)
@@ -176,20 +185,24 @@ class VulnerabilityEnrichmentService:
                     cve_to_findings[cve].append(finding)
 
                     # Extract CVSS score
-                    if vuln.get("cvss_score") and cve not in cvss_scores:
+                    if vuln.get("cvss_score") is not None and cve not in cvss_scores:
                         cvss_scores[cve] = vuln["cvss_score"]
 
                 # Also check aliases within the vulnerability
                 for alias in vuln.get("aliases", []):
-                    if alias.startswith("CVE-") and alias not in cve_to_findings:
-                        cve_to_findings[alias] = []
-                        cve_to_findings[alias].append(finding)
+                    if alias.startswith("CVE-"):
+                        if alias not in cve_to_findings:
+                            cve_to_findings[alias] = []
+                        if finding not in cve_to_findings[alias]:
+                            cve_to_findings[alias].append(finding)
 
             # Also check aliases at finding level
             for alias in finding.get("aliases", []):
-                if alias.startswith("CVE-") and alias not in cve_to_findings:
-                    cve_to_findings[alias] = []
-                    cve_to_findings[alias].append(finding)
+                if alias.startswith("CVE-"):
+                    if alias not in cve_to_findings:
+                        cve_to_findings[alias] = []
+                    if finding not in cve_to_findings[alias]:
+                        cve_to_findings[alias].append(finding)
 
         if not cve_to_findings:
             return findings
@@ -306,19 +319,9 @@ class VulnerabilityEnrichmentService:
                         "exploit_maturity", "unknown"
                     )
                     # Keep the more severe maturity level
-                    # Levels: unknown < low < medium < high < active < weaponized
-                    maturity_order = {
-                        "unknown": 0,
-                        "low": 1,
-                        "medium": 2,
-                        "high": 3,
-                        "poc": 4,  # Proof of concept
-                        "active": 5,
-                        "weaponized": 6,
-                    }
-                    if maturity_order.get(
+                    if EXPLOIT_MATURITY_ORDER.get(
                         enrichment.exploit_maturity, 0
-                    ) > maturity_order.get(current_maturity, 0):
+                    ) > EXPLOIT_MATURITY_ORDER.get(current_maturity, 0):
                         finding["details"][
                             "exploit_maturity"
                         ] = enrichment.exploit_maturity

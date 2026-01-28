@@ -40,3 +40,65 @@ class SBOMIngest(BaseIngest):
     sboms: List[Dict[str, Any]] = Field(
         default_factory=list, description="List of SBOM JSON contents"
     )
+
+
+# =============================================================================
+# Response Schemas
+# =============================================================================
+
+
+class ScanStatsResponse(BaseModel):
+    """Statistics from scan analysis."""
+
+    total: int = 0
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    info: int = 0
+
+
+class FindingsIngestResponse(BaseModel):
+    """Response for findings-based ingest endpoints (TruffleHog, OpenGrep, KICS, Bearer)."""
+
+    scan_id: str = Field(..., description="Unique identifier of the scan")
+    findings_count: int = Field(..., description="Number of findings processed")
+    waived_count: int = Field(0, description="Number of findings waived")
+    stats: ScanStatsResponse = Field(
+        default_factory=ScanStatsResponse, description="Statistics breakdown"
+    )
+
+
+class SecretScanResponse(BaseModel):
+    """Response for secret scanning (TruffleHog) - includes failure status."""
+
+    status: str = Field(
+        ..., description="'failed' if secrets found, 'success' otherwise"
+    )
+    scan_id: str = Field(..., description="Unique identifier of the scan")
+    findings_count: int = Field(..., description="Number of secrets found")
+    waived_count: int = Field(0, description="Number of findings waived")
+    message: str = Field(..., description="Human-readable summary")
+
+
+class SBOMIngestResponse(BaseModel):
+    """Response for SBOM ingest endpoint."""
+
+    status: str = Field(..., description="'queued' when successfully submitted")
+    scan_id: str = Field(..., description="Unique identifier of the scan")
+    message: str = Field(..., description="Human-readable status message")
+    sboms_processed: int = Field(
+        0, description="Number of SBOMs successfully processed"
+    )
+    sboms_failed: int = Field(0, description="Number of SBOMs that failed to process")
+    dependencies_count: int = Field(0, description="Total dependencies extracted")
+    warnings: List[str] = Field(default_factory=list, description="Processing warnings")
+
+
+class ProjectConfigResponse(BaseModel):
+    """Response for project configuration endpoint."""
+
+    active_analyzers: List[str] = Field(
+        default_factory=list, description="List of active analyzer names"
+    )
+    retention_days: int = Field(90, description="Scan retention period in days")

@@ -1,5 +1,12 @@
+"""
+Statistics calculation for SBOM analysis.
+
+Provides functions to calculate comprehensive statistics including
+EPSS/KEV enrichment and reachability analysis data.
+"""
+
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.core.constants import sort_by_severity
 from app.models.stats import (
@@ -8,9 +15,34 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
+from app.services.analysis.types import (
+    CallgraphInfo,
+    Database,
+    EPSSKEVSummary,
+    EPSSScoreCounts,
+    ExploitMaturityCounts,
+    FindingDict,
+    HighRiskCVE,
+    KEVDetail,
+    ReachabilityLevelCounts,
+    ReachabilitySummary,
+    VulnerabilityInfo,
+)
 
 
-def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _format_datetime(value: Optional[Any]) -> Optional[str]:
+    """Safely format a datetime value to ISO string."""
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    # If it's already a string, return as-is (unless empty)
+    if isinstance(value, str):
+        return value if value else None
+    return str(value)
+
+
+def build_epss_kev_summary(findings: List[FindingDict]) -> EPSSKEVSummary:
     """
     Build a summary of EPSS/KEV enrichment for raw data view.
 
@@ -20,24 +52,28 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
     Returns:
         Summary dict with statistics and details
     """
-    summary: Dict[str, Any] = {
+    epss_scores_counts: EPSSScoreCounts = {
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+    }
+
+    exploit_maturity_counts: ExploitMaturityCounts = {
+        "weaponized": 0,
+        "active": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "unknown": 0,
+    }
+
+    summary: EPSSKEVSummary = {
         "total_vulnerabilities": len(findings),
         "epss_enriched": 0,
         "kev_matches": 0,
         "kev_ransomware": 0,
-        "epss_scores": {
-            "high": 0,  # > 0.1 (10%)
-            "medium": 0,  # 0.01 - 0.1 (1-10%)
-            "low": 0,  # < 0.01 (< 1%)
-        },
-        "exploit_maturity": {
-            "weaponized": 0,
-            "active": 0,
-            "high": 0,
-            "medium": 0,
-            "low": 0,
-            "unknown": 0,
-        },
+        "epss_scores": epss_scores_counts,
+        "exploit_maturity": exploit_maturity_counts,
         "avg_epss_score": None,
         "max_epss_score": None,
         "avg_risk_score": None,
@@ -47,8 +83,8 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    epss_scores = []
-    risk_scores = []
+    epss_scores: List[float] = []
+    risk_scores: List[float] = []
 
     for finding in findings:
         details = finding.get("details", {})
@@ -57,7 +93,7 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
         epss_score = details.get("epss_score")
         if epss_score is not None:
             summary["epss_enriched"] += 1
-            epss_scores.append(epss_score)
+            epss_scores.append(float(epss_score))
 
             if epss_score > 0.1:
                 summary["epss_scores"]["high"] += 1
@@ -69,7 +105,7 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
         # KEV enrichment
         if details.get("in_kev"):
             summary["kev_matches"] += 1
-            kev_detail = {
+            kev_detail: KEVDetail = {
                 "cve": finding.get("finding_id") or finding.get("id", ""),
                 "component": finding.get("component", ""),
                 "due_date": details.get("kev_due_date"),
@@ -81,28 +117,27 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
                 summary["kev_ransomware"] += 1
 
         # Exploit maturity
-        maturity = details.get("exploit_maturity", "unknown")
+        maturity: str = details.get("exploit_maturity", "unknown")
         if maturity in summary["exploit_maturity"]:
-            summary["exploit_maturity"][maturity] += 1
+            summary["exploit_maturity"][maturity] += 1  # type: ignore[literal-required]
 
         # Risk score
         risk_score = details.get("risk_score")
         if risk_score is not None:
-            risk_scores.append(risk_score)
+            risk_scores.append(float(risk_score))
 
             # Track high-risk CVEs (risk_score > 70)
             if risk_score > 70:
-                summary["high_risk_cves"].append(
-                    {
-                        "cve": finding.get("finding_id") or finding.get("id", ""),
-                        "component": finding.get("component", ""),
-                        "version": finding.get("version", ""),
-                        "risk_score": round(risk_score, 1),
-                        "epss_score": round(epss_score, 4) if epss_score else None,
-                        "in_kev": details.get("in_kev", False),
-                        "exploit_maturity": maturity,
-                    }
-                )
+                high_risk_cve: HighRiskCVE = {
+                    "cve": finding.get("finding_id") or finding.get("id", ""),
+                    "component": finding.get("component", ""),
+                    "version": finding.get("version", ""),
+                    "risk_score": round(risk_score, 1),
+                    "epss_score": round(epss_score, 4) if epss_score else None,
+                    "in_kev": details.get("in_kev", False),
+                    "exploit_maturity": maturity,
+                }
+                summary["high_risk_cves"].append(high_risk_cve)
 
     # Calculate averages
     if epss_scores:
@@ -122,8 +157,10 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def build_reachability_summary(
-    findings: List[Dict[str, Any]], callgraph: Dict[str, Any], enriched_count: int
-) -> Dict[str, Any]:
+    findings: List[FindingDict],
+    callgraph: Dict[str, Any],
+    enriched_count: int,
+) -> ReachabilitySummary:
     """
     Build a summary of reachability analysis for raw data view.
 
@@ -135,25 +172,25 @@ def build_reachability_summary(
     Returns:
         Summary dict with statistics and details
     """
-    summary: Dict[str, Any] = {
+    reachability_levels: ReachabilityLevelCounts = {
+        "confirmed": 0,
+        "likely": 0,
+        "unknown": 0,
+        "unreachable": 0,
+    }
+
+    callgraph_info: CallgraphInfo = {
+        "language": callgraph.get("language", "unknown"),
+        "total_modules": len(callgraph.get("module_usage", {})),
+        "total_imports": len(callgraph.get("import_map", {})),
+        "generated_at": _format_datetime(callgraph.get("created_at")),
+    }
+
+    summary: ReachabilitySummary = {
         "total_vulnerabilities": len(findings),
         "analyzed": enriched_count,
-        "reachability_levels": {
-            "confirmed": 0,  # Symbol-level match
-            "likely": 0,  # Import-level match
-            "unknown": 0,  # Could not determine
-            "unreachable": 0,  # Confirmed not used
-        },
-        "callgraph_info": {
-            "language": callgraph.get("language", "unknown"),
-            "total_modules": len(callgraph.get("module_usage", {})),
-            "total_imports": len(callgraph.get("import_map", {})),
-            "generated_at": (
-                callgraph.get("created_at", "").isoformat()
-                if hasattr(callgraph.get("created_at", ""), "isoformat")
-                else str(callgraph.get("created_at", ""))
-            ),
-        },
+        "reachability_levels": reachability_levels,
+        "callgraph_info": callgraph_info,
         "reachable_vulnerabilities": [],
         "unreachable_vulnerabilities": [],
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -161,21 +198,19 @@ def build_reachability_summary(
 
     for finding in findings:
         reachable = finding.get("reachable")
-        reachability_level = finding.get("reachability_level", "unknown")
+        reachability_level: str = finding.get("reachability_level", "unknown")
 
-        vuln_info = {
+        vuln_info: VulnerabilityInfo = {
             "cve": finding.get("finding_id") or finding.get("id", ""),
             "component": finding.get("component", ""),
             "version": finding.get("version", ""),
             "severity": finding.get("severity", "unknown"),
             "reachability_level": reachability_level,
-            "reachable_functions": finding.get("reachable_functions", [])[
-                :5
-            ],  # Limit to 5
+            "reachable_functions": finding.get("reachable_functions", [])[:5],
         }
 
         if reachability_level in summary["reachability_levels"]:
-            summary["reachability_levels"][reachability_level] += 1
+            summary["reachability_levels"][reachability_level] += 1  # type: ignore[literal-required]
 
         if reachable is True:
             summary["reachable_vulnerabilities"].append(vuln_info)
@@ -197,7 +232,7 @@ def build_reachability_summary(
     return summary
 
 
-async def calculate_comprehensive_stats(db, scan_id: str) -> Stats:
+async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     """
     Calculate comprehensive statistics including EPSS/KEV and Reachability data.
 
@@ -209,7 +244,7 @@ async def calculate_comprehensive_stats(db, scan_id: str) -> Stats:
         Stats object with all fields populated
     """
     # Comprehensive aggregation pipeline
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": scan_id, "waived": False}},
         {
             "$project": {
@@ -355,9 +390,7 @@ async def calculate_comprehensive_stats(db, scan_id: str) -> Stats:
                                     {
                                         "$or": [
                                             {"$eq": ["$reachable", True]},
-                                            {
-                                                "$eq": ["$reachable", None]
-                                            },  # Unknown = assume reachable
+                                            {"$eq": ["$reachable", None]},
                                         ]
                                     },
                                 ]
@@ -480,7 +513,9 @@ async def calculate_comprehensive_stats(db, scan_id: str) -> Stats:
         },
     ]
 
-    stats_result = await db.findings.aggregate(pipeline).to_list(1)
+    stats_result: List[Dict[str, Any]] = await db.findings.aggregate(pipeline).to_list(
+        1
+    )
 
     # Initialize stats with defaults
     stats = Stats()
@@ -499,9 +534,13 @@ async def calculate_comprehensive_stats(db, scan_id: str) -> Stats:
         stats.adjusted_risk_score = round(res.get("adjusted_risk_score_sum", 0.0), 1)
 
         # Calculate EPSS statistics
-        epss_scores = [s for s in res.get("epss_scores", []) if s is not None]
-        avg_epss = sum(epss_scores) / len(epss_scores) if epss_scores else None
-        max_epss = max(epss_scores) if epss_scores else None
+        epss_scores: List[float] = [
+            s for s in res.get("epss_scores", []) if s is not None
+        ]
+        avg_epss: Optional[float] = (
+            sum(epss_scores) / len(epss_scores) if epss_scores else None
+        )
+        max_epss: Optional[float] = max(epss_scores) if epss_scores else None
 
         # Threat Intelligence Stats
         stats.threat_intel = ThreatIntelligenceStats(

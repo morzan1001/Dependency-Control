@@ -1,10 +1,12 @@
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 
 class Broadcast(BaseModel):
-    id: Optional[str] = Field(None, alias="_id")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
     type: str  # 'general' or 'advisory'
     target_type: str  # 'global', 'teams', 'advisory'
     subject: str
