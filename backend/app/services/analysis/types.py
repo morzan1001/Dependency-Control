@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-
 # Type alias for the database connection
 Database = AsyncIOMotorDatabase
 

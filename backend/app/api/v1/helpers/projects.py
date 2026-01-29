@@ -87,13 +87,9 @@ async def check_project_access(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Users with project:read_all have full read access
-    # Users with project:update have full write access
-    if has_permission(user.permissions, ["project:read_all", "project:update"]):
-        return project
-
-    # Global read access (no required role)
-    if required_role is None and has_permission(user.permissions, "project:read_all"):
+    # SECURITY: project:read_all grants access to ALL projects (superuser)
+    # Note: project:update does NOT bypass membership checks - only grants write permission
+    if has_permission(user.permissions, "project:read_all"):
         return project
 
     is_owner = project.owner_id == str(user.id)

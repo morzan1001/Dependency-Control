@@ -27,10 +27,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Application Info Metrics
-# =============================================================================
-
 # Get version from package metadata (pyproject.toml)
 try:
     APP_VERSION = get_version("dependency-checks")
@@ -44,10 +40,6 @@ app_info.info(
         "app_name": "Dependency Control",
     }
 )
-
-# =============================================================================
-# HTTP Request Metrics
-# =============================================================================
 
 http_requests_total = Counter(
     "http_requests_total",
@@ -81,10 +73,6 @@ http_response_size_bytes = Histogram(
     ["method", "endpoint"],
     buckets=(100, 1000, 10000, 100000, 1000000, 10000000),
 )
-
-# =============================================================================
-# Database Metrics
-# =============================================================================
 
 db_connections_active = Gauge(
     "db_connections_active",
@@ -131,10 +119,6 @@ db_findings_total = Gauge(
     "Total number of findings in database",
 )
 
-# =============================================================================
-# Cache Metrics (Redis/DragonflyDB)
-# =============================================================================
-
 cache_hits_total = Counter(
     "cache_hits_total",
     "Total cache hits",
@@ -173,10 +157,6 @@ cache_connected_clients = Gauge(
     "Number of clients connected to cache",
 )
 
-# =============================================================================
-# Worker Queue Metrics
-# =============================================================================
-
 worker_queue_size = Gauge(
     "worker_queue_size",
     "Current number of jobs in the worker queue",
@@ -198,10 +178,6 @@ worker_job_duration_seconds = Histogram(
     "Worker job processing duration in seconds",
     buckets=(1, 5, 10, 30, 60, 120, 300, 600, 1800),
 )
-
-# =============================================================================
-# Analysis/Scanner Metrics
-# =============================================================================
 
 analysis_scans_total = Counter(
     "analysis_scans_total",
@@ -301,10 +277,6 @@ analysis_aggregation_duration_seconds = Histogram(
     buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120),
 )
 
-# =============================================================================
-# External API Metrics
-# =============================================================================
-
 external_api_requests_total = Counter(
     "external_api_requests_total",
     "Total external API requests by service",
@@ -330,10 +302,6 @@ external_api_rate_limit_hits_total = Counter(
     ["service"],
 )
 
-# =============================================================================
-# Notification Metrics
-# =============================================================================
-
 notifications_sent_total = Counter(
     "notifications_sent_total",
     "Total notifications sent by type",
@@ -345,10 +313,6 @@ notifications_failed_total = Counter(
     "Total notification failures by type",
     ["type"],
 )
-
-# =============================================================================
-# Authentication Metrics
-# =============================================================================
 
 auth_login_attempts_total = Counter(
     "auth_login_attempts_total",
@@ -386,10 +350,6 @@ auth_password_resets_total = Counter(
     ["status"],
 )
 
-# =============================================================================
-# Webhook Metrics
-# =============================================================================
-
 webhooks_triggered_total = Counter(
     "webhooks_triggered_total",
     "Total webhooks triggered by event type",
@@ -401,10 +361,6 @@ webhooks_failed_total = Counter(
     "Total webhook failures by event type",
     ["event_type"],
 )
-
-# =============================================================================
-# System Metrics
-# =============================================================================
 
 uptime_seconds = Gauge(
     "uptime_seconds",
@@ -420,11 +376,6 @@ def update_uptime():
     uptime_seconds.set(time.time() - startup_time)
 
 
-# =============================================================================
-# Prometheus Metrics Endpoint
-# =============================================================================
-
-
 async def metrics_endpoint(request: Request) -> Response:
     """
     Prometheus metrics endpoint.
@@ -435,11 +386,6 @@ async def metrics_endpoint(request: Request) -> Response:
     update_uptime()
     metrics_output = generate_latest(REGISTRY)
     return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
-
-
-# =============================================================================
-# Middleware for HTTP Metrics
-# =============================================================================
 
 
 class PrometheusMiddleware(BaseHTTPMiddleware):
@@ -526,11 +472,6 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         path = re.sub(r"/[0-9a-f]{24}", "/{id}", path, flags=re.IGNORECASE)
 
         return path
-
-
-# =============================================================================
-# Helper Functions for Application Code
-# =============================================================================
 
 
 def track_db_operation(collection: str, operation: str):

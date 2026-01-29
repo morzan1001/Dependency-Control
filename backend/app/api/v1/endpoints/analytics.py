@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
+from app.services.recommendation.common import get_attr
 from app.api.v1.helpers.analytics import (
     build_findings_severity_map,
     build_hotspot_priority_reasons,
@@ -258,16 +259,16 @@ async def get_dependency_tree(
     findings_map = build_findings_severity_map(findings)
 
     def build_node(dep) -> DependencyTreeNode:
-        name = dep["name"]
+        name = get_attr(dep, "name", "")
         finding_info = findings_map.get(name, {})
 
         return DependencyTreeNode(
-            id=str(dep.get("_id", dep["purl"])),
+            id=str(get_attr(dep, "_id") or get_attr(dep, "purl", "")),
             name=name,
-            version=dep["version"],
-            purl=dep["purl"],
-            type=dep.get("type", "unknown"),
-            direct=dep.get("direct", False),
+            version=get_attr(dep, "version", ""),
+            purl=get_attr(dep, "purl", ""),
+            type=get_attr(dep, "type", "unknown"),
+            direct=get_attr(dep, "direct", False),
             has_findings=finding_info.get("total", 0) > 0,
             findings_count=finding_info.get("total", 0),
             findings_severity=(
@@ -280,17 +281,17 @@ async def get_dependency_tree(
                 if finding_info
                 else None
             ),
-            source_type=dep.get("source_type"),
-            source_target=dep.get("source_target"),
-            layer_digest=dep.get("layer_digest"),
-            locations=dep.get("locations", []),
+            source_type=get_attr(dep, "source_type"),
+            source_target=get_attr(dep, "source_target"),
+            layer_digest=get_attr(dep, "layer_digest"),
+            locations=get_attr(dep, "locations", []),
             children=[],
         )
 
     # Separate direct and transitive dependencies
-    direct_deps = [build_node(d) for d in dependencies if d.get("direct", False)]
+    direct_deps = [build_node(d) for d in dependencies if get_attr(d, "direct", False)]
     transitive_deps = [
-        build_node(d) for d in dependencies if not d.get("direct", False)
+        build_node(d) for d in dependencies if not get_attr(d, "direct", False)
     ]
 
     # Sort by findings count (most problematic first)
@@ -394,11 +395,17 @@ async def get_impact_analysis(
             days_known,
         )
 
+        # Filter project_ids to only accessible projects
+        # Prevents information disclosure of project names user doesn't have access to
+        accessible_impact_project_ids = [
+            pid for pid in r["project_ids"] if pid in project_ids
+        ]
+
         # Build priority reasons using helper function
         priority_reasons = build_priority_reasons(
             severity_counts,
             enrichment_data,
-            r["affected_projects"],
+            len(accessible_impact_project_ids),  # Use filtered count
             has_fix,
             days_known,
         )
@@ -407,12 +414,17 @@ async def get_impact_analysis(
             ImpactAnalysisResult(
                 component=r["component"],
                 version=r.get("version") or "unknown",
-                affected_projects=r["affected_projects"],
+                affected_projects=len(
+                    accessible_impact_project_ids
+                ),  # Only accessible count
                 total_findings=r["total_findings"],
                 findings_by_severity=SeverityBreakdown(**severity_counts),
                 fix_impact_score=base_impact,
                 affected_project_names=[
-                    project_name_map.get(pid, "Unknown") for pid in r["project_ids"][:5]
+                    project_name_map.get(pid, "Unknown")
+                    for pid in accessible_impact_project_ids[
+                        :5
+                    ]  # Only accessible projects!
                 ],
                 max_epss_score=enrichment_data["max_epss"],
                 epss_percentile=enrichment_data["max_percentile"],
@@ -519,9 +531,10 @@ async def get_vulnerability_hotspots(
 
     # Batch fetch dependency types to avoid N+1 queries
     component_names = list(set(r["_id"]["component"] for r in results))
-    deps_by_name = await dep_repo.find_many(
+    # Use find_all() instead of find_many() when using projection
+    # find_many() returns Pydantic models which don't work with partial projections
+    deps_by_name = await dep_repo.find_all(
         {"name": {"$in": component_names}},
-        limit=len(component_names),
         projection={"name": 1, "type": 1},
     )
     dep_type_map = {d["name"]: d.get("type", "unknown") for d in deps_by_name}
@@ -560,6 +573,12 @@ async def get_vulnerability_hotspots(
             enrichment_data, severity_counts, has_fix, days_until_due
         )
 
+        # Filter project_ids to only accessible projects
+        # Prevents information disclosure of project names user doesn't have access to
+        accessible_affected_projects = [
+            pid for pid in r["project_ids"] if pid in project_ids
+        ]
+
         hotspots.append(
             VulnerabilityHotspot(
                 component=r["_id"]["component"],
@@ -569,7 +588,9 @@ async def get_vulnerability_hotspots(
                 severity_breakdown=SeverityBreakdown(**severity_counts),
                 affected_projects=[
                     project_name_map.get(pid, "Unknown")
-                    for pid in r["project_ids"][:10]
+                    for pid in accessible_affected_projects[
+                        :10
+                    ]  # Only accessible projects!
                 ],
                 first_seen=first_seen_str,
                 max_epss_score=enrichment_data["max_epss"],
@@ -689,8 +710,8 @@ async def search_dependencies_advanced(
     vuln_status_map: Dict[str, bool] = {}
     if has_vulnerabilities is not None and dependencies:
         # Build unique (project_id, component) pairs
-        dep_keys = list(set((dep["project_id"], dep["name"]) for dep in dependencies))
-        component_names = list(set(dep["name"] for dep in dependencies))
+        dep_keys = list(set((get_attr(dep, "project_id"), get_attr(dep, "name")) for dep in dependencies))
+        component_names = list(set(get_attr(dep, "name") for dep in dependencies))
 
         # Single aggregation to get components with vulnerabilities
         vuln_pipeline: List[Dict[str, Any]] = [
@@ -715,8 +736,10 @@ async def search_dependencies_advanced(
     results = []
     for dep in dependencies:
         # Check for vulnerabilities if filter is set
+        dep_project_id = get_attr(dep, "project_id")
+        dep_name = get_attr(dep, "name")
         if has_vulnerabilities is not None:
-            key = f"{dep['project_id']}:{dep['name']}"
+            key = f"{dep_project_id}:{dep_name}"
             has_vulns = vuln_status_map.get(key, False)
             if has_vulnerabilities and not has_vulns:
                 continue
@@ -725,30 +748,30 @@ async def search_dependencies_advanced(
 
         results.append(
             DependencySearchResult(
-                project_id=dep["project_id"],
-                project_name=project_name_map.get(dep["project_id"], "Unknown"),
-                package=dep["name"],
-                version=dep["version"],
-                type=dep.get("type", "unknown"),
-                license=dep.get("license"),
-                license_url=dep.get("license_url"),
-                direct=dep.get("direct", False),
-                purl=dep.get("purl"),
-                source_type=dep.get("source_type"),
-                source_target=dep.get("source_target"),
-                layer_digest=dep.get("layer_digest"),
-                found_by=dep.get("found_by"),
-                locations=dep.get("locations", []),
-                cpes=dep.get("cpes", []),
-                description=dep.get("description"),
-                author=dep.get("author"),
-                publisher=dep.get("publisher"),
-                group=dep.get("group"),
-                homepage=dep.get("homepage"),
-                repository_url=dep.get("repository_url"),
-                download_url=dep.get("download_url"),
-                hashes=dep.get("hashes", {}),
-                properties=dep.get("properties", {}),
+                project_id=dep_project_id,
+                project_name=project_name_map.get(dep_project_id, "Unknown"),
+                package=dep_name,
+                version=get_attr(dep, "version"),
+                type=get_attr(dep, "type", "unknown"),
+                license=get_attr(dep, "license"),
+                license_url=get_attr(dep, "license_url"),
+                direct=get_attr(dep, "direct", False),
+                purl=get_attr(dep, "purl"),
+                source_type=get_attr(dep, "source_type"),
+                source_target=get_attr(dep, "source_target"),
+                layer_digest=get_attr(dep, "layer_digest"),
+                found_by=get_attr(dep, "found_by"),
+                locations=get_attr(dep, "locations", []),
+                cpes=get_attr(dep, "cpes", []),
+                description=get_attr(dep, "description"),
+                author=get_attr(dep, "author"),
+                publisher=get_attr(dep, "publisher"),
+                group=get_attr(dep, "group"),
+                homepage=get_attr(dep, "homepage"),
+                repository_url=get_attr(dep, "repository_url"),
+                download_url=get_attr(dep, "download_url"),
+                hashes=get_attr(dep, "hashes", {}),
+                properties=get_attr(dep, "properties", {}),
             )
         )
 
@@ -860,12 +883,13 @@ async def search_vulnerabilities(
     mongo_sort_field = sort_field_map.get(sort_by, "severity")
     sort_direction = -1 if sort_order == "desc" else 1
 
-    # Fetch findings
-    findings = await finding_repo.find_many(
+    # Fetch findings (use find_many_raw to get dicts)
+    findings = await finding_repo.find_many_raw(
         query,
         skip=skip,
         limit=limit,
-        sort=[(mongo_sort_field, sort_direction)],
+        sort_by=mongo_sort_field,
+        sort_order=sort_direction,
     )
 
     results = []
@@ -1064,8 +1088,9 @@ async def get_component_findings(
 
     results = []
     for fr in finding_records:
-        finding = dict(fr)
-        finding["project_name"] = project_name_map.get(fr.get("project_id"), "Unknown")
+        # Convert Pydantic model to dict
+        finding = fr.model_dump(by_alias=True)
+        finding["project_name"] = project_name_map.get(fr.project_id, "Unknown")
         results.append(finding)
 
     return results
@@ -1126,12 +1151,12 @@ async def get_dependency_metadata_endpoint(
     # Collect affected projects (with deduplication)
     affected_projects = {}
     for dep in dependencies:
-        proj_id = dep.get("project_id")
+        proj_id = get_attr(dep, "project_id")
         if proj_id and proj_id not in affected_projects:
             affected_projects[proj_id] = {
                 "id": proj_id,
                 "name": project_name_map.get(proj_id, "Unknown"),
-                "direct": dep.get("direct", False),
+                "direct": get_attr(dep, "direct", False),
             }
 
     # Get enrichment data (deps.dev + license) - single query
@@ -1141,7 +1166,7 @@ async def get_dependency_metadata_endpoint(
     license_risks: List[str] = []
     license_obligations: List[str] = []
 
-    dep_purl = first_dep.get("purl")
+    dep_purl = get_attr(first_dep, "purl")
     if dep_purl:
         enrichment = await enrichment_repo.get_by_purl(dep_purl)
         if enrichment:
@@ -1161,7 +1186,7 @@ async def get_dependency_metadata_endpoint(
     # Helper function to get first non-null value from dependencies
     def first_value(key: str):
         for dep in dependencies:
-            val = dep.get(key)
+            val = get_attr(dep, key)
             if val:
                 return val
         return None
@@ -1178,9 +1203,9 @@ async def get_dependency_metadata_endpoint(
     vuln_count = await finding_repo.count(vuln_query)
 
     return DependencyMetadata(
-        name=first_dep.get("name", component),
-        version=first_dep.get("version", version or "unknown"),
-        type=first_dep.get("type", "unknown"),
+        name=get_attr(first_dep, "name", component),
+        version=get_attr(first_dep, "version", version or "unknown"),
+        type=get_attr(first_dep, "type", "unknown"),
         purl=dep_purl,
         description=first_value("description"),
         author=first_value("author"),
@@ -1223,11 +1248,6 @@ async def get_dependency_types(
 
     dep_repo = DependencyRepository(db)
     return await dep_repo.get_distinct_types(scan_ids)
-
-
-# ============================================================================
-# RECOMMENDATIONS
-# ============================================================================
 
 
 @router.get(
@@ -1279,11 +1299,11 @@ async def get_project_recommendations(
         if scan and scan.get("project_id") != project_id:
             scan = None
     else:
-        scans = await scan_repo.find_many(
+        # Use find_many_raw() with sort parameter instead of sort_by/sort_order
+        scans = await scan_repo.find_many_raw(
             {"project_id": project_id},
             limit=1,
-            sort_by="created_at",
-            sort_order=-1,
+            sort=[("created_at", -1)],
         )
         scan = scans[0] if scans else None
 
@@ -1294,8 +1314,6 @@ async def get_project_recommendations(
 
     # Get source target (e.g., Docker image name) from scan
     source_target = None
-    # Note: sbom_refs could be used to extract from SBOM metadata if available
-    # sbom_refs = scan.get("sbom_refs", [])
 
     # Fetch ALL findings for this scan (all types: vulnerability, secret, sast, iac, license, quality)
     findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
@@ -1303,21 +1321,20 @@ async def get_project_recommendations(
     # Fetch all dependencies for this scan
     dependencies = await dep_repo.find_by_scan(scan_id)
 
-    # Try to get source target from dependencies
+    # Try to get source target from dependencies (Dependency is a Pydantic model)
     for dep in dependencies:
-        if dep.get("source_target"):
-            source_target = dep["source_target"]
+        if dep.source_target:
+            source_target = dep.source_target
             break
 
     previous_scan_findings = None
     scan_history = None
 
     # Get previous scan for regression detection
-    previous_scans = await scan_repo.find_many(
+    previous_scans = await scan_repo.find_many_raw(
         {"project_id": project_id, "_id": {"$ne": scan_id}},
         limit=1,
-        sort_by="created_at",
-        sort_order=-1,
+        sort=[("created_at", -1)],
     )
     previous_scan = previous_scans[0] if previous_scans else None
 
@@ -1330,8 +1347,7 @@ async def get_project_recommendations(
     recent_scans = await scan_repo.find_many(
         {"project_id": project_id},
         limit=10,
-        sort_by="created_at",
-        sort_order=-1,
+        sort=[("created_at", -1)],
         projection={"_id": 1, "findings_summary": 1, "created_at": 1},
     )
 
@@ -1343,9 +1359,6 @@ async def get_project_recommendations(
         user_project_ids, project_id, db
     )
 
-    # ----------------------------------------------------------------
-    # Generate recommendations with all data
-    # ----------------------------------------------------------------
     recommendations = await recommendation_engine.generate_recommendations(
         findings=findings,
         dependencies=dependencies,
@@ -1355,13 +1368,13 @@ async def get_project_recommendations(
         cross_project_data=cross_project_data,
     )
 
-    # Count findings by type for stats
-    vuln_count = sum(1 for f in findings if f.get("type") == "vulnerability")
-    secret_count = sum(1 for f in findings if f.get("type") == "secret")
-    sast_count = sum(1 for f in findings if f.get("type") == "sast")
-    iac_count = sum(1 for f in findings if f.get("type") == "iac")
-    license_count = sum(1 for f in findings if f.get("type") == "license")
-    quality_count = sum(1 for f in findings if f.get("type") == "quality")
+    # Count findings by type for stats (FindingRecord uses type attribute, not dict)
+    vuln_count = sum(1 for f in findings if f.type == "vulnerability")
+    secret_count = sum(1 for f in findings if f.type == "secret")
+    sast_count = sum(1 for f in findings if f.type == "sast")
+    iac_count = sum(1 for f in findings if f.type == "iac")
+    license_count = sum(1 for f in findings if f.type == "license")
+    quality_count = sum(1 for f in findings if f.type == "quality")
 
     # Build extended summary
     summary: Dict[str, Any] = {

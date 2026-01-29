@@ -29,6 +29,68 @@ from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 logger = logging.getLogger(__name__)
 
 
+class DependencyGraphAnalyzer:
+    """
+    Reusable dependency graph analysis logic for all SBOM formats.
+    Implements DRY principle by centralizing common graph operations.
+    """
+
+    @staticmethod
+    def build_reverse_dependency_graph(
+        relationships: List[Dict[str, Any]],
+        child_key: str = "child",
+        parent_key: str = "parent",
+    ) -> Dict[str, List[str]]:
+        """
+        Build a reverse dependency graph (child -> list of parents).
+
+        Args:
+            relationships: List of relationship objects
+            child_key: Key name for child reference in relationship dict
+            parent_key: Key name for parent reference in relationship dict
+
+        Returns:
+            Dictionary mapping child IDs to list of parent IDs
+        """
+        reverse_graph: Dict[str, List[str]] = {}
+
+        for rel in relationships:
+            child = rel.get(child_key)
+            parent = rel.get(parent_key)
+
+            if child and parent:
+                if child not in reverse_graph:
+                    reverse_graph[child] = []
+                reverse_graph[child].append(parent)
+
+        return reverse_graph
+
+    @staticmethod
+    def identify_direct_dependencies(
+        all_refs: set,
+        transitive_refs: set,
+        root_deps: Optional[set] = None,
+    ) -> set:
+        """
+        Identify direct dependencies based on dependency graph analysis.
+
+        Args:
+            all_refs: Set of all component references
+            transitive_refs: Set of components that are dependencies of other components
+            root_deps: Optional set of dependencies explicitly marked as direct by root
+
+        Returns:
+            Set of component references that are direct dependencies
+        """
+        if root_deps:
+            return root_deps
+
+        # Components that have dependencies but are not themselves depended upon
+        # are likely direct dependencies
+        direct = all_refs - transitive_refs
+        return direct
+
+
 def is_url(value: str) -> bool:
     """Check if a string is a URL."""
     if not value:
@@ -177,7 +239,6 @@ class SBOMParser:
         main_bom_ref = main_component.get("bom-ref")
 
         # Parse the dependencies array to build dependency graph
-        # CycloneDX dependencies: [{ref: "pkg:...", dependsOn: ["pkg:...", ...]}, ...]
         dependencies_map = sbom.get("dependencies", [])
         direct_refs: set = set()  # Components that are direct dependencies
         all_transitive_refs: set = set()  # All refs that appear in any dependsOn array
@@ -351,6 +412,29 @@ class SBOMParser:
         # Fallback to global source type
         return global_source_type
 
+    def _construct_purl(
+        self, pkg_type: str, name: str, version: str, group: Optional[str] = None
+    ) -> str:
+        """Construct a PURL from component metadata."""
+        # Normalize type to PURL namespace
+        type_mapping = {
+            "library": "generic",
+            "application": "generic",
+            "container": "oci",
+            "operating-system": "generic",
+            "device": "generic",
+            "firmware": "generic",
+            "file": "generic",
+            "framework": "generic",
+        }
+        purl_type = type_mapping.get(pkg_type, pkg_type)
+
+        # Construct PURL: pkg:type/namespace/name@version
+        if group:
+            return f"pkg:{purl_type}/{group}/{name}@{version}"
+        else:
+            return f"pkg:{purl_type}/{name}@{version}"
+
     def _parse_cyclonedx_component(
         self,
         comp: Dict[str, Any],
@@ -366,19 +450,21 @@ class SBOMParser:
         name = comp.get("name")
         version = comp.get("version", "unknown")
         bom_ref = comp.get("bom-ref")
+        component_type = comp.get("type", "library")
+        group = comp.get("group")
 
         # Skip components without identifiable info
-        if not purl and not name:
+        if not name:
             return None
 
-        # If no purl, try to construct one or skip
+        # If no purl, construct one from available metadata
         if not purl:
-            # For now, skip components without PURL
-            # Could be enhanced to construct PURL from type+name+version
-            return None
+            purl = self._construct_purl(component_type, name, version, group)
+            logger.debug(f"Constructed PURL for {name}@{version}: {purl}")
 
         # Determine if this is a direct dependency
         direct = False
+        direct_inferred = False
         parent_components = []
         check_ref = bom_ref or purl
 
@@ -397,7 +483,11 @@ class SBOMParser:
                 # Not in anyone's dependsOn and we have explicit direct refs
                 # This component might be isolated or a root-level dependency
                 direct = True
-        # If no dependency graph at all, leave direct as False (unknown)
+        else:
+            # No dependency graph - mark as inferred
+            direct_inferred = True
+            # Assume top-level components are direct when we can't determine relationship
+            direct = True
 
         # Get parent components from reverse dependency graph
         if reverse_deps_graph and check_ref in reverse_deps_graph:
@@ -490,6 +580,7 @@ class SBOMParser:
             license_url=license_url,
             scope=comp.get("scope"),
             direct=direct,
+            direct_inferred=direct_inferred,
             parent_components=parent_components,
             source_type=determined_source_type,
             source_target=source_target,
@@ -686,10 +777,17 @@ class SBOMParser:
             f"{len(all_child_ids)} total children from {len(relationships)} relationships"
         )
 
+        # Determine if we have a dependency graph
+        has_dependency_graph = bool(relationships)
+        inferred = not has_dependency_graph
+
         # Parse artifacts with direct/transitive info
         for artifact in artifacts:
             artifact_id = artifact.get("id", "")
             is_direct = artifact_id in direct_artifact_ids
+            # If no dependency graph, assume all are direct (inferred)
+            if inferred:
+                is_direct = True
             parent_components = reverse_deps_graph.get(artifact_id, [])
 
             parsed = self._parse_syft_artifact(
@@ -697,6 +795,7 @@ class SBOMParser:
                 result.source_type,
                 result.source_target,
                 is_direct,
+                inferred,
                 parent_components,
             )
             if parsed:
@@ -710,6 +809,7 @@ class SBOMParser:
         source_type: Optional[str],
         source_target: Optional[str],
         is_direct: bool = False,
+        direct_inferred: bool = False,
         parent_components: Optional[List[str]] = None,
     ) -> Optional[ParsedDependency]:
         """Parse a single Syft artifact with all available fields."""
@@ -717,17 +817,19 @@ class SBOMParser:
         purl = artifact.get("purl")
         name = artifact.get("name")
         version = artifact.get("version", "unknown")
+        pkg_type = artifact.get("type", "unknown")
 
         if parent_components is None:
             parent_components = []
 
         # Skip artifacts without identifiable info
-        if not purl and not name:
+        if not name:
             return None
 
-        # If no purl, skip (could enhance to construct)
+        # If no purl, construct one from available metadata
         if not purl:
-            return None
+            purl = self._construct_purl(pkg_type, name, version)
+            logger.debug(f"Constructed PURL for Syft artifact {name}@{version}: {purl}")
 
         # Extract license
         licenses = artifact.get("licenses", [])
@@ -829,6 +931,7 @@ class SBOMParser:
             license_url=license_url,
             scope=None,
             direct=direct,
+            direct_inferred=direct_inferred,
             parent_components=parent_components,
             source_type=determined_source_type,
             source_target=source_target,
@@ -963,6 +1066,10 @@ class SBOMParser:
         # SPDX uses "packages" instead of components
         packages = sbom.get("packages", [])
 
+        # Determine if we have a dependency graph
+        has_dependency_graph = bool(relationships)
+        inferred = not has_dependency_graph
+
         for pkg in packages:
             pkg_spdx_id = pkg.get("SPDXID", "")
 
@@ -977,10 +1084,16 @@ class SBOMParser:
                 # Has dependencies but no one depends on it - likely a root package
                 is_direct = True
 
+            # If no dependency graph, assume all are direct (inferred)
+            if inferred:
+                is_direct = True
+
             # Get parent components
             parent_components = reverse_deps_graph.get(pkg_spdx_id, [])
 
-            parsed = self._parse_spdx_package(pkg, is_direct, parent_components)
+            parsed = self._parse_spdx_package(
+                pkg, is_direct, inferred, parent_components
+            )
             if parsed:
                 result.dependencies.append(parsed)
             else:
@@ -990,6 +1103,7 @@ class SBOMParser:
         self,
         pkg: Dict[str, Any],
         is_direct: bool = False,
+        direct_inferred: bool = False,
         parent_components: Optional[List[str]] = None,
     ) -> Optional[ParsedDependency]:
         """Parse a single SPDX package with all available fields."""
@@ -1017,9 +1131,26 @@ class SBOMParser:
                 if locator:
                     cpes.append(locator)
 
-        # Skip if no PURL (could be enhanced)
+        # If no PURL, construct one from available metadata
         if not purl:
-            return None
+            # Try to infer type from download location or supplier
+            download_loc = pkg.get("downloadLocation", "")
+            pkg_type = "generic"
+
+            # Try to infer type from download location
+            if "npmjs.org" in download_loc or "registry.npmjs" in download_loc:
+                pkg_type = "npm"
+            elif "pypi.org" in download_loc or "pypi.python.org" in download_loc:
+                pkg_type = "pypi"
+            elif "maven" in download_loc or "mvnrepository" in download_loc:
+                pkg_type = "maven"
+            elif "crates.io" in download_loc:
+                pkg_type = "cargo"
+            elif "rubygems" in download_loc:
+                pkg_type = "gem"
+
+            purl = self._construct_purl(pkg_type, name, version)
+            logger.debug(f"Constructed PURL for SPDX package {name}@{version}: {purl}")
 
         # Extract license
         license_concluded = pkg.get("licenseConcluded", "")
@@ -1135,6 +1266,7 @@ class SBOMParser:
             license_url=license_url,
             scope=None,
             direct=is_direct,
+            direct_inferred=direct_inferred,
             parent_components=parent_components,
             source_type=determined_source_type,
             source_target=None,

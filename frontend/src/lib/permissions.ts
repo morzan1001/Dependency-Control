@@ -2,12 +2,7 @@
  * Permission System Constants and Helpers
  *
  * This module provides a centralized, fine-grained permission system.
- * No wildcard ("*") permissions are used - admins have all individual permissions explicitly.
  */
-
-// =============================================================================
-// Permission Constants
-// =============================================================================
 
 export const Permissions = {
   // System Management
@@ -56,6 +51,8 @@ export const Permissions = {
 
   // Webhooks
   WEBHOOK_CREATE: "webhook:create",
+  WEBHOOK_READ: "webhook:read",
+  WEBHOOK_UPDATE: "webhook:update",
   WEBHOOK_DELETE: "webhook:delete",
 } as const;
 
@@ -102,12 +99,10 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.WAIVER_DELETE,
   // Webhooks
   Permissions.WEBHOOK_CREATE,
+  Permissions.WEBHOOK_READ,
+  Permissions.WEBHOOK_UPDATE,
   Permissions.WEBHOOK_DELETE,
 ];
-
-// =============================================================================
-// Permission Presets
-// =============================================================================
 
 // Admin: All permissions
 export const PRESET_ADMIN: Permission[] = [...ALL_PERMISSIONS];
@@ -133,6 +128,9 @@ export const PRESET_USER: Permission[] = [
   Permissions.ANALYTICS_RECOMMENDATIONS,
   // Waivers - can view own waivers
   Permissions.WAIVER_READ,
+  // Webhooks - can create and view webhooks for own projects
+  Permissions.WEBHOOK_CREATE,
+  Permissions.WEBHOOK_READ,
 ];
 
 // Viewer: Read-only access
@@ -149,10 +147,6 @@ export const PRESET_VIEWER: Permission[] = [
   // Waivers - can view waivers
   Permissions.WAIVER_READ,
 ];
-
-// =============================================================================
-// Permission Groups for UI
-// =============================================================================
 
 export interface PermissionItem {
   id: string;
@@ -378,6 +372,16 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         description: "Create webhooks for any project",
       },
       {
+        id: Permissions.WEBHOOK_READ,
+        label: "Read Webhooks",
+        description: "View webhook configurations",
+      },
+      {
+        id: Permissions.WEBHOOK_UPDATE,
+        label: "Update Webhooks",
+        description: "Modify webhook configurations",
+      },
+      {
         id: Permissions.WEBHOOK_DELETE,
         label: "Delete Webhooks",
         description: "Delete any webhook",
@@ -385,10 +389,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
 ];
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
 
 /**
  * Check if user has the required permission(s).

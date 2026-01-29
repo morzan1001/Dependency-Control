@@ -296,9 +296,17 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                                                         <p className="text-xs text-muted-foreground break-all">{finding.source_target}</p>
                                                                     )}
                                                                     {finding.direct !== undefined && (
-                                                                        <p className="text-xs">
-                                                                            {finding.direct ? "Direct dependency" : "Transitive dependency"}
-                                                                        </p>
+                                                                        <div className="space-y-0.5">
+                                                                            <p className="text-xs">
+                                                                                {finding.direct ? "Direct dependency" : "Transitive dependency"}
+                                                                                {finding.direct_inferred ? " (inferred)" : ""}
+                                                                            </p>
+                                                                            {finding.direct_inferred && (
+                                                                                <p className="text-xs text-muted-foreground italic">
+                                                                                    Classification inferred (SBOM had no dependency graph)
+                                                                                </p>
+                                                                            )}
+                                                                        </div>
                                                                     )}
                                                                 </div>
                                                             </TooltipContent>

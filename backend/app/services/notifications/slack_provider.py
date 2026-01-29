@@ -24,11 +24,39 @@ except ImportError:
 
 class SlackProvider(NotificationProvider):
     def __init__(self):
-        # Lock to prevent concurrent token refresh within the same pod
+        # Local lock to prevent concurrent refresh within same pod
         self._refresh_lock = asyncio.Lock()
         # Cache the refreshed token to avoid redundant refreshes
         self._cached_token: Optional[str] = None
         self._cached_token_expires_at: float = 0
+
+    async def _acquire_distributed_lock(
+        self, db, lock_name: str, ttl_seconds: int = 30
+    ) -> bool:
+        """
+        Acquire a distributed lock using DistributedLocksRepository.
+
+        Args:
+            db: Database connection
+            lock_name: Name of the lock
+            ttl_seconds: Lock TTL in seconds (auto-expires if holder crashes)
+
+        Returns:
+            True if lock acquired, False otherwise
+        """
+        from app.repositories.distributed_locks import DistributedLocksRepository
+
+        locks_repo = DistributedLocksRepository(db)
+        holder_id = f"slack-provider-{id(self)}"
+
+        return await locks_repo.acquire_lock(lock_name, holder_id, ttl_seconds)
+
+    async def _release_distributed_lock(self, db, lock_name: str) -> None:
+        """Release a distributed lock using DistributedLocksRepository."""
+        from app.repositories.distributed_locks import DistributedLocksRepository
+
+        locks_repo = DistributedLocksRepository(db)
+        await locks_repo.release_lock(lock_name)
 
     async def _refresh_token(self, system_settings: SystemSettings) -> Optional[str]:
         """
@@ -116,42 +144,106 @@ class SlackProvider(NotificationProvider):
             and system_settings.slack_token_expires_at
             < (current_time + SLACK_TOKEN_EXPIRY_BUFFER_SECONDS)
         ):
-            # Check if we have a valid cached token first
+            # Check if we have a valid cached token first (local cache)
             if self._cached_token and self._cached_token_expires_at > current_time:
                 slack_token = self._cached_token
             else:
-                # Use lock to prevent concurrent refresh attempts within this pod
+                # Use LOCAL lock for intra-pod coordination
                 async with self._refresh_lock:
-                    # Double-check after acquiring lock (another request may have refreshed)
+                    # Double-check after acquiring local lock
                     if (
                         self._cached_token
                         and self._cached_token_expires_at > current_time
                     ):
                         slack_token = self._cached_token
                     else:
-                        logger.info(
-                            "Slack token expired or expiring soon. Refreshing..."
+                        # Try to acquire DISTRIBUTED lock for inter-pod coordination
+                        db = await get_database()
+                        lock_acquired = await self._acquire_distributed_lock(
+                            db, "slack_token_refresh", ttl_seconds=30
                         )
-                        new_token = await self._refresh_token(system_settings)
-                        if new_token:
-                            slack_token = new_token
-                            # Cache for 1 hour minus buffer (Slack tokens typically last 12 hours)
-                            self._cached_token = new_token
-                            self._cached_token_expires_at = (
-                                current_time + 3600 - SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
-                            )
+
+                        if lock_acquired:
+                            try:
+                                logger.info(
+                                    "Acquired distributed lock for Slack token refresh"
+                                )
+                                # Re-check settings (another pod may have refreshed)
+                                from app.repositories.system_settings import (
+                                    SystemSettingsRepository,
+                                )
+
+                                repo = SystemSettingsRepository(db)
+                                fresh_settings = await repo.get()
+                                if (
+                                    fresh_settings
+                                    and fresh_settings.slack_token_expires_at
+                                    and fresh_settings.slack_token_expires_at
+                                    > (current_time + SLACK_TOKEN_EXPIRY_BUFFER_SECONDS)
+                                ):
+                                    # Another pod already refreshed, use new token
+                                    slack_token = fresh_settings.slack_bot_token
+                                    self._cached_token = slack_token
+                                    self._cached_token_expires_at = (
+                                        fresh_settings.slack_token_expires_at
+                                    )
+                                    logger.info("Using token refreshed by another pod")
+                                else:
+                                    # We need to refresh
+                                    logger.info(
+                                        "Slack token expired or expiring soon. Refreshing..."
+                                    )
+                                    new_token = await self._refresh_token(
+                                        system_settings
+                                    )
+                                    if new_token:
+                                        slack_token = new_token
+                                        # Cache locally
+                                        self._cached_token = new_token
+                                        self._cached_token_expires_at = (
+                                            current_time
+                                            + 3600
+                                            - SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
+                                        )
+                                    else:
+                                        logger.warning(
+                                            "Failed to refresh Slack token, attempting to use existing token."
+                                        )
+                            finally:
+                                # Always release distributed lock
+                                await self._release_distributed_lock(
+                                    db, "slack_token_refresh"
+                                )
                         else:
-                            logger.warning(
-                                "Failed to refresh Slack token, attempting to use existing token."
+                            # Another pod is refreshing, wait and retry
+                            logger.info(
+                                "Another pod is refreshing Slack token, waiting..."
                             )
+                            await asyncio.sleep(2)
+                            # Re-fetch settings after wait
+                            from app.repositories.system_settings import (
+                                SystemSettingsRepository,
+                            )
+
+                            repo = SystemSettingsRepository(db)
+                            fresh_settings = await repo.get()
+                            if fresh_settings and fresh_settings.slack_bot_token:
+                                slack_token = fresh_settings.slack_bot_token
+                                self._cached_token = slack_token
+                                if fresh_settings.slack_token_expires_at:
+                                    self._cached_token_expires_at = (
+                                        fresh_settings.slack_token_expires_at
+                                    )
+                            else:
+                                logger.warning(
+                                    "Could not acquire lock and no refreshed token found"
+                                )
 
         if not slack_token:
             logger.warning(
                 "SLACK_BOT_TOKEN not configured. Skipping Slack notification."
             )
             return False
-
-        # Slack API 'chat.postMessage' accepts channel IDs, names, or user IDs.
 
         url = "https://slack.com/api/chat.postMessage"
         headers = {

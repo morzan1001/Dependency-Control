@@ -85,10 +85,10 @@ async def resolve_sbom_refs(
                             "sbom": None,
                         }
                     )
-        elif isinstance(item, dict):
-            # Already inline SBOM data (legacy format)
-            resolved_sboms.append(
-                {"index": index, "filename": None, "storage": "inline", "sbom": item}
+        else:
+            # Invalid SBOM reference format
+            logger.warning(
+                f"Invalid SBOM reference format at index {index}: {type(item)}"
             )
 
     return resolved_sboms

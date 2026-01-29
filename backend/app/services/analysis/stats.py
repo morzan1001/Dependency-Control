@@ -285,13 +285,19 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                     "$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}
                 },
                 "total": {"$sum": 1},
-                # Traditional risk score sum
-                "risk_score_sum": {
-                    "$sum": {"$ifNull": ["$cvss_score", "$calculated_score"]}
+                # Traditional risk score (use average, not sum)
+                "avg_risk_score": {
+                    "$avg": {"$ifNull": ["$cvss_score", "$calculated_score"]}
+                },
+                "max_risk_score": {
+                    "$max": {"$ifNull": ["$cvss_score", "$calculated_score"]}
                 },
                 # Adjusted risk scores (including enrichment data)
-                "adjusted_risk_score_sum": {
-                    "$sum": {"$ifNull": ["$risk_score", "$calculated_score"]}
+                "avg_adjusted_risk_score": {
+                    "$avg": {"$ifNull": ["$risk_score", "$calculated_score"]}
+                },
+                "max_adjusted_risk_score": {
+                    "$max": {"$ifNull": ["$risk_score", "$calculated_score"]}
                 },
                 # KEV statistics
                 "kev_count": {"$sum": {"$cond": [{"$eq": ["$is_kev", True]}, 1, 0]}},
@@ -513,9 +519,11 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         },
     ]
 
-    stats_result: List[Dict[str, Any]] = await db.findings.aggregate(pipeline).to_list(
-        1
-    )
+    # Use FindingRepository for consistent data access
+    from app.repositories import FindingRepository
+
+    finding_repo = FindingRepository(db)
+    stats_result: List[Dict[str, Any]] = await finding_repo.aggregate(pipeline, limit=1)
 
     # Initialize stats with defaults
     stats = Stats()
@@ -530,8 +538,9 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         stats.low = res.get("low", 0)
         stats.info = res.get("info", 0)
         stats.unknown = res.get("unknown", 0)
-        stats.risk_score = round(res.get("risk_score_sum", 0.0), 1)
-        stats.adjusted_risk_score = round(res.get("adjusted_risk_score_sum", 0.0), 1)
+        # Use average risk scores (not sum)
+        stats.risk_score = round(res.get("avg_risk_score", 0.0), 1)
+        stats.adjusted_risk_score = round(res.get("avg_adjusted_risk_score", 0.0), 1)
 
         # Calculate EPSS statistics
         epss_scores: List[float] = [

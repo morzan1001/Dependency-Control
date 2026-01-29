@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional
 
 # Severity order for sorting (higher value = more severe)
 SEVERITY_ORDER: Dict[str, int] = {
-    # Uppercase variants for consistency
     "CRITICAL": 5,
     "HIGH": 4,
     "MEDIUM": 3,
@@ -168,11 +167,6 @@ TEAM_ROLE_ADMIN = "admin"
 TEAM_ROLE_MEMBER = "member"
 TEAM_ROLES = [TEAM_ROLE_MEMBER, TEAM_ROLE_ADMIN, TEAM_ROLE_OWNER]
 
-
-# ==============================================================================
-# RECOMMENDATION ENGINE CONSTANTS
-# ==============================================================================
-
 # Weights for calculating risk scores (supports both uppercase and lowercase keys)
 SEVERITY_WEIGHTS: Dict[str, float] = {
     "CRITICAL": 10.0,
@@ -315,11 +309,6 @@ EFFORT_BONUSES: Dict[str, int] = {
     "high": 0,
 }
 
-
-# ==============================================================================
-# RECOMMENDATION ENGINE CONFIGURATION
-# ==============================================================================
-
 # Maximum depth for dependency chain analysis
 MAX_DEPENDENCY_DEPTH: int = 5
 
@@ -340,26 +329,14 @@ EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploit
 SCORECARD_LOW_THRESHOLD: float = 4.0  # Packages below this are flagged as low quality
 SCORECARD_UNMAINTAINED_THRESHOLD: float = 5.0  # Used for critical risk correlation
 
-
-# System Permissions - Use Permissions class from app.core.permissions instead
-# These are kept for backwards compatibility but should be migrated to use Permissions.*
-# from app.core.permissions import Permissions
-
-
-# ==============================================================================
-# ANALYZER THRESHOLDS
-# ==============================================================================
-
-# OpenSSF Scorecard thresholds (use these instead of SCORECARD_THRESHOLD):
-# - SCORECARD_LOW_THRESHOLD (4.0): Packages flagged as low quality (high risk)
-# - SCORECARD_UNMAINTAINED_THRESHOLD (5.0): General warning threshold
-
 # Maintainer risk thresholds (days since last release)
 STALE_PACKAGE_THRESHOLD_DAYS: int = 730  # 2 years = potentially abandoned
 STALE_PACKAGE_WARNING_DAYS: int = 365  # 1 year = warning
 
 # Typosquatting detection threshold (similarity ratio 0-1)
 TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
+# Maximum popular packages to cache (prevent memory issues)
+TYPOSQUATTING_MAX_FALLBACK_PACKAGES: int = 10000
 
 # Analyzer batch sizes for API rate limiting
 ANALYZER_BATCH_SIZES: Dict[str, int] = {
@@ -389,9 +366,6 @@ ANALYZER_TIMEOUTS: Dict[str, float] = {
     "default": 30.0,
 }
 
-# Retry configuration for enrichment providers is now in settings.py
-# Use settings.ENRICHMENT_MAX_RETRIES and settings.ENRICHMENT_RETRY_DELAY
-
 # GHSA concurrent fetching (with GitHub token: 5000 req/hour, without: 60 req/hour)
 GHSA_CONCURRENT_REQUESTS_AUTHENTICATED: int = 10
 GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
@@ -416,11 +390,6 @@ EXPLOIT_MATURITY_BOOST: Dict[str, float] = {
     "low": 1.0,
     "unknown": 1.0,
 }
-
-
-# ==============================================================================
-# ANALYTICS CONSTANTS
-# ==============================================================================
 
 # Maximum items returned by analytics aggregation queries
 # Used to prevent memory issues with large datasets
@@ -455,11 +424,6 @@ IMPACT_SEVERITY_WEIGHTS: Dict[str, int] = {
     "low": 1,
 }
 
-
-# ==============================================================================
-# EXTERNAL SERVICE URLS
-# ==============================================================================
-
 # Threat intelligence
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -481,11 +445,6 @@ TOP_PYPI_PACKAGES_URL = (
     "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.json"
 )
 GITHUB_API_URL = "https://api.github.com"
-
-
-# ==============================================================================
-# END-OF-LIFE MAPPING
-# ==============================================================================
 
 # Mapping from package/component names to endoflife.date product IDs
 # See https://endoflife.date/api for all available products
@@ -633,11 +592,6 @@ NAME_TO_EOL_MAPPING: Dict[str, str] = {
     "linkerd": "linkerd",
 }
 
-
-# ==============================================================================
-# SCANNER SEVERITY MAPPINGS
-# ==============================================================================
-
 # Severity aliases for normalizing different scanner output formats
 # Used by safe_severity() in normalizers/utils.py
 SEVERITY_ALIASES: Dict[str, str] = {
@@ -673,11 +627,6 @@ BEARER_SEVERITY_MAP: Dict[str, str] = {
     "info": "INFO",
 }
 
-
-# ==============================================================================
-# NOTIFICATION CONSTANTS
-# ==============================================================================
-
 # Notification channel identifiers
 NOTIFICATION_CHANNEL_EMAIL = "email"
 NOTIFICATION_CHANNEL_SLACK = "slack"
@@ -697,11 +646,6 @@ SLACK_TOKEN_EXPIRY_BUFFER_SECONDS: int = 300
 
 # HTTP timeout for notification providers is now in settings.py
 # Use settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
-
-
-# ==============================================================================
-# DUPLICATE PACKAGE DETECTION
-# ==============================================================================
 
 # Groups of packages that often provide similar/duplicate functionality
 SIMILAR_PACKAGE_GROUPS: List[Dict[str, Any]] = [
@@ -748,11 +692,6 @@ SIMILAR_PACKAGE_GROUPS: List[Dict[str, Any]] = [
     },
 ]
 
-
-# ==============================================================================
-# AUTH CONSTANTS
-# ==============================================================================
-
 # Authentication providers
 AUTH_PROVIDER_LOCAL = "local"
 AUTH_PROVIDER_OIDC = "oidc"
@@ -769,11 +708,6 @@ TOTP_VALID_WINDOW: int = 1  # Accept codes from 1 interval before/after current
 
 # OIDC HTTP client timeout (seconds)
 OIDC_HTTP_TIMEOUT_SECONDS: float = 30.0
-
-
-# ==============================================================================
-# WEBHOOK CONSTANTS
-# ==============================================================================
 
 # Webhook configuration
 # WEBHOOK_TIMEOUT_SECONDS and WEBHOOK_MAX_RETRIES are now in settings.py
@@ -807,11 +741,6 @@ WEBHOOK_USER_AGENT_VALUE = "DependencyControl-Webhook/1.0"
 # Webhook URL validation prefixes
 WEBHOOK_ALLOWED_URL_PREFIXES = ("https://", "http://localhost", "http://127.0.0.1")
 
-
-# ==============================================================================
-# SCAN STATUS CONSTANTS
-# ==============================================================================
-
 SCAN_STATUS_PENDING = "pending"
 SCAN_STATUS_PROCESSING = "processing"
 SCAN_STATUS_COMPLETED = "completed"
@@ -823,11 +752,6 @@ SCAN_VALID_STATUSES = [
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_FAILED,
 ]
-
-
-# ==============================================================================
-# SBOM SOURCE TYPE CONSTANTS
-# ==============================================================================
 
 SOURCE_TYPE_IMAGE = "image"
 SOURCE_TYPE_APPLICATION = "application"
@@ -875,11 +799,6 @@ APP_PACKAGE_TYPES = frozenset(
     }
 )
 
-
-# ==============================================================================
-# REACHABILITY CONSTANTS
-# ==============================================================================
-
 # Analysis levels
 REACHABILITY_LEVEL_NONE = "none"
 REACHABILITY_LEVEL_IMPORT = "import"
@@ -899,11 +818,6 @@ REACHABILITY_EXTRACTION_CONFIDENCE = {
     "low": 0.5,
 }
 
-
-# ==============================================================================
-# GITLAB ACCESS LEVEL CONSTANTS
-# ==============================================================================
-
 GITLAB_ACCESS_GUEST = 10
 GITLAB_ACCESS_REPORTER = 20
 GITLAB_ACCESS_DEVELOPER = 30
@@ -912,11 +826,6 @@ GITLAB_ACCESS_OWNER = 50
 
 # Minimum access level for admin role in DependencyControl
 GITLAB_ADMIN_MIN_ACCESS = GITLAB_ACCESS_MAINTAINER
-
-
-# ==============================================================================
-# AGGREGATION CONSTANTS
-# ==============================================================================
 
 # Aggregation key prefixes for finding deduplication
 AGG_KEY_VULNERABILITY = "AGG:VULN"
@@ -935,11 +844,6 @@ WAIVER_STATUSES = [
     WAIVER_STATUS_FALSE_POSITIVE,
 ]
 
-
-# ==============================================================================
-# CVSS SEVERITY SCORE MAPPING
-# ==============================================================================
-
 # Default CVSS scores used when actual score is not available
 CVSS_SEVERITY_SCORES: Dict[str, float] = {
     "CRITICAL": 10.0,
@@ -950,19 +854,9 @@ CVSS_SEVERITY_SCORES: Dict[str, float] = {
     "UNKNOWN": 0.0,
 }
 
-
-# ==============================================================================
-# CACHE TTL CONSTANTS
-# ==============================================================================
-
 # GitLab JWKS cache TTLs (in seconds)
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
-
-
-# ==============================================================================
-# HOUSEKEEPING CONSTANTS (Implementation Details - not configurable)
-# ==============================================================================
 
 # Time (seconds) since last result to trigger aggregation for stale scans
 # This is tuned for typical CI pipeline timing - don't change unless you understand the implications
@@ -979,17 +873,3 @@ HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS: int = 300  # 5 minutes
 
 # Fixed interval for retention cleanup checks (hours)
 HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS: int = 24
-
-
-# ==============================================================================
-# RETRY CONSTANTS (Standard values - not configurable)
-# ==============================================================================
-
-# Maximum retries for enrichment API calls
-ENRICHMENT_MAX_RETRIES: int = 3
-
-# Delay between retries (seconds)
-ENRICHMENT_RETRY_DELAY: float = 1.0
-
-# Maximum retries for webhook delivery
-WEBHOOK_MAX_RETRIES: int = 3

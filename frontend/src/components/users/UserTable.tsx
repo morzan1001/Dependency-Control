@@ -4,6 +4,12 @@ import { useDeleteUser, useInviteUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Check, X, Trash2, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -153,12 +159,32 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                     )}
                 </TableCell>
                 <TableCell>
-                  <div className="flex gap-1 flex-wrap">
-                    {user.permissions.map((perm) => (
+                  <div className="flex gap-1 flex-wrap items-center">
+                    {user.permissions.slice(0, 3).map((perm) => (
                       <span key={perm} className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
                         {perm}
                       </span>
                     ))}
+                    {user.permissions.length > 3 && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold cursor-help border-transparent bg-muted text-muted-foreground hover:bg-muted/80">
+                              +{user.permissions.length - 3}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-xs">
+                            <div className="flex flex-wrap gap-1">
+                              {user.permissions.slice(3).map((perm) => (
+                                <span key={perm} className="inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium border-transparent bg-secondary text-secondary-foreground">
+                                  {perm}
+                                </span>
+                              ))}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>

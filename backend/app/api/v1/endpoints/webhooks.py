@@ -35,11 +35,6 @@ from app.services.webhooks.webhook_service import webhook_service
 router = APIRouter()
 
 
-# =============================================================================
-# Project Webhooks
-# =============================================================================
-
-
 @router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201)
 async def create_webhook(
     project_id: str,
@@ -83,11 +78,6 @@ async def list_webhooks(
     return build_pagination_response(items, total, skip, limit)
 
 
-# =============================================================================
-# Global Webhooks
-# =============================================================================
-
-
 @router.post("/global/", response_model=WebhookResponse, status_code=201)
 async def create_global_webhook(
     webhook_in: WebhookCreate,
@@ -124,11 +114,6 @@ async def list_global_webhooks(
 
     items = [w.model_dump(by_alias=True) for w in webhooks]
     return build_pagination_response(items, total, skip, limit)
-
-
-# =============================================================================
-# Webhook Management (Get, Update, Delete, Test)
-# =============================================================================
 
 
 @router.get("/{webhook_id}", response_model=WebhookResponse)

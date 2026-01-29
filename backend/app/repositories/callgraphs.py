@@ -16,10 +16,6 @@ class CallgraphRepository(BaseRepository[Callgraph]):
     collection_name = "callgraphs"
     model_class = Callgraph
 
-    # ===================
-    # Lookup operations
-    # ===================
-
     async def get_by_project(self, project_id: str) -> Optional[Callgraph]:
         """Get callgraph by project ID."""
         return await self.find_one({"project_id": project_id})
@@ -45,10 +41,6 @@ class CallgraphRepository(BaseRepository[Callgraph]):
         return await self.find_one(
             {"project_id": project_id, "pipeline_id": pipeline_id}
         )
-
-    # ===================
-    # Delete operations
-    # ===================
 
     async def delete_by_project(self, project_id: str) -> int:
         """Delete callgraph by project ID."""

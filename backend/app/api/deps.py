@@ -60,6 +60,8 @@ async def get_current_user(
         )
         username: str = payload.get("sub")
         permissions: list[str] = payload.get("permissions", [])
+        jti: str = payload.get("jti")  # JWT ID for blacklist check
+
         if username is None:
             raise credentials_exception
         token_data = TokenPayload(sub=username, permissions=permissions)
@@ -67,6 +69,20 @@ async def get_current_user(
         if auth_token_validations_total:
             auth_token_validations_total.labels(result="invalid").inc()
         raise credentials_exception from exc
+
+    # Check if token is blacklisted (logout invalidation)
+    if jti:
+        from app.repositories import TokenBlacklistRepository
+
+        blacklist_repo = TokenBlacklistRepository(db)
+        if await blacklist_repo.is_blacklisted(jti):
+            if auth_token_validations_total:
+                auth_token_validations_total.labels(result="blacklisted").inc()
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_username(token_data.sub)

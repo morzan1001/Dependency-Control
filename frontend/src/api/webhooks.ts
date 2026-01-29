@@ -3,8 +3,8 @@ import { Webhook, WebhookCreate } from '@/types/webhook';
 
 export const webhookApi = {
   getGlobal: async () => {
-    const response = await api.get<Webhook[]>('/webhooks/global/');
-    return response.data;
+    const response = await api.get<{ items: Webhook[] }>('/webhooks/global/');
+    return response.data.items || [];
   },
 
   createGlobal: async (data: WebhookCreate) => {
@@ -13,8 +13,8 @@ export const webhookApi = {
   },
 
   getProject: async (projectId: string) => {
-    const response = await api.get<Webhook[]>(`/webhooks/project/${projectId}`);
-    return response.data;
+    const response = await api.get<{ items: Webhook[] }>(`/webhooks/project/${projectId}`);
+    return response.data.items || [];
   },
 
   createProject: async (projectId: string, data: WebhookCreate) => {

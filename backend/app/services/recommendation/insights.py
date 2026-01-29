@@ -10,12 +10,12 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import parse_version_tuple
+from app.services.recommendation.common import get_attr, ModelOrDict, parse_version_tuple
 
 
 def correlate_scorecard_with_vulnerabilities(
-    vulnerability_findings: List[Dict[str, Any]],
-    quality_findings: List[Dict[str, Any]],
+    vulnerability_findings: List[ModelOrDict],
+    quality_findings: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Correlate vulnerability findings with OpenSSF Scorecard quality data.
@@ -31,22 +31,23 @@ def correlate_scorecard_with_vulnerabilities(
     # Build scorecard lookup by component
     scorecard_by_component = {}
     for qf in quality_findings:
-        component = qf.get("component", "")
+        component = get_attr(qf, "component", "")
         if not component:
             continue
+        details = get_attr(qf, "details", {})
         scorecard_by_component[component] = {
-            "overall_score": qf.get("details", {}).get("overall_score", 10),
-            "critical_issues": qf.get("details", {}).get("critical_issues", []),
-            "project_url": qf.get("details", {}).get("project_url"),
-            "failed_checks": qf.get("details", {}).get("failed_checks", []),
+            "overall_score": details.get("overall_score", 10) if isinstance(details, dict) else 10,
+            "critical_issues": details.get("critical_issues", []) if isinstance(details, dict) else [],
+            "project_url": details.get("project_url") if isinstance(details, dict) else None,
+            "failed_checks": details.get("failed_checks", []) if isinstance(details, dict) else [],
         }
 
     # Find vulnerabilities in poorly maintained packages
     high_risk_vulns = []
 
     for vf in vulnerability_findings:
-        component = vf.get("component", "")
-        severity = vf.get("severity", "").upper()
+        component = get_attr(vf, "component", "")
+        severity = str(get_attr(vf, "severity", "")).upper()
 
         # Check if this component has scorecard data
         scorecard = scorecard_by_component.get(component)
@@ -61,16 +62,17 @@ def correlate_scorecard_with_vulnerabilities(
         if severity in ["CRITICAL", "HIGH"] and (
             is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD
         ):
+            vf_details = get_attr(vf, "details", {})
             high_risk_vulns.append(
                 {
                     "component": component,
-                    "version": vf.get("version"),
+                    "version": get_attr(vf, "version"),
                     "vuln_severity": severity,
                     "scorecard_score": score,
                     "unmaintained": is_unmaintained,
                     "cves": [
                         v.get("id")
-                        for v in vf.get("details", {}).get("vulnerabilities", [])[:3]
+                        for v in (vf_details.get("vulnerabilities", []) if isinstance(vf_details, dict) else [])[:3]
                     ],
                     "project_url": scorecard.get("project_url"),
                 }
@@ -146,28 +148,12 @@ def correlate_scorecard_with_vulnerabilities(
 
 
 def analyze_cross_project_patterns(
-    current_findings: List[Dict[str, Any]],
-    dependencies: List[Dict[str, Any]],
+    current_findings: List[ModelOrDict],
+    dependencies: List[ModelOrDict],
     cross_project_data: Dict[str, Any],
 ) -> List[Recommendation]:
     """
     Analyze patterns across multiple projects owned by the same user/team.
-
-    cross_project_data structure:
-    {
-        "projects": [
-            {
-                "project_id": "...",
-                "project_name": "...",
-                "cves": ["CVE-2023-..."],
-                "packages": [{"name": "lodash", "version": "4.17.20"}],
-                "total_critical": 5,
-                "total_high": 10
-            },
-            ...
-        ],
-        "total_projects": 5
-    }
     """
     recommendations: List[Recommendation] = []
 
@@ -177,9 +163,6 @@ def analyze_cross_project_patterns(
     projects = cross_project_data["projects"]
     total_projects = cross_project_data.get("total_projects", len(projects))
 
-    # ----------------------------------------------------------------
-    # 1. Find CVEs that appear across multiple projects
-    # ----------------------------------------------------------------
     cve_project_map = defaultdict(list)  # CVE -> list of project names
 
     for proj in projects:
@@ -237,9 +220,6 @@ def analyze_cross_project_patterns(
             )
         )
 
-    # ----------------------------------------------------------------
-    # 2. Find packages used across many projects (standardization candidates)
-    # ----------------------------------------------------------------
     package_usage: Dict[str, Dict[str, Any]] = defaultdict(
         lambda: {"versions": set(), "projects": []}
     )
@@ -327,9 +307,6 @@ def analyze_cross_project_patterns(
             )
         )
 
-    # ----------------------------------------------------------------
-    # 3. Identify organizational patterns (most problematic projects)
-    # ----------------------------------------------------------------
     projects_by_severity = sorted(
         projects,
         key=lambda p: (p.get("total_critical", 0) * 10 + p.get("total_high", 0)),

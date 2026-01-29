@@ -16,10 +16,6 @@ class DependencyRepository(BaseRepository[Dependency]):
     collection_name = "dependencies"
     model_class = Dependency
 
-    # ===================
-    # Lookup operations
-    # ===================
-
     async def get_by_name(self, name: str) -> Optional[Dependency]:
         """Get first dependency by name."""
         return await self.find_one({"name": name})
@@ -27,10 +23,6 @@ class DependencyRepository(BaseRepository[Dependency]):
     async def get_by_name_raw(self, name: str) -> Optional[Dict[str, Any]]:
         """Get first raw dependency by name."""
         return await self.find_one_raw({"name": name})
-
-    # ===================
-    # Scan-specific operations
-    # ===================
 
     async def find_by_scan(
         self,
@@ -53,6 +45,15 @@ class DependencyRepository(BaseRepository[Dependency]):
             {"scan_id": scan_id}, skip=skip, limit=limit, projection=projection
         )
 
+    async def find_all(
+        self,
+        query: Optional[Dict[str, Any]] = None,
+        projection: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find all dependencies matching query (returns raw dicts)."""
+        cursor = self.collection.find(query or {}, projection)
+        return await cursor.to_list(None)
+
     async def delete_by_scan(self, scan_id: str) -> int:
         """Delete all dependencies for a scan."""
         return await self.delete_many({"scan_id": scan_id})
@@ -60,10 +61,6 @@ class DependencyRepository(BaseRepository[Dependency]):
     async def count_by_scan(self, scan_id: str) -> int:
         """Count dependencies for a scan."""
         return await self.count({"scan_id": scan_id})
-
-    # ===================
-    # Aggregation helpers
-    # ===================
 
     async def get_unique_packages(self, scan_ids: List[str]) -> int:
         """Get count of unique packages across scans."""

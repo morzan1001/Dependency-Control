@@ -207,9 +207,6 @@ class VulnerabilityEnrichmentService:
         if not cve_to_findings:
             return findings
 
-        # =====================================================================
-        # GHSA Resolution: Resolve GHSA IDs to CVEs and add GitHub URLs
-        # =====================================================================
         ghsa_ids = [vid for vid in cve_to_findings.keys() if vid.startswith("GHSA-")]
         ghsa_resolutions: Dict[str, GHSAData] = {}
 

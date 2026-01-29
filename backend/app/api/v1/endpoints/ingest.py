@@ -42,11 +42,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# =============================================================================
-# Ingest Endpoints
-# =============================================================================
-
-
 @router.post(
     "/ingest/trufflehog",
     summary="Ingest TruffleHog Results",
@@ -186,18 +181,19 @@ async def ingest_sbom(
     if not data.sboms:
         raise HTTPException(status_code=400, detail="No SBOM provided")
 
-    # For SBOM, we need the scan_id before creating the scan for GridFS metadata
-    # So we handle this slightly differently
     pipeline_url = manager.build_pipeline_url(data)
 
-    # Check for existing scan
-    existing_scan = None
-    if data.pipeline_id:
-        existing_scan = await scan_repo.find_one(
-            {"project_id": str(project.id), "pipeline_id": data.pipeline_id}
-        )
-
-    scan_id = existing_scan["_id"] if existing_scan else str(uuid.uuid4())
+    if data.pipeline_id and data.commit_hash:
+        # Deterministic scan_id: Same commit in same pipeline = same scan
+        scan_id_seed = f"{project.id}-{data.pipeline_id}-{data.commit_hash}"
+        scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+    elif data.pipeline_id:
+        # No commit_hash, use pipeline_id only (less precise, but better than random)
+        scan_id_seed = f"{project.id}-{data.pipeline_id}"
+        scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+    else:
+        # No pipeline_id, use random UUID (manual upload scenario)
+        scan_id = str(uuid.uuid4())
 
     # Initialize GridFS
     fs = AsyncIOMotorGridFSBucket(db)
@@ -212,8 +208,10 @@ async def ingest_sbom(
         try:
             sbom_str = json.dumps(sbom)
             sbom_bytes = sbom_str.encode("utf-8")
+            # Generate consistent filename UUID
+            filename = f"sbom-{uuid.uuid4()}.json"
             file_id = await fs.upload_from_stream(
-                f"sbom-{uuid.uuid4()}.json",
+                filename,
                 sbom_bytes,
                 metadata={"contentType": "application/json", "scan_id": scan_id},
             )
@@ -221,7 +219,7 @@ async def ingest_sbom(
                 {
                     "storage": "gridfs",
                     "file_id": str(file_id),
-                    "filename": f"sbom-{uuid.uuid4()}.json",
+                    "filename": filename,  # Use same filename
                     "type": "gridfs_reference",
                     "gridfs_id": str(file_id),
                 }
@@ -256,6 +254,7 @@ async def ingest_sbom(
                     license_url=parsed_dep.license_url,
                     scope=parsed_dep.scope,
                     direct=parsed_dep.direct,
+                    direct_inferred=parsed_dep.direct_inferred,
                     parent_components=parsed_dep.parent_components,
                     source_type=parsed_dep.source_type,
                     source_target=parsed_dep.source_target,
@@ -292,64 +291,85 @@ async def ingest_sbom(
             detail=f"All {sboms_failed} SBOM(s) failed to process. Check server logs for details.",
         )
 
-    # Bulk insert dependencies
+    # Bulk insert/update dependencies
     if dependencies_to_insert:
         try:
-            if existing_scan:
-                await dep_repo.delete_by_scan(scan_id)
-            await dep_repo.create_many(dependencies_to_insert)
+            # Delete old dependencies for this scan atomically
+            await dep_repo.delete_by_scan(scan_id)
+            # Insert new dependencies (use create_many_raw for dict list)
+            # The unique constraint on (scan_id, name, version, purl) prevents duplicates
+            await dep_repo.create_many_raw(dependencies_to_insert)
         except Exception as e:
-            warnings.append("Failed to store dependencies")
-            logger.error(f"Failed to insert dependencies: {e}")
+            # Check if this is a duplicate key error (race condition with another pod)
+            if "duplicate key error" in str(e).lower() or "E11000" in str(e):
+                logger.warning(
+                    f"Duplicate dependency detected for scan {scan_id}, "
+                    f"likely due to concurrent SBOM upload. Ignoring."
+                )
+                # Continue processing - the dependencies are already inserted by another pod
+            else:
+                warnings.append("Failed to store dependencies")
+                logger.error(f"Failed to insert dependencies: {e}", exc_info=True)
+                # This is critical - if dependencies fail, the scan is incomplete
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to store dependencies. Please try again.",
+                )
 
-    # Create or update scan using manager's context
-    # We need to do this after GridFS to include sbom_refs
-    if existing_scan:
-        await scan_repo.update_raw(
-            scan_id,
-            {
-                "$set": {
-                    "branch": data.branch or existing_scan.get("branch"),
-                    "commit_hash": data.commit_hash or existing_scan.get("commit_hash"),
-                    "project_url": data.project_url,
-                    "pipeline_url": pipeline_url,
-                    "job_id": data.job_id,
-                    "job_started_at": data.job_started_at,
-                    "project_name": data.project_name,
-                    "commit_message": data.commit_message,
-                    "commit_tag": data.commit_tag,
-                    "pipeline_user": data.pipeline_user,
-                    "status": "pending",
-                    "updated_at": datetime.now(timezone.utc),
-                },
-                "$push": {"sbom_refs": {"$each": sbom_refs}},
-            },
-        )
+    now = datetime.now(timezone.utc)
+
+    scan_update = {
+        "$set": {
+            "branch": data.branch or "unknown",
+            "commit_hash": data.commit_hash,
+            "project_url": data.project_url,
+            "pipeline_url": pipeline_url,
+            "job_id": data.job_id,
+            "job_started_at": data.job_started_at,
+            "project_name": data.project_name,
+            "commit_message": data.commit_message,
+            "commit_tag": data.commit_tag,
+            "pipeline_user": data.pipeline_user,
+            "updated_at": now,
+        },
+        "$setOnInsert": {
+            "_id": scan_id,
+            "project_id": str(project.id),
+            "pipeline_id": data.pipeline_id,
+            "pipeline_iid": data.pipeline_iid,
+            "status": "pending",
+            "created_at": now,
+        },
+    }
+
+    # Only set status to pending if not currently processing
+    # This prevents resetting a scan that's actively being analyzed
+    filter_query = {"_id": scan_id}
+
+    # Add new SBOM refs (append to existing, or initialize if new)
+    if sbom_refs:
+        scan_update["$push"] = {"sbom_refs": {"$each": sbom_refs}}
     else:
-        scan = Scan(
-            id=scan_id,
-            project_id=str(project.id),
-            branch=data.branch or "unknown",
-            commit_hash=data.commit_hash,
-            pipeline_id=data.pipeline_id,
-            pipeline_iid=data.pipeline_iid,
-            project_url=data.project_url,
-            pipeline_url=pipeline_url,
-            job_id=data.job_id,
-            job_started_at=data.job_started_at,
-            project_name=data.project_name,
-            commit_message=data.commit_message,
-            commit_tag=data.commit_tag,
-            pipeline_user=data.pipeline_user,
-            sbom_refs=sbom_refs,
-            status="pending",
-        )
-        await scan_repo.create(scan)
+        # Only initialize sbom_refs as empty array if no sboms provided
+        scan_update["$setOnInsert"]["sbom_refs"] = []
+
+    # Atomic upsert
+    await db.scans.update_one(
+        filter_query,
+        scan_update,
+        upsert=True,
+    )
+
+    # If scan was completed, reset to pending for re-analysis
+    # This handles the case where a new SBOM is uploaded for an existing pipeline
+    # Also reset retry_count since this is a legitimate new upload, not a retry
+    await db.scans.update_one(
+        {"_id": scan_id, "status": "completed"},
+        {"$set": {"status": "pending", "retry_count": 0}},
+    )
 
     # Register SBOM result and trigger analysis
     # SBOM is considered the "main" scanner, so it triggers aggregation
-    # This will also collect results from other scanners (TruffleHog, OpenGrep, etc.)
-    # that may have already submitted their findings
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 
     # Build response message

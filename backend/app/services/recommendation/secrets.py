@@ -2,9 +2,10 @@ from collections import defaultdict
 from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 
-def process_secrets(findings: List[Dict[str, Any]]) -> List[Recommendation]:
+def process_secrets(findings: List[ModelOrDict]) -> List[Recommendation]:
     """Process secret/credential findings."""
     if not findings:
         return []
@@ -12,8 +13,12 @@ def process_secrets(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     # Group secrets by type/detector
     secrets_by_type = defaultdict(list)
     for f in findings:
-        details = f.get("details", {})
-        detector = details.get("detector_type") or details.get("rule_id") or "generic"
+        details = get_attr(f, "details", {})
+        detector = (
+            details.get("detector_type") if isinstance(details, dict) else None
+        ) or (
+            details.get("rule_id") if isinstance(details, dict) else None
+        ) or "generic"
         secrets_by_type[detector].append(f)
 
     recommendations = []
@@ -23,8 +28,8 @@ def process_secrets(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     files_affected = set()
 
     for f in findings:
-        severity_counts[f.get("severity", "UNKNOWN")] += 1
-        component = f.get("component", "")
+        severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
+        component = get_attr(f, "component", "")
         if component:
             files_affected.add(component)
 

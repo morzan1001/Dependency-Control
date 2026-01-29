@@ -2,9 +2,10 @@ from collections import defaultdict
 from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 
-def process_sast(findings: List[Dict[str, Any]]) -> List[Recommendation]:
+def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
     """Process SAST (Static Application Security Testing) findings."""
     if not findings:
         return []
@@ -12,11 +13,11 @@ def process_sast(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     # Group by rule/category
     findings_by_category = defaultdict(list)
     for f in findings:
-        details = f.get("details", {})
+        details = get_attr(f, "details", {})
         category = (
-            details.get("category")
-            or details.get("rule_id")
-            or details.get("check_id")
+            (details.get("category") if isinstance(details, dict) else None)
+            or (details.get("rule_id") if isinstance(details, dict) else None)
+            or (details.get("check_id") if isinstance(details, dict) else None)
             or "security"
         )
         # Normalize category
@@ -42,8 +43,8 @@ def process_sast(findings: List[Dict[str, Any]]) -> List[Recommendation]:
         files_affected = set()
 
         for f in cat_findings:
-            severity_counts[f.get("severity", "UNKNOWN")] += 1
-            files_affected.add(f.get("component", "unknown"))
+            severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
+            files_affected.add(get_attr(f, "component", "unknown"))
 
         critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get(
             "HIGH", 0
@@ -61,6 +62,15 @@ def process_sast(findings: List[Dict[str, Any]]) -> List[Recommendation]:
             priority = Priority.MEDIUM
         else:
             priority = Priority.LOW
+
+        # Extract rule IDs safely
+        rule_ids = set()
+        for f in cat_findings:
+            details = get_attr(f, "details", {})
+            if isinstance(details, dict):
+                rule_id = details.get("rule_id")
+                if rule_id:
+                    rule_ids.add(rule_id)
 
         recommendations.append(
             Recommendation(
@@ -84,13 +94,7 @@ def process_sast(findings: List[Dict[str, Any]]) -> List[Recommendation]:
                     "type": "fix_code",
                     "category": category,
                     "files": list(files_affected)[:10],
-                    "rules": list(
-                        set(
-                            f.get("details", {}).get("rule_id", "")
-                            for f in cat_findings
-                            if f.get("details", {}).get("rule_id")
-                        )
-                    )[:10],
+                    "rules": list(rule_ids)[:10],
                 },
                 effort="medium" if len(cat_findings) < 10 else "high",
             )

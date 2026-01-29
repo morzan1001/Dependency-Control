@@ -44,7 +44,8 @@ from app.core.constants import (
     WEBHOOK_HEADER_USER_AGENT,
     WEBHOOK_USER_AGENT_VALUE,
 )
-from app.models.webhook import Webhook
+# Avoid circular import - webhook.py imports validation.py from this package
+# Import moved to method level where needed
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ class WebhookService:
 
     def _build_headers(
         self,
-        webhook: Webhook,
+        webhook: "Webhook",
         event_type: str,
         json_payload: str,
         is_test: bool = False,
@@ -187,7 +188,7 @@ class WebhookService:
         success: bool,
     ) -> None:
         """
-        Update webhook delivery status in database.
+        Update webhook delivery status in database with circuit breaker logic.
 
         This is crucial for multi-pod deployments to track delivery state.
 
@@ -196,24 +197,125 @@ class WebhookService:
             webhook_id: Webhook ID to update
             success: Whether the delivery was successful
         """
+        from datetime import timedelta
+
         try:
-            update_field = "last_triggered_at" if success else "last_failure_at"
-            await db.webhooks.update_one(
-                {"_id": webhook_id},
-                {"$set": {update_field: datetime.now(timezone.utc)}},
-            )
+            now = datetime.now(timezone.utc)
+
+            if success:
+                # Reset circuit breaker on success
+                await db.webhooks.update_one(
+                    {"_id": webhook_id},
+                    {
+                        "$set": {
+                            "last_triggered_at": now,
+                            "consecutive_failures": 0,
+                            "circuit_breaker_until": None,
+                        },
+                        "$inc": {"total_deliveries": 1},
+                    },
+                )
+            else:
+                # Increment failure counters
+                # Circuit breaker: After 5 consecutive failures, disable for 1 hour
+                CIRCUIT_BREAKER_THRESHOLD = 5
+                CIRCUIT_BREAKER_DURATION_HOURS = 1
+
+                # First, increment failure counters
+                await db.webhooks.update_one(
+                    {"_id": webhook_id},
+                    {
+                        "$set": {"last_failure_at": now},
+                        "$inc": {"consecutive_failures": 1, "total_failures": 1},
+                    },
+                )
+
+                # Then, atomically activate circuit breaker if threshold is reached
+                # This uses a conditional update that only activates the circuit breaker
+                # when consecutive_failures >= threshold, making it atomic and race-safe
+                circuit_until = now + timedelta(hours=CIRCUIT_BREAKER_DURATION_HOURS)
+                result = await db.webhooks.find_one_and_update(
+                    {
+                        "_id": webhook_id,
+                        "consecutive_failures": {"$gte": CIRCUIT_BREAKER_THRESHOLD},
+                        # Only activate if not already activated (prevents duplicate logs)
+                        "$or": [
+                            {"circuit_breaker_until": {"$exists": False}},
+                            {"circuit_breaker_until": None},
+                            {"circuit_breaker_until": {"$lte": now}},
+                        ],
+                    },
+                    {"$set": {"circuit_breaker_until": circuit_until}},
+                    return_document=True,
+                )
+
+                if result:
+                    consecutive = result.get("consecutive_failures", 0)
+                    logger.warning(
+                        f"Circuit breaker activated for webhook {webhook_id} "
+                        f"after {consecutive} consecutive failures. "
+                        f"Will retry after {circuit_until.isoformat()}"
+                    )
+
         except Exception as e:
             logger.error(f"Failed to update webhook status for {webhook_id}: {e}")
+
+    async def _log_webhook_delivery(
+        self,
+        db: AsyncIOMotorDatabase,
+        webhook_id: str,
+        event_type: str,
+        payload: Dict[str, Any],
+        success: bool,
+        status_code: Optional[int] = None,
+        error: Optional[str] = None,
+        retry_count: int = 0,
+    ) -> None:
+        """
+        Log webhook delivery for audit trail using WebhookDeliveriesRepository.
+
+        Args:
+            db: Database connection
+            webhook_id: Webhook ID
+            event_type: Event type
+            payload: Payload sent
+            success: Whether delivery was successful
+            status_code: HTTP status code received
+            error: Error message if failed
+            retry_count: Number of retries attempted
+        """
+        from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
+
+        try:
+            deliveries_repo = WebhookDeliveriesRepository(db)
+
+            payload_summary = {
+                "scan_id": payload.get("scan", {}).get("id"),
+                "project_id": payload.get("project", {}).get("id"),
+            }
+
+            await deliveries_repo.log_delivery(
+                webhook_id=webhook_id,
+                event_type=event_type,
+                payload_summary=payload_summary,
+                success=success,
+                status_code=status_code,
+                error=error,
+                retry_count=retry_count,
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to log webhook delivery: {e}")
 
     async def _send_webhook(
         self,
         db: AsyncIOMotorDatabase,
-        webhook: Webhook,
+        webhook: "Webhook",
         payload: Dict[str, Any],
         event_type: str,
     ) -> bool:
         """
-        Send a single webhook with retries.
+        Send a single webhook with retries and audit logging.
 
         Args:
             db: Database connection for status updates
@@ -223,12 +325,25 @@ class WebhookService:
 
         Returns:
             True if successful, False otherwise
+
+        NOTE: Retry Persistence
+        -----------------------
+        Current implementation uses in-memory retry (asyncio.sleep).
+        If pod crashes during retry, the delivery is lost.
+
+        For production-grade reliability, consider implementing:
+        - Persistent retry queue (Redis/RabbitMQ)
+        - Background worker for retry processing
+        - Dead letter queue for exhausted retries
+
+        See module docstring for detailed architecture recommendations.
         """
         json_payload = json.dumps(payload)
         headers = self._build_headers(webhook, event_type, json_payload)
 
         retry_count = 0
         last_error: Optional[str] = None
+        last_status_code: Optional[int] = None
 
         while retry_count < self.max_retries:
             try:
@@ -239,19 +354,33 @@ class WebhookService:
                         headers=headers,
                     )
 
+                    last_status_code = response.status_code
+
                     if 200 <= response.status_code < 300:
                         logger.info(
                             f"Webhook {webhook.id} triggered successfully for {event_type} "
                             f"(status: {response.status_code})"
                         )
                         await self._update_webhook_status(db, webhook.id, success=True)
+                        # Log successful delivery
+                        await self._log_webhook_delivery(
+                            db,
+                            webhook.id,
+                            event_type,
+                            payload,
+                            success=True,
+                            status_code=response.status_code,
+                            retry_count=retry_count,
+                        )
                         return True
                     else:
                         logger.warning(
                             f"Webhook {webhook.id} returned non-success status {response.status_code} "
                             f"for {event_type}: {response.text[:200]}"
                         )
-                        last_error = f"HTTP {response.status_code}"
+                        last_error = (
+                            f"HTTP {response.status_code}: {response.text[:200]}"
+                        )
 
             except httpx.TimeoutException:
                 logger.warning(
@@ -281,6 +410,17 @@ class WebhookService:
             f"Last error: {last_error}"
         )
         await self._update_webhook_status(db, webhook.id, success=False)
+        # Log failed delivery
+        await self._log_webhook_delivery(
+            db,
+            webhook.id,
+            event_type,
+            payload,
+            success=False,
+            status_code=last_status_code,
+            error=last_error,
+            retry_count=retry_count,
+        )
         return False
 
     async def _get_webhooks_for_event(
@@ -288,6 +428,7 @@ class WebhookService:
     ) -> List[Webhook]:
         """
         Fetch all active webhooks for a given event type and project.
+        Filters out webhooks in circuit breaker state.
 
         Args:
             db: Database connection
@@ -295,17 +436,28 @@ class WebhookService:
             event_type: Type of event
 
         Returns:
-            List of matching webhooks
+            List of matching webhooks (excluding those in circuit breaker state)
         """
+        from datetime import datetime, timezone
+
         webhooks: List[Webhook] = []
+        now = datetime.now(timezone.utc)
+
+        # Base query with circuit breaker filter
+        base_conditions = {
+            "is_active": True,
+            "events": event_type,
+            # Exclude webhooks in circuit breaker state
+            "$or": [
+                {"circuit_breaker_until": {"$exists": False}},
+                {"circuit_breaker_until": None},
+                {"circuit_breaker_until": {"$lt": now}},
+            ],
+        }
 
         # Project-specific webhooks
         if project_id:
-            project_query = {
-                "is_active": True,
-                "project_id": project_id,
-                "events": event_type,  # MongoDB matches if event_type is in the array
-            }
+            project_query = {**base_conditions, "project_id": project_id}
             cursor = db.webhooks.find(project_query)
             async for webhook_data in cursor:
                 try:
@@ -314,11 +466,7 @@ class WebhookService:
                     logger.error(f"Failed to parse webhook data: {e}")
 
         # Global webhooks (project_id is None)
-        global_query = {
-            "is_active": True,
-            "project_id": None,
-            "events": event_type,
-        }
+        global_query = {**base_conditions, "project_id": None}
         cursor = db.webhooks.find(global_query)
         async for webhook_data in cursor:
             try:
@@ -522,7 +670,7 @@ class WebhookService:
 
     async def test_webhook(
         self,
-        webhook: Webhook,
+        webhook: "Webhook",
         event_type: str = WEBHOOK_EVENT_SCAN_COMPLETED,
     ) -> Dict[str, Any]:
         """

@@ -175,7 +175,6 @@ class NotificationService:
             for member in project.members:
                 # If member has configured preferences (non-empty), use them.
                 # Otherwise, treat as None (fallback to Global later)
-                # Note: ProjectMember.notification_preferences defaults to {}
                 m_prefs = (
                     member.notification_preferences
                     if member.notification_preferences

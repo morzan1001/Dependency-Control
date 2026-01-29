@@ -1,5 +1,7 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from pydantic import BaseModel
 
 from app.schemas.recommendation import (
     Priority,
@@ -8,14 +10,14 @@ from app.schemas.recommendation import (
     VulnerabilityInfo,
 )
 from app.core.constants import OS_PACKAGE_TYPES
-from app.services.recommendation.common import calculate_best_fix_version
+from app.services.recommendation.common import calculate_best_fix_version, get_attr, ModelOrDict
 
 
 def process_vulnerabilities(
-    findings: List[Dict[str, Any]],
-    dep_by_purl: Dict[str, Dict],
-    dep_by_name_version: Dict[str, Dict],
-    dependencies: List[Dict[str, Any]],
+    findings: List[ModelOrDict],
+    dep_by_purl: Dict[str, ModelOrDict],
+    dep_by_name_version: Dict[str, ModelOrDict],
+    dependencies: List[ModelOrDict],
     source_target: Optional[str],
 ) -> List[Recommendation]:
     """Process vulnerability findings."""
@@ -51,27 +53,28 @@ def process_vulnerabilities(
 
 
 def _categorize_by_source(
-    findings: List[Dict[str, Any]],
-    dep_by_purl: Dict[str, Dict],
-    dep_by_name_version: Dict[str, Dict],
+    findings: List[ModelOrDict],
+    dep_by_purl: Dict[str, ModelOrDict],
+    dep_by_name_version: Dict[str, ModelOrDict],
 ) -> Dict[str, List[VulnerabilityInfo]]:
     """Categorize vulnerabilities by their source type."""
 
     categories = defaultdict(list)
 
     for f in findings:
-        if f.get("type") != "vulnerability":
+        if get_attr(f, "type") != "vulnerability":
             continue
 
-        details = f.get("details", {})
-        component = f.get("component", "")
-        version = f.get("version", "")
+        details = get_attr(f, "details", {})
+        component = get_attr(f, "component", "")
+        version = get_attr(f, "version", "")
 
         # Extract fixed version
-        fixed_version = details.get("fixed_version")
+        fixed_version = details.get("fixed_version") if isinstance(details, dict) else None
 
         # Try to find the dependency
-        purl = details.get("purl") or details.get("package_url")
+        purl = details.get("purl") if isinstance(details, dict) else None
+        purl = purl or (details.get("package_url") if isinstance(details, dict) else None)
         dep = None
 
         if purl and purl in dep_by_purl:
@@ -80,10 +83,10 @@ def _categorize_by_source(
             dep = dep_by_name_version[f"{component}@{version}"]
 
         # Extract CVE ID
-        cve_id_val = f.get("id")
+        cve_id_val = get_attr(f, "id")
         if not cve_id_val or not str(cve_id_val).startswith("CVE-"):
             # Check aliases
-            for alias in f.get("aliases", []):
+            for alias in get_attr(f, "aliases", []) or []:
                 if alias.startswith("CVE-"):
                     cve_id_val = alias
                     break
@@ -91,19 +94,19 @@ def _categorize_by_source(
         cve_id = str(cve_id_val) if cve_id_val else "unknown"
 
         # Extract EPSS/KEV/Reachability data from details
-        epss_score = details.get("epss_score")
-        is_kev = details.get("is_kev", False)
-        kev_ransomware = details.get("kev_ransomware", False)
-        risk_score = details.get("risk_score")
+        epss_score = details.get("epss_score") if isinstance(details, dict) else None
+        is_kev = details.get("is_kev", False) if isinstance(details, dict) else False
+        kev_ransomware = details.get("kev_ransomware", False) if isinstance(details, dict) else False
+        risk_score = details.get("risk_score") if isinstance(details, dict) else None
 
         # Reachability comes from finding-level, not details
-        is_reachable = f.get("reachable")
-        reachability_level = f.get("reachability_level")
+        is_reachable = get_attr(f, "reachable")
+        reachability_level = get_attr(f, "reachability_level")
 
         vuln_info = VulnerabilityInfo(
-            finding_id=f.get("id", ""),
+            finding_id=get_attr(f, "id", ""),
             cve_id=cve_id,
-            severity=f.get("severity", "UNKNOWN"),
+            severity=get_attr(f, "severity", "UNKNOWN"),
             package_name=component,
             current_version=version,
             fixed_version=fixed_version,
@@ -120,8 +123,8 @@ def _categorize_by_source(
         if not fixed_version:
             categories["no_fix"].append(vuln_info)
         elif dep:
-            source_type = dep.get("source_type", "")
-            is_direct = dep.get("direct", False)
+            source_type = get_attr(dep, "source_type", "")
+            is_direct = get_attr(dep, "direct", False)
 
             if source_type == "image" or _is_os_package(dep):
                 categories["image"].append(vuln_info)
@@ -136,10 +139,10 @@ def _categorize_by_source(
     return categories
 
 
-def _is_os_package(dep: Dict[str, Any]) -> bool:
+def _is_os_package(dep: ModelOrDict) -> bool:
     """Check if a dependency is an OS-level package."""
-    pkg_type = dep.get("type", "").lower()
-    purl = dep.get("purl", "")
+    pkg_type = str(get_attr(dep, "type", "")).lower()
+    purl = get_attr(dep, "purl", "") or ""
 
     # Check type
     if pkg_type in OS_PACKAGE_TYPES:
@@ -155,7 +158,7 @@ def _is_os_package(dep: Dict[str, Any]) -> bool:
 
 def _analyze_base_image_vulns(
     vulns: List[VulnerabilityInfo],
-    dependencies: List[Dict[str, Any]],
+    dependencies: List[ModelOrDict],
     source_target: Optional[str],
 ) -> Optional[Recommendation]:
     """Analyze if a base image update would be beneficial."""
@@ -231,8 +234,8 @@ def _analyze_base_image_vulns(
 
 def _analyze_direct_dependencies(
     vulns: List[VulnerabilityInfo],
-    dep_by_purl: Dict[str, Dict],
-    dep_by_name_version: Dict[str, Dict],
+    dep_by_purl: Dict[str, ModelOrDict],
+    dep_by_name_version: Dict[str, ModelOrDict],
 ) -> List[Recommendation]:
     """Analyze direct dependency updates with EPSS/KEV/Reachability prioritization."""
 
@@ -409,7 +412,7 @@ def _analyze_direct_dependencies(
 
 
 def _analyze_transitive_dependencies(
-    vulns: List[VulnerabilityInfo], dependencies: List[Dict[str, Any]]
+    vulns: List[VulnerabilityInfo], dependencies: List[ModelOrDict]
 ) -> List[Recommendation]:
     """Analyze transitive dependency vulnerabilities with EPSS/KEV/Reachability prioritization."""
 

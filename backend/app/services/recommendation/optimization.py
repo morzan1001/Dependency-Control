@@ -7,12 +7,12 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import calculate_best_fix_version
+from app.services.recommendation.common import calculate_best_fix_version, get_attr, ModelOrDict
 
 
 def identify_quick_wins(
-    vuln_findings: List[Dict[str, Any]],
-    dependencies: List[Dict[str, Any]],
+    vuln_findings: List[ModelOrDict],
+    dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Identify quick wins - updates that fix many issues with minimal effort.
@@ -28,15 +28,16 @@ def identify_quick_wins(
     # Group vulnerabilities by package
     vulns_by_package: Dict[str, List[Dict]] = defaultdict(list)
     for f in vuln_findings:
-        component = f.get("component", "")
-        if component and f.get("details", {}).get("fixed_version"):
+        component = get_attr(f, "component", "")
+        details = get_attr(f, "details", {})
+        if component and isinstance(details, dict) and details.get("fixed_version"):
             vulns_by_package[component].append(f)
 
     # Create a set of direct dependencies
     direct_deps = set()
     for dep in dependencies:
-        if dep.get("direct", False):
-            direct_deps.add(dep.get("name", ""))
+        if get_attr(dep, "direct", False):
+            direct_deps.add(get_attr(dep, "name", ""))
 
     # Find packages where one update fixes multiple issues
     quick_wins = []
@@ -45,21 +46,24 @@ def identify_quick_wins(
             continue
 
         # Get all fixed versions
-        fixed_versions = list(
-            set(
-                v.get("details", {}).get("fixed_version")
-                for v in vulns
-                if v.get("details", {}).get("fixed_version")
-            )
-        )
+        fixed_versions = []
+        for v in vulns:
+            v_details = get_attr(v, "details", {})
+            if isinstance(v_details, dict) and v_details.get("fixed_version"):
+                fixed_versions.append(v_details.get("fixed_version"))
+        fixed_versions = list(set(fixed_versions))
 
         if not fixed_versions:
             continue
 
         # Calculate impact
-        critical_count = len([v for v in vulns if v.get("severity") == "CRITICAL"])
-        high_count = len([v for v in vulns if v.get("severity") == "HIGH"])
-        kev_count = len([v for v in vulns if v.get("details", {}).get("is_kev")])
+        critical_count = len([v for v in vulns if get_attr(v, "severity") == "CRITICAL"])
+        high_count = len([v for v in vulns if get_attr(v, "severity") == "HIGH"])
+        kev_count = 0
+        for v in vulns:
+            v_details = get_attr(v, "details", {})
+            if isinstance(v_details, dict) and v_details.get("is_kev"):
+                kev_count += 1
 
         is_direct = pkg in direct_deps
 
@@ -75,7 +79,7 @@ def identify_quick_wins(
         quick_wins.append(
             {
                 "package": pkg,
-                "version": vulns[0].get("version", "unknown"),
+                "version": get_attr(vulns[0], "version", "unknown"),
                 "fixed_version": calculate_best_fix_version(fixed_versions),
                 "vuln_count": len(vulns),
                 "critical_count": critical_count,

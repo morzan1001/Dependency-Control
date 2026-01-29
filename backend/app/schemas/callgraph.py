@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 class MadgeImport(BaseModel):
     """Import entry from madge (JavaScript/TypeScript)."""
 
-    # madge format: { "src/file.js": ["./utils", "lodash", "@org/pkg"] }
     pass
 
 

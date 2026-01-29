@@ -341,9 +341,8 @@ async def read_all_scans(
 
     # 1. Get accessible project IDs
     permission_query = await build_user_project_query(current_user, team_repo)
-    projects = await project_repo.find_many_raw(
+    projects = await project_repo.find_all(
         permission_query,
-        limit=10000,
         projection={"_id": 1, "name": 1},
     )
 
@@ -476,7 +475,6 @@ async def read_project(
                 )
 
     # Construct Project object
-    # We need to remove aux fields that are not in Project model
     data.pop("team_data", None)
     data.pop("project_users", None)
     data.pop("team_users", None)
@@ -645,8 +643,8 @@ async def trigger_rescan(
         )
 
     # Determine original scan ID
-    # If the source scan is already a re-scan, use its original_scan_id
-    # If it's an original scan, use its ID
+    # If the source scan is already a re-scan, trace back to find the original
+    # This maintains proper scan lineage for history tracking
     original_scan_id = scan.get("original_scan_id") or scan_id
 
     # Create new scan document
@@ -673,8 +671,6 @@ async def trigger_rescan(
     await scan_repo.create(new_scan)
 
     # Update original scan to point to this new pending rescan
-    # We update 'latest_run' to pending so the UI shows the spinner,
-    # but we DO NOT change the original scan's own status (it remains 'completed').
     await scan_repo.update_raw(
         original_scan_id,
         {
@@ -787,9 +783,6 @@ async def update_notification_settings(
         for i, member in enumerate(project.members):
             if member.user_id == str(current_user.id):
                 # Update specific member in the array
-                # Note: If we are updating enforcement, we might be an admin who is also a member.
-                # But typically enforcement is set by owner.
-                # If we have update_data (enforcement), we should apply it to the project root.
                 if update_data:
                     await project_repo.update(project_id, update_data)
 
@@ -911,8 +904,6 @@ async def read_analysis_results(
     await check_project_access(scan["project_id"], current_user, db)
 
     # Find all scans for this commit to aggregate results
-    # This ensures that if scanners ran in different jobs (creating different scan entries),
-    # we still see all results for this commit.
     related_scans = await scan_repo.find_many(
         {"project_id": scan["project_id"], "commit_hash": scan["commit_hash"]},
         projection={"_id": 1},
@@ -922,7 +913,7 @@ async def read_analysis_results(
     if not related_scan_ids:
         related_scan_ids = [scan_id]
 
-    results = await analysis_repo.find_by_scan_ids(related_scan_ids)
+    results = await analysis_repo.find_by_scan_ids_raw(related_scan_ids)
 
     # Group results by analyzer_name
     grouped_results = {}
@@ -937,8 +928,6 @@ async def read_analysis_results(
         current_scan_results = [r for r in group if r["scan_id"] == scan_id]
 
         if current_scan_results:
-            # If we have multiple results for the same analyzer in the same scan,
-            # it means we processed multiple SBOMs. We should merge them for the "Raw Data" view.
             base_result = current_scan_results[0]
 
             if len(current_scan_results) > 1:
@@ -981,6 +970,13 @@ async def read_analysis_results(
                 newest = max(group, key=lambda x: x["created_at"])
                 final_results.append(newest)
 
+    # Convert ObjectId to string for response validation
+    for result in final_results:
+        if "_id" in result:
+            result["_id"] = str(result["_id"])
+        if "scan_id" in result:
+            result["scan_id"] = str(result["scan_id"])
+
     return final_results
 
 
@@ -1002,9 +998,6 @@ async def read_scan(
         raise HTTPException(status_code=404, detail="Scan not found")
 
     await check_project_access(scan_data["project_id"], current_user, db)
-
-    # Don't resolve GridFS references here - use /sboms endpoint for that
-    # Just return sbom_refs metadata for reference
 
     return Scan(**scan_data)
 
@@ -1032,10 +1025,15 @@ async def read_scan_sboms(
 
     await check_project_access(scan_data["project_id"], current_user, db)
 
-    # Check both sboms and sbom_refs for backward compatibility
-    sbom_items = scan_data.get("sboms") or scan_data.get("sbom_refs") or []
+    # Get SBOM refs from GridFS (legacy 'sboms' field removed)
+    sbom_refs = scan_data.get("sbom_refs") or []
 
-    return await resolve_sbom_refs(db, sbom_items)
+    if not sbom_refs:
+        raise HTTPException(
+            status_code=404, detail="No SBOM data available for this scan"
+        )
+
+    return await resolve_sbom_refs(db, sbom_refs)
 
 
 @router.get(
@@ -1396,32 +1394,21 @@ async def export_project_sbom(
 
     scan = Scan(**scan_data)
 
-    sbom_content = None
+    # Get SBOM from GridFS via sbom_refs
+    # Legacy fallback removed - all SBOMs are stored in GridFS
+    if not scan.sbom_refs or len(scan.sbom_refs) == 0:
+        raise HTTPException(status_code=404, detail="No SBOM data found for this scan")
 
-    # 1. Try to get from GridFS via sbom_refs
-    if scan.sbom_refs and len(scan.sbom_refs) > 0:
-        ref = scan.sbom_refs[0]
-        if ref.get("storage") == "gridfs" and ref.get("file_id"):
-            sbom_content = await load_from_gridfs(db, ref["file_id"])
+    ref = scan.sbom_refs[0]
+    if ref.get("storage") != "gridfs" or not ref.get("file_id"):
+        raise HTTPException(
+            status_code=500, detail="Invalid SBOM reference (not GridFS)"
+        )
 
-    # 2. Fallback to legacy sboms array
-    if not sbom_content and scan.sboms and len(scan.sboms) > 0:
-        first_sbom = scan.sboms[0]
-        # Check if it's a ref or raw data
-        if (
-            isinstance(first_sbom, dict)
-            and first_sbom.get("storage") == "gridfs"
-            and first_sbom.get("file_id")
-        ):
-            sbom_content = await load_from_gridfs(db, first_sbom["file_id"])
-        else:
-            # Assume it's the raw SBOM
-            sbom_content = first_sbom
+    sbom_content = await load_from_gridfs(db, ref["file_id"])
 
     if not sbom_content:
-        raise HTTPException(
-            status_code=404, detail="No SBOM data found for the latest scan"
-        )
+        raise HTTPException(status_code=404, detail="SBOM file not found in GridFS")
 
     return Response(
         content=json.dumps(sbom_content, indent=2),

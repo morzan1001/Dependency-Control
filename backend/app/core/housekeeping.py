@@ -21,6 +21,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _get_referenced_scan_ids(db) -> list[str]:
+    """
+    Get all scan IDs that are referenced by rescans (via original_scan_id).
+    These scans should NOT be deleted by retention cleanup to prevent orphaned SBOM refs.
+
+    Returns:
+        List of scan IDs that are referenced by active rescans
+    """
+    cursor = db.scans.find(
+        {
+            "is_rescan": True,
+            "original_scan_id": {"$exists": True, "$ne": None},
+        },
+        {"original_scan_id": 1},
+    )
+
+    referenced_ids = set()
+    async for doc in cursor:
+        original_id = doc.get("original_scan_id")
+        if original_id:
+            referenced_ids.add(original_id)
+
+    return list(referenced_ids)
+
+
 async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
     """
     Checks for projects that need a periodic re-scan.
@@ -69,20 +94,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                 if datetime.now(timezone.utc) < next_scan_due:
                     continue
 
-                # Check if there is already a pending/processing scan for this project
-                active_scan = await db.scans.find_one(
-                    {
-                        "project_id": project.id,
-                        "status": {"$in": ["pending", "processing"]},
-                    }
-                )
-
-                if active_scan:
-                    # Project has active scan, skipping re-scan
-                    continue
-
                 # Find the latest SUCCESSFUL scan with SBOMs
-                # We need SBOMs to re-scan
                 latest_valid_scan = await db.scans.find_one(
                     {
                         "project_id": project.id,
@@ -98,45 +110,73 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                     )
                     continue
 
-                # Create Re-Scan
-                logger.info(
-                    f"Triggering re-scan for project {project.name} (Last scan: {last_scan})"
-                )
+                # Acquire distributed lock to prevent duplicate rescans
+                from app.repositories import DistributedLocksRepository
+                import os
 
-                new_scan = Scan(
-                    project_id=project.id,
-                    branch=latest_valid_scan.get("branch", "unknown"),
-                    commit_hash=latest_valid_scan.get("commit_hash"),
-                    pipeline_id=None,  # Important: Don't collide with ingest
-                    pipeline_iid=latest_valid_scan.get("pipeline_iid"),
-                    project_url=latest_valid_scan.get("project_url"),
-                    pipeline_url=latest_valid_scan.get("pipeline_url"),
-                    job_id=latest_valid_scan.get("job_id"),
-                    job_started_at=latest_valid_scan.get("job_started_at"),
-                    project_name=latest_valid_scan.get("project_name"),
-                    commit_message=latest_valid_scan.get("commit_message"),
-                    commit_tag=latest_valid_scan.get("commit_tag"),
-                    sbom_refs=latest_valid_scan.get("sbom_refs", []),
-                    status="pending",
-                    created_at=datetime.now(timezone.utc),
-                    is_rescan=True,
-                    original_scan_id=str(latest_valid_scan["_id"]),
-                )
+                lock_repo = DistributedLocksRepository(db)
+                lock_name = f"rescan_create:{project.id}"
+                holder_id = f"housekeeping-{os.getenv('HOSTNAME', 'unknown')}"
 
-                await db.scans.insert_one(new_scan.model_dump(by_alias=True))
+                if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=60):
+                    logger.debug(
+                        f"Could not acquire lock for rescanning {project.name}. "
+                        f"Another pod is creating rescan."
+                    )
+                    continue
 
-                # Update original scan to point to this new pending rescan (so UI can show "Scanning...")
-                await db.scans.update_one(
-                    {"_id": str(latest_valid_scan["_id"])},
-                    {
-                        "$set": {
-                            "status": "pending",  # Set original scan to pending to indicate activity
-                            "latest_rescan_id": new_scan.id,
+                try:
+                    # Re-check for active scans inside lock (TOCTOU prevention)
+                    active_scan = await db.scans.find_one(
+                        {
+                            "project_id": project.id,
+                            "status": {"$in": ["pending", "processing"]},
                         }
-                    },
-                )
+                    )
 
-                await worker_manager.add_job(new_scan.id)
+                    if active_scan:
+                        logger.debug(f"Project {project.name} already has active scan")
+                        continue
+
+                    # Create rescan
+                    logger.info(
+                        f"Triggering re-scan for project {project.name} (Last scan: {last_scan})"
+                    )
+
+                    new_scan = Scan(
+                        project_id=project.id,
+                        branch=latest_valid_scan.get("branch", "unknown"),
+                        commit_hash=latest_valid_scan.get("commit_hash"),
+                        pipeline_id=None,
+                        pipeline_iid=latest_valid_scan.get("pipeline_iid"),
+                        project_url=latest_valid_scan.get("project_url"),
+                        pipeline_url=latest_valid_scan.get("pipeline_url"),
+                        job_id=latest_valid_scan.get("job_id"),
+                        job_started_at=latest_valid_scan.get("job_started_at"),
+                        project_name=latest_valid_scan.get("project_name"),
+                        commit_message=latest_valid_scan.get("commit_message"),
+                        commit_tag=latest_valid_scan.get("commit_tag"),
+                        sbom_refs=latest_valid_scan.get("sbom_refs", []),
+                        status="pending",
+                        created_at=datetime.now(timezone.utc),
+                        is_rescan=True,
+                        original_scan_id=str(latest_valid_scan["_id"]),
+                    )
+
+                    await db.scans.insert_one(new_scan.model_dump(by_alias=True))
+
+                    # Update source scan to track new rescan (preserves completed status)
+                    await db.scans.update_one(
+                        {"_id": str(latest_valid_scan["_id"])},
+                        {"$set": {"latest_rescan_id": new_scan.id}},
+                    )
+
+                    await worker_manager.add_job(new_scan.id)
+                    logger.info(f"Rescan {new_scan.id} created for project {project.name}")
+
+                finally:
+                    # Always release lock
+                    await lock_repo.release_lock(lock_name)
             except Exception as e:
                 logger.error(
                     f"Error processing project {project_data.get('name')}: {e}"
@@ -171,7 +211,17 @@ async def run_housekeeping() -> None:
                 )
 
                 # Find old scans
-                cursor = db.scans.find({"created_at": {"$lt": cutoff_date}}, {"_id": 1})
+                # IMPORTANT: Don't delete scans that are referenced by rescans (orphaned SBOM protection)
+                referenced_scan_ids = await _get_referenced_scan_ids(db)
+
+                cursor = db.scans.find(
+                    {
+                        "created_at": {"$lt": cutoff_date},
+                        # Don't delete scans that have active rescans pointing to them
+                        "_id": {"$nin": referenced_scan_ids},
+                    },
+                    {"_id": 1},
+                )
 
                 scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
 
@@ -221,10 +271,15 @@ async def run_housekeeping() -> None:
                 cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
                 # Find scans for this batch of projects that are too old
+                # IMPORTANT: Don't delete scans that are referenced by rescans
+                referenced_scan_ids = await _get_referenced_scan_ids(db)
+
                 cursor = db.scans.find(
                     {
                         "project_id": {"$in": project_ids},
                         "created_at": {"$lt": cutoff_date},
+                        # Don't delete scans that have active rescans pointing to them
+                        "_id": {"$nin": referenced_scan_ids},
                     },
                     {"_id": 1},
                 )

@@ -8,6 +8,7 @@ from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
     TOP_PYPI_PACKAGES_URL,
+    TYPOSQUATTING_MAX_FALLBACK_PACKAGES,
     TYPOSQUATTING_SIMILARITY_THRESHOLD,
 )
 from app.models.finding import Severity
@@ -16,9 +17,6 @@ from .base import Analyzer
 from .purl_utils import is_npm, is_pypi
 
 logger = logging.getLogger(__name__)
-
-# Maximum packages to store in fallback cache to prevent memory issues
-MAX_FALLBACK_PACKAGES = 10000
 
 
 class TyposquattingAnalyzer(Analyzer):
@@ -68,9 +66,11 @@ class TyposquattingAnalyzer(Analyzer):
 
         # Update fallback with size limit to prevent memory issues
         for registry in result:
-            if len(result[registry]) > MAX_FALLBACK_PACKAGES:
+            if len(result[registry]) > TYPOSQUATTING_MAX_FALLBACK_PACKAGES:
                 # Keep only a subset if too large
-                result[registry] = set(list(result[registry])[:MAX_FALLBACK_PACKAGES])
+                result[registry] = set(
+                    list(result[registry])[:TYPOSQUATTING_MAX_FALLBACK_PACKAGES]
+                )
         self._popular_packages_fallback = result
         return result
 

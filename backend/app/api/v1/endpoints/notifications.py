@@ -215,50 +215,79 @@ async def broadcast_message(
         # project_id -> list of strings "PackageName (Version)"
         project_findings: Dict[str, List[str]] = {}
 
-        # 2. Iterate over each advisory package rule
-        for pkg_rule in payload.packages:
-            query: Dict[str, Any] = {
-                "scan_id": {"$in": list(scan_map.keys())},
-                "name": pkg_rule.name,
-            }
-            if pkg_rule.type:
-                query["type"] = pkg_rule.type
+        # 2. Use AGGREGATED query for better performance
+        # Build match conditions for all packages
+        package_names = [pkg.name for pkg in payload.packages]
 
-            dependencies = await dep_repo.find_many_raw(query, limit=50000)
+        # Single aggregation query to find all affected dependencies
+        match_query: Dict[str, Any] = {
+            "scan_id": {"$in": list(scan_map.keys())},
+            "name": {"$in": package_names},
+        }
 
-            target_version = (
-                parse_version(pkg_rule.version) if pkg_rule.version else None
-            )
+        # Add type filter if all packages have the same type
+        unique_types = set(pkg.type for pkg in payload.packages if pkg.type)
+        if len(unique_types) == 1:
+            match_query["type"] = list(unique_types)[0]
 
-            for dep in dependencies:
-                is_affected = False
-                if target_version:
-                    try:
-                        dep_ver = parse_version(dep["version"])
-                        # Check if dep_ver <= target_version (affected range)
-                        if dep_ver <= target_version:
-                            is_affected = True
-                    except Exception as e:
-                        logger.debug(
-                            f"Could not parse version '{dep.get('version')}' for "
-                            f"dependency '{dep.get('name')}': {e}"
-                        )
-                else:
+        # Fetch all potentially affected dependencies in ONE query
+        dependencies = await dep_repo.find_many_raw(match_query, limit=100000)
+
+        logger.info(
+            f"Advisory broadcast: Found {len(dependencies)} dependencies "
+            f"matching {len(package_names)} packages"
+        )
+
+        # Process dependencies and check version ranges
+        for dep in dependencies:
+            dep_name = dep.get("name")
+            dep_version = dep.get("version")
+
+            # Find matching package rule
+            matching_rule = None
+            for pkg_rule in payload.packages:
+                if pkg_rule.name == dep_name:
+                    # Type match (if specified)
+                    if pkg_rule.type and dep.get("type") != pkg_rule.type:
+                        continue
+                    matching_rule = pkg_rule
+                    break
+
+            if not matching_rule:
+                continue
+
+            # Check version range
+            is_affected = False
+            if matching_rule.version:
+                try:
+                    target_ver = parse_version(matching_rule.version)
+                    dep_ver = parse_version(dep_version)
+                    # Check if dep_ver <= target_version (affected range)
+                    if dep_ver <= target_ver:
+                        is_affected = True
+                except Exception as e:
+                    logger.debug(
+                        f"Could not parse version '{dep_version}' for '{dep_name}': {e}"
+                    )
+                    # If version parsing fails, assume affected (conservative)
                     is_affected = True
+            else:
+                # No version specified, all versions affected
+                is_affected = True
 
-                if is_affected:
-                    p_data = scan_map.get(dep["scan_id"])
-                    if p_data:
-                        project_id = str(p_data["_id"])
-                        if project_id not in affected_projects_map:
-                            affected_projects_map[project_id] = Project(**p_data)
+            if is_affected:
+                p_data = scan_map.get(dep["scan_id"])
+                if p_data:
+                    project_id = str(p_data["_id"])
+                    if project_id not in affected_projects_map:
+                        affected_projects_map[project_id] = Project(**p_data)
 
-                        if project_id not in project_findings:
-                            project_findings[project_id] = []
+                    if project_id not in project_findings:
+                        project_findings[project_id] = []
 
-                        finding_str = f"{dep['name']} ({dep['version']})"
-                        if finding_str not in project_findings[project_id]:
-                            project_findings[project_id].append(finding_str)
+                    finding_str = f"{dep_name} ({dep_version})"
+                    if finding_str not in project_findings[project_id]:
+                        project_findings[project_id].append(finding_str)
 
         project_count = len(affected_projects_map)
 
@@ -270,8 +299,6 @@ async def broadcast_message(
         all_owner_ids = set()
         for p in affected_projects_map.values():
             all_owner_ids.add(p.owner_id)
-            # If teams are supported for ownership, we'd need to fetch teams -> members here too.
-            # Assuming simplified 'owner_id' for now as per Project model generally used.
 
         owner_users = await user_repo.find_many(
             {"_id": {"$in": list(all_owner_ids)}, "is_active": True}, limit=10000

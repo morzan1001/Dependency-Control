@@ -7,6 +7,9 @@ import { Activity, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThreatIntelligenceDashboard } from '@/components/ThreatIntelligenceDashboard'
+import { PostProcessorResultCard } from '@/components/PostProcessorResults'
+import { useScanResults } from '@/hooks/queries/use-scans'
+import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
 
@@ -21,9 +24,13 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const { data: waivers } = useProjectWaivers(projectId)
 
   const scanList = scans || []
-  
+
   // Filter scans based on selection
   const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch))
+
+  // Get latest scan for PostProcessor results
+  const latestScan = filteredScans.length > 0 ? filteredScans[0] : null
+  const { data: scanResults } = useScanResults(latestScan?._id || '')
 
   // Count unique pipelines (excluding rescans)
   const uniqueScansCount = filteredScans.filter((s: Scan) => !s.is_rescan).length
@@ -308,6 +315,24 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                     </div>
                 </CardContent>
             </Card>
+        </div>
+      )}
+
+      {/* Post-Processor Intelligence (EPSS/KEV, Reachability) */}
+      {latestScan && scanResults && scanResults.filter(r => isPostProcessorResult(r.analyzer_name)).length > 0 && (
+        <div className="space-y-4">
+          <h3 className="text-xl font-semibold">Enrichment & Intelligence</h3>
+          <div className="space-y-6">
+            {scanResults
+              .filter(r => isPostProcessorResult(r.analyzer_name))
+              .map((result) => (
+                <PostProcessorResultCard
+                  key={result._id}
+                  analyzerName={result.analyzer_name}
+                  result={result.result}
+                />
+              ))}
+          </div>
         </div>
       )}
     </div>

@@ -2,9 +2,10 @@ from collections import defaultdict
 from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 
-def process_licenses(findings: List[Dict[str, Any]]) -> List[Recommendation]:
+def process_licenses(findings: List[ModelOrDict]) -> List[Recommendation]:
     """Process license compliance findings."""
     if not findings:
         return []
@@ -12,16 +13,20 @@ def process_licenses(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     # Group by license type
     by_license = defaultdict(list)
     for f in findings:
-        details = f.get("details", {})
-        license_name = details.get("license") or details.get("license_id") or "unknown"
+        details = get_attr(f, "details", {})
+        license_name = (
+            (details.get("license") if isinstance(details, dict) else None)
+            or (details.get("license_id") if isinstance(details, dict) else None)
+            or "unknown"
+        )
         by_license[license_name].append(f)
 
     severity_counts: Dict[str, int] = defaultdict(int)
     components = set()
 
     for f in findings:
-        severity_counts[f.get("severity", "UNKNOWN")] += 1
-        components.add(f.get("component", "unknown"))
+        severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
+        components.add(get_attr(f, "component", "unknown"))
 
     # Determine priority based on findings severity
     if severity_counts.get("CRITICAL", 0) > 0:

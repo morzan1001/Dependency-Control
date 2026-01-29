@@ -7,7 +7,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import parse_version_tuple
+from app.services.recommendation.common import get_attr, ModelOrDict, parse_version_tuple
 from app.core.constants import (
     DEV_DEPENDENCY_PATTERNS,
     SIGNIFICANT_FRAGMENTATION_THRESHOLD,
@@ -15,7 +15,7 @@ from app.core.constants import (
 
 
 def analyze_outdated_dependencies(
-    dependencies: List[Dict[str, Any]],
+    dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Identify dependencies that appear to be outdated based on scanner data.
@@ -27,9 +27,9 @@ def analyze_outdated_dependencies(
     outdated_deps = []
 
     for dep in dependencies:
-        name = dep.get("name", "").lower()
-        version = dep.get("version", "")
-        latest_version = dep.get("latest_version")
+        name = str(get_attr(dep, "name", "")).lower()
+        version = get_attr(dep, "version", "")
+        latest_version = get_attr(dep, "latest_version")
 
         # Skip python library packages (python3-*, python-*, *-python)
         # These are NOT Python interpreter versions
@@ -44,11 +44,11 @@ def analyze_outdated_dependencies(
         if latest_version and latest_version != version:
             outdated_deps.append(
                 {
-                    "name": dep.get("name"),
+                    "name": get_attr(dep, "name"),
                     "version": version,
                     "recommended_major": latest_version,  # converting to showing the specific version
                     "message": f"Newer version {latest_version} is available",
-                    "direct": dep.get("direct", False),
+                    "direct": get_attr(dep, "direct", False),
                 }
             )
 
@@ -125,7 +125,7 @@ def analyze_outdated_dependencies(
 
 
 def analyze_version_fragmentation(
-    dependencies: List[Dict[str, Any]],
+    dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Detect when multiple versions of the same package exist in the dependency tree.
@@ -136,14 +136,14 @@ def analyze_version_fragmentation(
     # Group dependencies by name (normalize to lowercase)
     deps_by_name = defaultdict(list)
     for dep in dependencies:
-        name = dep.get("name", "").lower()
+        name = str(get_attr(dep, "name", "")).lower()
         if name:
             deps_by_name[name].append(
                 {
-                    "version": dep.get("version", "unknown"),
-                    "purl": dep.get("purl"),
-                    "direct": dep.get("direct", False),
-                    "parent": dep.get("parent_components", []),
+                    "version": get_attr(dep, "version", "unknown"),
+                    "purl": get_attr(dep, "purl"),
+                    "direct": get_attr(dep, "direct", False),
+                    "parent": get_attr(dep, "parent_components", []),
                 }
             )
 
@@ -235,7 +235,7 @@ def analyze_version_fragmentation(
 
 
 def analyze_dev_in_production(
-    dependencies: List[Dict[str, Any]],
+    dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Identify development dependencies that may be included in production builds.
@@ -245,8 +245,8 @@ def analyze_dev_in_production(
     potential_dev_deps = []
 
     for dep in dependencies:
-        name = (dep.get("name") or "").lower()
-        scope = (dep.get("scope") or "").lower()
+        name = str(get_attr(dep, "name") or "").lower()
+        scope = str(get_attr(dep, "scope") or "").lower()
 
         # Skip if already marked as dev
         if scope in ("dev", "development", "test"):
@@ -257,8 +257,8 @@ def analyze_dev_in_production(
             if re.search(pattern, name, re.IGNORECASE):
                 potential_dev_deps.append(
                     {
-                        "name": dep.get("name"),
-                        "version": dep.get("version"),
+                        "name": get_attr(dep, "name"),
+                        "version": get_attr(dep, "version"),
                         "reason": f"Matches dev pattern: {pattern}",
                     }
                 )
@@ -297,24 +297,25 @@ def analyze_dev_in_production(
     return recommendations
 
 
-def analyze_end_of_life(eol_findings: List[Dict[str, Any]]) -> List[Recommendation]:
+def analyze_end_of_life(eol_findings: List[ModelOrDict]) -> List[Recommendation]:
     """Process end-of-life dependency findings."""
     if not eol_findings:
         return []
 
     affected_packages = []
     for f in eol_findings:
-        pkg = f.get("component", "")
-        version = f.get("version", "")
-        eol_date = f.get("details", {}).get("eol_date", "")
+        pkg = get_attr(f, "component", "")
+        version = get_attr(f, "version", "")
+        details = get_attr(f, "details", {})
+        eol_date = details.get("eol_date", "") if isinstance(details, dict) else ""
         if eol_date:
             affected_packages.append(f"{pkg}@{version} (EOL: {eol_date})")
         else:
             affected_packages.append(f"{pkg}@{version}")
 
     # Check severity based on how long ago EOL was
-    critical_count = len([f for f in eol_findings if f.get("severity") == "CRITICAL"])
-    high_count = len([f for f in eol_findings if f.get("severity") == "HIGH"])
+    critical_count = len([f for f in eol_findings if get_attr(f, "severity") == "CRITICAL"])
+    high_count = len([f for f in eol_findings if get_attr(f, "severity") == "HIGH"])
 
     priority = Priority.HIGH if critical_count > 0 else Priority.MEDIUM
 
@@ -332,9 +333,9 @@ def analyze_end_of_life(eol_findings: List[Dict[str, Any]]) -> List[Recommendati
                 "critical": critical_count,
                 "high": high_count,
                 "medium": len(
-                    [f for f in eol_findings if f.get("severity") == "MEDIUM"]
+                    [f for f in eol_findings if get_attr(f, "severity") == "MEDIUM"]
                 ),
-                "low": len([f for f in eol_findings if f.get("severity") == "LOW"]),
+                "low": len([f for f in eol_findings if get_attr(f, "severity") == "LOW"]),
                 "total": len(eol_findings),
             },
             affected_components=affected_packages[:20],

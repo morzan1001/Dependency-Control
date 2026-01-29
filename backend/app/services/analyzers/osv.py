@@ -275,8 +275,6 @@ class OSVAnalyzer(Analyzer):
             pass
 
         # Try to extract base score from CVSS vector
-        # Format: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H or with score at end
-        # Some vectors include the score like: CVSS:3.1/AV:N/.../9.8
         if "/" in score:
             parts = score.split("/")
             # Check last part for numeric score

@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -27,6 +28,8 @@ from app.schemas.team import (
     TeamResponse,
     TeamUpdate,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -144,10 +147,27 @@ async def delete_team(
 ):
     """
     Delete a team. Requires 'owner' role.
+
+    Performs cascade cleanup:
+    - Sets team_id=null on all projects assigned to this team
+    - Projects remain accessible to their direct members
     """
+    from app.repositories import ProjectRepository
+
     if not has_permission(current_user.permissions, "team:delete"):
         await check_team_access(
             team_id, current_user, db, required_role=TEAM_ROLE_OWNER
+        )
+
+    # CASCADE: Unassign team from all projects
+    project_repo = ProjectRepository(db)
+    updated_count = await project_repo.update_many(
+        {"team_id": team_id}, {"team_id": None}
+    )
+
+    if updated_count > 0:
+        logger.info(
+            f"Team {team_id} deleted: unassigned from {updated_count} project(s)"
         )
 
     team_repo = TeamRepository(db)

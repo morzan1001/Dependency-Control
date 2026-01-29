@@ -42,6 +42,12 @@ class Webhook(BaseModel):
     last_triggered_at: Optional[datetime] = None
     last_failure_at: Optional[datetime] = None
 
+    # Circuit Breaker fields (prevent hammering failing webhooks)
+    consecutive_failures: int = 0
+    circuit_breaker_until: Optional[datetime] = None
+    total_deliveries: int = 0
+    total_failures: int = 0
+
     @field_validator("events")
     @classmethod
     def _validate_events(cls, v: List[str]) -> List[str]:

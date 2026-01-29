@@ -312,6 +312,7 @@ export interface Finding {
   locations?: string[];
   purl?: string;
   direct?: boolean;
+  direct_inferred?: boolean;
 }
 
 export interface ThreatIntelligenceStats {

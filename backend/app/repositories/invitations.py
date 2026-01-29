@@ -9,8 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.models.invitation import SystemInvitation
-from app.models.project import ProjectInvitation
+from app.models.invitation import ProjectInvitation, SystemInvitation
 
 
 class InvitationRepository:

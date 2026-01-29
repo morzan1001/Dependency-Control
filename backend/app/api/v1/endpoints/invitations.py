@@ -1,5 +1,6 @@
 import logging
 import uuid
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List
 
@@ -63,8 +64,7 @@ async def create_system_invitation(
         # Resend existing invite
         token = existing_invite["token"]
     else:
-        # Create new invite
-        token = str(uuid.uuid4())
+        token = secrets.token_urlsafe(32)  # 32 bytes = 256 bits of entropy
         invitation = SystemInvitation(
             email=email,
             token=token,

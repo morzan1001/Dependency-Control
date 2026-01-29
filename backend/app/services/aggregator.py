@@ -247,7 +247,6 @@ class ResultAggregator:
             if f.type == FindingType.SAST:
                 # Group SAST findings by component (file), line number, AND rule_id
                 # This prevents merging distinct issues (e.g. different secrets) that happen to be on the same line.
-                # We only want to merge the SAME issue detected by multiple scanners.
                 line = f.details.get("line")
                 start_line = f.details.get("start", {}).get("line")
                 effective_line = line or start_line or 0
@@ -269,13 +268,12 @@ class ResultAggregator:
             if not vulns:
                 continue
 
-            # Create a deterministic key for the set of vulnerabilities
-            # vuln_key = frozenset(vulns)
+            # Group by component+version (not just version!)
+            # This prevents false merging of different components with same version
+            component = f.component.lower() if f.component else "unknown"
+            version = f.version or "unknown"
+            group_key = f"{component}:{version}"
 
-            # Group by version only. We will rely on component name matching to merge.
-            # This allows merging findings for the same component that have DIFFERENT sets of vulnerabilities
-            # (e.g. different scanners found different things).
-            group_key = f.version or ""
             if group_key not in groups:
                 groups[group_key] = []
             groups[group_key].append(f)
@@ -294,18 +292,9 @@ class ResultAggregator:
             if not group:
                 continue
 
-            # If group has only 1 item, no merge needed, but wrap in standardized structure if needed?
-            # Actually, user wants consistent UI so maybe we should ensure 'sast_findings' exists?
-            # But let's stick to merging logic first.
+            # Single item groups are also normalized via _merge_sast_findings
+            # to ensure consistent structure (sast_findings list) for all SAST findings
             if len(group) == 1:
-                f = group[0]
-                # Ensure structure is consistent for single item too?
-                # If we want a unified list in frontend, we might want to restructure even single items.
-                # But let's verify if that's required. FrontEnd currently handles flat details.
-                # If we start merging, some will have 'sast_findings' and some won't.
-                # BETTER: Always restructure to have 'sast_findings' list if type is SAST.
-
-                # Convert single finding to merged structure
                 merged_f = self._merge_sast_findings(group)
                 final_findings.append(merged_f)
                 continue
@@ -595,7 +584,6 @@ class ResultAggregator:
             return None
 
         # 1. Parse all available fixes
-        # Structure: { MajorVersion: { VulnIndex: [VersionTuple, OriginalString] } }
         major_buckets: Dict[Any, Any] = {}
 
         for i, fv_str in enumerate(fixed_versions_list):
@@ -635,7 +623,6 @@ class ResultAggregator:
 
                 for _, fixes in vulns_map.items():
                     # Sort fixes for this vuln by version tuple (ascending)
-                    # We pick the lowest version that fixes the vuln (conservative approach)
                     fixes.sort(key=lambda x: x[0])
                     best_fix_for_vuln = fixes[0]
 
@@ -872,7 +859,6 @@ class ResultAggregator:
                     del tv["details"]["urls"]
 
                 # Merge other details (selectively)
-                # We check both top-level and nested details for these fields
                 for key in ["cwe_ids", "published_date", "last_modified_date"]:
                     # Check source details
                     val = source_entry.get("details", {}).get(key)
@@ -1024,9 +1010,6 @@ class ResultAggregator:
             self._merge_vulnerability_into_list(vuln_list, vuln_entry)
 
             existing.details["vulnerabilities"] = vuln_list
-
-            # We don't set a description for aggregated findings anymore, as it's just a container.
-            # The frontend will handle the display.
             existing.description = ""
 
             # Update found_in

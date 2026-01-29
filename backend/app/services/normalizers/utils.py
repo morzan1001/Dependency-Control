@@ -165,7 +165,6 @@ def extract_cvss(
     if not cvss_data:
         return None, None
 
-    # Trivy format: {"nvd": {"V3Score": ..., "V3Vector": ...}, ...}
     # Priority order for sources
     source_priority = ["nvd", "redhat", "ghsa", "bitnami"]
 

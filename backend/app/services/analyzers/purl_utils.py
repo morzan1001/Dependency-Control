@@ -172,35 +172,52 @@ def get_purl_type(purl: str) -> Optional[str]:
         return None
 
 
+def is_purl_type(purl: str, expected_type: str | tuple[str, ...]) -> bool:
+    """
+    Check if PURL matches expected type(s).
+
+    Args:
+        purl: Package URL
+        expected_type: Single type or tuple of types (e.g., "npm" or ("go", "golang"))
+
+    Returns:
+        True if PURL type matches
+    """
+    purl_type = get_purl_type(purl)
+    if isinstance(expected_type, tuple):
+        return purl_type in expected_type
+    return purl_type == expected_type
+
+
+# Convenience functions (backwards compatibility)
 def is_pypi(purl: str) -> bool:
     """Check if PURL is a PyPI package."""
-    return get_purl_type(purl) == "pypi"
+    return is_purl_type(purl, "pypi")
 
 
 def is_npm(purl: str) -> bool:
     """Check if PURL is an npm package."""
-    return get_purl_type(purl) == "npm"
+    return is_purl_type(purl, "npm")
 
 
 def is_maven(purl: str) -> bool:
     """Check if PURL is a Maven package."""
-    return get_purl_type(purl) == "maven"
+    return is_purl_type(purl, "maven")
 
 
 def is_go(purl: str) -> bool:
     """Check if PURL is a Go package."""
-    purl_type = get_purl_type(purl)
-    return purl_type in ("go", "golang")
+    return is_purl_type(purl, ("go", "golang"))
 
 
 def is_cargo(purl: str) -> bool:
     """Check if PURL is a Cargo (Rust) package."""
-    return get_purl_type(purl) == "cargo"
+    return is_purl_type(purl, "cargo")
 
 
 def is_nuget(purl: str) -> bool:
     """Check if PURL is a NuGet package."""
-    return get_purl_type(purl) == "nuget"
+    return is_purl_type(purl, "nuget")
 
 
 def normalize_hash_algorithm(alg: str) -> str:

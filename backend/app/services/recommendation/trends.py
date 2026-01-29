@@ -7,11 +7,12 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 
 def analyze_regressions(
-    current_findings: List[Dict[str, Any]],
-    previous_findings: List[Dict[str, Any]],
+    current_findings: List[ModelOrDict],
+    previous_findings: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Detect regressions - vulnerabilities that were fixed but have returned.
@@ -21,13 +22,13 @@ def analyze_regressions(
     # Create sets of finding identifiers
     def finding_key(f):
         """Create a unique key for a finding."""
-        if f.get("type") == "vulnerability":
-            details = f.get("details", {})
-            cve = details.get("cve_id") or details.get("id") or f.get("id")
-            component = f.get("component", "")
+        if get_attr(f, "type") == "vulnerability":
+            details = get_attr(f, "details", {})
+            cve = details.get("cve_id") or details.get("id") or get_attr(f, "id")
+            component = get_attr(f, "component", "")
             return f"vuln:{cve}:{component}"
         else:
-            return f"{f.get('type')}:{f.get('component')}:{f.get('id')}"
+            return f"{get_attr(f, 'type')}:{get_attr(f, 'component')}:{get_attr(f, 'id')}"
 
     # Build sets for comparison
     previous_keys = {finding_key(f) for f in previous_findings}
@@ -40,9 +41,9 @@ def analyze_regressions(
             new_findings.append(f)
 
     # Categorize new findings
-    new_vulns = [f for f in new_findings if f.get("type") == "vulnerability"]
-    new_critical = [f for f in new_vulns if f.get("severity") == "CRITICAL"]
-    new_high = [f for f in new_vulns if f.get("severity") == "HIGH"]
+    new_vulns = [f for f in new_findings if get_attr(f, "type") == "vulnerability"]
+    new_critical = [f for f in new_vulns if get_attr(f, "severity") == "CRITICAL"]
+    new_high = [f for f in new_vulns if get_attr(f, "severity") == "HIGH"]
 
     # Count overall change
     finding_delta = len(current_findings) - len(previous_findings)
@@ -65,21 +66,21 @@ def analyze_regressions(
                     "critical": len(new_critical),
                     "high": len(new_high),
                     "medium": len(
-                        [f for f in new_vulns if f.get("severity") == "MEDIUM"]
+                        [f for f in new_vulns if get_attr(f, "severity") == "MEDIUM"]
                     ),
-                    "low": len([f for f in new_vulns if f.get("severity") == "LOW"]),
+                    "low": len([f for f in new_vulns if get_attr(f, "severity") == "LOW"]),
                     "total": len(new_vulns),
                 },
                 affected_components=list(
                     set(
-                        f.get("component", "unknown")
+                        get_attr(f, "component", "unknown")
                         for f in (new_critical + new_high)[:15]
                     )
                 ),
                 action={
                     "type": "investigate_regression",
                     "new_critical_cves": [
-                        f.get("details", {}).get("cve_id", f.get("id"))
+                        get_attr(f, "details", {}).get("cve_id", get_attr(f, "id"))
                         for f in new_critical
                     ],
                     "suggestion": "Review recent dependency updates and code changes",
@@ -111,7 +112,7 @@ def analyze_regressions(
 
 
 def analyze_recurring_issues(
-    scan_history: List[Dict[str, Any]],
+    scan_history: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Identify issues that keep appearing across multiple scans.
@@ -128,21 +129,21 @@ def analyze_recurring_issues(
     )
 
     for scan in scan_history:
-        scan_id = scan.get("_id") or scan.get("id")
-        findings_summary = scan.get("findings_summary", [])
+        scan_id = get_attr(scan, "_id") or get_attr(scan, "id")
+        findings_summary = get_attr(scan, "findings_summary", []) or []
 
         for f in findings_summary:
-            if f.get("type") == "vulnerability":
-                details = f.get("details", {})
-                cve = details.get("cve_id") or f.get("id")
+            if get_attr(f, "type") == "vulnerability":
+                details = get_attr(f, "details", {})
+                cve = details.get("cve_id") or get_attr(f, "id")
                 if cve:
                     finding_frequency[cve]["count"] += 1
                     finding_frequency[cve]["scans"].add(scan_id)
                     if not finding_frequency[cve]["info"]:
                         finding_frequency[cve]["info"] = {
-                            "severity": f.get("severity"),
-                            "component": f.get("component"),
-                            "description": f.get("description", "")[:100],
+                            "severity": get_attr(f, "severity"),
+                            "component": get_attr(f, "component"),
+                            "description": get_attr(f, "description", "")[:100],
                         }
 
     # Find truly recurring issues (appear in N+ scans)

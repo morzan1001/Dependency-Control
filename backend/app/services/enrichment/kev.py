@@ -73,8 +73,6 @@ class KEVProvider:
                     logger.info(
                         f"Fetched {len(kev_dict)} entries from CISA KEV catalog"
                     )
-                    # Don't cache empty results - likely an API issue
-                    # KEV catalog has 1000+ entries, empty is suspicious
                     if not kev_dict:
                         logger.warning("KEV catalog returned empty - not caching")
                         return None

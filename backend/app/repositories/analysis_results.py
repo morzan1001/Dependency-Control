@@ -16,10 +16,6 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
     collection_name = "analysis_results"
     model_class = AnalysisResult
 
-    # ===================
-    # Scan-specific operations
-    # ===================
-
     async def find_by_scan(
         self,
         scan_id: str,

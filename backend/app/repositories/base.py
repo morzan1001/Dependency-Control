@@ -45,10 +45,6 @@ class BaseRepository(Generic[T]):
         """Convert a list of raw documents to model instances."""
         return [self.model_class(**doc) for doc in docs]
 
-    # ===================
-    # Read Operations
-    # ===================
-
     async def get_by_id(self, id: str) -> Optional[T]:
         """Get a document by ID and return as model instance."""
         data = await self.collection.find_one({"_id": id})
@@ -116,10 +112,6 @@ class BaseRepository(Generic[T]):
         """Check if a document matching the query exists."""
         return await self.collection.find_one(query) is not None
 
-    # ===================
-    # Write Operations
-    # ===================
-
     async def create(self, model: T) -> T:
         """Create a new document from a model instance."""
         await self.collection.insert_one(model.model_dump(by_alias=True))
@@ -165,10 +157,6 @@ class BaseRepository(Generic[T]):
         """Update or insert a document."""
         await self.collection.update_one(query, {"$set": data}, upsert=True)
 
-    # ===================
-    # Delete Operations
-    # ===================
-
     async def delete(self, id: str) -> bool:
         """Delete a document by ID."""
         result = await self.collection.delete_one({"_id": id})
@@ -179,19 +167,11 @@ class BaseRepository(Generic[T]):
         result = await self.collection.delete_many(query)
         return result.deleted_count
 
-    # ===================
-    # Aggregation
-    # ===================
-
     async def aggregate(
         self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Run an aggregation pipeline."""
         return await self.collection.aggregate(pipeline).to_list(limit)
-
-    # ===================
-    # Iteration
-    # ===================
 
     async def iterate(
         self,

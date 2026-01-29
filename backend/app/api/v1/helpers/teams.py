@@ -126,8 +126,9 @@ async def check_team_access(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    # Users with team:read_all or team:update have full access
-    if has_permission(user.permissions, ["team:read_all", "team:update"]):
+    # SECURITY: team:read_all grants access to ALL teams (superuser)
+    # Note: team:update does NOT bypass membership - only grants write permission
+    if has_permission(user.permissions, "team:read_all"):
         return team
 
     member_role = None

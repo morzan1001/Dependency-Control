@@ -88,7 +88,8 @@ async def startup_event():
     for i in range(max_retries):
         try:
             await connect_to_mongo()
-            await init_db()
+            await init_db()  # Creates indexes + initial admin user
+
             await worker_manager.start()
             logger.info("Application startup complete.")
             break

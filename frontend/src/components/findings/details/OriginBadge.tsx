@@ -36,11 +36,19 @@ export function OriginBadge({ finding }: { finding: Finding }) {
       {isExpanded && (
         <div className="w-full mt-2 p-3 border rounded-lg bg-muted/30 space-y-3 text-sm">
           {finding.direct !== undefined && (
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Dependency Type:</span>
-              <Badge variant={finding.direct ? 'default' : 'secondary'}>
-                {finding.direct ? 'Direct' : 'Transitive'}
-              </Badge>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Dependency Type:</span>
+                <Badge variant={finding.direct ? 'default' : 'secondary'}>
+                  {finding.direct ? 'Direct' : 'Transitive'}
+                  {finding.direct_inferred ? ' (inferred)' : ''}
+                </Badge>
+              </div>
+              {finding.direct_inferred && (
+                <p className="text-xs text-muted-foreground italic">
+                  Note: Classification inferred (SBOM had no dependency graph)
+                </p>
+              )}
             </div>
           )}
 

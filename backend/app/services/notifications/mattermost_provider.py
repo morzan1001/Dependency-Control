@@ -27,7 +27,6 @@ class MattermostProvider(NotificationProvider):
     async def _get_bot_user_id(
         self, client: httpx.AsyncClient, base_url: str, headers: dict
     ) -> Optional[str]:
-        # Fast path: already cached
         if self._bot_user_id:
             return self._bot_user_id
 
@@ -202,7 +201,6 @@ class MattermostProvider(NotificationProvider):
                     )
                     if resolved_id:
                         channel_id = resolved_id
-                    # If not found, assume it's a valid channel ID and let Mattermost validate
 
                 payload = {
                     "channel_id": channel_id,

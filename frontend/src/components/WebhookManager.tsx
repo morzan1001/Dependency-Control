@@ -133,9 +133,9 @@ export function WebhookManager({
                 <div className="space-y-2">
                   {availableEvents.map(event => (
                     <div key={event.id} className="flex items-center space-x-2">
-                      <Checkbox 
-                        id={event.id} 
-                        checked={newWebhook.events.includes(event.id)}
+                      <Checkbox
+                        id={event.id}
+                        checked={(newWebhook.events || []).includes(event.id)}
                         onCheckedChange={() => toggleEvent(event.id)}
                       />
                       <Label htmlFor={event.id}>{event.label}</Label>
@@ -172,7 +172,7 @@ export function WebhookManager({
                   <TableCell className="font-mono text-xs">{webhook.url}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
-                      {webhook.events.map(e => (
+                      {(webhook.events || []).map(e => (
                         <Badge key={e} variant="secondary">{e}</Badge>
                       ))}
                     </div>

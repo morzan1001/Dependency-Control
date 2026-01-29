@@ -3,6 +3,8 @@ Recommendation Engine for Security Findings
 
 Analyzes vulnerabilities, secrets, SAST, IAC, and other findings
 to generate actionable remediation recommendations.
+
+Type-safe implementation using Pydantic models for findings and dependencies.
 """
 
 import logging
@@ -10,7 +12,10 @@ from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.core.constants import MAX_DEPENDENCY_DEPTH, OUTDATED_DEPENDENCY_THRESHOLD_DAYS
+from app.models.dependency import Dependency
+from app.models.finding_record import FindingRecord
 from app.schemas.recommendation import Recommendation
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 from app.services.recommendation import (
     vulnerabilities,
@@ -103,10 +108,10 @@ class RecommendationEngine:
 
     async def generate_recommendations(
         self,
-        findings: Optional[List[Dict[str, Any]]] = None,
-        dependencies: Optional[List[Dict[str, Any]]] = None,
+        findings: Optional[List[ModelOrDict]] = None,
+        dependencies: Optional[List[ModelOrDict]] = None,
         source_target: Optional[str] = None,
-        previous_scan_findings: Optional[List[Dict[str, Any]]] = None,
+        previous_scan_findings: Optional[List[ModelOrDict]] = None,
         scan_history: Optional[List[Dict[str, Any]]] = None,
         cross_project_data: Optional[Dict[str, Any]] = None,
     ) -> List[Recommendation]:
@@ -114,8 +119,8 @@ class RecommendationEngine:
         Generate remediation recommendations based on ALL finding types.
 
         Args:
-            findings: List of all findings (vulnerabilities, secrets, SAST, IAC, etc.)
-            dependencies: List of dependencies from the scan
+            findings: List of all findings (FindingRecord models or dicts)
+            dependencies: List of dependencies (Dependency models or dicts)
             source_target: The source target (e.g., Docker image name)
             previous_scan_findings: Findings from previous scan for regression analysis
             scan_history: History of scans for recurring issue analysis
@@ -124,27 +129,31 @@ class RecommendationEngine:
         Returns:
             List of prioritized recommendations
         """
-        # Input validation - use empty lists if None
-        findings = findings or []
-        dependencies = dependencies or []
+        # Use empty lists if None
+        findings_list = findings or []
+        dependencies_list = dependencies or []
+        previous_findings_list = previous_scan_findings
 
         logger.debug(
-            f"Generating recommendations for {len(findings)} findings, "
-            f"{len(dependencies)} dependencies"
+            f"Generating recommendations for {len(findings_list)} findings, "
+            f"{len(dependencies_list)} dependencies"
         )
 
         recommendations: List[Recommendation] = []
 
-        # Separate findings by type
-        findings_by_type: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        for f in findings:
-            finding_type = f.get("type", "other")
+        # Separate findings by type (using get_attr for Pydantic compatibility)
+        findings_by_type: Dict[str, List[ModelOrDict]] = defaultdict(list)
+        for f in findings_list:
+            finding_type = get_attr(f, "type", "other")
             findings_by_type[finding_type].append(f)
 
         # Build lookup maps for dependencies
-        dep_by_purl = {d.get("purl"): d for d in dependencies if d.get("purl")}
+        dep_by_purl = {
+            get_attr(d, "purl"): d for d in dependencies_list if get_attr(d, "purl")
+        }
         dep_by_name_version = {
-            f"{d.get('name')}@{d.get('version')}": d for d in dependencies
+            f"{get_attr(d, 'name')}@{get_attr(d, 'version')}": d
+            for d in dependencies_list
         }
 
         # 1. Process VULNERABILITIES
@@ -154,7 +163,7 @@ class RecommendationEngine:
                 findings_by_type.get("vulnerability", []),
                 dep_by_purl,
                 dep_by_name_version,
-                dependencies,
+                dependencies_list,
                 source_target,
             ),
             "vulnerabilities",
@@ -198,25 +207,25 @@ class RecommendationEngine:
         # 7. Dependency Hygiene (Outdated, Fragmentation, Dev-in-Prod)
         _safe_extend(
             recommendations,
-            lambda: dep_analysis.analyze_outdated_dependencies(dependencies),
+            lambda: dep_analysis.analyze_outdated_dependencies(dependencies_list),
             "outdated_dependencies",
         )
         _safe_extend(
             recommendations,
-            lambda: dep_analysis.analyze_version_fragmentation(dependencies),
+            lambda: dep_analysis.analyze_version_fragmentation(dependencies_list),
             "version_fragmentation",
         )
         _safe_extend(
             recommendations,
-            lambda: dep_analysis.analyze_dev_in_production(dependencies),
+            lambda: dep_analysis.analyze_dev_in_production(dependencies_list),
             "dev_in_production",
         )
 
         # 8. Trends & Regressions
-        if previous_scan_findings is not None:
+        if previous_findings_list is not None:
             _safe_extend(
                 recommendations,
-                lambda: trends.analyze_regressions(findings, previous_scan_findings),
+                lambda: trends.analyze_regressions(findings_list, previous_findings_list),
                 "regressions",
             )
 
@@ -231,13 +240,13 @@ class RecommendationEngine:
         _safe_extend(
             recommendations,
             lambda: graph.analyze_deep_dependency_chains(
-                dependencies, max_dependency_depth=self.max_dependency_depth
+                dependencies_list, max_dependency_depth=self.max_dependency_depth
             ),
             "deep_dependency_chains",
         )
         _safe_extend(
             recommendations,
-            lambda: graph.analyze_duplicate_packages(dependencies),
+            lambda: graph.analyze_duplicate_packages(dependencies_list),
             "duplicate_packages",
         )
 
@@ -246,7 +255,7 @@ class RecommendationEngine:
             _safe_extend(
                 recommendations,
                 lambda: insights.analyze_cross_project_patterns(
-                    findings, dependencies, cross_project_data
+                    findings_list, dependencies_list, cross_project_data
                 ),
                 "cross_project_patterns",
             )
@@ -264,7 +273,7 @@ class RecommendationEngine:
         _safe_extend(
             recommendations,
             lambda: risks.detect_critical_hotspots(
-                findings, dependencies, dep_by_purl, dep_by_name_version
+                findings_list, dependencies_list, dep_by_purl, dep_by_name_version
             ),
             "critical_hotspots",
         )
@@ -272,14 +281,14 @@ class RecommendationEngine:
         _safe_extend(
             recommendations,
             lambda: risks.detect_toxic_dependencies(
-                findings, dependencies, dep_by_purl, dep_by_name_version
+                findings_list, dependencies_list, dep_by_purl, dep_by_name_version
             ),
             "toxic_dependencies",
         )
 
         _safe_extend(
             recommendations,
-            lambda: risks.analyze_attack_surface(dependencies, findings),
+            lambda: risks.analyze_attack_surface(dependencies_list, findings_list),
             "attack_surface",
         )
 
@@ -299,11 +308,12 @@ class RecommendationEngine:
         )
 
         # Typosquatting
-        typosquat_findings = [
-            f
-            for f in findings_by_type.get("quality", [])
-            if "typosquat" in f.get("details", {}).get("risk_type", "").lower()
-        ]
+        typosquat_findings = []
+        for f in findings_by_type.get("quality", []):
+            details = get_attr(f, "details", {})
+            risk_type = details.get("risk_type", "") if isinstance(details, dict) else ""
+            if "typosquat" in risk_type.lower():
+                typosquat_findings.append(f)
         if typosquat_findings:
             _safe_extend(
                 recommendations,
@@ -330,7 +340,7 @@ class RecommendationEngine:
         _safe_extend(
             recommendations,
             lambda: optimization.identify_quick_wins(
-                findings_by_type.get("vulnerability", []), dependencies
+                findings_by_type.get("vulnerability", []), dependencies_list
             ),
             "quick_wins",
         )

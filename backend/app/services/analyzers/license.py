@@ -253,7 +253,6 @@ class LicenseAnalyzer(Analyzer):
             viral=False,
             network_clause=False,
         ),
-        # ========== STRONG COPYLEFT (Entire work must be shared if distributed) ==========
         "GPL-2.0": LicenseInfo(
             spdx_id="GPL-2.0",
             category=LicenseCategory.STRONG_COPYLEFT,
@@ -348,7 +347,6 @@ class LicenseAnalyzer(Analyzer):
             viral=True,
             network_clause=False,
         ),
-        # ========== NETWORK COPYLEFT (Triggers on network use, not just distribution) ==========
         "AGPL-3.0": LicenseInfo(
             spdx_id="AGPL-3.0",
             category=LicenseCategory.NETWORK_COPYLEFT,
@@ -416,7 +414,6 @@ class LicenseAnalyzer(Analyzer):
             viral=True,
             network_clause=True,
         ),
-        # ========== OTHER/SPECIAL ==========
         "CC-BY-4.0": LicenseInfo(
             spdx_id="CC-BY-4.0",
             category=LicenseCategory.PERMISSIVE,
@@ -565,7 +562,7 @@ class LicenseAnalyzer(Analyzer):
         for component in components:
             comp_name = component.get("name", "unknown")
             comp_version = component.get("version", "unknown")
-            comp_scope = component.get("scope", "").lower()
+            comp_scope = (component.get("scope") or "").lower()
             comp_purl = component.get("purl", "")
 
             # Skip dev dependencies if configured

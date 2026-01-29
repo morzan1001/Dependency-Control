@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { CodeBlock } from '@/components/ui/code-block'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
-import { PostProcessorResultCard } from '@/components/PostProcessorResults'
+// PostProcessorResultCard removed - now showing raw JSON in Raw Data tab
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { logger } from '@/lib/logger'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -491,19 +491,25 @@ export default function ScanDetails() {
                 </div>
             ) : (
                 <div className="space-y-8">
-                    {/* Post-Processor Results (EPSS/KEV, Reachability) */}
+                    {/* Post-Processor Results (EPSS/KEV, Reachability) - RAW JSON */}
                     {scanResults && scanResults.filter(r => isPostProcessorResult(r.analyzer_name)).length > 0 && (
                         <div className="space-y-4">
-                            <h3 className="text-lg font-medium">Post-Processor Results</h3>
+                            <h3 className="text-lg font-medium">Post-Processor Results (Raw JSON)</h3>
                             <div className="grid gap-6">
                                 {scanResults
                                     .filter(r => isPostProcessorResult(r.analyzer_name))
                                     .map((result) => (
-                                        <PostProcessorResultCard 
-                                            key={result._id}
-                                            analyzerName={result.analyzer_name}
-                                            result={result.result}
-                                        />
+                                        <Card key={result._id} className="overflow-hidden">
+                                            <CardHeader className="bg-muted/50 pb-4">
+                                                <CardTitle className="text-lg flex items-center justify-between">
+                                                    <span className="capitalize">{result.analyzer_name}</span>
+                                                    <Badge variant="outline">Post-Processor</Badge>
+                                                </CardTitle>
+                                            </CardHeader>
+                                            <CardContent className="p-0">
+                                                <CodeBlock code={JSON.stringify(result.result, null, 2)} />
+                                            </CardContent>
+                                        </Card>
                                     ))}
                             </div>
                         </div>

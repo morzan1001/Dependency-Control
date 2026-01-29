@@ -16,11 +16,6 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 
-# =============================================================================
-# Token Creation and Verification Helpers
-# =============================================================================
-
-
 def _create_token(
     subject: str,
     token_type: str,
@@ -29,6 +24,8 @@ def _create_token(
 ) -> str:
     """
     Create a JWT token with the given parameters.
+
+    Includes JTI (JWT ID) for token blacklisting on logout.
 
     Args:
         subject: The subject of the token (user ID or email)
@@ -39,11 +36,14 @@ def _create_token(
     Returns:
         Encoded JWT string
     """
+    import uuid
+
     to_encode = {
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "sub": str(subject),
         "type": token_type,
+        "jti": str(uuid.uuid4()),  # JWT ID for blacklisting
     }
     if extra_claims:
         to_encode.update(extra_claims)
@@ -75,11 +75,6 @@ def _verify_token(token: str, expected_type: str) -> Optional[str]:
     except JWTError as e:
         logger.debug(f"{expected_type} token invalid: {e}")
         return None
-
-
-# =============================================================================
-# Access and Refresh Tokens
-# =============================================================================
 
 
 def create_access_token(
@@ -120,11 +115,6 @@ def create_refresh_token(
     return _create_token(subject=str(subject), token_type="refresh", expire=expire)
 
 
-# =============================================================================
-# Password Functions
-# =============================================================================
-
-
 def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool:
     """Verify a plain password against a hashed password."""
     if not hashed_password:
@@ -135,11 +125,6 @@ def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool
 def get_password_hash(password: str) -> str:
     """Hash a password using Argon2."""
     return pwd_context.hash(password)
-
-
-# =============================================================================
-# Email Verification Tokens
-# =============================================================================
 
 
 def create_email_verification_token(email: str) -> str:
@@ -153,11 +138,6 @@ def create_email_verification_token(email: str) -> str:
 def verify_email_verification_token(token: str) -> Optional[str]:
     """Verify an email verification token and return the email if valid."""
     return _verify_token(token, "email_verification")
-
-
-# =============================================================================
-# Password Reset Tokens
-# =============================================================================
 
 
 def create_password_reset_token(email: str) -> str:

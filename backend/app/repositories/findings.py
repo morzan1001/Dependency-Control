@@ -18,9 +18,47 @@ class FindingRepository(BaseRepository[FindingRecord]):
     collection_name = "findings"
     model_class = FindingRecord
 
-    # ===================
-    # Scan-specific operations
-    # ===================
+    async def apply_vulnerability_waiver(
+        self,
+        scan_id: str,
+        vulnerability_id: str,
+        waived: bool,
+        waiver_reason: Optional[str] = None,
+    ) -> int:
+        """
+        Apply waiver to specific vulnerability within findings.
+        Uses MongoDB array_filters to update nested vulnerability objects.
+        """
+        update_data = {"details.vulnerabilities.$[vuln].waived": waived}
+        if waiver_reason:
+            update_data["details.vulnerabilities.$[vuln].waiver_reason"] = waiver_reason
+
+        result = await self.collection.update_many(
+            {
+                "scan_id": scan_id,
+                "type": "vulnerability",
+                "details.vulnerabilities.id": vulnerability_id,
+            },
+            {"$set": update_data},
+            array_filters=[{"vuln.id": vulnerability_id}],
+        )
+        return result.modified_count
+
+    async def apply_finding_waiver(
+        self,
+        scan_id: str,
+        query: dict,
+        waived: bool,
+        waiver_reason: Optional[str] = None,
+    ) -> int:
+        """Apply waiver to findings matching query (for non-vulnerability or finding-level waivers)."""
+        full_query = {"scan_id": scan_id, **query}
+        update_data = {"waived": waived}
+        if waiver_reason:
+            update_data["waiver_reason"] = waiver_reason
+
+        result = await self.collection.update_many(full_query, {"$set": update_data})
+        return result.modified_count
 
     async def find_by_scan(
         self,
@@ -56,20 +94,12 @@ class FindingRepository(BaseRepository[FindingRecord]):
         """Count findings for a scan."""
         return await self.count({"scan_id": scan_id})
 
-    # ===================
-    # Bulk operations
-    # ===================
-
     async def bulk_upsert(self, operations: List[UpdateOne]) -> int:
         """Bulk upsert findings."""
         if not operations:
             return 0
         result = await self.collection.bulk_write(operations)
         return result.upserted_count + result.modified_count
-
-    # ===================
-    # Aggregation helpers
-    # ===================
 
     async def get_severity_counts(self, scan_id: str) -> Dict[str, int]:
         """Get finding counts by severity for a scan."""

@@ -1,5 +1,8 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from pydantic import BaseModel
+
 from app.schemas.recommendation import Recommendation, Priority
 from app.core.constants import (
     ACTIONABLE_VULN_BONUS,
@@ -10,46 +13,57 @@ from app.core.constants import (
     REACHABILITY_MODIFIERS,
 )
 
+# Type alias for items that can be either Pydantic models or dicts
+ModelOrDict = Union[BaseModel, Dict[str, Any]]
 
-def validate_epss_score(score: Optional[float]) -> Optional[float]:
+
+def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
     """
-    Validate and normalize EPSS score to ensure it's in valid range [0, 1].
+    Get attribute from Pydantic model or dict in a type-safe way.
 
-    Returns None if invalid, otherwise returns the clamped score.
+    This is the standard accessor for all recommendation modules.
+
+    Args:
+        obj: A Pydantic model instance or dictionary
+        key: The attribute/key name to access
+        default: Default value if not found
+
+    Returns:
+        The attribute value or default
     """
-    if score is None:
-        return None
-    try:
-        score_float = float(score)
-        if score_float < 0 or score_float > 1:
-            # Clamp to valid range rather than rejecting
-            return max(0.0, min(1.0, score_float))
-        return score_float
-    except (TypeError, ValueError):
-        return None
+    if isinstance(obj, BaseModel):
+        return getattr(obj, key, default)
+    elif isinstance(obj, dict):
+        return obj.get(key, default)
+    return default
 
 
-def extract_cve_id(finding: Dict[str, Any]) -> Optional[str]:
+def extract_cve_id(finding: ModelOrDict) -> Optional[str]:
     """
     Extract CVE ID from a finding using multiple strategies.
 
-    Checks finding['id'], finding['details']['cve_id'], and aliases.
+    Supports both Pydantic FindingRecord models and legacy dicts.
+    Checks finding.id, finding.details.cve_id, and aliases.
     Returns the first valid CVE-XXXX-XXXXX format ID found, or None.
     """
     # Strategy 1: Direct ID field
-    finding_id = finding.get("id") or finding.get("finding_id")
+    finding_id = get_attr(finding, "id") or get_attr(finding, "finding_id")
     if finding_id and str(finding_id).startswith("CVE-"):
         return str(finding_id)
 
     # Strategy 2: Details cve_id field
-    details = finding.get("details", {})
-    cve_id = details.get("cve_id")
-    if cve_id and str(cve_id).startswith("CVE-"):
-        return str(cve_id)
+    details = get_attr(finding, "details", {})
+    if isinstance(details, dict):
+        cve_id = details.get("cve_id")
+        if cve_id and str(cve_id).startswith("CVE-"):
+            return str(cve_id)
 
     # Strategy 3: Check aliases
-    aliases = finding.get("aliases", []) or details.get("aliases", [])
-    for alias in aliases:
+    aliases = get_attr(finding, "aliases", [])
+    if not aliases and isinstance(details, dict):
+        aliases = details.get("aliases", [])
+
+    for alias in aliases or []:
         if alias and str(alias).startswith("CVE-"):
             return str(alias)
 

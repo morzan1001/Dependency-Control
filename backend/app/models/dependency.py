@@ -40,6 +40,10 @@ class Dependency(BaseModel):
     direct: bool = Field(
         False, description="True if direct dependency, False if transitive"
     )
+    direct_inferred: bool = Field(
+        False,
+        description="True if 'direct' was inferred (SBOM had no dependency graph)",
+    )
     parent_components: List[str] = Field(
         default_factory=list, description="List of parent component PURLs/names"
     )

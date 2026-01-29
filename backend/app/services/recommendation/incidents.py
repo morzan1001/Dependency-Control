@@ -6,15 +6,15 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import extract_cve_id
+from app.services.recommendation.common import extract_cve_id, get_attr, ModelOrDict
 
 
-def process_malware(malware_findings: List[Dict[str, Any]]) -> List[Recommendation]:
+def process_malware(malware_findings: List[ModelOrDict]) -> List[Recommendation]:
     """Process malware detection findings."""
     if not malware_findings:
         return []
 
-    affected_packages = list(set(f.get("component", "") for f in malware_findings))
+    affected_packages = list(set(get_attr(f, "component", "") for f in malware_findings))
 
     return [
         Recommendation(
@@ -54,7 +54,7 @@ def process_malware(malware_findings: List[Dict[str, Any]]) -> List[Recommendati
 
 
 def process_typosquatting(
-    typosquat_findings: List[Dict[str, Any]],
+    typosquat_findings: List[ModelOrDict],
 ) -> List[Recommendation]:
     """Process potential typosquatting package findings."""
     if not typosquat_findings:
@@ -62,8 +62,9 @@ def process_typosquatting(
 
     affected_packages = []
     for f in typosquat_findings:
-        pkg = f.get("component", "")
-        similar_to = f.get("details", {}).get("similar_to", "")
+        pkg = get_attr(f, "component", "")
+        details = get_attr(f, "details", {})
+        similar_to = details.get("similar_to", "") if isinstance(details, dict) else ""
         if pkg and similar_to:
             affected_packages.append(f"{pkg} (looks like: {similar_to})")
         elif pkg:
@@ -103,7 +104,7 @@ def process_typosquatting(
     ]
 
 
-def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommendation]:
+def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendation]:
     """
     Detect vulnerabilities with known exploits (KEV, ransomware, high EPSS).
     These require immediate action.
@@ -115,20 +116,21 @@ def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommend
     high_epss_vulns = []
 
     for f in vuln_findings:
-        details = f.get("details", {})
-        if details.get("is_kev"):
+        details = get_attr(f, "details", {})
+        if isinstance(details, dict) and details.get("is_kev"):
             if details.get("kev_ransomware"):
                 ransomware_vulns.append(f)
             else:
                 kev_vulns.append(f)
         elif (
-            details.get("epss_score")
+            isinstance(details, dict)
+            and details.get("epss_score")
             and details.get("epss_score") >= EPSS_VERY_HIGH_THRESHOLD
         ):
             high_epss_vulns.append(f)
 
     if ransomware_vulns:
-        affected_packages = list(set(f.get("component", "") for f in ransomware_vulns))
+        affected_packages = list(set(get_attr(f, "component", "") for f in ransomware_vulns))
         cves = list(set(cve for f in ransomware_vulns if (cve := extract_cve_id(f))))
 
         recommendations.append(
@@ -170,7 +172,7 @@ def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommend
         )
 
     if kev_vulns:
-        affected_packages = list(set(f.get("component", "") for f in kev_vulns))
+        affected_packages = list(set(get_attr(f, "component", "") for f in kev_vulns))
         cves = list(set(cve for f in kev_vulns if (cve := extract_cve_id(f))))
 
         recommendations.append(
@@ -185,11 +187,11 @@ def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommend
                 ),
                 impact={
                     "critical": len(
-                        [v for v in kev_vulns if v.get("severity") == "CRITICAL"]
+                        [v for v in kev_vulns if get_attr(v, "severity") == "CRITICAL"]
                     ),
-                    "high": len([v for v in kev_vulns if v.get("severity") == "HIGH"]),
+                    "high": len([v for v in kev_vulns if get_attr(v, "severity") == "HIGH"]),
                     "medium": len(
-                        [v for v in kev_vulns if v.get("severity") == "MEDIUM"]
+                        [v for v in kev_vulns if get_attr(v, "severity") == "MEDIUM"]
                     ),
                     "low": 0,
                     "total": len(kev_vulns),
@@ -213,11 +215,12 @@ def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommend
         )
 
     if high_epss_vulns:
-        affected_packages = list(set(f.get("component", "") for f in high_epss_vulns))
+        affected_packages = list(set(get_attr(f, "component", "") for f in high_epss_vulns))
         cves = list(set(cve for f in high_epss_vulns if (cve := extract_cve_id(f))))
 
         max_epss = max(
-            f.get("details", {}).get("epss_score", 0) for f in high_epss_vulns
+            (get_attr(f, "details", {}).get("epss_score", 0) if isinstance(get_attr(f, "details", {}), dict) else 0)
+            for f in high_epss_vulns
         )
 
         recommendations.append(
@@ -232,13 +235,13 @@ def detect_known_exploits(vuln_findings: List[Dict[str, Any]]) -> List[Recommend
                 ),
                 impact={
                     "critical": len(
-                        [v for v in high_epss_vulns if v.get("severity") == "CRITICAL"]
+                        [v for v in high_epss_vulns if get_attr(v, "severity") == "CRITICAL"]
                     ),
                     "high": len(
-                        [v for v in high_epss_vulns if v.get("severity") == "HIGH"]
+                        [v for v in high_epss_vulns if get_attr(v, "severity") == "HIGH"]
                     ),
                     "medium": len(
-                        [v for v in high_epss_vulns if v.get("severity") == "MEDIUM"]
+                        [v for v in high_epss_vulns if get_attr(v, "severity") == "MEDIUM"]
                     ),
                     "low": 0,
                     "total": len(high_epss_vulns),

@@ -77,17 +77,23 @@ async def enrich_findings_with_reachability(
         logger.warning("No scan_id available for reachability enrichment")
         return 0
 
+    # Use repositories for consistent data access
+    from app.repositories import CallgraphRepository, ScanRepository
+
+    callgraph_repo = CallgraphRepository(db)
+    scan_repo = ScanRepository(db)
+
     # Fetch callgraph linked to this scan
     # Priority: exact scan_id match > fallback to pipeline_id match
-    callgraph = await db.callgraphs.find_one(
+    callgraph = await callgraph_repo.find_one_raw(
         {"project_id": project_id, "scan_id": scan_id}
     )
 
     if not callgraph:
         # Fallback: try to find callgraph via pipeline_id
-        scan = await db.scans.find_one({"_id": scan_id})
+        scan = await scan_repo.find_one_raw({"_id": scan_id})
         if scan and scan.get("pipeline_id"):
-            callgraph = await db.callgraphs.find_one(
+            callgraph = await callgraph_repo.find_one_raw(
                 {"project_id": project_id, "pipeline_id": scan["pipeline_id"]}
             )
 
@@ -387,8 +393,21 @@ async def run_pending_reachability_for_scan(
         "error": None,
     }
 
+    # Use repositories for consistent data access
+    from app.repositories import (
+        ScanRepository,
+        FindingRepository,
+        CallgraphRepository,
+        AnalysisResultRepository,
+    )
+
+    scan_repo = ScanRepository(db)
+    finding_repo = FindingRepository(db)
+    callgraph_repo = CallgraphRepository(db)
+    result_repo = AnalysisResultRepository(db)
+
     # Check if this scan has pending reachability
-    scan = await db.scans.find_one({"_id": scan_id})
+    scan = await scan_repo.find_one_raw({"_id": scan_id})
     if not scan:
         logger.debug(f"Scan {scan_id} not found")
         return result
@@ -399,18 +418,15 @@ async def run_pending_reachability_for_scan(
 
     try:
         # Fetch vulnerability findings for this scan
-        findings = await db.findings.find(
-            {
-                "scan_id": scan_id,
-                "type": "vulnerability",
-            }
-        ).to_list(None)
+        findings = await finding_repo.find_many_raw(
+            {"scan_id": scan_id, "type": "vulnerability"}, limit=10000
+        )
 
         if not findings:
             logger.debug(f"No vulnerability findings for scan {scan_id}")
             # Clear pending status even if no findings
-            await db.scans.update_one(
-                {"_id": scan_id},
+            await scan_repo.update_raw(
+                scan_id,
                 {
                     "$unset": {
                         "reachability_pending": "",
@@ -434,30 +450,26 @@ async def run_pending_reachability_for_scan(
         # Update findings in database with reachability data
         for finding_dict in findings_dicts:
             if finding_dict.get("reachable") is not None:
-                await db.findings.update_one(
-                    {"_id": finding_dict["_id"]},
+                await finding_repo.update(
+                    finding_dict["_id"],
                     {
-                        "$set": {
-                            "reachable": finding_dict.get("reachable"),
-                            "reachability_level": finding_dict.get(
-                                "reachability_level"
-                            ),
-                            "reachable_functions": finding_dict.get(
-                                "reachable_functions", []
-                            ),
-                        }
+                        "reachable": finding_dict.get("reachable"),
+                        "reachability_level": finding_dict.get("reachability_level"),
+                        "reachable_functions": finding_dict.get(
+                            "reachable_functions", []
+                        ),
                     },
                 )
 
         # Store reachability summary in analysis_results for raw data view
-        callgraph = await db.callgraphs.find_one(
+        callgraph = await callgraph_repo.find_one_raw(
             {"project_id": project_id, "scan_id": scan_id}
         )
         if callgraph:
             reachability_summary = _build_reachability_summary_for_pending(
                 findings_dicts, callgraph, enriched_count
             )
-            await db.analysis_results.insert_one(
+            await result_repo.create_raw(
                 {
                     "_id": str(uuid.uuid4()),
                     "scan_id": scan_id,
@@ -467,9 +479,9 @@ async def run_pending_reachability_for_scan(
                 }
             )
 
-        # Clear pending status
-        await db.scans.update_one(
-            {"_id": scan_id},
+        # Clear pending status via repository
+        await scan_repo.update_raw(
+            scan_id,
             {
                 "$unset": {
                     "reachability_pending": "",

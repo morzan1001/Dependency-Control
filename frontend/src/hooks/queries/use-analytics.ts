@@ -25,6 +25,7 @@ export const useDashboardStats = () => {
         queryKey: analyticsKeys.dashboardStats(),
         queryFn: analyticsApi.getDashboardStats,
         staleTime: 2 * 60 * 1000, // 2 minutes - stats are expensive to compute
+        refetchOnWindowFocus: true, // Refetch when tab regains focus (if stale)
         retry: 2,
     });
 }
@@ -42,6 +43,7 @@ export const useAnalyticsSummary = () => {
         queryKey: analyticsKeys.summary(),
         queryFn: analyticsApi.getSummary,
         staleTime: 5 * 60 * 1000, // 5 minutes
+        refetchOnWindowFocus: true,
     });
 }
 
@@ -50,6 +52,7 @@ export const useTopDependencies = (limit: number = 20, type?: string) => {
         queryKey: analyticsKeys.topDependencies(limit, type),
         queryFn: () => analyticsApi.getTopDependencies(limit, type),
         staleTime: 5 * 60 * 1000, // 5 minutes
+        refetchOnWindowFocus: true,
     });
 }
 
@@ -59,6 +62,7 @@ export const useDependencyTree = (projectId: string, scanId?: string) => {
         queryFn: () => analyticsApi.getDependencyTree(projectId, scanId),
         enabled: !!projectId,
         staleTime: 5 * 60 * 1000, // 5 minutes
+        refetchOnWindowFocus: true,
     });
 }
 
@@ -67,6 +71,7 @@ export const useImpactAnalysis = (limit: number = 20) => {
         queryKey: analyticsKeys.impactAnalysis(limit),
         queryFn: () => analyticsApi.getImpactAnalysis(limit),
         staleTime: 5 * 60 * 1000, // 5 minutes
+        refetchOnWindowFocus: true,
     });
 }
 
@@ -74,6 +79,8 @@ export const useVulnerabilityHotspots = (params: HotspotsQueryParams) => {
     return useQuery({
         queryKey: analyticsKeys.hotspots(params),
         queryFn: () => analyticsApi.getVulnerabilityHotspots(params),
+        staleTime: 5 * 60 * 1000, // 5 minutes
+        refetchOnWindowFocus: true,
         placeholderData: keepPreviousData
     });
 }
@@ -117,6 +124,7 @@ export const useDependencyTypes = () => {
         queryKey: analyticsKeys.dependencyTypes(),
         queryFn: analyticsApi.getDependencyTypes,
         staleTime: 30 * 60 * 1000, // 30 minutes - types almost never change
+        refetchOnWindowFocus: true,
     });
 }
 
@@ -126,5 +134,6 @@ export const useProjectRecommendations = (projectId: string, scanId?: string) =>
         queryFn: () => analyticsApi.getProjectRecommendations(projectId, scanId),
         enabled: !!projectId,
         staleTime: 5 * 60 * 1000, // 5 minutes
+        refetchOnWindowFocus: true,
     });
 }

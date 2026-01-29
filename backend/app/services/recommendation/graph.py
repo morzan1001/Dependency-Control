@@ -6,10 +6,11 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.core.constants import SIMILAR_PACKAGE_GROUPS
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 
 def analyze_deep_dependency_chains(
-    dependencies: List[Dict[str, Any]], max_dependency_depth: int = 8
+    dependencies: List[ModelOrDict], max_dependency_depth: int = 8
 ) -> List[Recommendation]:
     """
     Identify dependencies with very deep transitive chains.
@@ -28,8 +29,8 @@ def analyze_deep_dependency_chains(
     # Build adjacency list for cycle detection
     children_map: Dict[str, List[str]] = {}  # parent -> list of children
     for dep in dependencies:
-        key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
-        parents = dep.get("parent_components", [])
+        key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+        parents = get_attr(dep, "parent_components", [])
         for parent in parents:
             if parent not in children_map:
                 children_map[parent] = []
@@ -58,22 +59,22 @@ def analyze_deep_dependency_chains(
 
     # Run cycle detection from all direct dependencies
     for dep in dependencies:
-        key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
-        if dep.get("direct", False) and color.get(key, 0) == 0:
+        key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+        if get_attr(dep, "direct", False) and color.get(key, 0) == 0:
             has_cycle(key, set())
 
     # First pass: direct deps have depth 1
     for dep in dependencies:
-        key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
-        if dep.get("direct", False):
+        key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+        if get_attr(dep, "direct", False):
             depth_map[key] = 1
 
     # Iterative depth calculation (skip nodes in cycles to avoid infinite loops)
     for _ in range(10):  # Max iterations
         changed = False
         for dep in dependencies:
-            key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
-            parents = dep.get("parent_components", [])
+            key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+            parents = get_attr(dep, "parent_components", [])
 
             if key in depth_map or key in in_cycle:
                 continue
@@ -95,10 +96,10 @@ def analyze_deep_dependency_chains(
     if in_cycle:
         cycle_packages = []
         for dep in dependencies:
-            key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
+            key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
             if key in in_cycle:
                 cycle_packages.append(
-                    {"name": dep.get("name"), "version": dep.get("version")}
+                    {"name": get_attr(dep, "name"), "version": get_attr(dep, "version")}
                 )
 
         if cycle_packages:
@@ -136,16 +137,16 @@ def analyze_deep_dependency_chains(
     # Find deeply nested deps
     deep_deps = []
     for dep in dependencies:
-        key = dep.get("purl") or f"{dep.get('name')}@{dep.get('version')}"
+        key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
         depth = depth_map.get(key, 0)
 
         if depth > max_dependency_depth:
             deep_deps.append(
                 {
-                    "name": dep.get("name"),
-                    "version": dep.get("version"),
+                    "name": get_attr(dep, "name"),
+                    "version": get_attr(dep, "version"),
                     "depth": depth,
-                    "parents": dep.get("parent_components", [])[:3],
+                    "parents": get_attr(dep, "parent_components", [])[:3],
                 }
             )
 
@@ -200,7 +201,7 @@ def analyze_deep_dependency_chains(
 
 
 def analyze_duplicate_packages(
-    dependencies: List[Dict[str, Any]],
+    dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Detect packages that likely provide similar/duplicate functionality.
@@ -210,7 +211,7 @@ def analyze_duplicate_packages(
 
     recommendations = []
 
-    dep_names = {dep.get("name", "").lower() for dep in dependencies}
+    dep_names = {str(get_attr(dep, "name", "")).lower() for dep in dependencies}
 
     duplicates_found = []
     for group in SIMILAR_PACKAGE_GROUPS:

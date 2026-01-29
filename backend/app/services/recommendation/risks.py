@@ -11,6 +11,7 @@ from app.core.constants import (
     SCORECARD_LOW_THRESHOLD,
     SEVERITY_WEIGHTS,
 )
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 
 def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
@@ -61,8 +62,8 @@ def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
 
 
 def detect_critical_hotspots(
-    findings: List[Dict[str, Any]],
-    dependencies: List[Dict[str, Any]],
+    findings: List[ModelOrDict],
+    dependencies: List[ModelOrDict],
     dep_by_purl: Dict[str, Dict],
     dep_by_name_version: Dict[str, Dict],
 ) -> List[Recommendation]:
@@ -100,13 +101,13 @@ def detect_critical_hotspots(
     )
 
     for f in findings:
-        component = f.get("component", "")
+        component = get_attr(f, "component", "")
         if not component:
             continue
 
-        finding_type = f.get("type", "other")
-        severity = f.get("severity", "UNKNOWN")
-        details = f.get("details", {})
+        finding_type = get_attr(f, "type", "other")
+        severity = get_attr(f, "severity", "UNKNOWN")
+        details = get_attr(f, "details", {})
 
         pkg_data = package_findings[component]
 
@@ -116,18 +117,18 @@ def detect_critical_hotspots(
                 pkg_data["critical_count"] += 1
             elif severity == "HIGH":
                 pkg_data["high_count"] += 1
-            if details.get("is_kev"):
+            if isinstance(details, dict) and details.get("is_kev"):
                 pkg_data["kev_count"] += 1
             if (
-                details.get("epss_score")
+                isinstance(details, dict)
+                and details.get("epss_score")
                 and details.get("epss_score") >= EPSS_HIGH_THRESHOLD
             ):
                 pkg_data["high_epss_count"] += 1
-            if f.get("reachable") is True:
+            if get_attr(f, "reachable") is True:
                 pkg_data["reachable_count"] += 1
-            pkg_data["total_risk_score"] += details.get(
-                "risk_score", 0
-            ) or SEVERITY_WEIGHTS.get(severity, 0)
+            risk_score = details.get("risk_score", 0) if isinstance(details, dict) else 0
+            pkg_data["total_risk_score"] += risk_score or SEVERITY_WEIGHTS.get(severity, 0)
         elif finding_type == "quality":
             pkg_data["quality_issues"].append(f)
         elif finding_type == "license":
@@ -173,7 +174,8 @@ def detect_critical_hotspots(
         if pkg_data["quality_issues"]:
             # Check for low scorecard
             for qi in pkg_data["quality_issues"]:
-                score = qi.get("details", {}).get("scorecard_score", 10)
+                qi_details = get_attr(qi, "details", {})
+                score = qi_details.get("scorecard_score", 10) if isinstance(qi_details, dict) else 10
                 if score < SCORECARD_LOW_THRESHOLD:
                     hotspot_reasons.append(f"Low OpenSSF Scorecard: {score}/10")
                     break
@@ -185,14 +187,14 @@ def detect_critical_hotspots(
             # Get version
             version = "unknown"
             if pkg_data["vulnerabilities"]:
-                version = pkg_data["vulnerabilities"][0].get("version", "unknown")
+                version = get_attr(pkg_data["vulnerabilities"][0], "version", "unknown")
 
             # Find fixed version
-            fixed_versions = [
-                v.get("details", {}).get("fixed_version")
-                for v in pkg_data["vulnerabilities"]
-                if v.get("details", {}).get("fixed_version")
-            ]
+            fixed_versions = []
+            for v in pkg_data["vulnerabilities"]:
+                v_details = get_attr(v, "details", {})
+                if isinstance(v_details, dict) and v_details.get("fixed_version"):
+                    fixed_versions.append(v_details.get("fixed_version"))
 
             hotspots.append(
                 {
@@ -284,8 +286,8 @@ def detect_critical_hotspots(
 
 
 def detect_toxic_dependencies(
-    findings: List[Dict[str, Any]],
-    dependencies: List[Dict[str, Any]],
+    findings: List[ModelOrDict],
+    dependencies: List[ModelOrDict],
     dep_by_purl: Dict[str, Dict],
     dep_by_name_version: Dict[str, Dict],
 ) -> List[Recommendation]:
@@ -315,20 +317,20 @@ def detect_toxic_dependencies(
     )
 
     for f in findings:
-        component = f.get("component", "")
+        component = get_attr(f, "component", "")
         if not component:
             continue
 
         pkg = package_risks[component]
-        finding_type = f.get("type", "")
-        details = f.get("details", {})
+        finding_type = get_attr(f, "type", "")
+        details = get_attr(f, "details", {})
 
         if finding_type == "vulnerability":
             pkg["vulns"].append(f)
             if len(pkg["vulns"]) == 1:
-                pkg["details"]["version"] = f.get("version", "unknown")
+                pkg["details"]["version"] = get_attr(f, "version", "unknown")
         elif finding_type == "quality":
-            score = details.get("scorecard_score", 10)
+            score = details.get("scorecard_score", 10) if isinstance(details, dict) else 10
             if score < SCORECARD_LOW_THRESHOLD:
                 if "low_scorecard" not in [r["type"] for r in pkg["risk_factors"]]:
                     pkg["risk_factors"].append(
@@ -350,14 +352,15 @@ def detect_toxic_dependencies(
                 )
                 pkg["total_score"] += 40
         elif finding_type == "license":
-            severity = f.get("severity", "LOW")
+            severity = get_attr(f, "severity", "LOW")
             if severity in ["CRITICAL", "HIGH"]:
                 if "license_issue" not in [r["type"] for r in pkg["risk_factors"]]:
+                    license_name = details.get("license", "unknown") if isinstance(details, dict) else "unknown"
                     pkg["risk_factors"].append(
                         {
                             "type": "license_issue",
                             "severity": severity,
-                            "description": f"License compliance issue: {details.get('license', 'unknown')}",
+                            "description": f"License compliance issue: {license_name}",
                         }
                     )
                     pkg["total_score"] += 20
@@ -375,9 +378,14 @@ def detect_toxic_dependencies(
     for component, pkg in package_risks.items():
         vuln_count = len(pkg["vulns"])
         if vuln_count > 0:
-            critical = len([v for v in pkg["vulns"] if v.get("severity") == "CRITICAL"])
-            high = len([v for v in pkg["vulns"] if v.get("severity") == "HIGH"])
-            kev = len([v for v in pkg["vulns"] if v.get("details", {}).get("is_kev")])
+            critical = len([v for v in pkg["vulns"] if get_attr(v, "severity") == "CRITICAL"])
+            high = len([v for v in pkg["vulns"] if get_attr(v, "severity") == "HIGH"])
+            kev_count = 0
+            for v in pkg["vulns"]:
+                v_details = get_attr(v, "details", {})
+                if isinstance(v_details, dict) and v_details.get("is_kev"):
+                    kev_count += 1
+            kev = kev_count
 
             pkg["risk_factors"].append(
                 {
@@ -417,13 +425,13 @@ def detect_toxic_dependencies(
                 ),
                 impact={
                     "critical": len(
-                        [v for v in pkg["vulns"] if v.get("severity") == "CRITICAL"]
+                        [v for v in pkg["vulns"] if get_attr(v, "severity") == "CRITICAL"]
                     ),
                     "high": len(
-                        [v for v in pkg["vulns"] if v.get("severity") == "HIGH"]
+                        [v for v in pkg["vulns"] if get_attr(v, "severity") == "HIGH"]
                     ),
                     "medium": len(
-                        [v for v in pkg["vulns"] if v.get("severity") == "MEDIUM"]
+                        [v for v in pkg["vulns"] if get_attr(v, "severity") == "MEDIUM"]
                     ),
                     "low": 0,
                     "total": len(pkg["vulns"]),
@@ -454,8 +462,8 @@ def detect_toxic_dependencies(
 
 
 def analyze_attack_surface(
-    dependencies: List[Dict[str, Any]],
-    findings: List[Dict[str, Any]],
+    dependencies: List[ModelOrDict],
+    findings: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Analyze attack surface and recommend reduction strategies.
@@ -473,23 +481,23 @@ def analyze_attack_surface(
     # Count vulnerabilities by package
     vuln_count_by_pkg: Dict[str, int] = defaultdict(int)
     for f in findings:
-        if f.get("type") == "vulnerability":
-            vuln_count_by_pkg[f.get("component", "")] += 1
+        if get_attr(f, "type") == "vulnerability":
+            vuln_count_by_pkg[get_attr(f, "component", "")] += 1
 
     # Identify transitive dependencies with many vulnerabilities
     transitive_with_vulns = []
     for dep in dependencies:
-        pkg_name = dep.get("name", "")
-        is_direct = dep.get("direct", False)
+        pkg_name = get_attr(dep, "name", "")
+        is_direct = get_attr(dep, "direct", False)
         vuln_count = vuln_count_by_pkg.get(pkg_name, 0)
 
         if not is_direct and vuln_count >= 2:
             transitive_with_vulns.append(
                 {
                     "name": pkg_name,
-                    "version": dep.get("version", "unknown"),
+                    "version": get_attr(dep, "version", "unknown"),
                     "vuln_count": vuln_count,
-                    "parent": dep.get("introduced_by", dep.get("parent", "unknown")),
+                    "parent": get_attr(dep, "introduced_by", get_attr(dep, "parent", "unknown")),
                 }
             )
 
@@ -537,7 +545,7 @@ def analyze_attack_surface(
 
     # Identify very large dependency counts
     total_deps = len(dependencies)
-    direct_deps = len([d for d in dependencies if d.get("direct", False)])
+    direct_deps = len([d for d in dependencies if get_attr(d, "direct", False)])
 
     if total_deps > 500 and direct_deps < total_deps * 0.1:
         recommendations.append(

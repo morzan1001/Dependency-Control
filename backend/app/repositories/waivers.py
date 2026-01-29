@@ -79,20 +79,62 @@ class WaiverRepository:
         """Count waivers matching query."""
         return await self.collection.count_documents(query or {})
 
-    async def find_active_for_project(self, project_id: str) -> List[Waiver]:
-        """Find all active (non-expired) waivers for a project."""
+    async def find_active_for_project(
+        self, project_id: str, include_global: bool = True
+    ) -> List[Dict[str, Any]]:
+        """
+        Find all active (non-expired) waivers for a project.
+
+        Includes both project-specific and global waivers (project_id=None).
+        This is the standard method used by scan_manager and stats modules.
+
+        Args:
+            project_id: Project ID to find waivers for
+            include_global: Whether to include global waivers (default: True)
+
+        Returns:
+            List of waiver documents (raw dicts for performance)
+        """
         from datetime import datetime, timezone
 
-        query = {
-            "project_id": project_id,
-            "$or": [
-                {"expiration_date": None},
-                {"expiration_date": {"$gt": datetime.now(timezone.utc)}},
-            ],
-        }
+        now = datetime.now(timezone.utc)
+
+        if include_global:
+            # Include both project-specific and global waivers
+            query = {
+                "$and": [
+                    {
+                        "$or": [
+                            {"project_id": project_id},
+                            {"project_id": None},  # Global waivers
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"expiration_date": {"$exists": False}},
+                            {"expiration_date": None},
+                            {"expiration_date": {"$gt": now}},
+                        ]
+                    },
+                ]
+            }
+        else:
+            # Only project-specific waivers
+            query = {
+                "$and": [
+                    {"project_id": project_id},
+                    {
+                        "$or": [
+                            {"expiration_date": {"$exists": False}},
+                            {"expiration_date": None},
+                            {"expiration_date": {"$gt": now}},
+                        ]
+                    },
+                ]
+            }
+
         cursor = self.collection.find(query)
-        docs = await cursor.to_list(None)
-        return [Waiver(**doc) for doc in docs]
+        return await cursor.to_list(length=10000)
 
     async def find_by_finding(
         self, project_id: str, finding_id: str

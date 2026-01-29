@@ -13,10 +13,6 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, computed_field
 
-# =============================================================================
-# EPSS/KEV Enrichment Schemas
-# =============================================================================
-
 
 class EPSSData(BaseModel):
     """EPSS (Exploit Prediction Scoring System) data for a CVE."""
@@ -85,11 +81,6 @@ class VulnerabilityEnrichment(BaseModel):
     risk_score: Optional[float] = None  # Combined risk score 0-100
 
 
-# =============================================================================
-# Reachability Analysis Schemas
-# =============================================================================
-
-
 class ExtractedSymbols(BaseModel):
     """Result of symbol extraction from a vulnerability."""
 
@@ -99,11 +90,6 @@ class ExtractedSymbols(BaseModel):
     confidence: str = "low"  # low, medium, high
     extraction_method: str = "none"  # none, regex, osv_ecosystem
     raw_text: Optional[str] = None  # The text we parsed
-
-
-# =============================================================================
-# Dependency Enrichment Schemas
-# =============================================================================
 
 
 class DependencyEnrichment(BaseModel):

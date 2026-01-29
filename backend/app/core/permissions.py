@@ -11,42 +11,27 @@ from typing import List, Union
 class Permissions:
     """All available permissions in the system."""
 
-    # ==========================================================================
-    # System Management
-    # ==========================================================================
     SYSTEM_MANAGE = "system:manage"
 
-    # ==========================================================================
-    # User Management
-    # ==========================================================================
     USER_CREATE = "user:create"
     USER_READ = "user:read"
     USER_READ_ALL = "user:read_all"
     USER_UPDATE = "user:update"
     USER_DELETE = "user:delete"
-    USER_MANAGE = "user:manage"  # Legacy: combines create/read_all/update/delete
+    USER_MANAGE = "user:manage"  # Composite: combines create/read_all/update/delete
 
-    # ==========================================================================
-    # Team Management
-    # ==========================================================================
     TEAM_CREATE = "team:create"
     TEAM_READ = "team:read"
     TEAM_READ_ALL = "team:read_all"
     TEAM_UPDATE = "team:update"
     TEAM_DELETE = "team:delete"
 
-    # ==========================================================================
-    # Project Management
-    # ==========================================================================
     PROJECT_CREATE = "project:create"
     PROJECT_READ = "project:read"
     PROJECT_READ_ALL = "project:read_all"
     PROJECT_UPDATE = "project:update"
     PROJECT_DELETE = "project:delete"
 
-    # ==========================================================================
-    # Analytics
-    # ==========================================================================
     ANALYTICS_READ = "analytics:read"
     ANALYTICS_SUMMARY = "analytics:summary"
     ANALYTICS_DEPENDENCIES = "analytics:dependencies"
@@ -56,22 +41,13 @@ class Permissions:
     ANALYTICS_SEARCH = "analytics:search"
     ANALYTICS_RECOMMENDATIONS = "analytics:recommendations"
 
-    # ==========================================================================
-    # Notifications
-    # ==========================================================================
     NOTIFICATIONS_BROADCAST = "notifications:broadcast"
 
-    # ==========================================================================
-    # Waivers
-    # ==========================================================================
     WAIVER_READ = "waiver:read"
     WAIVER_READ_ALL = "waiver:read_all"
     WAIVER_MANAGE = "waiver:manage"
     WAIVER_DELETE = "waiver:delete"
 
-    # ==========================================================================
-    # Webhooks
-    # ==========================================================================
     WEBHOOK_CREATE = "webhook:create"
     WEBHOOK_READ = "webhook:read"
     WEBHOOK_UPDATE = "webhook:update"
@@ -124,11 +100,6 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.WEBHOOK_DELETE,
 ]
 
-
-# =============================================================================
-# Permission Presets
-# =============================================================================
-
 # Admin: All permissions
 PRESET_ADMIN: List[str] = ALL_PERMISSIONS.copy()
 
@@ -153,6 +124,9 @@ PRESET_USER: List[str] = [
     Permissions.ANALYTICS_RECOMMENDATIONS,
     # Waivers - can view own waivers
     Permissions.WAIVER_READ,
+    # Webhooks - can create and view webhooks for own projects
+    Permissions.WEBHOOK_CREATE,
+    Permissions.WEBHOOK_READ,
 ]
 
 # Viewer: Read-only access
@@ -169,11 +143,6 @@ PRESET_VIEWER: List[str] = [
     # Waivers - can view waivers
     Permissions.WAIVER_READ,
 ]
-
-
-# =============================================================================
-# Permission Groups for UI
-# =============================================================================
 
 PERMISSION_GROUPS = [
     {
@@ -403,11 +372,6 @@ PERMISSION_GROUPS = [
         ],
     },
 ]
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
 
 
 def has_permission(

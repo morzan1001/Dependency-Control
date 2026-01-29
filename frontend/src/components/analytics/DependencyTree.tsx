@@ -72,7 +72,20 @@ function DependencyNode({ node, level, onSelect }: DependencyNodeProps) {
             <span className="font-medium">{node.name}</span>
             <Badge variant="outline" className="text-xs">{node.version}</Badge>
             {node.direct && (
-              <Badge variant="secondary" className="text-xs">direct</Badge>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="secondary" className="text-xs cursor-help">
+                    direct{node.direct_inferred ? '*' : ''}
+                  </Badge>
+                </TooltipTrigger>
+                {node.direct_inferred && (
+                  <TooltipContent side="top">
+                    <p className="text-xs">
+                      Direct/transitive classification inferred (SBOM had no dependency graph)
+                    </p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
             )}
             
             {/* Source information */}

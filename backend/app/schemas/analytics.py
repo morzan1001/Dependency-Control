@@ -256,11 +256,6 @@ class DependencySearchResponse(BaseModel):
     size: int
 
 
-# =============================================================================
-# Recommendations
-# =============================================================================
-
-
 class RecommendationResponse(BaseModel):
     """Response model for a single recommendation."""
 

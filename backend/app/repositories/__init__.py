@@ -11,14 +11,17 @@ from app.repositories.broadcasts import BroadcastRepository
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
+from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.invitations import InvitationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
+from app.repositories.token_blacklist import TokenBlacklistRepository
 from app.repositories.users import UserRepository
 from app.repositories.waivers import WaiverRepository
+from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
 from app.repositories.webhooks import WebhookRepository
 
 __all__ = [
@@ -28,13 +31,16 @@ __all__ = [
     "CallgraphRepository",
     "DependencyRepository",
     "DependencyEnrichmentRepository",
+    "DistributedLocksRepository",
     "FindingRepository",
     "InvitationRepository",
     "ProjectRepository",
     "ScanRepository",
     "SystemSettingsRepository",
     "TeamRepository",
+    "TokenBlacklistRepository",
     "UserRepository",
     "WaiverRepository",
+    "WebhookDeliveriesRepository",
     "WebhookRepository",
 ]

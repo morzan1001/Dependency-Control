@@ -3,9 +3,10 @@ from typing import Any, Dict, List
 
 from app.core.constants import SCORECARD_LOW_THRESHOLD
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 
-def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
+def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
     """Process supply chain quality findings from OpenSSF Scorecard."""
     if not findings:
         return []
@@ -19,19 +20,19 @@ def process_quality(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     unmaintained_packages: List[Any] = []
 
     for f in findings:
-        severity = f.get("severity", "UNKNOWN")
+        severity = get_attr(f, "severity", "UNKNOWN")
         severity_counts[severity] += 1
-        component = f.get("component", "unknown")
-        version = f.get("version", "")
-        details = f.get("details", {})
+        component = get_attr(f, "component", "unknown")
+        version = get_attr(f, "version", "")
+        details = get_attr(f, "details", {})
 
-        overall_score = details.get("overall_score")
+        overall_score = details.get("overall_score") if isinstance(details, dict) else None
         if overall_score is None:
             overall_score = 0.0
 
-        critical_issues = details.get("critical_issues", [])
-        failed_checks = details.get("failed_checks", [])
-        project_url = details.get("project_url", "")
+        critical_issues = details.get("critical_issues", []) if isinstance(details, dict) else []
+        failed_checks = details.get("failed_checks", []) if isinstance(details, dict) else []
+        project_url = details.get("project_url", "") if isinstance(details, dict) else ""
 
         # Track packages with very low scores
         if overall_score < SCORECARD_LOW_THRESHOLD:

@@ -34,9 +34,6 @@ class Settings(BaseSettings):
     # Frontend
     FRONTEND_BASE_URL: str = "http://localhost:3000"
 
-    # =========================================================================
-    # Configurable Timeouts (deployment-dependent)
-    # =========================================================================
     # Time (seconds) a scan can be in 'processing' before considered stuck
     # Increase this if your analysis typically takes longer
     HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS: int = 1800  # 30 minutes

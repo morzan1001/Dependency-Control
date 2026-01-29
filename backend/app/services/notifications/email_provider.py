@@ -1,7 +1,5 @@
-import asyncio
 import logging
 import os
-import smtplib
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -20,32 +18,62 @@ except ImportError:
     notifications_sent_total = None
     notifications_failed_total = None
 
+# Import aiosmtplib for async SMTP (required dependency)
+try:
+    import aiosmtplib
+except ImportError as e:
+    logger.error(
+        "aiosmtplib is required for async SMTP. " "Install with: poetry install"
+    )
+    raise ImportError("aiosmtplib is required") from e
+
 
 class EmailProvider(NotificationProvider):
-    def _send_sync(
-        self, smtp_host, smtp_port, smtp_user, smtp_password, encryption, msg
-    ):
+    async def _send_async(
+        self,
+        smtp_host: str,
+        smtp_port: int,
+        smtp_user: Optional[str],
+        smtp_password: Optional[str],
+        encryption: str,
+        msg: MIMEMultipart,
+    ) -> None:
+        """
+        Send email using async SMTP (aiosmtplib).
+        Does not block the event loop.
+        """
         timeout = SMTP_TIMEOUT_SECONDS
+
         try:
+            # Configure SMTP client based on encryption
             if encryption == "ssl":
-                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=timeout) as server:
-                    if smtp_user and smtp_password:
-                        server.login(smtp_user, smtp_password)
-                    server.send_message(msg)
-            elif encryption == "starttls":
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=timeout) as server:
-                    # Always use STARTTLS when configured for security
-                    server.starttls()
-                    if smtp_user and smtp_password:
-                        server.login(smtp_user, smtp_password)
-                    server.send_message(msg)
-            else:  # none
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=timeout) as server:
-                    if smtp_user and smtp_password:
-                        server.login(smtp_user, smtp_password)
-                    server.send_message(msg)
+                smtp = aiosmtplib.SMTP(
+                    hostname=smtp_host,
+                    port=smtp_port,
+                    use_tls=True,
+                    timeout=timeout,
+                )
+            else:
+                smtp = aiosmtplib.SMTP(
+                    hostname=smtp_host,
+                    port=smtp_port,
+                    use_tls=False,
+                    timeout=timeout,
+                )
+
+            async with smtp:
+                if encryption == "starttls":
+                    await smtp.starttls()
+
+                # Login if credentials provided
+                if smtp_user and smtp_password:
+                    await smtp.login(smtp_user, smtp_password)
+
+                # Send message
+                await smtp.send_message(msg)
+
         except Exception as e:
-            logger.error(f"SMTP send failed: {e}")
+            logger.error(f"Async SMTP send failed: {e}")
             raise
 
     async def send(
@@ -105,11 +133,8 @@ class EmailProvider(NotificationProvider):
                 if html_message:
                     msg.attach(MIMEText(html_message, "html"))
 
-            # Send email
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None,
-                self._send_sync,
+            # Send email asynchronously using aiosmtplib
+            await self._send_async(
                 smtp_host,
                 smtp_port,
                 smtp_user,

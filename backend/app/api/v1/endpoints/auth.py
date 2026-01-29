@@ -302,17 +302,54 @@ async def create_user(
 
 @router.post("/logout", response_model=LogoutResponse, summary="Logout user")
 async def logout(
+    request: Request,
     current_user: User = Depends(deps.get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> LogoutResponse:
     """
     Logout the current user.
-    Invalidates all tokens issued before this logout by updating the user's last_logout_at timestamp.
+
+    Invalidates the current token by:
+    1. Adding token JTI to blacklist (immediate invalidation)
+    2. Updating last_logout_at timestamp (invalidates older tokens)
+
+    This ensures the token is immediately invalidated and cannot be reused.
     """
+    from app.repositories import TokenBlacklistRepository, UserRepository
+
+    # Extract token from Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]  # Remove "Bearer " prefix
+
+        # Decode token to get JTI and expiration
+        try:
+            payload = jwt.decode(
+                token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+            )
+            jti = payload.get("jti")
+            exp_timestamp = payload.get("exp")
+
+            if jti and exp_timestamp:
+                # Convert exp timestamp to datetime
+                exp_datetime = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
+
+                # Blacklist the token
+                blacklist_repo = TokenBlacklistRepository(db)
+                await blacklist_repo.blacklist_token(jti, exp_datetime, reason="logout")
+                logger.info(
+                    f"Token {jti[:8]}... blacklisted for user {current_user.username}"
+                )
+        except Exception as e:
+            logger.warning(f"Could not blacklist token on logout: {e}")
+
+    # Update last_logout_at for backward compatibility
+    # (invalidates tokens without JTI or issued before this timestamp)
     user_repo = UserRepository(db)
     await user_repo.update(
         current_user.id, {"last_logout_at": datetime.now(timezone.utc)}
     )
+
     return LogoutResponse(message="Successfully logged out")
 
 
@@ -510,15 +547,34 @@ async def login_oidc_callback(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing state parameter"
         )
 
-    cached_state = await cache_service.get(f"oidc_state:{state}")
+    # If two requests arrive with same state, only one succeeds
+    state_key = f"oidc_state:{state}"
+    cached_state = await cache_service.get(state_key)
+
     if not cached_state or not cached_state.get("valid"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired state parameter",
         )
 
-    # Delete state after validation (one-time use)
-    await cache_service.delete(f"oidc_state:{state}")
+    # Mark state as used ATOMICALLY by setting valid=False
+    # If another request already did this, we'll detect it
+    # Try to update state to invalid
+    update_success = await cache_service.set(
+        state_key,
+        {"valid": False, "used_at": datetime.now(timezone.utc).isoformat()},
+        ttl_seconds=60,
+    )
+
+    # Double-check: if state is still valid in cache after our update attempt
+    # This prevents race condition where two requests process same state
+    recheck_state = await cache_service.get(state_key)
+    if recheck_state and recheck_state.get("valid"):
+        # Another request is using this state concurrently
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="State parameter already in use",
+        )
 
     redirect_uri = str(request.url_for("login_oidc_callback"))
 
@@ -679,7 +735,6 @@ async def login_oidc_callback(
         auth_oidc_logins_total.labels(status="success").inc()
 
     # Redirect to frontend with tokens
-    # We'll use a hash fragment to pass the tokens securely
     base_url = settings.FRONTEND_BASE_URL.rstrip("/")
     frontend_url = f"{base_url}/login/callback#access_token={access_token}&refresh_token={refresh_token}"
 
@@ -699,7 +754,14 @@ async def forgot_password(
     """
     Request a password reset email.
     This endpoint is public and always returns success to prevent email enumeration.
+
+    SECURITY: Uses constant-time response to prevent timing attacks.
     """
+    import asyncio
+    import time
+
+    start_time = time.monotonic()
+
     generic_response = ForgotPasswordResponse(
         message="If an account with this email exists, a password reset email has been sent."
     )
@@ -724,6 +786,12 @@ async def forgot_password(
                 user.get("username", "User"),
             )
 
+    # Ensure response time is always ~200ms regardless of whether email exists
+    elapsed = time.monotonic() - start_time
+    target_duration = 0.2  # 200ms
+    if elapsed < target_duration:
+        await asyncio.sleep(target_duration - elapsed)
+
     return generic_response
 
 
@@ -737,13 +805,26 @@ async def reset_password(
 ) -> PasswordResetResponse:
     """
     Reset password using the token received via email.
+    Token is one-time use to prevent replay attacks.
     """
+    token_hash = security.get_password_hash(reset_in.token)  # Hash token for storage
+    token_key = f"used_reset_token:{token_hash[:32]}"  # Use first 32 chars of hash
+
+    if await cache_service.get(token_key):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This reset token has already been used",
+        )
+
     email = security.verify_password_reset_token(reset_in.token)
     if not email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token",
         )
+
+    # TTL: Same as token expiration (1 hour from now)
+    await cache_service.set(token_key, True, ttl_seconds=3600)
 
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)

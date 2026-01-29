@@ -2,9 +2,10 @@ from collections import defaultdict
 from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.recommendation.common import get_attr, ModelOrDict
 
 
-def process_iac(findings: List[Dict[str, Any]]) -> List[Recommendation]:
+def process_iac(findings: List[ModelOrDict]) -> List[Recommendation]:
     """Process IAC (Infrastructure as Code) findings."""
     if not findings:
         return []
@@ -12,11 +13,12 @@ def process_iac(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     # Group by platform/category
     findings_by_platform = defaultdict(list)
     for f in findings:
-        details = f.get("details", {})
+        details = get_attr(f, "details", {})
+        query_name = details.get("query_name", "") if isinstance(details, dict) else ""
         platform = (
-            details.get("platform") or details.get("query_name", "").split(".")[0]
-            if details.get("query_name")
-            else "infrastructure"
+            (details.get("platform") if isinstance(details, dict) else None)
+            or (query_name.split(".")[0] if query_name else None)
+            or "infrastructure"
         )
         # Normalize platform
         platform_lower = platform.lower()
@@ -42,8 +44,8 @@ def process_iac(findings: List[Dict[str, Any]]) -> List[Recommendation]:
         files_affected = set()
 
         for f in plat_findings:
-            severity_counts[f.get("severity", "UNKNOWN")] += 1
-            files_affected.add(f.get("component", "unknown"))
+            severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
+            files_affected.add(get_attr(f, "component", "unknown"))
 
         critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get(
             "HIGH", 0
@@ -92,15 +94,15 @@ def process_iac(findings: List[Dict[str, Any]]) -> List[Recommendation]:
     return recommendations
 
 
-def _get_common_iac_issues(findings: List[Dict[str, Any]]) -> List[str]:
+def _get_common_iac_issues(findings: List[ModelOrDict]) -> List[str]:
     """Extract common IAC issue types."""
     issues: Dict[str, int] = defaultdict(int)
     for f in findings:
-        details = f.get("details", {})
+        details = get_attr(f, "details", {})
         issue_type = (
-            details.get("query_name")
-            or details.get("check_id")
-            or f.get("description", "")[:50]
+            (details.get("query_name") if isinstance(details, dict) else None)
+            or (details.get("check_id") if isinstance(details, dict) else None)
+            or get_attr(f, "description", "")[:50]
         )
         issues[issue_type] += 1
 

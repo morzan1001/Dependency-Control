@@ -11,6 +11,13 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateOne
 
 from app.models.project import Project
+from app.repositories import (
+    AnalysisResultRepository,
+    CallgraphRepository,
+    FindingRepository,
+    ProjectRepository,
+    ScanRepository,
+)
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.aggregator import ResultAggregator
 from app.services.analyzers import Analyzer
@@ -93,14 +100,18 @@ async def _carry_over_external_results(
     internal_analyzer_names = list(analyzers.keys())
 
     # Find results from the original scan that are NOT internal analyzers
-    cursor = db.analysis_results.find(
+    from app.repositories import AnalysisResultRepository
+
+    result_repo = AnalysisResultRepository(db)
+    old_results = await result_repo.find_many_raw(
         {
             "scan_id": original_scan_id,
             "analyzer_name": {"$nin": internal_analyzer_names},
-        }
+        },
+        limit=10000,
     )
 
-    async for old_result in cursor:
+    for old_result in old_results:
         # Use upsert to avoid race conditions when multiple workers might copy the same result
         # The unique key is (scan_id, analyzer_name, result hash)
         new_result = old_result.copy()
@@ -108,19 +119,16 @@ async def _carry_over_external_results(
         new_result["scan_id"] = scan_id
         new_result["created_at"] = datetime.now(timezone.utc)
 
-        # Use update_one with upsert to atomically check-and-insert
-        result = await db.analysis_results.update_one(
+        # Use upsert via repository (upsert is implicit, no parameter needed)
+        await result_repo.upsert(
             {
                 "scan_id": scan_id,
                 "analyzer_name": old_result["analyzer_name"],
                 "result": old_result["result"],
             },
             {"$setOnInsert": new_result},
-            upsert=True,
         )
-
-        if result.upserted_id:
-            logger.info(f"Carried over result for {old_result['analyzer_name']}")
+        logger.debug(f"Carried over result for {old_result['analyzer_name']}")
 
 
 async def process_analyzer(
@@ -150,8 +158,9 @@ async def process_analyzer(
             duration = time.time() - analyzer_start_time
             analysis_duration_seconds.labels(analyzer=analyzer_name).observe(duration)
 
-        # Store raw result
-        await db.analysis_results.insert_one(
+        # Store raw result via repository
+        result_repo = AnalysisResultRepository(db)
+        await result_repo.create_raw(
             {
                 "_id": str(uuid.uuid4()),
                 "scan_id": scan_id,
@@ -205,8 +214,15 @@ async def run_analysis(
     aggregator = ResultAggregator()
     results_summary: List[str] = []
 
+    # Initialize repositories for consistent data access
+    scan_repo = ScanRepository(db)
+    result_repo = AnalysisResultRepository(db)
+    finding_repo = FindingRepository(db)
+    callgraph_repo = CallgraphRepository(db)
+    project_repo = ProjectRepository(db)
+
     # Fetch scan document ONCE at the beginning - reuse throughout the function
-    scan_doc: Optional[ScanDict] = await db.scans.find_one({"_id": scan_id})
+    scan_doc: Optional[ScanDict] = await scan_repo.find_one_raw({"_id": scan_id})
     if not scan_doc:
         logger.error(f"Scan {scan_id} not found")
         return False
@@ -216,7 +232,8 @@ async def run_analysis(
     # 0. Cleanup previous results for internal analyzers
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
     if internal_analyzers:
-        await db.analysis_results.delete_many(
+        # Delete via repository for consistency
+        await result_repo.delete_many(
             {"scan_id": scan_id, "analyzer_name": {"$in": internal_analyzers}}
         )
 
@@ -329,8 +346,9 @@ async def run_analysis(
     # We mark the time BEFORE loading external results to detect race conditions later
     external_load_start = datetime.now(timezone.utc)
 
-    external_results_cursor = db.analysis_results.find({"scan_id": scan_id})
-    async for res in external_results_cursor:
+    # Load external results via repository
+    external_results = await result_repo.find_by_scan_raw(scan_id, limit=10000)
+    for res in external_results:
         name = res["analyzer_name"]
         if name not in analyzers:
             aggregator.aggregate(name, res["result"])
@@ -395,7 +413,7 @@ async def run_analysis(
     ]
 
     # Save Findings to 'findings' collection
-    await db.findings.delete_many({"scan_id": scan_id})
+    await finding_repo.delete_many({"scan_id": scan_id})
 
     findings_to_insert = []
     for f in aggregated_findings:
@@ -420,7 +438,8 @@ async def run_analysis(
                 vulnerability_findings, github_token=github_token
             )
             epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
-            await db.analysis_results.insert_one(
+            # Store EPSS/KEV summary via repository
+            await result_repo.create_raw(
                 {
                     "_id": str(uuid.uuid4()),
                     "scan_id": scan_id,
@@ -457,14 +476,14 @@ async def run_analysis(
 
     # Reachability Analysis
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
-        callgraph = await db.callgraphs.find_one(
+        callgraph = await callgraph_repo.find_one_raw(
             {"project_id": project_id, "scan_id": scan_id}
         )
 
         if not callgraph:
             pipeline_id = scan_doc.get("pipeline_id") if scan_doc else None
             if pipeline_id:
-                callgraph = await db.callgraphs.find_one(
+                callgraph = await callgraph_repo.find_one_raw(
                     {"project_id": project_id, "pipeline_id": pipeline_id}
                 )
 
@@ -479,7 +498,8 @@ async def run_analysis(
                 reachability_summary = build_reachability_summary(
                     vulnerability_findings, callgraph, enriched_count
                 )
-                await db.analysis_results.insert_one(
+                # Store reachability summary via repository
+                await result_repo.create_raw(
                     {
                         "_id": str(uuid.uuid4()),
                         "scan_id": scan_id,
@@ -511,8 +531,8 @@ async def run_analysis(
             except Exception as e:
                 logger.warning(f"[reachability] Failed to enrich findings: {e}")
         else:
-            await db.scans.update_one(
-                {"_id": scan_id},
+            await scan_repo.update_raw(
+                scan_id,
                 {
                     "$set": {
                         "reachability_pending": True,
@@ -525,7 +545,7 @@ async def run_analysis(
             )
 
     if findings_to_insert:
-        await db.findings.insert_many(findings_to_insert)
+        await finding_repo.create_many_raw(findings_to_insert)
 
     # Apply waivers via DB updates
     for waiver in active_waivers:
@@ -541,30 +561,23 @@ async def run_analysis(
 
         vulnerability_id = waiver.get("vulnerability_id")
         if vulnerability_id:
-            await db.findings.update_many(
-                {
-                    **query,
-                    "type": "vulnerability",
-                    "details.vulnerabilities.id": vulnerability_id,
-                },
-                {
-                    "$set": {
-                        "details.vulnerabilities.$[vuln].waived": True,
-                        "details.vulnerabilities.$[vuln].waiver_reason": waiver.get(
-                            "reason"
-                        ),
-                    }
-                },
-                array_filters=[{"vuln.id": vulnerability_id}],
+            # Use custom repository method with array_filters support
+            await finding_repo.apply_vulnerability_waiver(
+                scan_id=scan_id,
+                vulnerability_id=vulnerability_id,
+                waived=True,
+                waiver_reason=waiver.get("reason"),
             )
         else:
-            await db.findings.update_many(
-                query, {"$set": {"waived": True, "waiver_reason": waiver.get("reason")}}
+            # Use custom repository method for finding-level waivers
+            await finding_repo.apply_finding_waiver(
+                scan_id=scan_id,
+                query={k: v for k, v in query.items() if k != "scan_id"},
+                waived=True,
+                waiver_reason=waiver.get("reason"),
             )
 
-    ignored_count = await db.findings.count_documents(
-        {"scan_id": scan_id, "waived": True}
-    )
+    ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
 
     # Track waiver metrics
     if analysis_waivers_applied_total:
@@ -608,8 +621,16 @@ async def run_analysis(
     # Race Condition Check: Did new results arrive while we were processing?
     # Specifically, after we started loading external results.
     # We need a fresh query here since last_result_at may have changed during processing
-    race_check = await db.scans.find_one({"_id": scan_id}, {"last_result_at": 1})
+    race_check = await scan_repo.find_one_raw(
+        {"_id": scan_id}, projection={"last_result_at": 1}
+    )
     last_result_at = race_check.get("last_result_at") if race_check else None
+
+    # Ensure timezone-aware comparison (handle legacy timezone-naive datetimes)
+    if last_result_at:
+        if last_result_at.tzinfo is None:
+            # Convert naive datetime to UTC
+            last_result_at = last_result_at.replace(tzinfo=timezone.utc)
 
     if last_result_at and last_result_at >= external_load_start:
         logger.warning(
@@ -622,13 +643,16 @@ async def run_analysis(
             analysis_race_conditions_total.inc()
 
         # Reset to pending so it gets picked up again
-        await db.scans.update_one(
-            {"_id": scan_id},
+        # IMPORTANT: Increment retry_count to prevent infinite loops
+        # This ensures that scans stuck in race condition loops eventually fail
+        await scan_repo.update_raw(
+            scan_id,
             {
                 "$set": {
                     "status": "pending",
                     # We do NOT unset received_results/last_result_at here, keep them for the next run
-                }
+                },
+                "$inc": {"retry_count": 1},
             },
         )
         return False
@@ -638,8 +662,8 @@ async def run_analysis(
         aggregation_duration = time.time() - aggregation_start_time
         analysis_aggregation_duration_seconds.observe(aggregation_duration)
 
-    await db.scans.update_one(
-        {"_id": scan_id},
+    await scan_repo.update_raw(
+        scan_id,
         {
             "$set": {
                 "status": "completed",
@@ -660,8 +684,8 @@ async def run_analysis(
 
     # Update Project stats (reuse scan_doc from the beginning)
     if scan_doc.get("is_rescan") and scan_doc.get("original_scan_id"):
-        await db.scans.update_one(
-            {"_id": scan_doc["original_scan_id"]},
+        await scan_repo.update_raw(
+            scan_doc["original_scan_id"],
             {
                 "$set": {
                     "latest_rescan_id": scan_id,
@@ -671,8 +695,8 @@ async def run_analysis(
         )
 
     if project_id:
-        await db.projects.update_one(
-            {"_id": project_id},
+        await project_repo.update_raw(
+            project_id,
             {
                 "$set": {
                     "stats": stats.model_dump(),
@@ -684,7 +708,7 @@ async def run_analysis(
 
     # Integrations & Notifications
     if project_id:
-        project_data = await db.projects.find_one({"_id": project_id})
+        project_data = await project_repo.get_raw_by_id(project_id)
         if project_data:
             project = Project(**project_data)
 

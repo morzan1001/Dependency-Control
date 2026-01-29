@@ -42,11 +42,6 @@ class SBOMIngest(BaseIngest):
     )
 
 
-# =============================================================================
-# Response Schemas
-# =============================================================================
-
-
 class ScanStatsResponse(BaseModel):
     """Statistics from scan analysis."""
 

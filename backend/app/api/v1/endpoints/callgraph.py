@@ -103,22 +103,23 @@ async def upload_callgraph(
             status_code=400, detail=f"Failed to parse callgraph: {str(e)}"
         )
 
-    # Create callgraph document
-    # First, resolve scan_id if only pipeline_id is provided
+    import uuid
+
     scan_id = request.scan_id
     if not scan_id and request.pipeline_id:
-        # Find the scan for this pipeline (consistent with other ingest endpoints)
-        existing_scan = await scan_repo.find_one(
-            {
-                "project_id": project_id,
-                "pipeline_id": request.pipeline_id,
-            }
+        # This ensures callgraph is linked to the correct scan
+        if request.commit_hash:
+            # Deterministic: Same commit + pipeline = same scan
+            scan_id_seed = f"{project_id}-{request.pipeline_id}-{request.commit_hash}"
+            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+        else:
+            # No commit_hash: Use pipeline_id only (less precise)
+            scan_id_seed = f"{project_id}-{request.pipeline_id}"
+            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+
+        logger.debug(
+            f"Generated deterministic scan_id {scan_id} from pipeline_id {request.pipeline_id}"
         )
-        if existing_scan:
-            scan_id = existing_scan["_id"]
-            logger.debug(
-                f"Resolved scan_id {scan_id} from pipeline_id {request.pipeline_id}"
-            )
 
     callgraph = Callgraph(
         project_id=project_id,

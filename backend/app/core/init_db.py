@@ -61,6 +61,18 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["dependencies"].create_index("version")
     await database["dependencies"].create_index("type")
     await database["dependencies"].create_index("direct")
+    # Unique constraint to prevent duplicate dependencies in the same scan
+    # This allows safe upsert operations and prevents race conditions during SBOM ingestion
+    await database["dependencies"].create_index(
+        [
+            ("scan_id", pymongo.ASCENDING),
+            ("name", pymongo.ASCENDING),
+            ("version", pymongo.ASCENDING),
+            ("purl", pymongo.ASCENDING),
+        ],
+        unique=True,
+        sparse=True,  # Allow null purl values
+    )
     # Compound index for fast search within a project
     await database["dependencies"].create_index(
         [("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)]
@@ -131,6 +143,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)]
     )
     await database["scans"].create_index("original_scan_id")
+    await database["scans"].create_index("latest_rescan_id")  # For fast rescan history traversal
 
     # Findings - Additional indexes for analytics and stats
     await database["findings"].create_index("waived")
@@ -172,8 +185,55 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["waivers"].create_index("finding_id")
     await database["waivers"].create_index("package_name")
 
-    # Webhooks
+    # Webhooks - Extended with circuit breaker and performance indexes
     await database["webhooks"].create_index("project_id")
+    await database["webhooks"].create_index(
+        [("is_active", pymongo.ASCENDING), ("circuit_breaker_until", pymongo.ASCENDING)]
+    )
+    await database["webhooks"].create_index(
+        [("project_id", pymongo.ASCENDING), ("is_active", pymongo.ASCENDING)]
+    )
+    await database["webhooks"].create_index("events")
+
+    # Webhook Deliveries - Audit trail (NEW)
+    await database["webhook_deliveries"].create_index(
+        [("webhook_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)]
+    )
+    await database["webhook_deliveries"].create_index(
+        [("success", pymongo.ASCENDING), ("webhook_id", pymongo.ASCENDING)]
+    )
+    # TTL Index: Auto-delete after 30 days
+    await database["webhook_deliveries"].create_index(
+        [("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000
+    )
+
+    # Distributed Locks - Multi-pod coordination (NEW)
+    # TTL Index: Auto-delete expired locks
+    await database["distributed_locks"].create_index(
+        [("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0
+    )
+
+    # Token Blacklist - Logout invalidation (NEW)
+    await database["token_blacklist"].create_index("jti", unique=True)
+    # TTL Index: Auto-delete after token expiration
+    await database["token_blacklist"].create_index(
+        [("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0
+    )
+
+    # Scans - Additional index for reachability pending
+    await database["scans"].create_index(
+        [("reachability_pending", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)]
+    )
+
+    # Dependencies - Source type filtering
+    await database["dependencies"].create_index(
+        [("scan_id", pymongo.ASCENDING), ("source_type", pymongo.ASCENDING)]
+    )
+
+    # Findings - Reachability analysis
+    await database["findings"].create_index(
+        [("scan_id", pymongo.ASCENDING), ("reachable", pymongo.ASCENDING)]
+    )
 
     # System Invitations
     await database["system_invitations"].create_index("token", unique=True)

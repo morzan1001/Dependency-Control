@@ -33,7 +33,6 @@ def normalize_trufflehog(
         detector = finding.get("DetectorType") or "Generic Secret"
 
         # Create a unique ID based on detector, file path, and secret hash
-        # Note: MD5 is used here for deduplication/fingerprinting, not security
         raw_secret = finding.get("Raw") or ""
         secret_hash = (
             hashlib.md5(raw_secret.encode()).hexdigest() if raw_secret else "nohash"

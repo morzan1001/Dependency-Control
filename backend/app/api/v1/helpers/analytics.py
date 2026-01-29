@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.services.recommendation.common import get_attr
+
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     BLAST_RADIUS_THRESHOLD,
@@ -338,13 +340,13 @@ def count_severities(severities: List[Optional[str]]) -> Dict[str, int]:
 
 
 def build_findings_severity_map(
-    findings: List[Dict[str, Any]],
+    findings: List[Any],
 ) -> Dict[str, Dict[str, int]]:
     """
     Build a map of component names to their severity counts.
 
     Args:
-        findings: List of finding documents
+        findings: List of finding documents (can be Pydantic models or dicts)
 
     Returns:
         Dict mapping component name to severity counts:
@@ -356,11 +358,11 @@ def build_findings_severity_map(
     findings_map: Dict[str, Dict[str, int]] = {}
 
     for finding in findings:
-        component = finding.get("component")
+        component = get_attr(finding, "component")
         if not component:
             continue
 
-        severity = finding.get("severity", "UNKNOWN")
+        severity = get_attr(finding, "severity", "UNKNOWN")
 
         if component not in findings_map:
             findings_map[component] = {

@@ -32,6 +32,12 @@ class ScanRepository:
         """Get raw scan document by ID."""
         return await self.collection.find_one({"_id": scan_id}, projection)
 
+    async def find_one_raw(
+        self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Find one raw scan document matching query."""
+        return await self.collection.find_one(query, projection)
+
     async def create(self, scan: Scan) -> Scan:
         """Create a new scan."""
         await self.collection.insert_one(scan.model_dump(by_alias=True))
@@ -99,6 +105,18 @@ class ScanRepository:
         if limit:
             cursor = cursor.limit(limit)
         return await cursor.to_list(limit)
+
+    # Alias for consistency with other repositories
+    async def find_many_raw(
+        self,
+        query: Dict[str, Any],
+        skip: int = 0,
+        limit: int = 100,
+        sort: Optional[List[tuple]] = None,
+        projection: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Alias for find_many() - returns raw dicts."""
+        return await self.find_many(query, projection, sort, skip, limit)
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
         """Count scans matching query."""

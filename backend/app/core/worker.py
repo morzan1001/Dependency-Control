@@ -64,7 +64,14 @@ class AnalysisWorkerManager:
             db = await get_database()
             # Find scans that are pending
             # Optimization: Only fetch _id, don't load full SBOMs
-            cursor = db.scans.find({"status": "pending"}, {"_id": 1})
+            # Limit recovery to prevent queue overload in case of many pending scans
+            recovery_limit = 1000  # Configurable limit
+            cursor = (
+                db.scans.find({"status": "pending"}, {"_id": 1})
+                .sort("created_at", 1)
+                .limit(recovery_limit)
+            )
+
             count = 0
             async for scan in cursor:
                 await self.queue.put(str(scan["_id"]))
@@ -72,6 +79,12 @@ class AnalysisWorkerManager:
 
             if count > 0:
                 logger.info(f"Recovered {count} pending scans from database.")
+                if count >= recovery_limit:
+                    logger.warning(
+                        f"Recovery limit ({recovery_limit}) reached. "
+                        f"Some pending scans may not have been queued. "
+                        f"They will be picked up by housekeeping."
+                    )
         except Exception as e:
             logger.error(f"Failed to recover pending jobs: {e}")
 
@@ -164,8 +177,33 @@ class AnalysisWorkerManager:
                     )
 
                     if not success:
+                        # Race condition detected - check retry count before re-queueing
+                        retry_count = scan.get("retry_count", 0)
+                        max_retries = 5  # Configurable limit
+
+                        if retry_count >= max_retries:
+                            logger.error(
+                                f"Scan {scan_id} failed after {retry_count} retries due to persistent race conditions. Marking as failed."
+                            )
+                            await db.scans.update_one(
+                                {"_id": scan_id},
+                                {
+                                    "$set": {
+                                        "status": "failed",
+                                        "error": f"Analysis failed after {retry_count} retry attempts due to race conditions.",
+                                    }
+                                },
+                            )
+                            self.queue.task_done()
+                            continue
+
                         logger.info(
-                            f"Scan {scan_id} requires re-processing (race condition). Re-queueing."
+                            f"Scan {scan_id} requires re-processing (race condition). "
+                            f"Re-queueing (attempt {retry_count + 1}/{max_retries})."
+                        )
+                        # Increment retry counter
+                        await db.scans.update_one(
+                            {"_id": scan_id}, {"$inc": {"retry_count": 1}}
                         )
                         await self.queue.put(scan_id)
                         self.queue.task_done()

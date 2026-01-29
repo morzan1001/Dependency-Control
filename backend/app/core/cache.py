@@ -43,11 +43,6 @@ except ImportError:
     cache_connected_clients = None
 
 
-# =============================================================================
-# Cache TTL and Key Constants (defined before CacheService to avoid forward references)
-# =============================================================================
-
-
 class CacheTTL:
     """Standard TTL values for different types of cached data."""
 
@@ -134,11 +129,6 @@ class CacheKeys:
     @staticmethod
     def malware(registry: str, package: str, version: str) -> str:
         return f"malware:{registry}:{package}:{version}"
-
-
-# =============================================================================
-# Cache Service
-# =============================================================================
 
 
 class CacheService:

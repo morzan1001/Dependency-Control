@@ -23,6 +23,7 @@ export interface SearchResult {
   type: string;
   license?: string;
   direct?: boolean;
+  direct_inferred?: boolean;
   purl?: string;
   source_type?: string;
   source_target?: string;
@@ -47,6 +48,7 @@ export interface DependencyTreeNode {
   purl: string;
   type: string;
   direct: boolean;
+  direct_inferred?: boolean;
   has_findings: boolean;
   findings_count: number;
   findings_severity?: SeverityBreakdown;
@@ -128,6 +130,7 @@ export interface AdvancedSearchResult {
   license?: string;
   license_url?: string;
   direct: boolean;
+  direct_inferred?: boolean;
   purl?: string;
   source_type?: string;
   source_target?: string;
@@ -276,7 +279,7 @@ export interface DependencyMetadata {
     links?: Record<string, string>;
   };
   project_count: number;
-  affected_projects: Array<{ id: string; name: string; direct: boolean }>;
+  affected_projects: Array<{ id: string; name: string; direct: boolean; direct_inferred?: boolean }>;
   total_vulnerability_count: number;
   total_finding_count: number;
   enrichment_sources?: string[];
