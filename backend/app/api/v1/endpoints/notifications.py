@@ -159,7 +159,7 @@ async def broadcast_message(
             return BroadcastResult(recipient_count=0)
 
         # Find teams -> members -> users
-        teams = await team_repo.find_many_raw(
+        teams = await team_repo.find_many(
             {"_id": {"$in": payload.target_teams}}, limit=100
         )
         user_ids: Set[str] = set()
@@ -198,7 +198,7 @@ async def broadcast_message(
             )
 
         # 1. Get all projects with latest_scan_id
-        projects_list = await project_repo.find_many_raw(
+        projects_list = await project_repo.find_many(
             {"latest_scan_id": {"$exists": True}}, limit=10000
         )
 

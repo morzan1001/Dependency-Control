@@ -86,7 +86,7 @@ class NotificationService:
             return
 
         system_settings = None
-        if db:
+        if db is not None:
             repo = SystemSettingsRepository(db)
             system_settings = await repo.get()
 
@@ -114,7 +114,7 @@ class NotificationService:
         Send a notification to multiple users.
         """
         system_settings = None
-        if db:
+        if db is not None:
             repo = SystemSettingsRepository(db)
             system_settings = await repo.get()
 
