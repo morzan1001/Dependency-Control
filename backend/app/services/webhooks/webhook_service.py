@@ -14,7 +14,10 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from app.models.webhook import Webhook
 
 import httpx
 
@@ -439,6 +442,7 @@ class WebhookService:
             List of matching webhooks (excluding those in circuit breaker state)
         """
         from datetime import datetime, timezone
+        from app.models.webhook import Webhook
 
         webhooks: List[Webhook] = []
         now = datetime.now(timezone.utc)

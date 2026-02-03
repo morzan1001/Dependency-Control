@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import List
 
 from app.schemas.recommendation import (
     Priority,

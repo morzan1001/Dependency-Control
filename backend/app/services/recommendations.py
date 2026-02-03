@@ -12,8 +12,6 @@ from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.core.constants import MAX_DEPENDENCY_DEPTH, OUTDATED_DEPENDENCY_THRESHOLD_DAYS
-from app.models.dependency import Dependency
-from app.models.finding_record import FindingRecord
 from app.schemas.recommendation import Recommendation
 from app.services.recommendation.common import get_attr, ModelOrDict
 

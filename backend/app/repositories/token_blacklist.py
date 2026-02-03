@@ -6,7 +6,6 @@ Tokens are automatically removed after expiration via MongoDB TTL index.
 """
 
 from datetime import datetime
-from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 

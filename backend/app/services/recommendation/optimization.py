@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from app.core.constants import QUICK_WIN_SCORING_WEIGHTS
 from app.schemas.recommendation import (

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import List
 
 from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.recommendation import (

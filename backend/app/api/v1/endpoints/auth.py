@@ -560,7 +560,7 @@ async def login_oidc_callback(
     # Mark state as used ATOMICALLY by setting valid=False
     # If another request already did this, we'll detect it
     # Try to update state to invalid
-    update_success = await cache_service.set(
+    await cache_service.set(
         state_key,
         {"valid": False, "used_at": datetime.now(timezone.utc).isoformat()},
         ttl_seconds=60,

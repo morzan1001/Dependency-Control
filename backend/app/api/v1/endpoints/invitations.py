@@ -1,5 +1,4 @@
 import logging
-import uuid
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List

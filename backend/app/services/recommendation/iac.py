@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import get_attr, ModelOrDict

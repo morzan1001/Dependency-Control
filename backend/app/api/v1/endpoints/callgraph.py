@@ -22,7 +22,7 @@ from app.api.v1.helpers.callgraph import (
 from app.db.mongodb import get_database
 from app.models.callgraph import Callgraph
 from app.models.user import User
-from app.repositories import CallgraphRepository, ScanRepository
+from app.repositories import CallgraphRepository
 from app.schemas.callgraph import (
     CallgraphResponse,
     CallgraphUploadRequest,
@@ -58,7 +58,6 @@ async def upload_callgraph(
     # Verify project exists and user has write access
     await check_callgraph_access(project_id, current_user, db, require_write=True)
 
-    scan_repo = ScanRepository(db)
     callgraph_repo = CallgraphRepository(db)
 
     # Detect format

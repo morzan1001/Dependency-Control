@@ -21,8 +21,8 @@ from app.api import deps
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.db.mongodb import get_database
 from app.models.dependency import Dependency
-from app.models.project import Project, Scan
-from app.repositories import DependencyRepository, ScanRepository
+from app.models.project import Project
+from app.repositories import DependencyRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -175,7 +175,6 @@ async def ingest_sbom(
     The analysis will be queued and processed by background workers.
     """
     manager = ScanManager(db, project)
-    scan_repo = ScanRepository(db)
     dep_repo = DependencyRepository(db)
 
     if not data.sboms:

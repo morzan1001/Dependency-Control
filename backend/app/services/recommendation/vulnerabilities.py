@@ -1,7 +1,6 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
-from pydantic import BaseModel
 
 from app.schemas.recommendation import (
     Priority,

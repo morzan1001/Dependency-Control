@@ -18,7 +18,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.worker import worker_manager
 from app.models.finding import Finding
-from app.models.project import Project, Scan
+from app.models.project import Project
 from app.models.stats import Stats
 from app.schemas.ingest import BaseIngest, ScanContext
 
@@ -116,7 +116,7 @@ class ScanManager:
         from app.repositories import ScanRepository
 
         scan_repo = ScanRepository(self.db)
-        result = await scan_repo.upsert({"_id": scan_id}, scan_update)
+        await scan_repo.upsert({"_id": scan_id}, scan_update)
 
         # Check if new scan was created
         is_new = True  # This is a simplification - could be improved
