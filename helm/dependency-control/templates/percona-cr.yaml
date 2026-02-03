@@ -19,9 +19,6 @@ spec:
     sslInternal: {{ .Values.database.cluster.name }}-ssl-internal
     {{- end }}
     encryptionKey: {{ .Values.database.cluster.name }}-encryption-key
-  security:
-    enableEncryption: true
-    encryptionKeySecret: {{ .Values.database.cluster.name }}-encryption-key
   upgradeOptions:
     versionServiceEndpoint: {{ .Values.database.percona.upgradeOptions.versionServiceEndpoint }}
     apply: {{ .Values.database.percona.upgradeOptions.apply }}
@@ -30,25 +27,7 @@ spec:
   - name: {{ .Values.database.percona.replicaSetName }}
     size: {{ .Values.database.cluster.replicas }}
     affinity:
-      podAntiAffinity:
-        preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          podAffinityTerm:
-            labelSelector:
-              matchExpressions:
-              - key: app.kubernetes.io/name
-                operator: In
-                values:
-                - percona-server-mongodb
-              - key: app.kubernetes.io/instance
-                operator: In
-                values:
-                - {{ .Values.database.cluster.name }}
-              - key: replset
-                operator: In
-                values:
-                - {{ .Values.database.percona.replicaSetName }}
-            topologyKey: kubernetes.io/hostname
+      antiAffinityTopologyKey: kubernetes.io/hostname
     podDisruptionBudget:
       maxUnavailable: 1
     resources:
