@@ -1,3 +1,11 @@
+# Release 1.4.7
+
+## 🚀 Features
+
+- feat: enhance memory debug endpoint to identify large containers (#0)
+
+
+
 # Release 1.4.6
 
 ## 🚀 Features
