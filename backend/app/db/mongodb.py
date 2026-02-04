@@ -24,8 +24,8 @@ except ImportError:
 
 # Connection pool settings (Motor uses these internally)
 # These can be overridden via MONGODB_URL query parameters
-DEFAULT_MAX_POOL_SIZE = 100
-DEFAULT_MIN_POOL_SIZE = 10
+DEFAULT_MAX_POOL_SIZE = 25 
+DEFAULT_MIN_POOL_SIZE = 2 
 DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 30000  # 30 seconds
 DEFAULT_CONNECT_TIMEOUT_MS = 20000  # 20 seconds
 DEFAULT_SOCKET_TIMEOUT_MS = 30000  # 30 seconds
