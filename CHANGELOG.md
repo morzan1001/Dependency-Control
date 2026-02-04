@@ -1,3 +1,11 @@
+# Release 1.4.5
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.5 and update MongoDB connection pool settings (#0)
+
+
+
 # Release 1.4.4
 
 ## 📦 Build & CI
