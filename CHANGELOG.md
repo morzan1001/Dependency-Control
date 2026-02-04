@@ -1,3 +1,15 @@
+# Release 1.4.8
+
+## 🐛 Fixes
+
+- fix: update liveness and readiness probes to return JSONResponse for consistency (#0)
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.8 (#0)
+
+
+
 # Release 1.4.7
 
 ## 🚀 Features
