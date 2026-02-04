@@ -133,9 +133,24 @@ async def memory_debug() -> Dict[str, Any]:
     type_counts = Counter(type(obj).__name__ for obj in all_objects)
     top_types = dict(type_counts.most_common(30))
 
-    # Check for large containers
-    large_dicts = sum(1 for obj in all_objects if isinstance(obj, dict) and len(obj) > 1000)
-    large_lists = sum(1 for obj in all_objects if isinstance(obj, list) and len(obj) > 1000)
+    # Check for large containers and identify them
+    large_dicts = []
+    large_lists = []
+    for obj in all_objects:
+        if isinstance(obj, dict) and len(obj) > 1000:
+            # Try to identify what this dict is
+            sample_keys = list(obj.keys())[:5]
+            large_dicts.append({
+                "size": len(obj),
+                "sample_keys": [str(k)[:50] for k in sample_keys],
+            })
+        elif isinstance(obj, list) and len(obj) > 1000:
+            # Try to identify what types are in this list
+            type_sample = [type(x).__name__ for x in obj[:5]]
+            large_lists.append({
+                "size": len(obj),
+                "type_sample": type_sample,
+            })
 
     # GC stats
     gc_stats = {
