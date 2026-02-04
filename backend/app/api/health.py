@@ -1,3 +1,9 @@
+import gc
+import os
+import sys
+from collections import Counter
+from typing import Any, Dict
+
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
@@ -100,3 +106,52 @@ async def cache_health():
             "error": str(e),
             "available": False,
         }
+
+
+@router.get("/debug/memory", summary="Memory Debug Info", include_in_schema=False)
+async def memory_debug() -> Dict[str, Any]:
+    """
+    Debug endpoint to analyze memory usage of the running process.
+    Only accessible internally, not exposed via ingress.
+    """
+    # Force garbage collection first
+    gc.collect()
+
+    # Get memory info from /proc
+    memory_info = {}
+    try:
+        with open("/proc/self/status", "r") as f:
+            for line in f:
+                if line.startswith(("VmRSS", "VmSize", "VmPeak", "VmData", "VmStk")):
+                    key, value = line.split(":", 1)
+                    memory_info[key.strip()] = value.strip()
+    except Exception:
+        pass
+
+    # Count Python objects by type
+    all_objects = gc.get_objects()
+    type_counts = Counter(type(obj).__name__ for obj in all_objects)
+    top_types = dict(type_counts.most_common(30))
+
+    # Check for large containers
+    large_dicts = sum(1 for obj in all_objects if isinstance(obj, dict) and len(obj) > 1000)
+    large_lists = sum(1 for obj in all_objects if isinstance(obj, list) and len(obj) > 1000)
+
+    # GC stats
+    gc_stats = {
+        "collections": gc.get_count(),
+        "thresholds": gc.get_threshold(),
+        "garbage_count": len(gc.garbage),
+    }
+
+    return {
+        "process_memory": memory_info,
+        "python_objects": {
+            "total_count": len(all_objects),
+            "top_types": top_types,
+            "large_dicts": large_dicts,
+            "large_lists": large_lists,
+        },
+        "gc_stats": gc_stats,
+        "modules_loaded": len(sys.modules),
+    }
