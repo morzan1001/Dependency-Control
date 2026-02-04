@@ -1,3 +1,11 @@
+# Release 1.4.4
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.4 (#0)
+
+
+
 # Release 1.4.3
 
 
