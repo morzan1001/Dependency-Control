@@ -1,8 +1,9 @@
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
@@ -27,6 +28,9 @@ except ImportError:
     worker_jobs_processed_total = None
     worker_job_duration_seconds = None
 
+# Default graceful shutdown timeout (should be less than K8s terminationGracePeriodSeconds)
+DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
+
 
 class AnalysisWorkerManager:
     """Manages analysis worker tasks and job queue."""
@@ -37,6 +41,10 @@ class AnalysisWorkerManager:
         self.workers: List[asyncio.Task[None]] = []
         self.housekeeping_task: Optional[asyncio.Task[None]] = None
         self.stale_scan_task: Optional[asyncio.Task[None]] = None
+        # Graceful shutdown state
+        self._shutting_down: bool = False
+        self._active_scans: Set[str] = set()  # Currently processing scan IDs
+        self._shutdown_event: asyncio.Event = asyncio.Event()
 
     async def start(self) -> None:
         """Starts the worker tasks and recovers pending jobs from DB."""
@@ -88,22 +96,118 @@ class AnalysisWorkerManager:
         except Exception as e:
             logger.error(f"Failed to recover pending jobs: {e}")
 
-    async def stop(self) -> None:
-        """Stops all worker tasks."""
-        logger.info("Stopping analysis workers...")
-        for task in self.workers:
-            task.cancel()
+    async def stop(self, timeout: Optional[float] = None) -> None:
+        """
+        Gracefully stops all worker tasks.
 
+        1. Signals shutdown (stops accepting new jobs)
+        2. Stops housekeeping tasks immediately
+        3. Waits for workers to finish current scan (with timeout)
+        4. Returns unclaimed queue items to DB as pending (they already are)
+        5. Force-cancels workers if timeout exceeded
+
+        Args:
+            timeout: Max seconds to wait for graceful shutdown.
+                     Default: DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
+        """
+        if timeout is None:
+            timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
+
+        logger.info(
+            f"Initiating graceful shutdown (timeout: {timeout}s, "
+            f"active scans: {len(self._active_scans)}, "
+            f"queue size: {self.queue.qsize()})..."
+        )
+
+        # 1. Signal shutdown - stop accepting new jobs
+        self._shutting_down = True
+        self._shutdown_event.set()
+
+        # 2. Stop housekeeping tasks immediately (they're not critical)
         if self.housekeeping_task:
             self.housekeeping_task.cancel()
-            logger.info("Housekeeping task stopped.")
+            logger.info("Housekeeping task cancelled.")
 
         if self.stale_scan_task:
             self.stale_scan_task.cancel()
-            logger.info("Stale scan loop stopped.")
+            logger.info("Stale scan loop cancelled.")
 
-    async def add_job(self, scan_id: str) -> None:
-        """Adds a new scan job to the queue."""
+        # 3. Log queue items that will be left behind (they're still pending in DB)
+        queue_size = self.queue.qsize()
+        if queue_size > 0:
+            logger.info(
+                f"Leaving {queue_size} items in queue - they remain 'pending' in DB "
+                f"and will be recovered by other pods or on restart."
+            )
+            # Drain the queue to prevent memory leak (items are already in DB as pending)
+            while not self.queue.empty():
+                try:
+                    self.queue.get_nowait()
+                    self.queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+
+        # 4. Wait for active scans to complete (with timeout)
+        if self._active_scans:
+            logger.info(
+                f"Waiting for {len(self._active_scans)} active scan(s) to complete: "
+                f"{self._active_scans}"
+            )
+            try:
+                # Wait for workers to finish their current work
+                await asyncio.wait_for(
+                    self._wait_for_active_scans(),
+                    timeout=timeout
+                )
+                logger.info("All active scans completed gracefully.")
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Shutdown timeout ({timeout}s) exceeded. "
+                    f"Force-cancelling {len(self._active_scans)} active scan(s): "
+                    f"{self._active_scans}. "
+                    f"These will be recovered by housekeeping as stuck scans."
+                )
+
+        # 5. Cancel all worker tasks (they should have exited by now or will be force-stopped)
+        for task in self.workers:
+            if not task.done():
+                task.cancel()
+
+        # Wait for tasks to be cancelled
+        if self.workers:
+            await asyncio.gather(*self.workers, return_exceptions=True)
+
+        # Update metrics
+        if worker_active_count:
+            worker_active_count.set(0)
+        if worker_queue_size:
+            worker_queue_size.set(0)
+
+        logger.info("Graceful shutdown complete.")
+
+    async def _wait_for_active_scans(self) -> None:
+        """Wait until all active scans are completed."""
+        while self._active_scans:
+            await asyncio.sleep(0.5)
+
+    def is_shutting_down(self) -> bool:
+        """Check if the worker manager is shutting down."""
+        return self._shutting_down
+
+    async def add_job(self, scan_id: str) -> bool:
+        """
+        Adds a new scan job to the queue.
+
+        Returns:
+            True if job was added, False if rejected (shutting down)
+        """
+        if self._shutting_down:
+            logger.warning(
+                f"Job {scan_id} rejected - worker manager is shutting down. "
+                f"Scan remains 'pending' in DB and will be processed by another pod."
+            )
+            return False
+
         await self.queue.put(scan_id)
         queue_size = self.queue.qsize()
         logger.info(f"Job {scan_id} added to queue. Queue size: {queue_size}")
@@ -112,13 +216,42 @@ class AnalysisWorkerManager:
         if worker_queue_size:
             worker_queue_size.set(queue_size)
 
+        return True
+
     async def worker(self, name: str) -> None:
         """Worker loop that processes jobs from the queue."""
-        logger.info(f"Worker {name} started")
+        hostname = os.getenv("HOSTNAME", "unknown")
+        worker_id = f"{hostname}/{name}"
+        logger.info(f"Worker {worker_id} started")
+
         while True:
             try:
-                scan_id = await self.queue.get()
-                logger.info(f"Worker {name} picked up scan {scan_id}")
+                # Check if we're shutting down and queue is empty
+                if self._shutting_down and self.queue.empty():
+                    logger.info(f"Worker {worker_id} exiting - shutdown signaled and queue empty")
+                    break
+
+                # Use wait_for with timeout to check shutdown periodically
+                try:
+                    scan_id = await asyncio.wait_for(self.queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # No item in queue, check shutdown and continue
+                    if self._shutting_down:
+                        logger.info(f"Worker {worker_id} exiting - shutdown signaled")
+                        break
+                    continue
+
+                # If shutting down, put the item back and exit
+                if self._shutting_down:
+                    # Don't process new items during shutdown - let other pods handle them
+                    logger.info(
+                        f"Worker {worker_id} returning scan {scan_id} to queue - shutting down"
+                    )
+                    # Item stays in DB as 'pending', just mark as done
+                    self.queue.task_done()
+                    break
+
+                logger.info(f"Worker {worker_id} picked up scan {scan_id}")
 
                 # Update queue size metric
                 if worker_queue_size:
@@ -136,7 +269,7 @@ class AnalysisWorkerManager:
                     {
                         "$set": {
                             "status": "processing",
-                            "worker_id": name,
+                            "worker_id": worker_id,  # Full hostname/worker format
                             "analysis_started_at": datetime.now(timezone.utc),
                         }
                     },
@@ -152,6 +285,9 @@ class AnalysisWorkerManager:
                     )
                     self.queue.task_done()
                     continue
+
+                # Track this scan as actively processing (for graceful shutdown)
+                self._active_scans.add(scan_id)
 
                 # Fetch project config (for active analyzers)
                 project = await db.projects.find_one({"_id": scan["project_id"]})
@@ -205,6 +341,8 @@ class AnalysisWorkerManager:
                         await db.scans.update_one(
                             {"_id": scan_id}, {"$inc": {"retry_count": 1}}
                         )
+                        # Remove from active scans before re-queueing
+                        self._active_scans.discard(scan_id)
                         await self.queue.put(scan_id)
                         self.queue.task_done()
                         continue
@@ -245,14 +383,16 @@ class AnalysisWorkerManager:
                             f"Failed to trigger analysis_failed webhook: {webhook_err}"
                         )
 
+                # Remove from active scans tracking
+                self._active_scans.discard(scan_id)
                 self.queue.task_done()
-                logger.info(f"Worker {name} finished scan {scan_id}")
+                logger.info(f"Worker {worker_id} finished scan {scan_id}")
 
             except asyncio.CancelledError:
-                logger.info(f"Worker {name} stopped")
+                logger.info(f"Worker {worker_id} cancelled during shutdown")
                 break
             except Exception as e:
-                logger.error(f"Worker {name} crashed: {e}")
+                logger.error(f"Worker {worker_id} crashed: {e}")
                 await asyncio.sleep(
                     1
                 )  # Prevent tight loop if something is really broken

@@ -1,0 +1,27 @@
+{{/*
+Percona MongoDB Metrics Service
+Exposes the mongodb_exporter sidecar port for Prometheus scraping
+*/}}
+{{- if and .Values.monitoring.serviceMonitor.enabled .Values.database.percona.monitoring.enabled (eq .Values.database.type "percona") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.database.cluster.name }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database-metrics
+    app.kubernetes.io/name: percona-server-mongodb
+    app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 9216
+      targetPort: 9216
+      protocol: TCP
+      name: metrics
+  selector:
+    app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
+    app.kubernetes.io/name: percona-server-mongodb
+{{- end }}

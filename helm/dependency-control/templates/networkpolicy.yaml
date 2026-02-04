@@ -20,6 +20,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
   policyTypes:
   - Egress
   egress:
@@ -46,6 +47,7 @@ spec:
   podSelector:
     matchLabels:
       {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
   policyTypes:
   - Egress
   egress:
@@ -94,8 +96,12 @@ spec:
       {{- end }}
   {{- end }}
   {{- if .Values.monitoring.serviceMonitor.enabled }}
+  # Allow Prometheus to scrape backend metrics
+  # RESTRICTED: Only from kube-monitoring namespace
   - from:
-    - namespaceSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-monitoring
       podSelector:
         matchLabels:
           app.kubernetes.io/name: prometheus
@@ -135,11 +141,32 @@ spec:
       port: 80
       {{- end }}
   {{- end }}
+
+---
+# Frontend Egress - restrict to DNS only (frontend serves static files, no outbound connections needed)
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-frontend-egress
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS resolution only (nginx needs DNS for upstream resolution)
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
 {{- end }}
 
 {{- if .Values.networkPolicy.enabled }}
 ---
-# Allow MongoDB to receive traffic from Backend, Operator, and other Mongo nodes
+# Allow MongoDB to receive traffic from Backend, Operator, Init-Users Job, and other Mongo nodes
 kind: NetworkPolicy
 apiVersion: networking.k8s.io/v1
 metadata:
@@ -176,11 +203,61 @@ spec:
           {{- if eq .Values.database.type "mongodb" }}
           app.kubernetes.io/name: mongodb-kubernetes-operator
           {{- else }}
-          app.kubernetes.io/name: percona-server-mongodb-operator
+          app.kubernetes.io/name: psmdb-operator
+          {{- end }}
+    # Allow Init-Users Job (workaround for Percona bug #1983)
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: {{ .Values.database.cluster.name }}-init-users
+    ports:
+    - protocol: TCP
+      port: 27017
+  {{- if and .Values.monitoring.serviceMonitor.enabled .Values.database.percona.monitoring.enabled }}
+  # Allow Prometheus to scrape MongoDB metrics (port 9216)
+  # RESTRICTED: Only from kube-monitoring namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - protocol: TCP
+      port: 9216
+  {{- end }}
+
+---
+# Allow Init-Users Job to talk to MongoDB and DNS (workaround for Percona bug #1983)
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-init-users-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.database.cluster.name }}-init-users
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- if eq .Values.database.type "mongodb" }}
+          app: "{{ .Values.database.cluster.name }}-svc"
+          {{- else }}
+          app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
+          app.kubernetes.io/name: percona-server-mongodb
           {{- end }}
     ports:
     - protocol: TCP
       port: 27017
+  # Allow DNS resolution
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
 
 ---
 # Allow MongoDB to talk to other Mongo nodes (Replication)
@@ -235,13 +312,35 @@ spec:
       {{- if eq .Values.database.type "mongodb" }}
       app.kubernetes.io/name: mongodb-kubernetes-operator
       {{- else }}
-      app.kubernetes.io/name: percona-server-mongodb-operator
+      app.kubernetes.io/name: psmdb-operator
       {{- end }}
   policyTypes:
   - Egress
   egress:
   # Allow everything for Operator to ensure it can manage resources and talk to K8s API
   - {}
+
+---
+# Allow Operator to receive healthchecks from Kubelet
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-operator-to-apiserver
+spec:
+  podSelector:
+    matchLabels:
+      {{- if eq .Values.database.type "mongodb" }}
+      app.kubernetes.io/name: mongodb-kubernetes-operator
+      {{- else }}
+      app.kubernetes.io/name: psmdb-operator
+      {{- end }}
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow healthchecks from anywhere (kubelet uses host network)
+  - ports:
+    - protocol: TCP
+      port: 8081
 {{- end }}
 
 {{- if and .Values.dragonfly.enabled .Values.networkPolicy.enabled }}
@@ -301,10 +400,13 @@ spec:
     ports:
     - protocol: TCP
       port: 6379
-  {{- if .Values.dragonfly.serviceMonitor.enabled }}
-  # Allow Prometheus to scrape metrics
+  {{- if .Values.monitoring.serviceMonitor.enabled }}
+  # Allow Prometheus to scrape Dragonfly admin metrics (port 9999)
+  # RESTRICTED: Only from kube-monitoring namespace, only prometheus pods
   - from:
-    - namespaceSelector: {}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-monitoring
       podSelector:
         matchLabels:
           app.kubernetes.io/name: prometheus

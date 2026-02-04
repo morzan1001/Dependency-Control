@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import httpx
@@ -27,9 +26,6 @@ class KEVProvider:
         self._retry_delay = (
             retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
         )
-        # In-memory fallback caches (used only if Redis is unavailable)
-        self._kev_cache_fallback: Dict[str, KEVEntry] = {}
-        self._kev_cache_time_fallback: Optional[datetime] = None
 
     async def load_kev_catalog(self, client: httpx.AsyncClient) -> Dict[str, KEVEntry]:
         """Load CISA KEV catalog, using Redis cache with distributed lock."""
@@ -125,18 +121,8 @@ class KEVProvider:
         )
 
         if cached:
-            # Update in-memory fallback cache
             kev_data = {k: KEVEntry(**v) for k, v in cached.items()}
-            self._kev_cache_fallback = kev_data
-            self._kev_cache_time_fallback = datetime.now(timezone.utc)
             logger.debug(f"KEV catalog loaded ({len(kev_data)} entries)")
             return kev_data
 
-        # Fallback: check in-memory cache if Redis failed
-        if self._kev_cache_time_fallback:
-            cache_age = datetime.now(timezone.utc) - self._kev_cache_time_fallback
-            if cache_age < timedelta(hours=24) and self._kev_cache_fallback:
-                logger.debug("KEV catalog loaded from in-memory fallback cache")
-                return self._kev_cache_fallback
-
-        return self._kev_cache_fallback or {}
+        return {}

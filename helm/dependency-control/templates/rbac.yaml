@@ -1,0 +1,94 @@
+{{/*
+RBAC Configuration for Backend and Frontend
+Implements least-privilege access for service accounts
+*/}}
+{{- if .Values.serviceAccount.create }}
+---
+# Backend Role - minimal permissions for pod operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-backend
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+rules:
+  # Allow reading own pod info (for health checks and debugging)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Allow reading configmaps (for configuration)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Allow reading secrets (for credentials - restricted to specific secrets)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ include "dependency-control.fullname" . }}-secrets
+      - {{ include "dependency-control.fullname" . }}-backend-tls
+      - {{ include "dependency-control.fullname" . }}-dragonfly-tls
+      - {{ .Values.database.cluster.name }}-app-user
+    verbs: ["get"]
+
+---
+# Frontend Role - minimal permissions (read-only)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-frontend
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+rules:
+  # Frontend only needs to read its own configmap for nginx config
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      - {{ include "dependency-control.fullname" . }}-frontend-config
+    verbs: ["get"]
+  {{- if .Values.global.tls.enabled }}
+  # Allow reading TLS secrets for nginx
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ include "dependency-control.fullname" . }}-frontend-tls
+    verbs: ["get"]
+  {{- end }}
+
+---
+# RoleBinding for Backend
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-backend
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dependency-control.fullname" . }}-backend
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dependency-control.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+
+---
+# RoleBinding for Frontend
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-frontend
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "dependency-control.fullname" . }}-frontend
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dependency-control.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,28 @@
+{{/*
+PodDisruptionBudget for DragonflyDB
+Ensures cache availability during cluster maintenance
+*/}}
+{{- if and .Values.dragonfly.enabled .Values.dragonfly.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dragonfly
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache
+spec:
+  {{- if .Values.dragonfly.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.dragonfly.podDisruptionBudget.minAvailable }}
+  {{- else if .Values.dragonfly.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.dragonfly.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dragonfly
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- if .Values.dragonfly.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ .Values.dragonfly.podDisruptionBudget.unhealthyPodEvictionPolicy }}
+  {{- end }}
+{{- end }}

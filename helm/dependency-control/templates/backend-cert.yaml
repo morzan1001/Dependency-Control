@@ -24,6 +24,10 @@ spec:
   usages:
     - server auth
     - client auth
+  # Output combined PEM (cert+key) for MongoDB client authentication
+  # This eliminates the need for an init container to combine files
+  additionalOutputFormats:
+    - type: CombinedPEM
   commonName: {{ include "dependency-control.fullname" . }}-backend
   dnsNames:
     # Service DNS names

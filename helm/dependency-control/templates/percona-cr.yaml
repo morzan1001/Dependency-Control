@@ -12,8 +12,15 @@ spec:
   crVersion: {{ .Values.database.percona.crVersion | quote }}
   image: "{{ .Values.database.cluster.image.repository }}:{{ .Values.database.cluster.image.tag }}"
   imagePullPolicy: IfNotPresent
+  updateStrategy: SmartUpdate
+  unmanaged: false
+  {{- if lt (int .Values.database.cluster.replicas) 3 }}
+  unsafeFlags:
+    replsetSize: true
+  {{- end }}
   secrets:
     users: {{ .Values.database.cluster.name }}-secrets
+    keyFile: {{ .Values.database.cluster.name }}-mongodb-keyfile
     {{- if .Values.global.tls.enabled }}
     ssl: {{ .Values.database.cluster.name }}-ssl-internal
     sslInternal: {{ .Values.database.cluster.name }}-ssl-internal
@@ -23,11 +30,17 @@ spec:
     versionServiceEndpoint: {{ .Values.database.percona.upgradeOptions.versionServiceEndpoint }}
     apply: {{ .Values.database.percona.upgradeOptions.apply }}
     schedule: {{ .Values.database.percona.upgradeOptions.schedule | quote }}
+  {{- if .Values.global.tls.enabled }}
+  tls:
+    mode: {{ .Values.database.percona.tlsMode | default "preferTLS" }}
+  {{- end }}
   replsets:
   - name: {{ .Values.database.percona.replicaSetName }}
     size: {{ .Values.database.cluster.replicas }}
+    {{- if and .Values.database.cluster.antiAffinityTopologyKey (ne .Values.database.cluster.antiAffinityTopologyKey "none") }}
     affinity:
-      antiAffinityTopologyKey: kubernetes.io/hostname
+      antiAffinityTopologyKey: {{ .Values.database.cluster.antiAffinityTopologyKey }}
+    {{- end }}
     podDisruptionBudget:
       maxUnavailable: 1
     resources:
@@ -43,6 +56,61 @@ spec:
           requests:
             storage: {{ .Values.database.cluster.persistence.size }}
         storageClassName: {{ .Values.database.cluster.persistence.storageClass }}
+    expose:
+      enabled: false
+    {{- if .Values.database.percona.monitoring.enabled }}
+    sidecars:
+    - image: percona/mongodb_exporter:0.43
+      name: mongodb-exporter
+      args:
+        - --discovering-mode
+        - --compatible-mode
+        - --collector.diagnosticdata
+        - --collector.replicasetstatus
+        - --collector.dbstats
+        - --collector.topmetrics
+        - --collector.indexstats
+        - --collector.collstats
+        {{- if .Values.global.tls.enabled }}
+        # Connect via pod FQDN that matches certificate SANs
+        # Format: <pod-name>.<headless-service>.<namespace>.svc.cluster.local
+        - --mongodb.uri=mongodb://$(EXPORTER_USER):$(EXPORTER_PASS)@$(POD_NAME).{{ .Values.database.cluster.name }}-{{ .Values.database.percona.replicaSetName }}.{{ .Release.Namespace }}.svc.cluster.local:27017/?tls=true&tlsCertificateFile=/etc/mongodb-ssl-internal/tls.crt&tlsPrivateKeyFile=/etc/mongodb-ssl-internal/tls.key&tlsCAFile=/etc/mongodb-ssl-internal/ca.crt
+        {{- else }}
+        - --mongodb.uri=mongodb://$(EXPORTER_USER):$(EXPORTER_PASS)@localhost:27017/
+        {{- end }}
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: EXPORTER_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.cluster.name }}-secrets
+              key: MONGODB_CLUSTER_MONITOR_USER
+        - name: EXPORTER_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.database.cluster.name }}-secrets
+              key: MONGODB_CLUSTER_MONITOR_PASSWORD
+      ports:
+        - name: metrics
+          containerPort: 9216
+          protocol: TCP
+      resources:
+        limits:
+          cpu: {{ .Values.database.percona.monitoring.exporter.resources.limits.cpu | default "200m" }}
+          memory: {{ .Values.database.percona.monitoring.exporter.resources.limits.memory | default "256Mi" }}
+        requests:
+          cpu: {{ .Values.database.percona.monitoring.exporter.resources.requests.cpu | default "50m" }}
+          memory: {{ .Values.database.percona.monitoring.exporter.resources.requests.memory | default "128Mi" }}
+      {{- if .Values.global.tls.enabled }}
+      volumeMounts:
+        - name: ssl-internal
+          mountPath: /etc/mongodb-ssl-internal
+          readOnly: true
+      {{- end }}
+    {{- end }}
 
   {{- if .Values.database.percona.pmm.enabled }}
   pmm:

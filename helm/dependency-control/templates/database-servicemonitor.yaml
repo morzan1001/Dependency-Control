@@ -1,6 +1,7 @@
 {{- if and .Values.monitoring.serviceMonitor.enabled .Values.database.percona.monitoring.enabled (eq .Values.database.type "percona") }}
 ---
 # Percona Server for MongoDB ServiceMonitor
+# Scrapes metrics from mongodb_exporter sidecar via custom metrics service
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -11,7 +12,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: percona-server-mongodb
+      app.kubernetes.io/component: database-metrics
       app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
   endpoints:
     - port: metrics

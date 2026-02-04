@@ -1,0 +1,25 @@
+{{/*
+DragonflyDB Metrics Service
+Exposes the admin port for Prometheus scraping
+Created when dragonfly.enabled and dragonfly.serviceMonitor.enabled
+*/}}
+{{- if and .Values.dragonfly.enabled .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dragonfly-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache-metrics
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9999
+      targetPort: 9999
+      protocol: TCP
+      name: admin
+  selector:
+    app.kubernetes.io/name: dragonfly
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

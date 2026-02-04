@@ -45,6 +45,11 @@ spec:
       {{- end }}
     {{- end }}
 
+{{- /*
+Frontend ServiceMonitor - disabled by default since nginx doesn't export Prometheus metrics
+Enable only if nginx-prometheus-exporter sidecar is added
+*/ -}}
+{{- if and .Values.frontend.metrics .Values.frontend.metrics.enabled }}
 ---
 # Frontend ServiceMonitor for Prometheus
 apiVersion: monitoring.coreos.com/v1
@@ -90,4 +95,5 @@ spec:
         {{- toYaml .Values.monitoring.serviceMonitor.relabelings | nindent 8 }}
       {{- end }}
     {{- end }}
+{{- end }}
 {{- end }}

@@ -52,6 +52,10 @@ environment: development
 secrets:
   # Provider: kubernetes, external-secrets
   provider: kubernetes
+  # Make secrets immutable (prevents modification after creation)
+  # WARNING: When enabled, Helm upgrades cannot modify secrets - delete and recreate required
+  # Recommended for production environments where secret rotation is handled externally
+  immutable: false
   # External Secrets configuration (when provider: external-secrets)
   externalSecrets:
     enabled: false
@@ -107,7 +111,7 @@ database:
   # Percona-Specific Configuration
   percona:
     # Percona Operator CRD version
-    crVersion: "1.18.0"
+    crVersion: "1.21.2"
     replicaSetName: rs0
     # Encryption at rest
     encryptionKey: ""  # Leave empty to auto-generate
@@ -124,6 +128,15 @@ database:
       enabled: false
     monitoring:
       enabled: false
+      # MongoDB exporter sidecar resources
+      exporter:
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 50m
+            memory: 128Mi
   # MongoDB Community-Specific Configuration
   mongodb:
     version: "8.2.3"
@@ -181,6 +194,20 @@ frontend:
     maxReplicas: 5
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
+    # HPA behavior for controlled scaling (prevents flapping)
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
+        policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 60
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
 
   podDisruptionBudget:
     enabled: true
@@ -236,6 +263,11 @@ backend:
     capabilities:
       drop: [ALL]
 
+  # Graceful shutdown timeout (seconds)
+  # Workers will finish current scan before shutdown, up to this limit
+  # Should be > worker shutdown timeout (25s) to allow graceful completion
+  terminationGracePeriodSeconds: 30
+
   env:
     workerCount: 2
     logLevel: "INFO"
@@ -253,6 +285,24 @@ backend:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
+    # HPA behavior for controlled scaling (prevents flapping)
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
+        policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 60
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
+          - type: Pods
+            value: 4
+            periodSeconds: 30
+        selectPolicy: Max
 
   podDisruptionBudget:
     enabled: true
@@ -369,6 +419,13 @@ dragonfly:
     enabled: false
     interval: "30s"
     scrapeTimeout: "10s"
+
+  # PodDisruptionBudget for DragonflyDB
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    # maxUnavailable: 1  # Alternative to minAvailable
+    # unhealthyPodEvictionPolicy: IfHealthyBudget  # Kubernetes 1.27+
 
 # -----------------------------------------------------------------------------
 # Traefik Ingress Controller (Sub-Chart)

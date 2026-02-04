@@ -4,6 +4,7 @@ metadata:
   name: {{ include "dependency-control.fullname" . }}-frontend
   labels:
     {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
   {{- $isTraefik := or .Values.traefik.enabled (eq (.Values.ingress.className | default "") "traefik") }}
   {{- if and .Values.global.tls.enabled $isTraefik }}
   annotations:

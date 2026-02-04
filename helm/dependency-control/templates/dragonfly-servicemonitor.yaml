@@ -1,6 +1,7 @@
-{{- if and .Values.dragonfly.enabled .Values.dragonfly.serviceMonitor.enabled }}
+{{- if and .Values.dragonfly.enabled .Values.monitoring.serviceMonitor.enabled }}
 ---
 # DragonflyDB ServiceMonitor for Prometheus
+# Uses our custom metrics service that exposes the admin port (9999)
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -11,16 +12,27 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: dragonfly
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- include "dependency-control.labels" . | nindent 6 }}
+      app.kubernetes.io/component: cache-metrics
   endpoints:
     - port: admin
       path: /metrics
-      interval: {{ .Values.dragonfly.serviceMonitor.interval | default "30s" }}
-      scrapeTimeout: {{ .Values.dragonfly.serviceMonitor.scrapeTimeout | default "10s" }}
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      {{- if .Values.global.tls.enabled }}
+      scheme: https
+      tlsConfig:
+        # Skip server certificate verification (Prometheus connects to pod IPs)
+        insecureSkipVerify: true
+        # Provide client certificate for mTLS authentication
+        cert:
+          secret:
+            name: {{ .Release.Name }}-dragonfly-tls
+            key: tls.crt
+        keySecret:
+          name: {{ .Release.Name }}-dragonfly-tls
+          key: tls.key
+      {{- else }}
       scheme: http
-      {{- if .Values.dragonfly.serviceMonitor.relabelings }}
-      relabelings:
-        {{- toYaml .Values.dragonfly.serviceMonitor.relabelings | nindent 8 }}
       {{- end }}
 {{- end }}
