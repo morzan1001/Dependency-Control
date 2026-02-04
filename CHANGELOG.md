@@ -1,3 +1,11 @@
+# Release 1.4.6
+
+## 🚀 Features
+
+- feat: add memory debug endpoint to analyze memory usage (#0)
+
+
+
 # Release 1.4.5
 
 ## 📦 Build & CI
