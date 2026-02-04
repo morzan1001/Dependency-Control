@@ -18,8 +18,9 @@ router = APIRouter()
 async def liveness():
     """
     Liveness probe to check if the application process is running.
+    Uses JSONResponse directly to bypass Pydantic validation overhead.
     """
-    return {"status": "alive"}
+    return JSONResponse(content={"status": "alive"})
 
 
 @router.get("/ready", summary="Readiness Probe")
@@ -81,7 +82,7 @@ async def readiness():
         # Cache is optional - service can run without it
 
     if is_ready:
-        return {"status": "ready", "components": components}
+        return JSONResponse(content={"status": "ready", "components": components})
 
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
