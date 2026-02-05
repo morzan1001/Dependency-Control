@@ -1,3 +1,11 @@
+# Release 1.4.27
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.27 and update project interface to include team_name (#0)
+
+
+
 # Release 1.4.26
 
 
