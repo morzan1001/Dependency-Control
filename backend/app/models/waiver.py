@@ -6,11 +6,12 @@ from pydantic import BaseModel, Field
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
 from app.models.finding import FindingType
+from app.models.types import PyObjectId
 
 
 class Waiver(BaseModel):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     project_id: Optional[str] = None  # If None, applies globally (admin only)
 
     # Matching Criteria

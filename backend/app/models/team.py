@@ -5,6 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from app.core.constants import TEAM_ROLE_MEMBER
+from app.models.types import PyObjectId
 
 
 class TeamMember(BaseModel):
@@ -14,7 +15,7 @@ class TeamMember(BaseModel):
 
 class Team(BaseModel):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     name: str
     description: Optional[str] = None
     members: List[TeamMember] = []

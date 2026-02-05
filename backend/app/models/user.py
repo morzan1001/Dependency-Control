@@ -5,12 +5,15 @@ from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from app.models.types import PyObjectId
+
 logger = logging.getLogger(__name__)
 
 
 class User(BaseModel):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    # PyObjectId automatically converts MongoDB ObjectId to string
+    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     username: str
     email: EmailStr
     hashed_password: Optional[str] = None
@@ -33,13 +36,6 @@ class User(BaseModel):
             "vulnerability_found": ["email", "slack"],
         }
     )
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def convert_objectid(cls, v):
-        if not isinstance(v, str):
-            return str(v)
-        return v
 
     @field_validator("notification_preferences")
     @classmethod

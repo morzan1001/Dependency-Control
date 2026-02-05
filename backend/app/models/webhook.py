@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.models.types import PyObjectId
 from app.services.webhooks.validation import (
     validate_webhook_events,
     validate_webhook_url,
@@ -32,7 +33,7 @@ class Webhook(BaseModel):
     """
 
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     project_id: Optional[str] = None
     url: str
     events: List[str]

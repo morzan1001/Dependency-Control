@@ -4,6 +4,8 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.models.types import PyObjectId
+
 
 class Dependency(BaseModel):
     """
@@ -17,7 +19,7 @@ class Dependency(BaseModel):
     """
 
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan where this was found")
 

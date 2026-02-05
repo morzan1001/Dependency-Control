@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from app.core.constants import PROJECT_ROLE_VIEWER
 from app.models.finding import Finding
 from app.models.stats import Stats
+from app.models.types import PyObjectId
 
 
 class ProjectMember(BaseModel):
@@ -19,7 +20,8 @@ class ProjectMember(BaseModel):
 
 class Project(BaseModel):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    # PyObjectId converts MongoDB ObjectId to string before validation
+    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     name: str
     owner_id: str
     team_id: Optional[str] = None
@@ -49,7 +51,8 @@ class Project(BaseModel):
 
 class Scan(BaseModel):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    # PyObjectId converts MongoDB ObjectId to string before validation
+    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     project_id: str
     branch: str
     commit_hash: Optional[str] = None
@@ -105,7 +108,8 @@ class Scan(BaseModel):
 
 class AnalysisResult(BaseModel):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    # PyObjectId converts MongoDB ObjectId to string before validation
+    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     scan_id: str
     analyzer_name: str
     result: Dict[str, Any]
