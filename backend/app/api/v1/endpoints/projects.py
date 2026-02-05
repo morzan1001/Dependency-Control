@@ -1076,7 +1076,7 @@ async def read_scan_findings(
     finding_repo = FindingRepository(db)
 
     # Check access
-    scan = await scan_repo.get_by_id(scan_id, {"project_id": 1})
+    scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     await check_project_access(scan.project_id, current_user, db)
@@ -1212,7 +1212,7 @@ async def get_scan_stats(
     finding_repo = FindingRepository(db)
 
     # Check access
-    scan = await scan_repo.get_by_id(scan_id, {"project_id": 1})
+    scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     await check_project_access(scan.project_id, current_user, db)
