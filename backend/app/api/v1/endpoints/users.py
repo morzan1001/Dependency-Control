@@ -373,7 +373,15 @@ async def setup_2fa(
 ):
     """
     Generate a new 2FA secret and QR code.
+    Only available for local auth users. OIDC users should configure 2FA in their identity provider.
     """
+    # OIDC users cannot enable local 2FA - they should use their identity provider's 2FA
+    if current_user.auth_provider and current_user.auth_provider != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="2FA must be configured in your identity provider, not in this application",
+        )
+
     # User must be either in 2FA setup mode or be a fully active user
     if not is_2fa_setup_mode(current_user) and not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
@@ -406,7 +414,15 @@ async def enable_2fa(
 ):
     """
     Verify OTP and enable 2FA.
+    Only available for local auth users. OIDC users should configure 2FA in their identity provider.
     """
+    # OIDC users cannot enable local 2FA - they should use their identity provider's 2FA
+    if current_user.auth_provider and current_user.auth_provider != "local":
+        raise HTTPException(
+            status_code=400,
+            detail="2FA must be configured in your identity provider, not in this application",
+        )
+
     # User must be either in 2FA setup mode or be a fully active user
     if not is_2fa_setup_mode(current_user) and not current_user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")

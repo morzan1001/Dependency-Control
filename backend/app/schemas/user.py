@@ -80,7 +80,8 @@ class UserMigrateToLocal(BaseModel):
 
 
 class UserInDBBase(UserBase):
-    id: str = Field(alias="_id")
+    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
+    id: str = Field(validation_alias="_id")
     totp_enabled: bool = False
     is_verified: bool = False
 

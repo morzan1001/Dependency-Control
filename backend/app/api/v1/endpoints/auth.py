@@ -719,6 +719,19 @@ async def login_oidc_callback(
                 detail="Failed to create user",
             )
     else:
+        # Check if existing user is a local auth user - they cannot use OIDC
+        existing_auth_provider = user.get("auth_provider", "local")
+        if existing_auth_provider == "local" or existing_auth_provider is None:
+            if auth_oidc_logins_total:
+                auth_oidc_logins_total.labels(status="local_user_blocked").inc()
+            logger.warning(
+                f"OIDC login attempt blocked for local user: {email}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This account uses local authentication. Please login with your password.",
+            )
+
         # Check if existing user is active
         if not user.get("is_active", True):
             if auth_oidc_logins_total:

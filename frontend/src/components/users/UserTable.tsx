@@ -152,7 +152,20 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                   )}
                 </TableCell>
                 <TableCell>
-                    {user.totp_enabled ? (
+                    {user.auth_provider && user.auth_provider !== 'local' ? (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 capitalize cursor-help">
+                              {user.auth_provider}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            2FA managed by identity provider
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : user.totp_enabled ? (
                         <Check className="h-4 w-4 text-green-500" />
                     ) : (
                         <X className="h-4 w-4 text-red-500" />
