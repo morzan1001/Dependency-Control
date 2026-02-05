@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_BATCH_SIZES,
     ANALYZER_TIMEOUTS,
@@ -81,7 +82,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("maintainer_risk", 10)
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
 
             for i in range(0, len(components), batch_size):
                 batch = components[i : i + batch_size]

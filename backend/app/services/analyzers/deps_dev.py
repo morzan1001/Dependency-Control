@@ -6,6 +6,7 @@ from urllib.parse import quote
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_BATCH_SIZES,
     ANALYZER_TIMEOUTS,
@@ -89,7 +90,7 @@ class DepsDevAnalyzer(Analyzer):
             semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
             timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
 
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
                 tasks = []
                 for component in uncached_components:
                     tasks.append(

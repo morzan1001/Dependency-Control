@@ -5,6 +5,7 @@ from typing import Optional
 import httpx
 
 from app.core.config import settings
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.system import SystemSettings
 from app.services.notifications.base import NotificationProvider
 
@@ -150,8 +151,8 @@ class MattermostProvider(NotificationProvider):
         }
 
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
+            async with InstrumentedAsyncClient(
+                "Mattermost API", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
             ) as client:
                 channel_id = destination
 

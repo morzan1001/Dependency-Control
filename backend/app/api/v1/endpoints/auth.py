@@ -6,6 +6,8 @@ from urllib.parse import urlencode
 
 import httpx
 import pyotp
+
+from app.core.http_utils import InstrumentedAsyncClient
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -595,7 +597,7 @@ async def login_oidc_callback(
         "redirect_uri": redirect_uri,
     }
 
-    async with httpx.AsyncClient(timeout=OIDC_HTTP_TIMEOUT_SECONDS) as client:
+    async with InstrumentedAsyncClient("OIDC Provider", timeout=OIDC_HTTP_TIMEOUT_SECONDS) as client:
         # Exchange code for token
         try:
             response = await client.post(

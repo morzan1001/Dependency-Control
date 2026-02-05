@@ -7,6 +7,8 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 from jose import jwt
+
+from app.core.http_utils import InstrumentedAsyncClient
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import security
@@ -44,7 +46,7 @@ class GitLabService:
         return {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
 
     @asynccontextmanager
-    async def _api_client(self) -> AsyncIterator[httpx.AsyncClient]:
+    async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:
         """
         Async context manager for authenticated GitLab API client.
 
@@ -52,7 +54,7 @@ class GitLabService:
             async with self._api_client() as client:
                 response = await client.get(url)
         """
-        async with httpx.AsyncClient(timeout=_GITLAB_API_TIMEOUT) as client:
+        async with InstrumentedAsyncClient("GitLab API", timeout=_GITLAB_API_TIMEOUT) as client:
             yield client
 
     async def _api_get(
@@ -217,11 +219,11 @@ class GitLabService:
         if cached_uri:
             return cached_uri
 
-        async with httpx.AsyncClient() as client:
+        async with InstrumentedAsyncClient("GitLab OIDC", timeout=10.0) as client:
             try:
                 # Try OpenID Connect discovery endpoint first
                 response = await client.get(
-                    f"{self.base_url}/.well-known/openid-configuration", timeout=10.0
+                    f"{self.base_url}/.well-known/openid-configuration"
                 )
                 if response.status_code == 200:
                     config = response.json()
@@ -249,13 +251,13 @@ class GitLabService:
         if cached_jwks:
             return cached_jwks
 
-        async with httpx.AsyncClient() as client:
+        async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
             try:
                 # Try to get JWKS URI from discovery document
                 jwks_uri = await self._get_jwks_uri()
 
                 if jwks_uri:
-                    response = await client.get(jwks_uri, timeout=10.0)
+                    response = await client.get(jwks_uri)
                     if response.status_code == 200:
                         jwks = response.json()
                         # Cache in Redis for all pods
@@ -266,7 +268,7 @@ class GitLabService:
 
                 # Fallback: Try common JWKS endpoints
                 for path in ["/-/jwks", "/oauth/discovery/keys"]:
-                    response = await client.get(f"{self.base_url}{path}", timeout=10.0)
+                    response = await client.get(f"{self.base_url}{path}")
                     if response.status_code == 200:
                         jwks = response.json()
                         # Cache in Redis for all pods

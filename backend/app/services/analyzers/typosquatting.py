@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
     TOP_PYPI_PACKAGES_URL,
@@ -80,7 +81,7 @@ class TyposquattingAnalyzer(Analyzer):
         timeout = ANALYZER_TIMEOUTS.get("typosquatting", ANALYZER_TIMEOUTS["default"])
 
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with InstrumentedAsyncClient("PyPI API", timeout=timeout) as client:
                 resp = await client.get(TOP_PYPI_PACKAGES_URL)
                 if resp.status_code == 200:
                     data = resp.json()

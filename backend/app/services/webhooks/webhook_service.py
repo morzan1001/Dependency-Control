@@ -7,6 +7,8 @@ Supports multiple event types:
 - analysis_failed: Triggered when analysis fails
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import hmac
@@ -21,6 +23,7 @@ if TYPE_CHECKING:
 
 import httpx
 
+from app.core.http_utils import InstrumentedAsyncClient
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
     BaseWebhookPayload,
@@ -350,7 +353,7 @@ class WebhookService:
 
         while retry_count < self.max_retries:
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with InstrumentedAsyncClient("Webhook Delivery", timeout=self.timeout) as client:
                     response = await client.post(
                         webhook.url,
                         content=json_payload,
@@ -708,7 +711,7 @@ class WebhookService:
         start_time = time.monotonic()
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with InstrumentedAsyncClient("Webhook Test", timeout=self.timeout) as client:
                 response = await client.post(
                     webhook.url,
                     content=json_payload,

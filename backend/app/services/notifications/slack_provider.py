@@ -3,9 +3,8 @@ import logging
 import time
 from typing import Optional
 
-import httpx
-
 from app.core.config import settings
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
 from app.db.mongodb import get_database
 from app.models.system import SystemSettings
@@ -74,8 +73,8 @@ class SlackProvider(NotificationProvider):
             return None
 
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
+            async with InstrumentedAsyncClient(
+                "Slack API", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
             ) as client:
                 response = await client.post(
                     "https://slack.com/api/oauth.v2.access",
@@ -255,8 +254,8 @@ class SlackProvider(NotificationProvider):
         payload = {"channel": destination, "text": f"*{subject}*\n{message}"}
 
         try:
-            async with httpx.AsyncClient(
-                timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
+            async with InstrumentedAsyncClient(
+                "Slack API", timeout=settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
             ) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 if response.status_code == 200 and response.json().get("ok"):

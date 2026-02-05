@@ -34,6 +34,7 @@ try:
         cache_hits_total,
         cache_keys_total,
         cache_misses_total,
+        cache_size_bytes,
     )
 except ImportError:
     # Fallback if metrics module is not available yet
@@ -41,6 +42,7 @@ except ImportError:
     cache_misses_total = None
     cache_keys_total = None
     cache_connected_clients = None
+    cache_size_bytes = None
 
 
 class CacheTTL:
@@ -593,18 +595,32 @@ async def update_cache_stats() -> None:
             return
 
         client = await cache_service.get_client()
+
+        # Get various info sections
         stats = await client.info(section="stats")
+        memory_info = await client.info(section="memory")
+        clients_info = await client.info(section="clients")
 
         total_keys = await client.dbsize()
-        connected_clients_count = stats.get("connected_clients", 0)
+
+        # Extract metrics from info sections
+        # connected_clients is in the clients section for DragonflyDB
+        connected_clients_count = clients_info.get(
+            "connected_clients", stats.get("connected_clients", 0)
+        )
+        # used_memory is in bytes
+        used_memory = memory_info.get("used_memory", 0)
 
         if cache_keys_total:
             cache_keys_total.set(total_keys)
         if cache_connected_clients:
             cache_connected_clients.set(connected_clients_count)
+        if cache_size_bytes:
+            cache_size_bytes.set(used_memory)
 
         logger.debug(
-            f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}"
+            f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}, "
+            f"memory={used_memory} bytes"
         )
     except Exception as e:
         logger.warning(f"Failed to update cache statistics metrics: {e}")

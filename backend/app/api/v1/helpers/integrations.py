@@ -9,6 +9,8 @@ from typing import Any, Dict
 
 import httpx
 
+from app.core.http_utils import InstrumentedAsyncClient
+
 logger = logging.getLogger(__name__)
 
 # Slack API endpoints
@@ -53,7 +55,7 @@ async def exchange_slack_code_for_token(
         SlackOAuthError: If the token exchange fails
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with InstrumentedAsyncClient("Slack OAuth", timeout=timeout) as client:
             response = await client.post(
                 SLACK_OAUTH_URL,
                 data={

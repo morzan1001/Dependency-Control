@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_BATCH_SIZES,
     ANALYZER_TIMEOUTS,
@@ -61,7 +62,7 @@ class OSVAnalyzer(Analyzer):
         timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with InstrumentedAsyncClient("OSV API", timeout=timeout) as client:
 
             for chunk_start in range(0, len(uncached_components), batch_size):
                 chunk = uncached_components[chunk_start : chunk_start + batch_size]

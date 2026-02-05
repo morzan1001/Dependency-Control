@@ -2,9 +2,8 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-import httpx
-
 from app.core.constants import ANALYZER_TIMEOUTS, EXPLOIT_MATURITY_ORDER
+from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import GHSAData, VulnerabilityEnrichment
 from app.services.enrichment.epss import EPSSProvider
 from app.services.enrichment.ghsa import GHSAProvider
@@ -31,7 +30,7 @@ class VulnerabilityEnrichmentService:
     """
 
     def __init__(self):
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: Optional[InstrumentedAsyncClient] = None
         self._client_lock = asyncio.Lock()  # Prevent race condition on client creation
         self._epss_provider = EPSSProvider()
         self._kev_provider = KEVProvider()
@@ -41,23 +40,26 @@ class VulnerabilityEnrichmentService:
         """Set the GitHub Personal Access Token for authenticated API requests."""
         self._ghsa_provider.set_token(token)
 
-    async def _get_client(self) -> httpx.AsyncClient:
+    async def _get_client(self) -> InstrumentedAsyncClient:
         """Get or create HTTP client with thread-safe initialization."""
-        if self._http_client is not None and not self._http_client.is_closed:
+        if self._http_client is not None and self._http_client._client is not None:
             return self._http_client
 
         async with self._client_lock:
             # Double-check after acquiring lock
-            if self._http_client is not None and not self._http_client.is_closed:
+            if self._http_client is not None and self._http_client._client is not None:
                 return self._http_client
             timeout = ANALYZER_TIMEOUTS.get("default", 30.0)
-            self._http_client = httpx.AsyncClient(timeout=timeout)
+            self._http_client = InstrumentedAsyncClient(
+                "Enrichment Service", timeout=timeout
+            )
+            await self._http_client.start()
         return self._http_client
 
     async def close(self):
         """Close HTTP client."""
-        if self._http_client and not self._http_client.is_closed:
-            await self._http_client.aclose()
+        if self._http_client:
+            await self._http_client.close()
 
     async def resolve_ghsa_to_cve(self, ghsa_ids: List[str]) -> Dict[str, GHSAData]:
         """Resolve multiple GHSA IDs to CVEs."""

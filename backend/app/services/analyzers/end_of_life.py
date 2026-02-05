@@ -7,6 +7,7 @@ from urllib.parse import quote
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_TIMEOUTS, EOL_API_URL, NAME_TO_EOL_MAPPING
 from app.models.finding import Severity
 
@@ -75,12 +76,12 @@ class EndOfLifeAnalyzer(Analyzer):
         # Fetch uncached products with distributed locking to prevent stampede
         if products_to_fetch:
             timeout = ANALYZER_TIMEOUTS.get("end_of_life", ANALYZER_TIMEOUTS["default"])
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with InstrumentedAsyncClient("endoflife.date API", timeout=timeout) as client:
                 for product, comp_name, version in products_to_fetch:
                     cache_key = CacheKeys.eol(product)
 
                     async def fetch_eol_data(
-                        prod: str = product, cli: httpx.AsyncClient = client
+                        prod: str = product, cli: InstrumentedAsyncClient = client
                     ) -> Optional[List[Dict[str, Any]]]:
                         """Fetch EOL data for a product."""
                         try:

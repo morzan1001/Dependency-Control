@@ -6,6 +6,7 @@ from urllib.parse import quote
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV_API_URL
 from app.models.finding import Severity
 
@@ -65,7 +66,7 @@ class OutdatedAnalyzer(Analyzer):
         if uncached_components:
             timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
 
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
                 # Process in batches to avoid overwhelming deps.dev API
                 batch_size = ANALYZER_BATCH_SIZES.get("outdated", 25)
                 for i in range(0, len(uncached_components), batch_size):

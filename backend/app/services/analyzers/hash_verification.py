@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
 from app.models.finding import Severity
 
@@ -59,7 +60,7 @@ class HashVerificationAnalyzer(Analyzer):
             "hash_verification", ANALYZER_TIMEOUTS["default"]
         )
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with InstrumentedAsyncClient("Package Registry API", timeout=timeout) as client:
             tasks = []
             for component in components:
                 tasks.append(self._verify_component(client, component))

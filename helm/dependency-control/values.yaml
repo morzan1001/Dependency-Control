@@ -369,16 +369,16 @@ psmdb-operator:
 # -----------------------------------------------------------------------------
 dragonfly:
   enabled: true
-  replicaCount: 2
+  replicaCount: 1
   password: ""  # Leave empty to auto-generate
 
   resources:
     limits:
       cpu: 500m
-      memory: 768Mi
+      memory: 2Gi
     requests:
       cpu: 100m
-      memory: 512Mi
+      memory: 1Gi
 
   podSecurityContext:
     fsGroup: 1000
@@ -395,7 +395,7 @@ dragonfly:
       drop: [ALL]
 
   extraArgs:
-    - --maxmemory=512mb
+    - --maxmemory=1536mb
     - --cache_mode=true
     - --proactor_threads=2
     # --requirepass needed to be set when not using autogenerate
