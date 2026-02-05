@@ -3,7 +3,9 @@ import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -31,7 +33,7 @@ from app.schemas.team import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)

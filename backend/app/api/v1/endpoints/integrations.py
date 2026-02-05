@@ -1,6 +1,8 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Depends, HTTPException
+
+from app.api.router import CustomAPIRouter
 from fastapi.responses import RedirectResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -13,7 +15,7 @@ from app.core.config import settings
 from app.db.mongodb import get_database
 from app.repositories.system_settings import SystemSettingsRepository
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 
 @router.get("/slack/callback")

@@ -14,7 +14,9 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Depends, HTTPException
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.api import deps
@@ -39,7 +41,7 @@ from app.services.scan_manager import ScanManager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 
 @router.post(

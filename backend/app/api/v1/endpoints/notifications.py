@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Set
 
 import markdown
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from packaging.version import parse as parse_version
 
@@ -28,7 +30,7 @@ from app.schemas.notification import (
 from app.services.notifications.service import notification_service
 from app.services.notifications.templates import get_announcement_template
 
-router = APIRouter()
+router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 

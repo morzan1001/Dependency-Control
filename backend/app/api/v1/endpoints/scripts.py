@@ -11,14 +11,16 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import HTTPException, Query
+
+from app.api.router import CustomAPIRouter
 from fastapi.responses import PlainTextResponse
 
 from app.schemas.scripts import ScriptInfo, ScriptManifest
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 SCRIPTS_DIR = Path("/app/ci-cd/scripts")
 

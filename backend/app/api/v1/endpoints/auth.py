@@ -9,7 +9,6 @@ import pyotp
 
 from app.core.http_utils import InstrumentedAsyncClient
 from fastapi import (
-    APIRouter,
     BackgroundTasks,
     Body,
     Depends,
@@ -18,6 +17,8 @@ from fastapi import (
     Request,
     status,
 )
+
+from app.api.router import CustomAPIRouter
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -67,7 +68,7 @@ except ImportError:
     auth_signups_total = None
     auth_password_resets_total = None
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 
 @router.post(

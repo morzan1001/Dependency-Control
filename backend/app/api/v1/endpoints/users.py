@@ -6,7 +6,9 @@ from typing import List, Optional
 
 import pyotp
 import qrcode
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import BackgroundTasks, Depends, HTTPException, status
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -39,7 +41,7 @@ from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.service import notification_service
 from app.services.notifications.templates import get_password_reset_template
 
-router = APIRouter()
+router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 

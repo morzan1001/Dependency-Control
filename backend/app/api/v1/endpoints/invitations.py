@@ -3,7 +3,9 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, status
+from fastapi import BackgroundTasks, Body, Depends, HTTPException, status
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -16,7 +18,7 @@ from app.models.user import User
 from app.repositories import InvitationRepository, UserRepository
 from app.schemas.user import User as UserSchema
 
-router = APIRouter()
+router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 

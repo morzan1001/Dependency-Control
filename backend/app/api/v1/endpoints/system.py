@@ -1,6 +1,8 @@
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import Depends
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -21,7 +23,7 @@ from app.schemas.system import (
     SystemSettingsUpdate,
 )
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 
 @router.get("/", response_model=SystemSettingsResponse)

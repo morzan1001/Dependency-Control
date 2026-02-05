@@ -7,7 +7,9 @@ plus webhook testing functionality.
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -32,7 +34,7 @@ from app.schemas.webhook import (
 )
 from app.services.webhooks.webhook_service import webhook_service
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 
 @router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201)

@@ -2,7 +2,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -55,7 +57,7 @@ from app.services.recommendations import recommendation_engine
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 
 @router.get("/summary", response_model=AnalyticsSummary)

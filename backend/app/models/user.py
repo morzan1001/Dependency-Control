@@ -11,8 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class User(BaseModel):
-    # validation_alias="_id": accepts _id from MongoDB
-    # serialization_alias="_id": model_dump(by_alias=True) outputs _id for MongoDB
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",

@@ -1,7 +1,9 @@
 import re
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, HTTPException, Query
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -24,7 +26,7 @@ from app.repositories import WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse
 from app.services.stats import recalculate_all_projects, recalculate_project_stats
 
-router = APIRouter()
+router = CustomAPIRouter()
 
 
 @router.post("/", response_model=WaiverResponse, status_code=201)

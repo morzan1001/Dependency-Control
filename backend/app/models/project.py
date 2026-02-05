@@ -19,9 +19,6 @@ class ProjectMember(BaseModel):
 
 
 class Project(BaseModel):
-    # validation_alias="_id": accepts _id from MongoDB
-    # serialization_alias="_id": model_dump(by_alias=True) outputs _id for MongoDB
-    # FastAPI serializes without by_alias, so API returns 'id'
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -55,8 +52,6 @@ class Project(BaseModel):
 
 
 class Scan(BaseModel):
-    # validation_alias="_id": accepts _id from MongoDB
-    # serialization_alias="_id": model_dump(by_alias=True) outputs _id for MongoDB
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -116,8 +111,6 @@ class Scan(BaseModel):
 
 
 class AnalysisResult(BaseModel):
-    # validation_alias="_id": accepts _id from MongoDB
-    # serialization_alias="_id": model_dump(by_alias=True) outputs _id for MongoDB
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",

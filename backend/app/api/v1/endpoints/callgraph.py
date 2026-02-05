@@ -8,7 +8,9 @@ for reachability analysis.
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Depends, HTTPException
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -32,7 +34,7 @@ from app.schemas.callgraph import (
 )
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
 
-router = APIRouter()
+router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 

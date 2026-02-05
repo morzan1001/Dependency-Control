@@ -8,7 +8,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import Depends, HTTPException, Response, status
+
+from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -61,7 +63,7 @@ from app.schemas.project import (
 )
 from app.schemas.waiver import WaiverResponse
 
-router = APIRouter()
+router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
