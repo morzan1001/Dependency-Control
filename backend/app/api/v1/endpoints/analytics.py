@@ -953,26 +953,24 @@ async def search_vulnerabilities(
         if not matched_vulns:
             results.append(
                 VulnerabilitySearchResult(
-                    vulnerability_id=finding["id"],
-                    aliases=finding.get("aliases", []),
-                    severity=finding.get("severity", "UNKNOWN"),
+                    vulnerability_id=finding.finding_id,
+                    aliases=finding.aliases or [],
+                    severity=finding.severity or "UNKNOWN",
                     cvss_score=details.get("cvss_score"),
                     epss_score=details.get("epss_score"),
                     epss_percentile=details.get("epss_percentile"),
                     in_kev=in_kev_status,
                     kev_ransomware=kev_ransomware,
                     kev_due_date=kev_due_date,
-                    component=finding.get("component", ""),
-                    version=finding.get("version", ""),
+                    component=finding.component or "",
+                    version=finding.version or "",
                     component_type=details.get("type"),
                     purl=details.get("purl"),
-                    project_id=finding.get("project_id", ""),
-                    project_name=project_name_map.get(
-                        finding.get("project_id", ""), "Unknown"
-                    ),
-                    scan_id=finding.get("scan_id"),
-                    finding_id=finding["id"],
-                    finding_type=finding.get("type", "vulnerability"),
+                    project_id=finding.project_id or "",
+                    project_name=project_name_map.get(finding.project_id or "", "Unknown"),
+                    scan_id=finding.scan_id,
+                    finding_id=finding.finding_id,
+                    finding_type=finding.type or "vulnerability",
                     description=(
                         finding.get("description", "")[:200]
                         if finding.get("description")
@@ -989,12 +987,12 @@ async def search_vulnerabilities(
                 results.append(
                     VulnerabilitySearchResult(
                         vulnerability_id=(
-                            vuln.get("id") or vuln.get("resolved_cve") or finding["id"]
+                            vuln.get("id") or vuln.get("resolved_cve") or finding.finding_id
                         ),
                         aliases=(
-                            [finding["id"]]
-                            if vuln.get("id") != finding["id"]
-                            else finding.get("aliases", [])
+                            [finding.finding_id]
+                            if vuln.get("id") != finding.finding_id
+                            else finding.aliases or []
                         ),
                         severity=(
                             vuln.get("severity") or finding.get("severity", "UNKNOWN")
@@ -1022,9 +1020,9 @@ async def search_vulnerabilities(
                         project_name=project_name_map.get(
                             finding.get("project_id", ""), "Unknown"
                         ),
-                        scan_id=finding.get("scan_id"),
-                        finding_id=finding["id"],
-                        finding_type=finding.get("type", "vulnerability"),
+                        scan_id=finding.scan_id,
+                        finding_id=finding.finding_id,
+                        finding_type=finding.type or "vulnerability",
                         description=(
                             vuln.get("description", "")[:200]
                             if vuln.get("description")

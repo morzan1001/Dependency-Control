@@ -325,7 +325,7 @@ async def run_analysis(
                         scan_id,
                         db,
                         aggregator,
-                        settings=system_settings,
+                        settings=system_settings.model_dump() if system_settings else None,
                         fallback_source=fallback_source,
                         parsed_components=(
                             parsed_components if parsed_components else None
@@ -707,7 +707,9 @@ async def run_analysis(
             project = Project(**project_data)
 
             # GitLab Decoration
-            await decorate_gitlab_mr(scan_id, stats, scan_doc, project, system_settings)
+            await decorate_gitlab_mr(
+                scan_id, stats, scan_doc, project, system_settings.model_dump() if system_settings else {}
+            )
 
             # Notifications
             await send_scan_notifications(
