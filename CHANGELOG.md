@@ -1,3 +1,12 @@
+# Release 1.4.11
+
+## 📦 Build & CI
+
+- chore: remove unnecessary comments from check_scheduled_rescans function (#0)
+- chore: update redirect URI logic for OIDC endpoints to support external URLs (#0)
+
+
+
 # Release 1.4.10
 
 ## 📦 Build & CI
