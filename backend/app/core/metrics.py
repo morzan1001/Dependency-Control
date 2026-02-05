@@ -530,3 +530,40 @@ def track_external_api(service: str):
             raise
 
     return _tracker()
+
+
+async def update_db_stats(database) -> None:
+    """
+    Update database statistics gauge metrics.
+
+    This function queries the database for collection counts and updates
+    the corresponding Prometheus gauge metrics. Should be called during
+    startup and periodically to keep metrics current.
+
+    Uses estimated_document_count() which is O(1) as it reads from collection
+    metadata instead of scanning all documents. This is much faster for large
+    collections like findings.
+
+    Args:
+        database: The Motor async database instance
+    """
+    try:
+        # Use estimated_document_count for O(1) performance
+        # This reads from collection metadata, not actual documents
+        users_count = await database["users"].estimated_document_count()
+        projects_count = await database["projects"].estimated_document_count()
+        scans_count = await database["scans"].estimated_document_count()
+        findings_count = await database["findings"].estimated_document_count()
+
+        # Update gauge metrics
+        db_users_total.set(users_count)
+        db_projects_total.set(projects_count)
+        db_scans_total.set(scans_count)
+        db_findings_total.set(findings_count)
+
+        logger.debug(
+            f"Updated DB stats: users={users_count}, projects={projects_count}, "
+            f"scans={scans_count}, findings={findings_count}"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to update database statistics metrics: {e}")

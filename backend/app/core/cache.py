@@ -579,3 +579,32 @@ class CacheService:
 
 # Global cache service instance
 cache_service = CacheService()
+
+
+async def update_cache_stats() -> None:
+    """
+    Update cache statistics Prometheus metrics.
+
+    This function should be called periodically (e.g., in housekeeping loop)
+    to keep cache metrics current for Prometheus scraping.
+    """
+    try:
+        if not cache_service._available:
+            return
+
+        client = await cache_service.get_client()
+        stats = await client.info(section="stats")
+
+        total_keys = await client.dbsize()
+        connected_clients_count = stats.get("connected_clients", 0)
+
+        if cache_keys_total:
+            cache_keys_total.set(total_keys)
+        if cache_connected_clients:
+            cache_connected_clients.set(connected_clients_count)
+
+        logger.debug(
+            f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to update cache statistics metrics: {e}")

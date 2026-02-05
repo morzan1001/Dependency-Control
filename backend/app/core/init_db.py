@@ -7,6 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
+from app.core.metrics import update_db_stats
 from app.db.mongodb import get_database
 from app.models.user import User
 
@@ -302,3 +303,7 @@ async def init_db() -> None:
         logger.info("Initial admin user created. Credentials displayed on stdout.")
     else:
         logger.info("Users already exist. Skipping initial user creation.")
+
+    # Update database statistics metrics
+    await update_db_stats(database)
+    logger.info("Database statistics metrics initialized.")

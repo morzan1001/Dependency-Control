@@ -14,6 +14,8 @@ from app.core.constants import (
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
 from app.repositories.system_settings import SystemSettingsRepository
+from app.core.metrics import update_db_stats
+from app.core.cache import update_cache_stats
 
 if TYPE_CHECKING:
     from app.core.worker import WorkerManager
@@ -459,6 +461,8 @@ async def housekeeping_loop(
     Runs the housekeeping tasks.
     - Stuck scan recovery: On each loop iteration
     - Scheduled re-scans: On each loop iteration
+    - Database stats update: On each loop iteration
+    - Cache stats update: On each loop iteration
     - Data retention cleanup: Every 24 hours
 
     Note: Stale pending scan aggregation runs in a separate faster loop.
@@ -472,6 +476,19 @@ async def housekeeping_loop(
 
         # Run scheduled re-scans
         await check_scheduled_rescans(worker_manager)
+
+        # Update database statistics metrics
+        try:
+            db = await get_database()
+            await update_db_stats(db)
+        except Exception as e:
+            logger.error(f"Failed to update database statistics: {e}")
+
+        # Update cache statistics metrics
+        try:
+            await update_cache_stats()
+        except Exception as e:
+            logger.error(f"Failed to update cache statistics: {e}")
 
         # Run retention cleanup if interval has passed (fixed 24h interval)
         if (datetime.now(timezone.utc) - last_retention_run) > timedelta(
