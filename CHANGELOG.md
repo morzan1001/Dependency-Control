@@ -1,3 +1,12 @@
+# Release 1.4.22
+
+## 🚀 Features
+
+- feat: enhance repository methods to return Pydantic models for projects, scans, and users (#0)
+- feat: implement CustomAPIRouter to standardize API responses using field names instead of aliases (#0)
+
+
+
 # Release 1.4.21
 
 ## 📦 Build & CI
