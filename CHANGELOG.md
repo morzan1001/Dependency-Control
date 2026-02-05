@@ -1,3 +1,11 @@
+# Release 1.4.19
+
+## 📦 Build & CI
+
+- chore: update version to 1.4.19 and set response_model_by_alias to False in API routers (#0)
+
+
+
 # Release 1.4.18
 
 ## 📦 Build & CI
