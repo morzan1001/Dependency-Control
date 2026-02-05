@@ -1,3 +1,11 @@
+# Release 1.4.17
+
+## 📦 Build & CI
+
+- chore: update version to 1.4.17 and refactor schemas for MongoDB integration (#0)
+
+
+
 # Release 1.4.16
 
 
