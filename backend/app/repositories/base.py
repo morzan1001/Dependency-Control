@@ -130,11 +130,22 @@ class BaseRepository(Generic[T]):
         return len(result.inserted_ids)
 
     async def create_many_raw(self, docs: List[Dict[str, Any]]) -> int:
-        """Create multiple documents from raw data."""
+        """
+        Create multiple documents from raw data.
+        Uses ordered=False to continue inserting even if some documents are duplicates.
+        """
         if not docs:
             return 0
-        result = await self.collection.insert_many(docs)
-        return len(result.inserted_ids)
+        try:
+            result = await self.collection.insert_many(docs, ordered=False)
+            return len(result.inserted_ids)
+        except Exception as e:
+            # Handle BulkWriteError - some documents may have been inserted
+            if hasattr(e, 'details') and 'writeErrors' in e.details:
+                # Count successful inserts
+                inserted_count = e.details.get('nInserted', 0)
+                return inserted_count
+            raise
 
     async def update(self, id: str, update_data: Dict[str, Any]) -> Optional[T]:
         """Update a document by ID and return the updated model."""

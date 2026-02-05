@@ -296,26 +296,27 @@ async def ingest_sbom(
     if dependencies_to_insert:
         try:
             # Delete old dependencies for this scan atomically
-            await dep_repo.delete_by_scan(scan_id)
-            # Insert new dependencies (use create_many_raw for dict list)
-            # The unique constraint on (scan_id, name, version, purl) prevents duplicates
-            await dep_repo.create_many_raw(dependencies_to_insert)
-        except Exception as e:
-            # Check if this is a duplicate key error (race condition with another pod)
-            if "duplicate key error" in str(e).lower() or "E11000" in str(e):
+            deleted_count = await dep_repo.delete_by_scan(scan_id)
+            logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
+
+            # Insert new dependencies with ordered=False to handle duplicates gracefully
+            inserted_count = await dep_repo.create_many_raw(dependencies_to_insert)
+            logger.info(
+                f"Inserted {inserted_count}/{len(dependencies_to_insert)} dependencies for scan {scan_id}"
+            )
+
+            if inserted_count < len(dependencies_to_insert):
+                skipped = len(dependencies_to_insert) - inserted_count
                 logger.warning(
-                    f"Duplicate dependency detected for scan {scan_id}, "
-                    f"likely due to concurrent SBOM upload. Ignoring."
+                    f"Skipped {skipped} duplicate dependencies for scan {scan_id}"
                 )
-                # Continue processing - the dependencies are already inserted by another pod
-            else:
-                warnings.append("Failed to store dependencies")
-                logger.error(f"Failed to insert dependencies: {e}", exc_info=True)
-                # This is critical - if dependencies fail, the scan is incomplete
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to store dependencies. Please try again.",
-                )
+        except Exception as e:
+            warnings.append("Failed to store dependencies")
+            logger.error(f"Failed to insert dependencies: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to store dependencies. Please try again.",
+            )
 
     now = datetime.now(timezone.utc)
 

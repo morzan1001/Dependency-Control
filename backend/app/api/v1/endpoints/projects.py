@@ -323,6 +323,21 @@ async def read_projects(
         sort_order=direction,
     )
 
+    # Enrich projects with team names
+    team_ids = [p.team_id for p in projects if p.team_id]
+    if team_ids:
+        teams = await team_repo.find_many({"_id": {"$in": team_ids}}, limit=len(team_ids))
+        team_name_map = {t.id: t.name for t in teams}
+
+        # Add team_name to each project (convert to dict, add field, keep as Project model)
+        enriched_projects = []
+        for p in projects:
+            p_dict = p.model_dump()
+            p_dict["team_name"] = team_name_map.get(p.team_id) if p.team_id else None
+            enriched_projects.append(p_dict)
+
+        return build_pagination_response(enriched_projects, total, skip, limit)
+
     return build_pagination_response(projects, total, skip, limit)
 
 
