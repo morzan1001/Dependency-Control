@@ -1,3 +1,11 @@
+# Release 1.4.23
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.23 (#0)
+
+
+
 # Release 1.4.22
 
 ## 🚀 Features
