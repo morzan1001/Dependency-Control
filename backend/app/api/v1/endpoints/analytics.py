@@ -55,7 +55,10 @@ from app.services.recommendations import recommendation_engine
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(
+    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
+    response_model_by_alias=False,
+)
 
 
 @router.get("/summary", response_model=AnalyticsSummary)

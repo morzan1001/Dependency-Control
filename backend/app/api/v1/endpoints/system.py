@@ -21,7 +21,10 @@ from app.schemas.system import (
     SystemSettingsUpdate,
 )
 
-router = APIRouter()
+router = APIRouter(
+    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
+    response_model_by_alias=False,
+)
 
 
 @router.get("/", response_model=SystemSettingsResponse)

@@ -39,7 +39,10 @@ from app.services.scan_manager import ScanManager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(
+    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
+    response_model_by_alias=False,
+)
 
 
 @router.post(

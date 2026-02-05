@@ -28,7 +28,10 @@ from app.schemas.notification import (
 from app.services.notifications.service import notification_service
 from app.services.notifications.templates import get_announcement_template
 
-router = APIRouter()
+router = APIRouter(
+    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
+    response_model_by_alias=False,
+)
 logger = logging.getLogger(__name__)
 
 

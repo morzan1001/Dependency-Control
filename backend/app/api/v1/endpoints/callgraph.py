@@ -32,7 +32,10 @@ from app.schemas.callgraph import (
 )
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
 
-router = APIRouter()
+router = APIRouter(
+    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
+    response_model_by_alias=False,
+)
 logger = logging.getLogger(__name__)
 
 
