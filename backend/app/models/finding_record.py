@@ -13,7 +13,11 @@ class FindingRecord(Finding):
     Inherits from the base Finding model.
     """
 
-    mongo_id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    mongo_id: PyObjectId = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        validation_alias="_id",
+        serialization_alias="_id",
+    )
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan")
 

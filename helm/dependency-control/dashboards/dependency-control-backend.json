@@ -390,7 +390,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "avg(rate(container_cpu_usage_seconds_total{namespace=\"dependency-control\", pod=~\"dependency-control-backend.*\", container=\"dependency-control\"}[5m]))",
+          "expr": "avg(rate(process_cpu_seconds_total{job=\"dependency-control-backend\"}[5m]))",
           "refId": "A"
         }
       ],
@@ -450,7 +450,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "avg(container_memory_working_set_bytes{namespace=\"dependency-control\", pod=~\"dependency-control-backend.*\", container=\"dependency-control\"})",
+          "expr": "avg(process_resident_memory_bytes{job=\"dependency-control-backend\"})",
           "refId": "A"
         }
       ],

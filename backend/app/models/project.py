@@ -19,9 +19,14 @@ class ProjectMember(BaseModel):
 
 
 class Project(BaseModel):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
+    # validation_alias="_id" accepts _id from MongoDB
+    # serialization_alias="_id" outputs _id when using model_dump(by_alias=True) for DB storage
     # PyObjectId converts MongoDB ObjectId to string before validation
-    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    id: PyObjectId = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        validation_alias="_id",
+        serialization_alias="_id",
+    )
     name: str
     owner_id: str
     team_id: Optional[str] = None
@@ -50,9 +55,13 @@ class Project(BaseModel):
 
 
 class Scan(BaseModel):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    # PyObjectId converts MongoDB ObjectId to string before validation
-    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    # validation_alias="_id" accepts _id from MongoDB
+    # serialization_alias="_id" outputs _id when using model_dump(by_alias=True) for DB storage
+    id: PyObjectId = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        validation_alias="_id",
+        serialization_alias="_id",
+    )
     project_id: str
     branch: str
     commit_hash: Optional[str] = None
@@ -107,9 +116,13 @@ class Scan(BaseModel):
 
 
 class AnalysisResult(BaseModel):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    # PyObjectId converts MongoDB ObjectId to string before validation
-    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    # validation_alias="_id" accepts _id from MongoDB
+    # serialization_alias="_id" outputs _id when using model_dump(by_alias=True) for DB storage
+    id: PyObjectId = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        validation_alias="_id",
+        serialization_alias="_id",
+    )
     scan_id: str
     analyzer_name: str
     result: Dict[str, Any]

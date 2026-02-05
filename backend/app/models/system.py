@@ -4,8 +4,9 @@ from pydantic import BaseModel, Field
 
 
 class SystemSettings(BaseModel):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(default="current", validation_alias="_id")
+    # validation_alias="_id" accepts _id from MongoDB
+    # serialization_alias="_id" outputs _id when using model_dump(by_alias=True) for DB storage
+    id: str = Field(default="current", validation_alias="_id", serialization_alias="_id")
 
     # General
     instance_name: str = "Dependency Control"

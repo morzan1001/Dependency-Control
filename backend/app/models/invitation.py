@@ -7,8 +7,13 @@ from app.models.types import PyObjectId
 
 
 class ProjectInvitation(BaseModel):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    # validation_alias="_id" accepts _id from MongoDB
+    # serialization_alias="_id" outputs _id when using model_dump(by_alias=True) for DB storage
+    id: PyObjectId = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        validation_alias="_id",
+        serialization_alias="_id",
+    )
     project_id: str
     email: EmailStr
     role: str
@@ -23,8 +28,13 @@ class ProjectInvitation(BaseModel):
 
 
 class SystemInvitation(BaseModel):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: PyObjectId = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
+    # validation_alias="_id" accepts _id from MongoDB
+    # serialization_alias="_id" outputs _id when using model_dump(by_alias=True) for DB storage
+    id: PyObjectId = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        validation_alias="_id",
+        serialization_alias="_id",
+    )
     email: EmailStr
     token: str
     invited_by: str
