@@ -1,26 +1,58 @@
-import gc
-import os
-import sys
-from collections import Counter
-from typing import Any, Dict
+import time
 
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
 from app.core.cache import cache_service
+from app.core.config import settings
 from app.core.worker import worker_manager
 from app.db.mongodb import db
 
 router = APIRouter()
+
+# Track when the application started
+_startup_time = time.time()
+
+
+def get_uptime_seconds() -> float:
+    """Get the application uptime in seconds."""
+    return time.time() - _startup_time
+
+
+def get_max_uptime_seconds() -> int:
+    """
+    Get the maximum allowed uptime before the pod should restart.
+    Default: 24 hours (86400 seconds). Set to 0 to disable.
+    """
+    return getattr(settings, "MAX_POD_UPTIME_SECONDS", 86400)
 
 
 @router.get("/live", summary="Liveness Probe")
 async def liveness():
     """
     Liveness probe to check if the application process is running.
-    Uses JSONResponse directly to bypass Pydantic validation overhead.
+
+    Returns unhealthy after MAX_POD_UPTIME_SECONDS to trigger a graceful restart.
+    This helps manage memory growth by ensuring pods are periodically recycled.
+    The PodDisruptionBudget ensures pods restart one at a time.
     """
-    return JSONResponse(content={"status": "alive"})
+    uptime = get_uptime_seconds()
+    max_uptime = get_max_uptime_seconds()
+
+    # Check if we've exceeded the max uptime (0 = disabled)
+    if max_uptime > 0 and uptime > max_uptime:
+        uptime_hours = uptime / 3600
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "restart_required",
+                "uptime_hours": round(uptime_hours, 2),
+                "max_uptime_hours": max_uptime / 3600,
+                "reason": "Pod has exceeded maximum uptime and will be restarted",
+            },
+        )
+
+    return {"status": "alive", "uptime_seconds": int(uptime)}
 
 
 @router.get("/ready", summary="Readiness Probe")
@@ -82,7 +114,7 @@ async def readiness():
         # Cache is optional - service can run without it
 
     if is_ready:
-        return JSONResponse(content={"status": "ready", "components": components})
+        return {"status": "ready", "components": components}
 
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -107,67 +139,3 @@ async def cache_health():
             "error": str(e),
             "available": False,
         }
-
-
-@router.get("/debug/memory", summary="Memory Debug Info", include_in_schema=False)
-async def memory_debug() -> Dict[str, Any]:
-    """
-    Debug endpoint to analyze memory usage of the running process.
-    Only accessible internally, not exposed via ingress.
-    """
-    # Force garbage collection first
-    gc.collect()
-
-    # Get memory info from /proc
-    memory_info = {}
-    try:
-        with open("/proc/self/status", "r") as f:
-            for line in f:
-                if line.startswith(("VmRSS", "VmSize", "VmPeak", "VmData", "VmStk")):
-                    key, value = line.split(":", 1)
-                    memory_info[key.strip()] = value.strip()
-    except Exception:
-        pass
-
-    # Count Python objects by type
-    all_objects = gc.get_objects()
-    type_counts = Counter(type(obj).__name__ for obj in all_objects)
-    top_types = dict(type_counts.most_common(30))
-
-    # Check for large containers and identify them
-    large_dicts = []
-    large_lists = []
-    for obj in all_objects:
-        if isinstance(obj, dict) and len(obj) > 1000:
-            # Try to identify what this dict is
-            sample_keys = list(obj.keys())[:5]
-            large_dicts.append({
-                "size": len(obj),
-                "sample_keys": [str(k)[:50] for k in sample_keys],
-            })
-        elif isinstance(obj, list) and len(obj) > 1000:
-            # Try to identify what types are in this list
-            type_sample = [type(x).__name__ for x in obj[:5]]
-            large_lists.append({
-                "size": len(obj),
-                "type_sample": type_sample,
-            })
-
-    # GC stats
-    gc_stats = {
-        "collections": gc.get_count(),
-        "thresholds": gc.get_threshold(),
-        "garbage_count": len(gc.garbage),
-    }
-
-    return {
-        "process_memory": memory_info,
-        "python_objects": {
-            "total_count": len(all_objects),
-            "top_types": top_types,
-            "large_dicts": large_dicts,
-            "large_lists": large_lists,
-        },
-        "gc_stats": gc_stats,
-        "modules_loaded": len(sys.modules),
-    }

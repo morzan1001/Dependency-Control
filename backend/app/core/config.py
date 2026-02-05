@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     ENRICHMENT_MAX_RETRIES: int = 3
     ENRICHMENT_RETRY_DELAY: float = 1.0
 
+    # Pod lifecycle settings
+    # Maximum time (seconds) a pod can run before it should restart
+    # Set to 0 to disable automatic restarts
+    # Default: 43200 (12 hours) - helps manage memory growth
+    MAX_POD_UPTIME_SECONDS: int = 43200
+
     class Config:
         case_sensitive = True
         env_file = ".env"

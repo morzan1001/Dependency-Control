@@ -248,7 +248,7 @@ backend:
   resources:
     limits:
       cpu: 1000m
-      memory: 1Gi
+      memory: 2Gi
     requests:
       cpu: 200m
       memory: 512Mi
@@ -275,6 +275,10 @@ backend:
     accessTokenExpireMinutes: 30
     refreshTokenExpireDays: 7
     frontendBaseUrl: ""
+    # Maximum pod uptime in seconds before automatic restart (helps manage memory)
+    # Set to 0 to disable. Default: 43200 (12 hours)
+    # The PodDisruptionBudget ensures pods restart one at a time
+    maxPodUptimeSeconds: 43200
   # Secret key for JWT signing
   secrets:
     secretKey: ""  # Leave empty to auto-generate

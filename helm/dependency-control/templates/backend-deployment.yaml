@@ -214,6 +214,9 @@ spec:
               value: "{{ .Values.backend.env.refreshTokenExpireDays }}"
             - name: FRONTEND_BASE_URL
               value: "{{ .Values.backend.env.frontendBaseUrl }}"
+            # Pod lifecycle: max uptime before automatic restart (helps manage memory)
+            - name: MAX_POD_UPTIME_SECONDS
+              value: "{{ .Values.backend.env.maxPodUptimeSeconds | default 86400 }}"
             {{- if .Values.global.tls.enabled }}
             # TLS environment variables
             - name: TLS_ENABLED

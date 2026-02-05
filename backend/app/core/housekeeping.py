@@ -12,7 +12,7 @@ from app.core.constants import (
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
 )
 from app.db.mongodb import get_database
-from app.models.project import Scan
+from app.models.project import Project, Scan
 from app.repositories.system_settings import SystemSettingsRepository
 
 if TYPE_CHECKING:
@@ -50,8 +50,8 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
     """
     Checks for projects that need a periodic re-scan.
 
-    Optimized to avoid creating Pydantic models for every project,
-    which can cause memory growth due to Pydantic v2 type caching.
+    Uses Pydantic models for type safety and consistency.
+    Memory is managed via the 24-hour pod restart mechanism.
     """
     if not worker_manager:
         return
@@ -64,31 +64,21 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
-        # Only fetch the fields we need to minimize memory usage
-        projection = {
-            "_id": 1,
-            "name": 1,
-            "rescan_enabled": 1,
-            "rescan_interval": 1,
-            "last_scan_at": 1,
-        }
-
-        # Iterate over all projects using raw dicts (no Pydantic model creation)
-        async for project_data in db.projects.find({}, projection):
+        # Iterate over all projects using Pydantic models
+        async for project_data in db.projects.find({}):
             try:
-                project_id = project_data["_id"]
-                project_name = project_data.get("name", "Unknown")
+                project = Project(**project_data)
 
-                # Determine if enabled (use raw dict values)
-                enabled = project_data.get("rescan_enabled")
+                # Determine if enabled (project setting overrides global)
+                enabled = project.rescan_enabled
                 if enabled is None:
                     enabled = system_settings.global_rescan_enabled
 
                 if not enabled:
                     continue
 
-                # Determine interval
-                interval_hours = project_data.get("rescan_interval")
+                # Determine interval (project setting overrides global)
+                interval_hours = project.rescan_interval
                 if interval_hours is None:
                     interval_hours = system_settings.global_rescan_interval
 
@@ -96,20 +86,19 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                     continue
 
                 # Check last scan time
-                last_scan = project_data.get("last_scan_at")
-                if not last_scan:
+                if not project.last_scan_at:
                     # If never scanned, we can't re-scan
                     continue
 
                 # Check if time to scan
-                next_scan_due = last_scan + timedelta(hours=interval_hours)
+                next_scan_due = project.last_scan_at + timedelta(hours=interval_hours)
                 if datetime.now(timezone.utc) < next_scan_due:
                     continue
 
                 # Find the latest SUCCESSFUL scan with SBOMs
                 latest_valid_scan = await db.scans.find_one(
                     {
-                        "project_id": project_id,
+                        "project_id": project.id,
                         "status": "completed",
                         "sbom_refs": {"$exists": True, "$ne": []},
                     },
@@ -118,7 +107,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
 
                 if not latest_valid_scan:
                     logger.info(
-                        f"Project {project_name} due for re-scan, but no valid previous scan with SBOMs found."
+                        f"Project {project.name} due for re-scan, but no valid previous scan with SBOMs found."
                     )
                     continue
 
@@ -127,12 +116,12 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                 import os
 
                 lock_repo = DistributedLocksRepository(db)
-                lock_name = f"rescan_create:{project_id}"
+                lock_name = f"rescan_create:{project.id}"
                 holder_id = f"housekeeping-{os.getenv('HOSTNAME', 'unknown')}"
 
                 if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=60):
                     logger.debug(
-                        f"Could not acquire lock for rescanning {project_name}. "
+                        f"Could not acquire lock for rescanning {project.name}. "
                         f"Another pod is creating rescan."
                     )
                     continue
@@ -141,22 +130,22 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                     # Re-check for active scans inside lock (TOCTOU prevention)
                     active_scan = await db.scans.find_one(
                         {
-                            "project_id": project_id,
+                            "project_id": project.id,
                             "status": {"$in": ["pending", "processing"]},
                         }
                     )
 
                     if active_scan:
-                        logger.debug(f"Project {project_name} already has active scan")
+                        logger.debug(f"Project {project.name} already has active scan")
                         continue
 
                     # Create rescan
                     logger.info(
-                        f"Triggering re-scan for project {project_name} (Last scan: {last_scan})"
+                        f"Triggering re-scan for project {project.name} (Last scan: {project.last_scan_at})"
                     )
 
                     new_scan = Scan(
-                        project_id=project_id,
+                        project_id=project.id,
                         branch=latest_valid_scan.get("branch", "unknown"),
                         commit_hash=latest_valid_scan.get("commit_hash"),
                         pipeline_id=None,
@@ -184,7 +173,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                     )
 
                     await worker_manager.add_job(new_scan.id)
-                    logger.info(f"Rescan {new_scan.id} created for project {project_name}")
+                    logger.info(f"Rescan {new_scan.id} created for project {project.name}")
 
                 finally:
                     # Always release lock
