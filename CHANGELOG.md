@@ -1,3 +1,11 @@
+# Release 1.4.9
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.9 (#0)
+
+
+
 # Release 1.4.8
 
 ## 🐛 Fixes
