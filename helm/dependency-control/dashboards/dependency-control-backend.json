@@ -928,11 +928,11 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(analysis_kev_vulnerabilities_total{job=~\".*dependency-control-backend.*\"}[24h]))",
+          "expr": "sum(increase(analysis_kev_vulnerabilities_total{job=~\".*dependency-control-backend.*\"}[$__range]))",
           "refId": "A"
         }
       ],
-      "title": "KEV Vulnerabilities (24h)",
+      "title": "KEV Vulnerabilities",
       "type": "stat"
     },
     {
@@ -992,7 +992,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum(rate(analysis_epss_scores_bucket{job=~\".*dependency-control-backend.*\"}[1h])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(analysis_epss_scores_bucket{job=~\".*dependency-control-backend.*\"}[$__range])) by (le))",
           "refId": "A"
         }
       ],
@@ -1048,12 +1048,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(analysis_reachable_vulnerabilities_total{job=~\".*dependency-control-backend.*\"}[24h])) by (reachability_level)",
+          "expr": "sum(increase(analysis_reachable_vulnerabilities_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (reachability_level)",
           "legendFormat": "{{reachability_level}}",
           "refId": "A"
         }
       ],
-      "title": "Reachable Vulnerabilities by Level (24h)",
+      "title": "Reachable Vulnerabilities by Level",
       "type": "piechart"
     },
     {
@@ -1524,17 +1524,17 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(notifications_sent_total{job=~\".*dependency-control-backend.*\"}[1h])) by (type)",
+          "expr": "sum(increase(notifications_sent_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (type)",
           "legendFormat": "{{type}} sent",
           "refId": "A"
         },
         {
-          "expr": "sum(increase(notifications_failed_total{job=~\".*dependency-control-backend.*\"}[1h])) by (type)",
+          "expr": "sum(increase(notifications_failed_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (type)",
           "legendFormat": "{{type}} failed",
           "refId": "B"
         }
       ],
-      "title": "Notifications (1h)",
+      "title": "Notifications",
       "type": "timeseries"
     },
     {
@@ -1612,17 +1612,17 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(webhooks_triggered_total{job=~\".*dependency-control-backend.*\"}[1h])) by (event_type)",
+          "expr": "sum(increase(webhooks_triggered_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (event_type)",
           "legendFormat": "{{event_type}} triggered",
           "refId": "A"
         },
         {
-          "expr": "sum(increase(webhooks_failed_total{job=~\".*dependency-control-backend.*\"}[1h])) by (event_type)",
+          "expr": "sum(increase(webhooks_failed_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (event_type)",
           "legendFormat": "{{event_type}} failed",
           "refId": "B"
         }
       ],
-      "title": "Webhooks (1h)",
+      "title": "Webhooks",
       "type": "timeseries"
     },
     {
@@ -2025,12 +2025,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(auth_login_attempts_total{job=~\".*dependency-control-backend.*\"}[1h])) by (status)",
+          "expr": "sum(increase(auth_login_attempts_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (status)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],
-      "title": "Login Attempts (1h Rate)",
+      "title": "Login Attempts",
       "type": "timeseries"
     },
     {
@@ -2108,12 +2108,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(auth_oidc_logins_total{job=~\".*dependency-control-backend.*\"}[1h])) by (status)",
+          "expr": "sum(increase(auth_oidc_logins_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (status)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],
-      "title": "OIDC Logins (1h Rate)",
+      "title": "OIDC Logins",
       "type": "timeseries"
     },
     {
@@ -2191,12 +2191,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(auth_token_validations_total{job=~\".*dependency-control-backend.*\"}[1h])) by (result)",
+          "expr": "sum(increase(auth_token_validations_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (result)",
           "legendFormat": "{{result}}",
           "refId": "A"
         }
       ],
-      "title": "Token Validations (1h Rate)",
+      "title": "Token Validations",
       "type": "timeseries"
     },
     {
@@ -2712,12 +2712,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(analysis_sbom_processed_total{job=~\".*dependency-control-backend.*\"}[24h])) by (format)",
+          "expr": "sum(increase(analysis_sbom_processed_total{job=~\".*dependency-control-backend.*\"}[$__range])) by (format)",
           "legendFormat": "{{format}}",
           "refId": "A"
         }
       ],
-      "title": "SBOMs Processed by Format (24h)",
+      "title": "SBOMs Processed by Format",
       "type": "piechart"
     },
     {
@@ -2765,11 +2765,11 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(analysis_components_parsed_total{job=~\".*dependency-control-backend.*\"}[24h]))",
+          "expr": "sum(increase(analysis_components_parsed_total{job=~\".*dependency-control-backend.*\"}[$__range]))",
           "refId": "A"
         }
       ],
-      "title": "Components Parsed (24h)",
+      "title": "Components Parsed",
       "type": "stat"
     },
     {
@@ -2825,11 +2825,11 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(analysis_sbom_parse_errors_total{job=~\".*dependency-control-backend.*\"}[24h]))",
+          "expr": "sum(increase(analysis_sbom_parse_errors_total{job=~\".*dependency-control-backend.*\"}[$__range]))",
           "refId": "A"
         }
       ],
-      "title": "SBOM Parse Errors (24h)",
+      "title": "SBOM Parse Errors",
       "type": "stat"
     },
     {
@@ -2877,11 +2877,11 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(analysis_rescan_operations_total{job=~\".*dependency-control-backend.*\"}[24h]))",
+          "expr": "sum(increase(analysis_rescan_operations_total{job=~\".*dependency-control-backend.*\"}[$__range]))",
           "refId": "A"
         }
       ],
-      "title": "Rescans (24h)",
+      "title": "Rescans",
       "type": "stat"
     },
     {
@@ -2929,11 +2929,11 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(increase(analysis_waivers_applied_total{job=~\".*dependency-control-backend.*\"}[24h]))",
+          "expr": "sum(increase(analysis_waivers_applied_total{job=~\".*dependency-control-backend.*\"}[$__range]))",
           "refId": "A"
         }
       ],
-      "title": "Waivers Applied (24h)",
+      "title": "Waivers Applied",
       "type": "stat"
     },
     {
