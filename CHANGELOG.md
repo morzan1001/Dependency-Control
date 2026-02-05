@@ -1,3 +1,11 @@
+# Release 1.4.12
+
+## 📦 Build & CI
+
+- chore: update authentication flow to restrict OIDC users from local 2FA configuration and enhance user feedback in UI (#0)
+
+
+
 # Release 1.4.11
 
 ## 📦 Build & CI
