@@ -489,7 +489,12 @@ async def login_oidc_authorize(
         )
 
     # Construct redirect URI (callback to backend)
-    redirect_uri = str(request.url_for("login_oidc_callback"))
+    # Use FRONTEND_BASE_URL to generate external URL (behind reverse proxy)
+    # Falls back to request.url_for() for local development
+    if settings.FRONTEND_BASE_URL and not settings.FRONTEND_BASE_URL.startswith("http://localhost"):
+        redirect_uri = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/api/v1/login/oidc/callback"
+    else:
+        redirect_uri = str(request.url_for("login_oidc_callback"))
 
     # Generate state to prevent CSRF
     state = secrets.token_urlsafe(32)
@@ -576,7 +581,11 @@ async def login_oidc_callback(
             detail="State parameter already in use",
         )
 
-    redirect_uri = str(request.url_for("login_oidc_callback"))
+    # Use same redirect_uri logic as authorize endpoint
+    if settings.FRONTEND_BASE_URL and not settings.FRONTEND_BASE_URL.startswith("http://localhost"):
+        redirect_uri = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/api/v1/login/oidc/callback"
+    else:
+        redirect_uri = str(request.url_for("login_oidc_callback"))
 
     token_data = {
         "client_id": system_config.oidc_client_id,
