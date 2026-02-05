@@ -139,7 +139,7 @@ async def list_waivers(
         query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction
     )
 
-    items = [Waiver(**w).model_dump(by_alias=True) for w in waivers]
+    items = [Waiver(**w).model_dump() for w in waivers]
     return build_pagination_response(items, total, skip, limit)
 
 

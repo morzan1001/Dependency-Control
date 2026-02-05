@@ -528,7 +528,7 @@ class GitLabService:
                         auth_provider="gitlab",
                     )
                     await user_repo.create(new_user)
-                    user = new_user.model_dump(by_alias=True)
+                    user = new_user.model_dump()
 
                 if user:
                     # Map GitLab access level to role
@@ -538,7 +538,7 @@ class GitLabService:
                     if access_level >= GITLAB_ADMIN_MIN_ACCESS:
                         role = "admin"
 
-                    team_members.append(TeamMember(user_id=str(user["_id"]), role=role))
+                    team_members.append(TeamMember(user_id=str(user["id"]), role=role))
 
             if team:
                 await team_repo.set_members(

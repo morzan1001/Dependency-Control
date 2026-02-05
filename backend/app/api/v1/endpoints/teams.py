@@ -54,7 +54,7 @@ async def create_team(
     await team_repo.create(team)
 
     # Enrich with username for response
-    team_dict = team.model_dump(by_alias=True)
+    team_dict = team.model_dump()
     team_dict["members"][0]["username"] = current_user.username
 
     return team_dict

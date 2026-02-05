@@ -74,7 +74,7 @@ async def list_webhooks(
     total = await webhook_repo.count_by_project(project_id)
     webhooks = await webhook_repo.find_by_project(project_id, skip=skip, limit=limit)
 
-    items = [w.model_dump(by_alias=True) for w in webhooks]
+    items = [w.model_dump() for w in webhooks]
     return build_pagination_response(items, total, skip, limit)
 
 
@@ -112,7 +112,7 @@ async def list_global_webhooks(
     total = await webhook_repo.count_global()
     webhooks = await webhook_repo.find_global(skip=skip, limit=limit)
 
-    items = [w.model_dump(by_alias=True) for w in webhooks]
+    items = [w.model_dump() for w in webhooks]
     return build_pagination_response(items, total, skip, limit)
 
 

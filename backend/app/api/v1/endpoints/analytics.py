@@ -1089,7 +1089,7 @@ async def get_component_findings(
     results = []
     for fr in finding_records:
         # Convert Pydantic model to dict
-        finding = fr.model_dump(by_alias=True)
+        finding = fr.model_dump()
         finding["project_name"] = project_name_map.get(fr.project_id, "Unknown")
         results.append(finding)
 
