@@ -249,7 +249,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                   <SelectContent>
                     <SelectItem value="__all__">All projects</SelectItem>
                     {projects.map((p) => (
-                      <SelectItem key={p._id} value={p._id}>{p.name}</SelectItem>
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

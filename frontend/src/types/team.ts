@@ -7,7 +7,7 @@ export interface TeamMember {
 }
 
 export interface Team {
-  _id: ObjectId;
+  id: ObjectId;
   name: string;
   description?: string;
   members: TeamMember[];

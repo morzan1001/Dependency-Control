@@ -228,16 +228,16 @@ export default function Broadcasts() {
                   <Label>Select Teams</Label>
                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 border p-4 rounded-md h-40 overflow-y-auto">
                       {teams?.map((team) => (
-                         <div key={team._id} className="flex items-center space-x-2">
+                         <div key={team.id} className="flex items-center space-x-2">
                             <Checkbox
-                               id={`team-${team._id}`}
-                               checked={selectedTeams.includes(team._id)}
+                               id={`team-${team.id}`}
+                               checked={selectedTeams.includes(team.id)}
                                onCheckedChange={(checked) => {
-                                  if (checked) setSelectedTeams([...selectedTeams, team._id])
-                                  else setSelectedTeams(selectedTeams.filter(id => id !== team._id))
+                                  if (checked) setSelectedTeams([...selectedTeams, team.id])
+                                  else setSelectedTeams(selectedTeams.filter(id => id !== team.id))
                                }}
                             />
-                            <Label htmlFor={`team-${team._id}`}>{team.name}</Label>
+                            <Label htmlFor={`team-${team.id}`}>{team.name}</Label>
                          </div>
                       ))}
                    </div>

@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class Broadcast(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
+    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     type: str  # 'general' or 'advisory'
     target_type: str  # 'global', 'teams', 'advisory'
     subject: str

@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 async def read_system_invitations(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(deps.PermissionChecker("user:manage")),
+    current_user: User = Depends(deps.PermissionChecker("user:create")),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    List all pending system invitations.
+    List all pending system invitations. Requires 'user:create' permission.
     """
     invitation_repo = InvitationRepository(db)
     invitations = await invitation_repo.find_active_system_invitations(
@@ -41,11 +41,11 @@ async def read_system_invitations(
 async def create_system_invitation(
     background_tasks: BackgroundTasks,
     email: str = Body(..., embed=True),
-    current_user: User = Depends(deps.PermissionChecker("user:manage")),
+    current_user: User = Depends(deps.PermissionChecker("user:create")),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    Create a system invitation for a new user. Requires 'user:manage' permission.
+    Create a system invitation for a new user. Requires 'user:create' permission.
     """
     user_repo = UserRepository(db)
     invitation_repo = InvitationRepository(db)

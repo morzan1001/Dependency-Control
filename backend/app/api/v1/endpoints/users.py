@@ -47,12 +47,12 @@ logger = logging.getLogger(__name__)
 async def create_user(
     user_in: UserCreate,
     current_user: User = Depends(
-        deps.PermissionChecker(["user:manage", "user:create"])
+        deps.PermissionChecker(["user:create"])
     ),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    Create a new user. Requires 'user:manage' or 'user:create' permissions.
+    Create a new user. Requires 'user:create' permission.
     """
     if not user_in.password:
         raise HTTPException(
@@ -91,7 +91,7 @@ async def read_users(
     sort_by: str = "username",
     sort_order: str = "asc",
     current_user: User = Depends(
-        deps.PermissionChecker(["user:manage", "user:read_all"])
+        deps.PermissionChecker(["user:read_all"])
     ),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
@@ -160,7 +160,7 @@ async def read_user_by_id(
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """Get user by ID. Requires admin permission or self."""
-    check_admin_or_self(current_user, user_id, ["user:manage", "user:read"])
+    check_admin_or_self(current_user, user_id, ["user:read"])
     return await get_user_or_404(user_id, db)
 
 
@@ -173,7 +173,7 @@ async def update_user(
 ):
     """Update user. Requires admin permission or self."""
     has_admin_perm = check_admin_or_self(
-        current_user, user_id, ["user:manage", "user:update"]
+        current_user, user_id, ["user:update"]
     )
 
     existing_user = await get_user_or_404(user_id, db)
@@ -242,7 +242,7 @@ async def migrate_to_local(
 async def migrate_user_to_local(
     user_id: str,
     current_user: User = Depends(
-        deps.PermissionChecker(["user:manage", "user:update"])
+        deps.PermissionChecker(["user:update"])
     ),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
@@ -267,7 +267,7 @@ async def reset_user_password(
     user_id: str,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(
-        deps.PermissionChecker(["user:manage", "user:update"])
+        deps.PermissionChecker(["user:update"])
     ),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
@@ -512,7 +512,7 @@ async def admin_disable_2fa(
     user_id: str,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(
-        deps.PermissionChecker(["user:manage", "user:update"])
+        deps.PermissionChecker(["user:update"])
     ),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
@@ -553,13 +553,13 @@ async def admin_disable_2fa(
 async def delete_user(
     user_id: str,
     current_user: User = Depends(
-        deps.PermissionChecker(["user:manage", "user:delete"])
+        deps.PermissionChecker(["user:delete"])
     ),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Delete a user or revoke a pending invitation.
-    Requires 'user:manage' or 'user:delete' permissions.
+    Requires 'user:delete' permission.
     """
     if user_id == str(current_user.id):
         raise HTTPException(status_code=400, detail="Users cannot delete themselves")

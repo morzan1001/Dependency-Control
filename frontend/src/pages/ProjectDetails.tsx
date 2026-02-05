@@ -137,7 +137,7 @@ export default function ProjectDetails() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
             <p className="text-muted-foreground">
-              Project ID: {project._id}
+              Project ID: {project.id}
             </p>
           </div>
         </div>
@@ -217,24 +217,24 @@ export default function ProjectDetails() {
         </div>
         
         <TabsContent value="overview" className="space-y-4">
-          <ProjectOverview projectId={project._id} selectedBranches={selectedBranches} />
+          <ProjectOverview projectId={project.id} selectedBranches={selectedBranches} />
         </TabsContent>
         
         <TabsContent value="scans" className="space-y-4">
-          <ProjectScans projectId={project._id} />
+          <ProjectScans projectId={project.id} />
         </TabsContent>
         
         <TabsContent value="waivers" className="space-y-4">
-          <ProjectWaivers projectId={project._id} />
+          <ProjectWaivers projectId={project.id} />
         </TabsContent>
         
         <TabsContent value="members" className="space-y-4">
-          <ProjectMembers project={project} projectId={project._id} />
+          <ProjectMembers project={project} projectId={project.id} />
         </TabsContent>
         
         {user && (
           <TabsContent value="settings" className="space-y-4">
-            <ProjectSettings key={project._id} project={project} projectId={project._id} user={user} />
+            <ProjectSettings key={project.id} project={project} projectId={project.id} user={user} />
           </TabsContent>
         )}
       </Tabs>

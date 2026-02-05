@@ -218,7 +218,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         <SelectContent>
                             <SelectItem value="none">No Team</SelectItem>
                             {teams?.map((team) => (
-                                <SelectItem key={team._id} value={team._id}>
+                                <SelectItem key={team.id} value={team.id}>
                                     {team.name}
                                 </SelectItem>
                             ))}
@@ -478,7 +478,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             {hasPermission('project:update') && (
                 <Button 
                     onClick={() => updateNotificationSettingsMutation.mutate({ 
-                        id: project._id,
+                        id: project.id,
                         settings: {
                             notification_preferences: notificationPrefs,
                             enforce_notification_settings: enforceNotificationSettings

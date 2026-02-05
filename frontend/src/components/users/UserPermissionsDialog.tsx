@@ -4,7 +4,7 @@ import { useUpdateUser } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -30,15 +30,19 @@ interface UserPermissionsDialogProps {
 
 export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissionsDialogProps) {
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(user?.permissions || []);
+  const [prevUserId, setPrevUserId] = useState<string | null>(user?.id || null);
+  const [prevOpen, setPrevOpen] = useState(open);
 
   const updateUserMutation = useUpdateUser();
 
-  // Sync selectedPermissions when user changes or dialog opens
-  useEffect(() => {
-    if (user) {
-      setSelectedPermissions(user.permissions || []);
-    }
-  }, [user, open]);
+  // Sync selectedPermissions when user changes or dialog opens (React 19 pattern: adjust state during render)
+  if (user && (user.id !== prevUserId || (open && !prevOpen))) {
+    setPrevUserId(user.id);
+    setPrevOpen(open);
+    setSelectedPermissions(user.permissions || []);
+  } else if (open !== prevOpen) {
+    setPrevOpen(open);
+  }
 
   const handlePermissionChange = (permission: string, checked: boolean) => {
     if (checked) {

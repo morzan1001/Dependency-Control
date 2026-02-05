@@ -191,7 +191,7 @@ export function CreateProjectDialog({
                 <SelectContent>
                   <SelectItem value="none">No Team (Personal)</SelectItem>
                   {teams?.map((team) => (
-                    <SelectItem key={team._id} value={team._id}>
+                    <SelectItem key={team.id} value={team.id}>
                       {team.name}
                     </SelectItem>
                   ))}

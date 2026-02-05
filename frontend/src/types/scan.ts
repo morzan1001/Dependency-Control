@@ -41,7 +41,7 @@ export interface AnalyzerResultData {
 }
 
 export interface ScanAnalysisResult {
-  _id: string;
+  id: string;
   analyzer_name: string;
   result: AnalyzerResultData;
   created_at?: string;
@@ -382,7 +382,7 @@ export interface EnhancedStats {
 }
 
 export interface Scan {
-  _id: string;
+  id: string;
   project_id: string;
   branch: string;
   commit_hash?: string;

@@ -114,7 +114,7 @@ export default function TeamsPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {teams?.map((team: Team) => (
           <TeamCard 
-            key={team._id} 
+            key={team.id} 
             team={team}
             onEdit={openEditDialog}
             onManageMembers={openManageMembersDialog}
@@ -125,7 +125,7 @@ export default function TeamsPage() {
       </div>
 
       <EditTeamDialog 
-        key={selectedTeam?._id}
+        key={selectedTeam?.id}
         team={selectedTeam} 
         isOpen={isEditOpen} 
         onClose={() => setIsEditOpen(false)} 

@@ -199,7 +199,7 @@ export default function Dashboard() {
                     ) : (
                         <>
                             {scanList.map((scan) => (
-                                <div key={scan._id} className="flex items-center">
+                                <div key={scan.id} className="flex items-center">
                                     <div className="space-y-1">
                                         <p className="text-sm font-medium leading-none">{scan.project_name}</p>
                                         <p className="text-sm text-muted-foreground">
@@ -273,11 +273,11 @@ export default function Dashboard() {
                                     const project = projectList[virtualRow.index]
                                     return (
                                         <tr 
-                                            key={project._id} 
+                                            key={project.id} 
                                             data-index={virtualRow.index}
                                             ref={rowVirtualizer.measureElement}
                                             className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
-                                            onClick={() => navigate(`/projects/${project._id}`)}
+                                            onClick={() => navigate(`/projects/${project.id}`)}
                                         >
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_id || '-'}</td>

@@ -71,7 +71,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                         onValueChange={(value) => {
                             if (team) {
                                 updateMemberMutation.mutate(
-                                  { teamId: team._id, userId: member.user_id, role: value },
+                                  { teamId: team.id, userId: member.user_id, role: value },
                                   { onSuccess: () => toast.success("Member role updated") }
                                 );
                             }
@@ -99,7 +99,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                         onClick={() => {
                             if (team) {
                                 removeMemberMutation.mutate(
-                                  { teamId: team._id, userId: member.user_id },
+                                  { teamId: team.id, userId: member.user_id },
                                   { onSuccess: () => toast.success("Member removed") }
                                 );
                             }

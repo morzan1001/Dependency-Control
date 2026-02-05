@@ -158,7 +158,7 @@ function AppRoutes() {
         } />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/users" element={
-          <RequirePermission permission={['user:manage', 'user:read_all']}>
+          <RequirePermission permission={['user:read_all']}>
             <UsersPage />
           </RequirePermission>
         } />

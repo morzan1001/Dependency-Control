@@ -202,7 +202,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center gap-2">
-                    {user.status === 'invited' && hasPermission('user:manage') && (
+                    {user.status === 'invited' && hasPermission('user:create') && (
                        <Button 
                          variant="outline" 
                          size="sm"

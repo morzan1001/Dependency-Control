@@ -14,7 +14,6 @@ export const Permissions = {
   USER_READ_ALL: "user:read_all",
   USER_UPDATE: "user:update",
   USER_DELETE: "user:delete",
-  USER_MANAGE: "user:manage", // Legacy: combines create/read_all/update/delete
 
   // Team Management
   TEAM_CREATE: "team:create",
@@ -68,7 +67,6 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.USER_READ_ALL,
   Permissions.USER_UPDATE,
   Permissions.USER_DELETE,
-  Permissions.USER_MANAGE,
   // Team
   Permissions.TEAM_CREATE,
   Permissions.TEAM_READ,
@@ -203,11 +201,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         id: Permissions.USER_DELETE,
         label: "Delete Users",
         description: "Delete users",
-      },
-      {
-        id: Permissions.USER_MANAGE,
-        label: "Manage Users",
-        description: "Full user management access (legacy)",
       },
     ],
   },

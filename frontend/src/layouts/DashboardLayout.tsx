@@ -48,7 +48,7 @@ export default function DashboardLayout() {
       href: '/users',
       label: 'Users',
       icon: UserCog,
-      show: hasPermission('user:manage') || hasPermission('user:read_all')
+      show: hasPermission('user:read_all')
     },
     {
       href: '/broadcasts',

@@ -5,7 +5,8 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class ProjectInvitation(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
+    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     project_id: str
     email: EmailStr
     role: str
@@ -20,7 +21,8 @@ class ProjectInvitation(BaseModel):
 
 
 class SystemInvitation(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
+    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     email: EmailStr
     token: str
     invited_by: str

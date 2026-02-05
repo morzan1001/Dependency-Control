@@ -18,7 +18,6 @@ class Permissions:
     USER_READ_ALL = "user:read_all"
     USER_UPDATE = "user:update"
     USER_DELETE = "user:delete"
-    USER_MANAGE = "user:manage"  # Composite: combines create/read_all/update/delete
 
     TEAM_CREATE = "team:create"
     TEAM_READ = "team:read"
@@ -64,7 +63,6 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.USER_READ_ALL,
     Permissions.USER_UPDATE,
     Permissions.USER_DELETE,
-    Permissions.USER_MANAGE,
     # Team
     Permissions.TEAM_CREATE,
     Permissions.TEAM_READ,
@@ -186,11 +184,6 @@ PERMISSION_GROUPS = [
                 "id": Permissions.USER_DELETE,
                 "name": "Delete Users",
                 "description": "Delete user accounts",
-            },
-            {
-                "id": Permissions.USER_MANAGE,
-                "name": "Manage Users",
-                "description": "Full user management access (legacy)",
             },
         ],
     },

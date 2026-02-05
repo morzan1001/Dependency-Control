@@ -146,9 +146,9 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
               ))}
               {!isLoading && scanList.map((scan) => (
                 <TableRow 
-                  key={scan._id} 
+                  key={scan.id} 
                   className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => navigate(`/projects/${projectId}/scans/${scan.latest_rescan_id || scan._id}`)}
+                  onClick={() => navigate(`/projects/${projectId}/scans/${scan.latest_rescan_id || scan.id}`)}
                 >
                   <TableCell>
                     <div className="flex items-center gap-2">

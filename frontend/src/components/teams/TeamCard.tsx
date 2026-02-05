@@ -45,7 +45,7 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete 
                 className="h-8 w-8 text-destructive hover:text-destructive/90"
                 onClick={(e: React.MouseEvent) => {
                   e.stopPropagation();
-                  onDelete(team._id);
+                  onDelete(team.id);
                 }}
               >
                   <Trash2 className="h-4 w-4" />
@@ -79,7 +79,7 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete 
               className="w-full" 
               onClick={(e: React.MouseEvent) => {
                 e.stopPropagation();
-                onAddMember(team._id);
+                onAddMember(team.id);
               }}
             >
                 <UserPlus className="mr-2 h-4 w-4" />

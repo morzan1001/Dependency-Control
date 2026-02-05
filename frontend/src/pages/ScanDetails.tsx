@@ -22,7 +22,7 @@ import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface ScanHistoryItem {
-  _id: string;
+  id: string;
   is_rescan?: boolean;
   created_at: string;
 }
@@ -159,7 +159,7 @@ export default function ScanDetails() {
                     </SelectTrigger>
                     <SelectContent>
                         {scanHistory.map((h: ScanHistoryItem) => (
-                            <SelectItem key={h._id} value={h._id}>
+                            <SelectItem key={h.id} value={h.id}>
                                 {h.is_rescan ? 'Re-scan' : 'Original'} - {formatDateTime(h.created_at)}
                             </SelectItem>
                         ))}
@@ -499,7 +499,7 @@ export default function ScanDetails() {
                                 {scanResults
                                     .filter(r => isPostProcessorResult(r.analyzer_name))
                                     .map((result) => (
-                                        <Card key={result._id} className="overflow-hidden">
+                                        <Card key={result.id} className="overflow-hidden">
                                             <CardHeader className="bg-muted/50 pb-4">
                                                 <CardTitle className="text-lg flex items-center justify-between">
                                                     <span className="capitalize">{result.analyzer_name}</span>
@@ -523,7 +523,7 @@ export default function ScanDetails() {
                                 {scanResults
                                     .filter(r => !isPostProcessorResult(r.analyzer_name))
                                     .map((result) => (
-                                    <Card key={result._id} className="overflow-hidden">
+                                    <Card key={result.id} className="overflow-hidden">
                                         <CardHeader className="bg-muted/50 pb-4">
                                             <CardTitle className="text-lg flex items-center justify-between">
                                                 <span className="capitalize">{result.analyzer_name}</span>

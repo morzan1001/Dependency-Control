@@ -41,7 +41,7 @@ export default function UsersPage() {
 
   const allUsers: User[] = [
     ...filteredInvitations.map(invite => ({
-      id: invite._id,
+      id: invite.id,
       email: invite.email,
       username: invite.email,
       is_active: false,

@@ -108,7 +108,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
     
     // Find teams this user belongs to
     const userTeamIds = teams 
-      ? teams.filter(t => t.members?.some(m => m.user_id === userId)).map(t => t._id)
+      ? teams.filter(t => t.members?.some(m => m.user_id === userId)).map(t => t.id)
       : [];
 
     return projects.filter(p => 
@@ -280,9 +280,9 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                     <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
                       {getUserProjects(user.id).map(project => (
                         <li 
-                          key={project._id} 
+                          key={project.id} 
                           className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
-                          onClick={() => navigate(`/projects/${project._id}`)}
+                          onClick={() => navigate(`/projects/${project.id}`)}
                         >
                           <span>{project.name}</span>
                         </li>
@@ -309,8 +309,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                   ) : getUserTeams(user.id).length > 0 ? (
                     <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
                       {getUserTeams(user.id).map(team => (
-                        <li 
-                          key={team._id} 
+                        <li
+                          key={team.id}
                           className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
                           onClick={() => navigate('/teams')}
                         >

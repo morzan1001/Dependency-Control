@@ -30,7 +30,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
   // Get latest scan for PostProcessor results
   const latestScan = filteredScans.length > 0 ? filteredScans[0] : null
-  const { data: scanResults } = useScanResults(latestScan?._id || '')
+  const { data: scanResults } = useScanResults(latestScan?.id || '')
 
   // Count unique pipelines (excluding rescans)
   const uniqueScansCount = filteredScans.filter((s: Scan) => !s.is_rescan).length
@@ -327,7 +327,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
               .filter(r => isPostProcessorResult(r.analyzer_name))
               .map((result) => (
                 <PostProcessorResultCard
-                  key={result._id}
+                  key={result.id}
                   analyzerName={result.analyzer_name}
                   result={result.result}
                 />

@@ -33,7 +33,7 @@ export function ProjectCombobox({
   const { data: projectsData, isLoading } = useProjects(debouncedSearch || undefined, 1, 50)
 
   const projects = projectsData?.items || []
-  const selectedProject = projects.find(p => p._id === value)
+  const selectedProject = projects.find(p => p.id === value)
 
   // Close dropdown when clicking outside
   const handleClose = useCallback(() => setOpen(false), [])
@@ -44,7 +44,7 @@ export function ProjectCombobox({
     if (e.key === 'Escape') {
       setOpen(false)
     } else if (e.key === 'Enter' && projects.length === 1) {
-      onValueChange(projects[0]._id)
+      onValueChange(projects[0].id)
       setOpen(false)
       setSearch('')
     }
@@ -145,17 +145,17 @@ export function ProjectCombobox({
               <div className="space-y-0.5">
                 {projects.map((project) => (
                   <button
-                    key={project._id}
-                    onClick={() => handleSelect(project._id)}
+                    key={project.id}
+                    onClick={() => handleSelect(project.id)}
                     className={cn(
                       "flex w-full items-center gap-2 rounded-sm px-2 py-2 text-sm hover:bg-accent hover:text-accent-foreground cursor-pointer transition-colors",
-                      value === project._id && "bg-accent"
+                      value === project.id && "bg-accent"
                     )}
                   >
                     <Check
                       className={cn(
                         "h-4 w-4 shrink-0",
-                        value === project._id ? "opacity-100" : "opacity-0"
+                        value === project.id ? "opacity-100" : "opacity-0"
                       )}
                     />
                     <Folder className="h-4 w-4 text-muted-foreground shrink-0" />

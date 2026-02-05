@@ -31,7 +31,8 @@ class Webhook(BaseModel):
         last_failure_at: Last failed delivery timestamp
     """
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
+    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), validation_alias="_id")
     project_id: Optional[str] = None
     url: str
     events: List[str]

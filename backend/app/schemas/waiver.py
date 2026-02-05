@@ -49,9 +49,11 @@ class WaiverUpdate(BaseModel):
 
 
 class WaiverResponse(WaiverCreate):
-    id: str = Field(alias="_id")
+    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
+    id: str = Field(validation_alias="_id")
     created_by: str
     created_at: datetime
 
     class Config:
+        from_attributes = True
         populate_by_name = True

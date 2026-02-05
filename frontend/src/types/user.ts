@@ -37,7 +37,7 @@ export interface UserUpdateMe {
 }
 
 export interface SystemInvitation {
-  _id: ObjectId;
+  id: ObjectId;
   email: string;
   token: string;
   invited_by: string;

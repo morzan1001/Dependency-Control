@@ -23,12 +23,12 @@ interface EditTeamDialogProps {
 export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
   const [name, setName] = useState(team?.name || '');
   const [description, setDescription] = useState(team?.description || '');
-  const [prevTeamId, setPrevTeamId] = useState<string | null>(team?._id || null);
+  const [prevTeamId, setPrevTeamId] = useState<string | null>(team?.id || null);
   const updateTeamMutation = useUpdateTeam();
 
   // Sync state when team prop changes (React 19 pattern: adjust state during render)
-  if (team && team._id !== prevTeamId) {
-    setPrevTeamId(team._id);
+  if (team && team.id !== prevTeamId) {
+    setPrevTeamId(team.id);
     setName(team.name || '');
     setDescription(team.description || '');
   }
@@ -43,7 +43,7 @@ export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
     e.preventDefault();
     if (team) {
       updateTeamMutation.mutate(
-        { id: team._id, data: { name, description } },
+        { id: team.id, data: { name, description } },
         {
           onSuccess: () => {
              handleClose();

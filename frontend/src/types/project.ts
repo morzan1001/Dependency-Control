@@ -12,7 +12,7 @@ export interface ProjectMember {
 }
 
 export interface Project {
-  _id: ObjectId;
+  id: ObjectId;
   name: string;
   owner_id: ObjectId;
   team_id?: ObjectId;
