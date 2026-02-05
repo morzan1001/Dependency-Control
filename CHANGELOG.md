@@ -1,3 +1,11 @@
+# Release 1.4.14
+
+## 📦 Build & CI
+
+- chore: consolidate code change entries for better organization (#0)
+
+
+
 # Release 1.4.13
 
 ## 📦 Build & CI
