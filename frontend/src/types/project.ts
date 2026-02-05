@@ -16,6 +16,7 @@ export interface Project {
   name: string;
   owner_id: ObjectId;
   team_id?: ObjectId;
+  team_name?: string;
   members?: ProjectMember[];
   active_analyzers?: string[];
   retention_days?: number;

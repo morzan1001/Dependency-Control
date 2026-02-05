@@ -1353,14 +1353,12 @@ async def export_project_csv(
     scan_repo = ScanRepository(db)
 
     # Get latest scan
-    scan_data = await scan_repo.get_latest_for_project(project_id, status="completed")
+    scan = await scan_repo.get_latest_for_project(project_id, status="completed")
 
-    if not scan_data:
+    if not scan:
         raise HTTPException(
             status_code=404, detail="No completed scans found for this project"
         )
-
-    scan = Scan(**scan_data)
 
     # Prepare CSV
     output = io.StringIO()

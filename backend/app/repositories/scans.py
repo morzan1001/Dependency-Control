@@ -127,12 +127,13 @@ class ScanRepository:
 
     async def get_latest_for_project(
         self, project_id: str, status: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[Scan]:
         """Get latest scan for a project."""
         query: Dict[str, Any] = {"project_id": project_id}
         if status:
             query["status"] = status
-        return await self.collection.find_one(query, sort=[("created_at", -1)])
+        data = await self.collection.find_one(query, sort=[("created_at", -1)])
+        return Scan(**data) if data else None
 
     async def get_pending_scans(self) -> List[Dict[str, Any]]:
         """Get all pending scans."""

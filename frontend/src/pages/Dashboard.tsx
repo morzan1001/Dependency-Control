@@ -280,7 +280,7 @@ export default function Dashboard() {
                                             onClick={() => navigate(`/projects/${project.id}`)}
                                         >
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_id || '-'}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_name || '-'}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? formatDate(project.last_scan_at) : 'Never'}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-high font-bold">{project.stats?.high || 0}</td>
