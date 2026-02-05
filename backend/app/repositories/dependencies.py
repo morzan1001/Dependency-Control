@@ -20,10 +20,6 @@ class DependencyRepository(BaseRepository[Dependency]):
         """Get first dependency by name."""
         return await self.find_one({"name": name})
 
-    async def get_by_name_raw(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get first raw dependency by name."""
-        return await self.find_one_raw({"name": name})
-
     async def find_by_scan(
         self,
         scan_id: str,
@@ -32,18 +28,6 @@ class DependencyRepository(BaseRepository[Dependency]):
     ) -> List[Dependency]:
         """Find dependencies for a scan."""
         return await self.find_many({"scan_id": scan_id}, skip=skip, limit=limit)
-
-    async def find_by_scan_raw(
-        self,
-        scan_id: str,
-        skip: int = 0,
-        limit: int = 10000,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Find raw dependencies for a scan."""
-        return await self.find_many_raw(
-            {"scan_id": scan_id}, skip=skip, limit=limit, projection=projection
-        )
 
     async def find_all(
         self,

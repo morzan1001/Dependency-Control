@@ -233,7 +233,7 @@ async def broadcast_message(
             match_query["type"] = list(unique_types)[0]
 
         # Fetch all potentially affected dependencies in ONE query
-        dependencies = await dep_repo.find_many_raw(match_query, limit=100000)
+        dependencies = await dep_repo.find_many(match_query, limit=100000)
 
         logger.info(
             f"Advisory broadcast: Found {len(dependencies)} dependencies "
@@ -242,15 +242,15 @@ async def broadcast_message(
 
         # Process dependencies and check version ranges
         for dep in dependencies:
-            dep_name = dep.get("name")
-            dep_version = dep.get("version")
+            dep_name = dep.name
+            dep_version = dep.version
 
             # Find matching package rule
             matching_rule = None
             for pkg_rule in payload.packages:
                 if pkg_rule.name == dep_name:
                     # Type match (if specified)
-                    if pkg_rule.type and dep.get("type") != pkg_rule.type:
+                    if pkg_rule.type and dep.type != pkg_rule.type:
                         continue
                     matching_rule = pkg_rule
                     break

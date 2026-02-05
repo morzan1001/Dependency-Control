@@ -73,19 +73,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
             query.update(query_filter)
         return await self.find_many(query, skip=skip, limit=limit)
 
-    async def find_by_scan_raw(
-        self,
-        scan_id: str,
-        skip: int = 0,
-        limit: int = 1000,
-        query_filter: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Find raw findings for a scan."""
-        query: Dict[str, Any] = {"scan_id": scan_id}
-        if query_filter:
-            query.update(query_filter)
-        return await self.find_many_raw(query, skip=skip, limit=limit)
-
     async def delete_by_scan(self, scan_id: str) -> int:
         """Delete all findings for a scan."""
         return await self.delete_many({"scan_id": scan_id})

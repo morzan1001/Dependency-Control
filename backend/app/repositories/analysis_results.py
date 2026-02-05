@@ -24,14 +24,6 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
         """Find analysis results for a scan."""
         return await self.find_many({"scan_id": scan_id}, limit=limit)
 
-    async def find_by_scan_raw(
-        self,
-        scan_id: str,
-        limit: int = 1000,
-    ) -> List[Dict[str, Any]]:
-        """Find raw analysis results for a scan."""
-        return await self.find_many_raw({"scan_id": scan_id}, limit=limit)
-
     async def find_by_scan_ids(
         self,
         scan_ids: List[str],
@@ -39,14 +31,6 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
     ) -> List[AnalysisResult]:
         """Find analysis results for multiple scans."""
         return await self.find_many({"scan_id": {"$in": scan_ids}}, limit=limit)
-
-    async def find_by_scan_ids_raw(
-        self,
-        scan_ids: List[str],
-        limit: int = 1000,
-    ) -> List[Dict[str, Any]]:
-        """Find raw analysis results for multiple scans."""
-        return await self.find_many_raw({"scan_id": {"$in": scan_ids}}, limit=limit)
 
     async def delete_by_scan(self, scan_id: str) -> int:
         """Delete all analysis results for a scan."""

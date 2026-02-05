@@ -46,6 +46,11 @@ class WaiverRepository:
         result = await self.collection.delete_one({"_id": waiver_id})
         return result.deleted_count > 0
 
+    async def delete_many(self, query: Dict[str, Any]) -> int:
+        """Delete multiple waivers matching query."""
+        result = await self.collection.delete_many(query)
+        return result.deleted_count
+
     async def find_by_project(
         self,
         project_id: str,

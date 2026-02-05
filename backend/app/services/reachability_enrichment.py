@@ -85,16 +85,14 @@ async def enrich_findings_with_reachability(
 
     # Fetch callgraph linked to this scan
     # Priority: exact scan_id match > fallback to pipeline_id match
-    callgraph = await callgraph_repo.find_one_raw(
-        {"project_id": project_id, "scan_id": scan_id}
-    )
+    callgraph = await callgraph_repo.get_minimal_by_scan(project_id, scan_id)
 
     if not callgraph:
         # Fallback: try to find callgraph via pipeline_id
-        scan = await scan_repo.find_one_raw({"_id": scan_id})
-        if scan and scan.get("pipeline_id"):
-            callgraph = await callgraph_repo.find_one_raw(
-                {"project_id": project_id, "pipeline_id": scan["pipeline_id"]}
+        scan = await scan_repo.get_by_id(scan_id)
+        if scan and scan.pipeline_id:
+            callgraph = await callgraph_repo.get_minimal_by_pipeline(
+                project_id, scan.pipeline_id
             )
 
     if not callgraph:
@@ -407,18 +405,18 @@ async def run_pending_reachability_for_scan(
     result_repo = AnalysisResultRepository(db)
 
     # Check if this scan has pending reachability
-    scan = await scan_repo.find_one_raw({"_id": scan_id})
+    scan = await scan_repo.get_by_id(scan_id)
     if not scan:
         logger.debug(f"Scan {scan_id} not found")
         return result
 
-    if not scan.get("reachability_pending"):
+    if not scan.reachability_pending:
         logger.debug(f"Scan {scan_id} has no pending reachability analysis")
         return result
 
     try:
         # Fetch vulnerability findings for this scan
-        findings = await finding_repo.find_many_raw(
+        findings = await finding_repo.find_many(
             {"scan_id": scan_id, "type": "vulnerability"}, limit=10000
         )
 
@@ -436,8 +434,8 @@ async def run_pending_reachability_for_scan(
             )
             return result
 
-        # Convert to dicts for enrichment
-        findings_dicts = [dict(f) for f in findings]
+        # Convert to dicts for enrichment (enrichment modifies dicts in place)
+        findings_dicts = [f.model_dump(by_alias=True) for f in findings]
 
         # Run reachability enrichment - callgraph lookup uses scan_id
         enriched_count = await enrich_findings_with_reachability(
@@ -462,12 +460,10 @@ async def run_pending_reachability_for_scan(
                 )
 
         # Store reachability summary in analysis_results for raw data view
-        callgraph = await callgraph_repo.find_one_raw(
-            {"project_id": project_id, "scan_id": scan_id}
-        )
+        callgraph = await callgraph_repo.get_minimal_by_scan(project_id, scan_id)
         if callgraph:
             reachability_summary = _build_reachability_summary_for_pending(
-                findings_dicts, callgraph, enriched_count
+                findings_dicts, callgraph.model_dump(by_alias=True), enriched_count
             )
             await result_repo.create_raw(
                 {

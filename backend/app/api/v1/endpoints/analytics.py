@@ -885,8 +885,8 @@ async def search_vulnerabilities(
     mongo_sort_field = sort_field_map.get(sort_by, "severity")
     sort_direction = -1 if sort_order == "desc" else 1
 
-    # Fetch findings (use find_many_raw to get dicts)
-    findings = await finding_repo.find_many_raw(
+    # Fetch findings with Pydantic models
+    findings = await finding_repo.find_many(
         query,
         skip=skip,
         limit=limit,
@@ -896,7 +896,7 @@ async def search_vulnerabilities(
 
     results = []
     for finding in findings:
-        details = finding.get("details", {})
+        details = finding.details
 
         # Extract vulnerability info from nested vulnerabilities if present
         nested_vulns = details.get("vulnerabilities", [])
@@ -1297,12 +1297,12 @@ async def get_project_recommendations(
 
     # Get the latest scan or specified scan
     if scan_id:
-        scan = await scan_repo.get_raw_by_id(scan_id)
-        if scan and scan.get("project_id") != project_id:
+        scan = await scan_repo.get_by_id(scan_id)
+        if scan and scan.project_id != project_id:
             scan = None
     else:
-        # Use find_many_raw() with sort parameter instead of sort_by/sort_order
-        scans = await scan_repo.find_many_raw(
+        # Get latest scan for project
+        scans = await scan_repo.find_many(
             {"project_id": project_id},
             limit=1,
             sort=[("created_at", -1)],
@@ -1312,7 +1312,7 @@ async def get_project_recommendations(
     if not scan:
         raise HTTPException(status_code=404, detail="No scan found for this project")
 
-    scan_id = scan["_id"]
+    scan_id = scan.id
 
     # Get source target (e.g., Docker image name) from scan
     source_target = None
@@ -1333,7 +1333,7 @@ async def get_project_recommendations(
     scan_history = None
 
     # Get previous scan for regression detection
-    previous_scans = await scan_repo.find_many_raw(
+    previous_scans = await scan_repo.find_many(
         {"project_id": project_id, "_id": {"$ne": scan_id}},
         limit=1,
         sort=[("created_at", -1)],
@@ -1342,7 +1342,7 @@ async def get_project_recommendations(
 
     if previous_scan:
         previous_scan_findings = await finding_repo.find_by_scan(
-            previous_scan["_id"], limit=ANALYTICS_MAX_QUERY_LIMIT
+            previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT
         )
 
     # Get last 10 scans for recurring issue detection

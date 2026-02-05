@@ -87,12 +87,10 @@ async def _carry_over_external_results(
     Copies analysis results from the original scan to the re-scan for analyzers
     that are NOT part of the internal SBOM analysis (e.g. Secret Scanning, SAST).
     """
-    if not (
-        scan_doc and scan_doc.get("is_rescan") and scan_doc.get("original_scan_id")
-    ):
+    if not (scan_doc and scan_doc.is_rescan and scan_doc.original_scan_id):
         return
 
-    original_scan_id = scan_doc.get("original_scan_id")
+    original_scan_id = scan_doc.original_scan_id
     logger.info(
         f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}"
     )
@@ -103,7 +101,7 @@ async def _carry_over_external_results(
     from app.repositories import AnalysisResultRepository
 
     result_repo = AnalysisResultRepository(db)
-    old_results = await result_repo.find_many_raw(
+    old_results = await result_repo.find_many(
         {
             "scan_id": original_scan_id,
             "analyzer_name": {"$nin": internal_analyzer_names},
@@ -114,7 +112,7 @@ async def _carry_over_external_results(
     for old_result in old_results:
         # Use upsert to avoid race conditions when multiple workers might copy the same result
         # The unique key is (scan_id, analyzer_name, result hash)
-        new_result = old_result.copy()
+        new_result = old_result.model_dump(by_alias=True).copy()
         new_result["_id"] = str(uuid.uuid4())
         new_result["scan_id"] = scan_id
         new_result["created_at"] = datetime.now(timezone.utc)
@@ -222,12 +220,12 @@ async def run_analysis(
     project_repo = ProjectRepository(db)
 
     # Fetch scan document ONCE at the beginning - reuse throughout the function
-    scan_doc: Optional[ScanDict] = await scan_repo.find_one_raw({"_id": scan_id})
+    scan_doc = await scan_repo.get_by_id(scan_id)
     if not scan_doc:
         logger.error(f"Scan {scan_id} not found")
         return False
 
-    project_id: Optional[str] = scan_doc.get("project_id")
+    project_id: Optional[str] = scan_doc.project_id
 
     # 0. Cleanup previous results for internal analyzers
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
@@ -238,7 +236,7 @@ async def run_analysis(
         )
 
     # Check if this is a re-scan and carry over external results
-    if scan_doc.get("is_rescan"):
+    if scan_doc.is_rescan:
         if analysis_rescan_operations_total:
             analysis_rescan_operations_total.inc()
 
@@ -246,7 +244,7 @@ async def run_analysis(
 
     # Fetch system settings for dynamic configuration
     settings_repo = SystemSettingsRepository(db)
-    system_settings: SystemSettingsDict = await settings_repo.get_raw() or {}
+    system_settings = await settings_repo.get()
 
     # Initialize GridFS
     fs = AsyncIOMotorGridFSBucket(db)
@@ -347,11 +345,11 @@ async def run_analysis(
     external_load_start = datetime.now(timezone.utc)
 
     # Load external results via repository
-    external_results = await result_repo.find_by_scan_raw(scan_id, limit=10000)
+    external_results = await result_repo.find_by_scan(scan_id, limit=10000)
     for res in external_results:
-        name = res["analyzer_name"]
+        name = res.analyzer_name
         if name not in analyzers:
-            aggregator.aggregate(name, res["result"])
+            aggregator.aggregate(name, res.result)
 
     # Save aggregated findings to the scan document
     aggregated_findings = aggregator.get_findings()
@@ -429,7 +427,7 @@ async def run_analysis(
         f for f in findings_to_insert if f.get("type") == "vulnerability"
     ]
 
-    github_token = system_settings.get("github_token")
+    github_token = system_settings.github_token
 
     # EPSS/KEV Enrichment
     if "epss_kev" in active_analyzers and vulnerability_findings:
@@ -476,15 +474,13 @@ async def run_analysis(
 
     # Reachability Analysis
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
-        callgraph = await callgraph_repo.find_one_raw(
-            {"project_id": project_id, "scan_id": scan_id}
-        )
+        callgraph = await callgraph_repo.get_minimal_by_scan(project_id, scan_id)
 
         if not callgraph:
-            pipeline_id = scan_doc.get("pipeline_id") if scan_doc else None
+            pipeline_id = scan_doc.pipeline_id if scan_doc else None
             if pipeline_id:
-                callgraph = await callgraph_repo.find_one_raw(
-                    {"project_id": project_id, "pipeline_id": pipeline_id}
+                callgraph = await callgraph_repo.get_minimal_by_pipeline(
+                    project_id, pipeline_id
                 )
 
         if callgraph:
@@ -496,7 +492,7 @@ async def run_analysis(
                     scan_id=scan_id,
                 )
                 reachability_summary = build_reachability_summary(
-                    vulnerability_findings, callgraph, enriched_count
+                    vulnerability_findings, callgraph.model_dump(by_alias=True), enriched_count
                 )
                 # Store reachability summary via repository
                 await result_repo.create_raw(
@@ -621,10 +617,8 @@ async def run_analysis(
     # Race Condition Check: Did new results arrive while we were processing?
     # Specifically, after we started loading external results.
     # We need a fresh query here since last_result_at may have changed during processing
-    race_check = await scan_repo.find_one_raw(
-        {"_id": scan_id}, projection={"last_result_at": 1}
-    )
-    last_result_at = race_check.get("last_result_at") if race_check else None
+    race_check = await scan_repo.get_by_id(scan_id)
+    last_result_at = race_check.last_result_at if race_check else None
 
     # Ensure timezone-aware comparison (handle legacy timezone-naive datetimes)
     if last_result_at:
@@ -683,7 +677,7 @@ async def run_analysis(
     )
 
     # Update Project stats (reuse scan_doc from the beginning)
-    if scan_doc.get("is_rescan") and scan_doc.get("original_scan_id"):
+    if scan_doc.is_rescan and scan_doc.original_scan_id:
         await scan_repo.update_raw(
             scan_doc["original_scan_id"],
             {

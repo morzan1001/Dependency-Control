@@ -53,16 +53,15 @@ async def update_settings(
 
     # Check if slack_bot_token is being manually updated
     if "slack_bot_token" in update_data:
-        current_settings = await repo.get_raw()
-        if current_settings:
-            current_token = current_settings.get("slack_bot_token")
-            new_token = update_data.get("slack_bot_token")
+        current_settings = await repo.get()
+        current_token = current_settings.slack_bot_token
+        new_token = update_data.get("slack_bot_token")
 
-            # If the token has changed (and it's not just a re-save of the existing one),
-            # we assume it's a manual update and clear the OAuth rotation fields.
-            if new_token != current_token:
-                update_data["slack_refresh_token"] = None
-                update_data["slack_token_expires_at"] = None
+        # If the token has changed (and it's not just a re-save of the existing one),
+        # we assume it's a manual update and clear the OAuth rotation fields.
+        if new_token != current_token:
+            update_data["slack_refresh_token"] = None
+            update_data["slack_token_expires_at"] = None
 
     return await repo.update(update_data)
 

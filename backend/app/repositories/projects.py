@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.project import Project
+from app.schemas.projections import ProjectIdOnly, ProjectWithScanId
 
 
 class ProjectRepository:
@@ -75,10 +76,11 @@ class ProjectRepository:
         limit: int = 100,
         sort_by: str = "name",
         sort_order: int = 1,
+        projection: Optional[Dict[str, int]] = None,
     ) -> List[Project]:
         """Find multiple projects with pagination. Returns Pydantic models."""
         cursor = (
-            self.collection.find(query)
+            self.collection.find(query, projection)
             .sort(sort_by, sort_order)
             .skip(skip)
             .limit(limit)
@@ -86,23 +88,27 @@ class ProjectRepository:
         docs = await cursor.to_list(limit)
         return [Project(**doc) for doc in docs]
 
-    async def find_many_raw(
+    async def find_many_ids(
         self,
         query: Dict[str, Any],
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "name",
-        sort_order: int = 1,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Find multiple projects with pagination. Returns raw dicts."""
-        cursor = (
-            self.collection.find(query, projection)
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
-        return await cursor.to_list(limit)
+        limit: int = 1000,
+    ) -> List[ProjectIdOnly]:
+        """Find project IDs matching query. Returns minimal Pydantic models."""
+        cursor = self.collection.find(query, {"_id": 1}).limit(limit)
+        docs = await cursor.to_list(limit)
+        return [ProjectIdOnly(**doc) for doc in docs]
+
+    async def find_many_with_scan_id(
+        self,
+        query: Dict[str, Any],
+        limit: int = 1000,
+    ) -> List[ProjectWithScanId]:
+        """Find projects with scan IDs. Returns Pydantic models."""
+        cursor = self.collection.find(
+            query, {"_id": 1, "name": 1, "latest_scan_id": 1}
+        ).limit(limit)
+        docs = await cursor.to_list(limit)
+        return [ProjectWithScanId(**doc) for doc in docs]
 
     async def find_all(
         self,

@@ -60,15 +60,15 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str
     team_repo = TeamRepository(db)
 
     if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
-        projects = await project_repo.find_many(
-            {}, limit=ANALYTICS_MAX_QUERY_LIMIT, projection={"_id": 1}
+        projects = await project_repo.find_many_ids(
+            {}, limit=ANALYTICS_MAX_QUERY_LIMIT
         )
-        return [p["_id"] for p in projects]
+        return [p.id for p in projects]
 
     user_teams = await team_repo.find_by_member(str(user.id))
     user_team_ids = [str(t["_id"]) for t in user_teams]
 
-    projects = await project_repo.find_many(
+    projects = await project_repo.find_many_ids(
         {
             "$or": [
                 {"owner_id": str(user.id)},
@@ -77,10 +77,9 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str
             ]
         },
         limit=ANALYTICS_MAX_QUERY_LIMIT,
-        projection={"_id": 1},
     )
 
-    return [p["_id"] for p in projects]
+    return [p.id for p in projects]
 
 
 async def get_latest_scan_ids(
@@ -88,13 +87,12 @@ async def get_latest_scan_ids(
 ) -> List[str]:
     """Get latest scan IDs for given projects."""
     project_repo = ProjectRepository(db)
-    projects = await project_repo.find_many(
+    projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": project_ids}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
-        projection={"latest_scan_id": 1},
     )
 
-    return [p["latest_scan_id"] for p in projects if p.get("latest_scan_id")]
+    return [p.latest_scan_id for p in projects if p.latest_scan_id]
 
 
 async def get_projects_with_scans(
@@ -107,14 +105,13 @@ async def get_projects_with_scans(
         Tuple of (project_name_map, scan_ids)
     """
     project_repo = ProjectRepository(db)
-    projects = await project_repo.find_many(
+    projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": project_ids}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
-        projection={"_id": 1, "name": 1, "latest_scan_id": 1},
     )
 
-    project_name_map = {p["_id"]: p["name"] for p in projects}
-    scan_ids = [p["latest_scan_id"] for p in projects if p.get("latest_scan_id")]
+    project_name_map = {p.id: p.name for p in projects}
+    scan_ids = [p.latest_scan_id for p in projects if p.latest_scan_id]
 
     return project_name_map, scan_ids
 
@@ -477,18 +474,17 @@ async def gather_cross_project_data(
     ]
 
     # Batch fetch: Get all projects info at once
-    other_projects = await project_repo.find_many(
+    other_projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": other_project_ids}},
         limit=len(other_project_ids),
-        projection={"_id": 1, "name": 1, "latest_scan_id": 1},
     )
-    project_info_map = {p["_id"]: p for p in other_projects}
+    project_info_map = {p.id: p for p in other_projects}
 
     # Collect scan IDs from projects
     scan_id_to_project: Dict[str, str] = {}
     for project in other_projects:
-        if project.get("latest_scan_id"):
-            scan_id_to_project[project["latest_scan_id"]] = project["_id"]
+        if project.latest_scan_id:
+            scan_id_to_project[project.latest_scan_id] = project.id
 
     other_scan_ids = list(scan_id_to_project.keys())
 
@@ -496,12 +492,11 @@ async def gather_cross_project_data(
         return cross_project_data
 
     # Batch fetch: Get all scans at once for stats
-    other_scans = await scan_repo.find_many(
+    other_scans = await scan_repo.find_many_with_stats(
         {"_id": {"$in": other_scan_ids}},
         limit=len(other_scan_ids),
-        projection={"_id": 1, "stats": 1},
     )
-    scan_stats_map = {s["_id"]: s.get("stats", {}) for s in other_scans}
+    scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
 
     # Batch fetch: Get CVEs for all scans via aggregation
     cve_pipeline: List[Dict[str, Any]] = [

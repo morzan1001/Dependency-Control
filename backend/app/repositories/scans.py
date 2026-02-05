@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.project import Scan
+from app.schemas.projections import ScanMinimal, ScanWithStats
 
 
 class ScanRepository:
@@ -26,17 +27,21 @@ class ScanRepository:
             return Scan(**data)
         return None
 
-    async def get_raw_by_id(
-        self, scan_id: str, projection: Optional[Dict[str, int]] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Get raw scan document by ID."""
-        return await self.collection.find_one({"_id": scan_id}, projection)
-
-    async def find_one_raw(
-        self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None
-    ) -> Optional[Dict[str, Any]]:
-        """Find one raw scan document matching query."""
-        return await self.collection.find_one(query, projection)
+    async def get_minimal_by_id(self, scan_id: str) -> Optional[ScanMinimal]:
+        """Get scan with minimal fields by ID (performance optimized)."""
+        data = await self.collection.find_one(
+            {"_id": scan_id},
+            {
+                "_id": 1,
+                "pipeline_id": 1,
+                "is_rescan": 1,
+                "original_scan_id": 1,
+                "status": 1,
+                "reachability_pending": 1,
+                "project_id": 1,
+            },
+        )
+        return ScanMinimal(**data) if data else None
 
     async def create(self, scan: Scan) -> Scan:
         """Create a new scan."""
@@ -106,23 +111,15 @@ class ScanRepository:
         docs = await cursor.to_list(limit)
         return [Scan(**doc) for doc in docs]
 
-    async def find_many_raw(
+    async def find_many_with_stats(
         self,
         query: Dict[str, Any],
-        skip: int = 0,
-        limit: int = 100,
-        sort: Optional[List[tuple]] = None,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
-        """Find multiple scans matching query. Returns raw dicts."""
-        cursor = self.collection.find(query, projection)
-        if sort:
-            cursor = cursor.sort(sort)
-        if skip:
-            cursor = cursor.skip(skip)
-        if limit:
-            cursor = cursor.limit(limit)
-        return await cursor.to_list(limit)
+        limit: int = 1000,
+    ) -> List[ScanWithStats]:
+        """Find scans with stats only. Returns Pydantic models."""
+        cursor = self.collection.find(query, {"_id": 1, "stats": 1}).limit(limit)
+        docs = await cursor.to_list(limit)
+        return [ScanWithStats(**doc) for doc in docs]
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
         """Count scans matching query."""

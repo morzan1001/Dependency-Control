@@ -910,36 +910,37 @@ async def read_analysis_results(
     analysis_repo = AnalysisResultRepository(db)
 
     # Need to find project_id from scan to check permissions
-    # Projection to avoid fetching large SBOMs
-    scan = await scan_repo.get_raw_by_id(scan_id, {"project_id": 1, "commit_hash": 1})
+    scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    await check_project_access(scan["project_id"], current_user, db)
+    await check_project_access(scan.project_id, current_user, db)
 
     # Find all scans for this commit to aggregate results
+    # Note: commit_hash not in ScanMinimal, use get_by_id for full model
+    full_scan = await scan_repo.get_by_id(scan_id)
     related_scans = await scan_repo.find_many(
-        {"project_id": scan["project_id"], "commit_hash": scan["commit_hash"]},
+        {"project_id": scan.project_id, "commit_hash": full_scan.commit_hash if full_scan else None},
         projection={"_id": 1},
     )
-    related_scan_ids = [s["_id"] for s in related_scans]
+    related_scan_ids = [s.id for s in related_scans]
 
     if not related_scan_ids:
         related_scan_ids = [scan_id]
 
-    results = await analysis_repo.find_by_scan_ids_raw(related_scan_ids)
+    results = await analysis_repo.find_by_scan_ids(related_scan_ids)
 
     # Group results by analyzer_name
     grouped_results = {}
     for res in results:
-        name = res["analyzer_name"]
+        name = res.analyzer_name
         grouped_results.setdefault(name, []).append(res)
 
     final_results = []
 
     for name, group in grouped_results.items():
         # 1. Prefer results from the requested scan_id
-        current_scan_results = [r for r in group if r["scan_id"] == scan_id]
+        current_scan_results = [r for r in group if r.scan_id == scan_id]
 
         if current_scan_results:
             base_result = current_scan_results[0]
@@ -1007,13 +1008,13 @@ async def read_scan(
     """
     scan_repo = ScanRepository(db)
 
-    scan_data = await scan_repo.get_raw_by_id(scan_id)
+    scan_data = await scan_repo.get_by_id(scan_id)
     if not scan_data:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    await check_project_access(scan_data["project_id"], current_user, db)
+    await check_project_access(scan_data.project_id, current_user, db)
 
-    return Scan(**scan_data)
+    return scan_data
 
 
 @router.get(
@@ -1033,14 +1034,14 @@ async def read_scan_sboms(
     """
     scan_repo = ScanRepository(db)
 
-    scan_data = await scan_repo.get_raw_by_id(scan_id)
+    scan_data = await scan_repo.get_by_id(scan_id)
     if not scan_data:
         raise HTTPException(status_code=404, detail="Scan not found")
 
-    await check_project_access(scan_data["project_id"], current_user, db)
+    await check_project_access(scan_data.project_id, current_user, db)
 
     # Get SBOM refs from GridFS (legacy 'sboms' field removed)
-    sbom_refs = scan_data.get("sbom_refs") or []
+    sbom_refs = scan_data.sbom_refs or []
 
     if not sbom_refs:
         raise HTTPException(
@@ -1075,10 +1076,10 @@ async def read_scan_findings(
     finding_repo = FindingRepository(db)
 
     # Check access
-    scan = await scan_repo.get_raw_by_id(scan_id, {"project_id": 1})
+    scan = await scan_repo.get_by_id(scan_id, {"project_id": 1})
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
-    await check_project_access(scan["project_id"], current_user, db)
+    await check_project_access(scan.project_id, current_user, db)
 
     query = {"scan_id": scan_id}
 
@@ -1211,10 +1212,10 @@ async def get_scan_stats(
     finding_repo = FindingRepository(db)
 
     # Check access
-    scan = await scan_repo.get_raw_by_id(scan_id, {"project_id": 1})
+    scan = await scan_repo.get_by_id(scan_id, {"project_id": 1})
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
-    await check_project_access(scan["project_id"], current_user, db)
+    await check_project_access(scan.project_id, current_user, db)
 
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": scan_id}},

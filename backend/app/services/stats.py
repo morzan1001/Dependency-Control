@@ -40,11 +40,11 @@ async def recalculate_project_stats(
     waiver_repo = WaiverRepository(db)
     lock_repo = DistributedLocksRepository(db)
 
-    project = await project_repo.get_raw_by_id(project_id)
-    if not project or not project.get("latest_scan_id"):
+    project = await project_repo.get_by_id(project_id)
+    if not project or not project.latest_scan_id:
         return None
 
-    scan_id = project["latest_scan_id"]
+    scan_id = project.latest_scan_id
 
     # Acquire distributed lock to prevent race conditions
     lock_name = f"stats_recalc:{project_id}"
