@@ -61,11 +61,7 @@ from app.schemas.project import (
 )
 from app.schemas.waiver import WaiverResponse
 
-router = APIRouter(
-    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
-    # Aliases are only used for MongoDB storage via model_dump(by_alias=True).
-    response_model_by_alias=False,
-)
+router = APIRouter()
 logger = logging.getLogger(__name__)
 
 

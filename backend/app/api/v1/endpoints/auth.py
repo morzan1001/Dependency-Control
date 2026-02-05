@@ -67,10 +67,7 @@ except ImportError:
     auth_signups_total = None
     auth_password_resets_total = None
 
-router = APIRouter(
-    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
-    response_model_by_alias=False,
-)
+router = APIRouter()
 
 
 @router.post(

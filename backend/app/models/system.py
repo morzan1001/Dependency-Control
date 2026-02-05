@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field
 
 
 class SystemSettings(BaseModel):
-    # validation_alias="_id" accepts _id from MongoDB
-    # serialization_alias="_id" outputs _id when using model_dump(by_alias=True) for DB storage
+    # validation_alias="_id": accepts _id from MongoDB
+    # serialization_alias="_id": model_dump(by_alias=True) outputs _id for MongoDB
     id: str = Field(default="current", validation_alias="_id", serialization_alias="_id")
 
     # General

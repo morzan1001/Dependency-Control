@@ -32,10 +32,7 @@ from app.schemas.webhook import (
 )
 from app.services.webhooks.webhook_service import webhook_service
 
-router = APIRouter(
-    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
-    response_model_by_alias=False,
-)
+router = APIRouter()
 
 
 @router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201)

@@ -39,10 +39,7 @@ from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.service import notification_service
 from app.services.notifications.templates import get_password_reset_template
 
-router = APIRouter(
-    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
-    response_model_by_alias=False,
-)
+router = APIRouter()
 logger = logging.getLogger(__name__)
 
 

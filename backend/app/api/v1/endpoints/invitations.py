@@ -16,10 +16,7 @@ from app.models.user import User
 from app.repositories import InvitationRepository, UserRepository
 from app.schemas.user import User as UserSchema
 
-router = APIRouter(
-    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
-    response_model_by_alias=False,
-)
+router = APIRouter()
 logger = logging.getLogger(__name__)
 
 

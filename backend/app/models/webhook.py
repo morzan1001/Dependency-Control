@@ -32,8 +32,8 @@ class Webhook(BaseModel):
         last_failure_at: Last failed delivery timestamp
     """
 
-    # validation_alias="_id" accepts _id from MongoDB
-    # serialization_alias="_id" outputs _id when using model_dump(by_alias=True) for DB storage
+    # validation_alias="_id": accepts _id from MongoDB
+    # serialization_alias="_id": model_dump(by_alias=True) outputs _id for MongoDB
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",

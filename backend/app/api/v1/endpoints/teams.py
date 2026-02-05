@@ -31,10 +31,7 @@ from app.schemas.team import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
-    response_model_by_alias=False,
-)
+router = APIRouter()
 
 
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)

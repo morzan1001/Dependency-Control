@@ -24,10 +24,7 @@ from app.repositories import WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse
 from app.services.stats import recalculate_all_projects, recalculate_project_stats
 
-router = APIRouter(
-    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
-    response_model_by_alias=False,
-)
+router = APIRouter()
 
 
 @router.post("/", response_model=WaiverResponse, status_code=201)

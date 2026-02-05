@@ -13,10 +13,7 @@ from app.core.config import settings
 from app.db.mongodb import get_database
 from app.repositories.system_settings import SystemSettingsRepository
 
-router = APIRouter(
-    # Use field names (e.g., 'id') instead of aliases (e.g., '_id') in JSON responses.
-    response_model_by_alias=False,
-)
+router = APIRouter()
 
 
 @router.get("/slack/callback")
