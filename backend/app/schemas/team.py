@@ -3,6 +3,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.models.types import PyObjectId
+
 
 class TeamMemberSchema(BaseModel):
     user_id: str
@@ -25,7 +27,8 @@ class TeamUpdate(TeamBase):
 
 class TeamResponse(TeamBase):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(validation_alias="_id")
+    # PyObjectId handles ObjectId to string conversion
+    id: PyObjectId = Field(validation_alias="_id")
     members: List[TeamMemberSchema]
     created_at: datetime
     updated_at: datetime

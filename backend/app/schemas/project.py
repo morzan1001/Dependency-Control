@@ -1,8 +1,10 @@
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.constants import PROJECT_ROLES, PROJECT_ROLE_VIEWER
+from app.models.finding import FindingType, Severity
 from app.models.project import Project, Scan
 
 
@@ -111,6 +113,14 @@ class ProjectApiKeyResponse(BaseModel):
     note: str = "This key will only be shown once. Please save it securely."
 
 
+class RiskyProject(BaseModel):
+    """A project entry in the top risky projects list."""
+
+    id: str = Field(..., description="Project ID")
+    name: str = Field(..., description="Project name")
+    risk: float = Field(..., description="Calculated risk score")
+
+
 class RecentScan(Scan):
     """Scan with additional project name for cross-project views."""
 
@@ -128,6 +138,60 @@ class DashboardStats(BaseModel):
     )
     total_high: int = Field(..., description="Total high findings across projects")
     avg_risk_score: float = Field(..., description="Average risk score across projects")
-    top_risky_projects: List[Dict[str, Any]] = Field(
+    top_risky_projects: List[RiskyProject] = Field(
         ..., description="Top 5 projects by risk score"
     )
+
+
+class ScanFindingItem(BaseModel):
+    """A single finding item in the scan findings response."""
+
+    # Core finding fields
+    id: str = Field(..., description="Logical finding ID (e.g. CVE-2021-44228)")
+    finding_id: str = Field(..., description="Finding identifier")
+    type: FindingType = Field(..., description="Type of finding")
+    severity: Severity = Field(..., description="Severity level")
+    component: str = Field(..., description="Affected component")
+    version: Optional[str] = Field(None, description="Affected version")
+    description: str = Field(..., description="Finding description")
+    scanners: List[str] = Field(default_factory=list, description="Scanners that detected this")
+    details: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
+
+    # Reference fields
+    project_id: str = Field(..., description="Project ID")
+    scan_id: str = Field(..., description="Scan ID")
+
+    # Status fields
+    waived: bool = Field(default=False, description="Whether this finding is waived")
+    waiver_reason: Optional[str] = Field(None, description="Reason for waiver")
+
+    # Metadata
+    found_in: List[str] = Field(default_factory=list, description="Files where found")
+    aliases: List[str] = Field(default_factory=list, description="Alternative IDs")
+    related_findings: List[str] = Field(default_factory=list, description="Related finding IDs")
+    created_at: Optional[datetime] = Field(None, description="When the finding was created")
+
+    # Enriched fields from dependency lookup
+    source_type: Optional[str] = Field(None, description="Source type (e.g. image, filesystem)")
+    source_target: Optional[str] = Field(None, description="Source target path")
+    layer_digest: Optional[str] = Field(None, description="Docker layer digest")
+    found_by: Optional[str] = Field(None, description="Scanner that found this")
+    locations: Optional[List[str]] = Field(None, description="File locations")
+    purl: Optional[str] = Field(None, description="Package URL")
+    direct: Optional[bool] = Field(None, description="Whether this is a direct dependency")
+
+    # Computed fields
+    severity_rank: int = Field(default=0, description="Numeric severity rank for sorting")
+
+    class Config:
+        use_enum_values = True
+
+
+class ScanFindingsResponse(BaseModel):
+    """Paginated response for scan findings."""
+
+    items: List[ScanFindingItem] = Field(..., description="List of findings")
+    total: int = Field(..., description="Total number of findings")
+    page: int = Field(..., description="Current page number")
+    size: int = Field(..., description="Number of items per page")
+    pages: int = Field(..., description="Total number of pages")

@@ -3,6 +3,8 @@ from typing import Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from app.models.types import PyObjectId
+
 
 def validate_password_strength(password: str) -> str:
     """Validate password meets security requirements."""
@@ -81,16 +83,10 @@ class UserMigrateToLocal(BaseModel):
 
 class UserInDBBase(UserBase):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(validation_alias="_id")
+    # PyObjectId handles ObjectId to string conversion
+    id: PyObjectId = Field(validation_alias="_id")
     totp_enabled: bool = False
     is_verified: bool = False
-
-    @field_validator("id", mode="before")
-    @classmethod
-    def convert_objectid(cls, v):
-        if not isinstance(v, str):
-            return str(v)
-        return v
 
     class Config:
         from_attributes = True

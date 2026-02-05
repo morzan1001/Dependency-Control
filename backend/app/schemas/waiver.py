@@ -4,6 +4,7 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WAIVER_STATUSES
+from app.models.types import PyObjectId
 
 
 class WaiverCreate(BaseModel):
@@ -50,7 +51,8 @@ class WaiverUpdate(BaseModel):
 
 class WaiverResponse(WaiverCreate):
     # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    id: str = Field(validation_alias="_id")
+    # PyObjectId handles ObjectId to string conversion
+    id: PyObjectId = Field(validation_alias="_id")
     created_by: str
     created_at: datetime
 

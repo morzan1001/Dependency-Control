@@ -56,6 +56,8 @@ from app.schemas.project import (
     ProjectNotificationSettings,
     ProjectUpdate,
     RecentScan,
+    RiskyProject,
+    ScanFindingsResponse,
 )
 from app.schemas.waiver import WaiverResponse
 
@@ -149,12 +151,22 @@ async def get_dashboard_stats(
     if total_projects > 0:
         avg_risk = round(total_risk_score / total_projects, 1)
 
+    # Convert to RiskyProject models (handles ObjectId to string conversion)
+    top_risky_converted = [
+        RiskyProject(
+            id=str(p.get("id", "")),
+            name=p.get("name", ""),
+            risk=p.get("risk", 0),
+        )
+        for p in top_risky
+    ]
+
     return {
         "total_projects": total_projects,
         "total_critical": totals.get("total_critical", 0),
         "total_high": totals.get("total_high", 0),
         "avg_risk_score": avg_risk,
-        "top_risky_projects": top_risky,
+        "top_risky_projects": top_risky_converted,
     }
 
 
@@ -1038,7 +1050,7 @@ async def read_scan_sboms(
 
 @router.get(
     "/scans/{scan_id}/findings",
-    response_model=Dict[str, Any],
+    response_model=ScanFindingsResponse,
     summary="Get scan findings with pagination",
 )
 async def read_scan_findings(
@@ -1154,8 +1166,8 @@ async def read_scan_findings(
                 "direct": {"$arrayElemAt": ["$dependency_info.direct", 0]},
             }
         },
-        # Remove the temporary lookup array
-        {"$project": {"dependency_info": 0}},
+        # Remove the temporary lookup array and exclude MongoDB _id
+        {"$project": {"dependency_info": 0, "_id": 0}},
     ]
 
     # Sorting
