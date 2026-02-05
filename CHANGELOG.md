@@ -1,3 +1,11 @@
+# Release 1.4.18
+
+## 📦 Build & CI
+
+- chore: update version to 1.4.18 and enhance MongoDB field handling in models (#0)
+
+
+
 # Release 1.4.17
 
 ## 📦 Build & CI
