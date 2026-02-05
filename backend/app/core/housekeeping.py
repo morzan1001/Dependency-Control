@@ -49,9 +49,6 @@ async def _get_referenced_scan_ids(db) -> list[str]:
 async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
     """
     Checks for projects that need a periodic re-scan.
-
-    Uses Pydantic models for type safety and consistency.
-    Memory is managed via the 24-hour pod restart mechanism.
     """
     if not worker_manager:
         return
