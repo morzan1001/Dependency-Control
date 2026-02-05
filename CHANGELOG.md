@@ -1,3 +1,11 @@
+# Release 1.4.25
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.25 and update settings handling in analysis engine (#0)
+
+
+
 # Release 1.4.24
 
 
