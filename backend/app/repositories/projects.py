@@ -75,9 +75,27 @@ class ProjectRepository:
         limit: int = 100,
         sort_by: str = "name",
         sort_order: int = 1,
+    ) -> List[Project]:
+        """Find multiple projects with pagination. Returns Pydantic models."""
+        cursor = (
+            self.collection.find(query)
+            .sort(sort_by, sort_order)
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(limit)
+        return [Project(**doc) for doc in docs]
+
+    async def find_many_raw(
+        self,
+        query: Dict[str, Any],
+        skip: int = 0,
+        limit: int = 100,
+        sort_by: str = "name",
+        sort_order: int = 1,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Find multiple projects with pagination."""
+        """Find multiple projects with pagination. Returns raw dicts."""
         cursor = (
             self.collection.find(query, projection)
             .sort(sort_by, sort_order)
@@ -91,7 +109,7 @@ class ProjectRepository:
         query: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Find all projects matching query."""
+        """Find all projects matching query. Returns raw dicts (for projections)."""
         cursor = self.collection.find(query or {}, projection)
         return await cursor.to_list(None)
 
@@ -102,6 +120,13 @@ class ProjectRepository:
     async def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Run aggregation pipeline."""
         return await self.collection.aggregate(pipeline).to_list(None)
+
+    async def update_many(
+        self, query: Dict[str, Any], update_data: Dict[str, Any]
+    ) -> int:
+        """Update multiple projects matching query."""
+        result = await self.collection.update_many(query, {"$set": update_data})
+        return result.modified_count
 
     async def add_member(self, project_id: str, member_data: Dict[str, Any]) -> None:
         """Add a member to project."""

@@ -91,22 +91,21 @@ class ScanRepository:
     async def find_many(
         self,
         query: Dict[str, Any],
-        projection: Optional[Dict[str, int]] = None,
         sort: Optional[List[tuple]] = None,
         skip: int = 0,
         limit: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        """Find multiple scans matching query."""
-        cursor = self.collection.find(query, projection)
+    ) -> List[Scan]:
+        """Find multiple scans matching query. Returns Pydantic models."""
+        cursor = self.collection.find(query)
         if sort:
             cursor = cursor.sort(sort)
         if skip:
             cursor = cursor.skip(skip)
         if limit:
             cursor = cursor.limit(limit)
-        return await cursor.to_list(limit)
+        docs = await cursor.to_list(limit)
+        return [Scan(**doc) for doc in docs]
 
-    # Alias for consistency with other repositories
     async def find_many_raw(
         self,
         query: Dict[str, Any],
@@ -115,8 +114,15 @@ class ScanRepository:
         sort: Optional[List[tuple]] = None,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Alias for find_many() - returns raw dicts."""
-        return await self.find_many(query, projection, sort, skip, limit)
+        """Find multiple scans matching query. Returns raw dicts."""
+        cursor = self.collection.find(query, projection)
+        if sort:
+            cursor = cursor.sort(sort)
+        if skip:
+            cursor = cursor.skip(skip)
+        if limit:
+            cursor = cursor.limit(limit)
+        return await cursor.to_list(limit)
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
         """Count scans matching query."""

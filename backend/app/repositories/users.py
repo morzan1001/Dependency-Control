@@ -77,15 +77,16 @@ class UserRepository:
         limit: int = 100,
         sort_by: str = "username",
         sort_order: int = 1,
-    ) -> List[Dict[str, Any]]:
-        """Find multiple users with pagination."""
+    ) -> List[User]:
+        """Find multiple users with pagination. Returns Pydantic models."""
         cursor = (
             self.collection.find(query)
             .sort(sort_by, sort_order)
             .skip(skip)
             .limit(limit)
         )
-        return await cursor.to_list(limit)
+        docs = await cursor.to_list(limit)
+        return [User(**doc) for doc in docs]
 
     async def find_by_ids(self, user_ids: List[str]) -> List[Dict[str, Any]]:
         """Find users by list of IDs."""
