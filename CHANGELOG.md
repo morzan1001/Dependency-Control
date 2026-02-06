@@ -1,3 +1,11 @@
+# Release 1.4.32
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.32 and optimize project retrieval queries (#0)
+
+
+
 # Release 1.4.31
 
 ## 🚀 Features
