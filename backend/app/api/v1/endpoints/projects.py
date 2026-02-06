@@ -53,6 +53,8 @@ from app.schemas.project import (
     ProjectApiKeyResponse,
     ProjectCreate,
     ProjectList,
+    ProjectListEnriched,
+    ProjectWithTeam,
     ProjectMemberInvite,
     ProjectMemberUpdate,
     ProjectNotificationSettings,
@@ -270,7 +272,7 @@ async def rotate_api_key(
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
 
-@router.get("/", response_model=ProjectList, summary="List all projects")
+@router.get("/", response_model=ProjectListEnriched, summary="List all projects")
 async def read_projects(
     search: Optional[str] = None,
     skip: int = 0,
@@ -323,7 +325,22 @@ async def read_projects(
         sort_order=direction,
     )
 
-    return build_pagination_response(projects, total, skip, limit)
+    # Enrich with team names
+    team_ids = [p.team_id for p in projects if p.team_id]
+    team_name_map = {}
+    if team_ids:
+        teams = await team_repo.find_many({"_id": {"$in": team_ids}}, limit=len(team_ids))
+        team_name_map = {t.id: t.name for t in teams}
+
+    # Create ProjectWithTeam instances
+    enriched_projects = []
+    for p in projects:
+        # Use model_validate to create ProjectWithTeam from Project
+        p_data = p.model_dump()
+        p_data["team_name"] = team_name_map.get(p.team_id) if p.team_id else None
+        enriched_projects.append(ProjectWithTeam(**p_data))
+
+    return build_pagination_response(enriched_projects, total, skip, limit)
 
 
 @router.get(

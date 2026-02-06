@@ -8,8 +8,25 @@ from app.models.finding import FindingType, Severity
 from app.models.project import Project, Scan
 
 
+class ProjectWithTeam(Project):
+    """Project with team name enrichment for list views."""
+    team_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class ProjectList(BaseModel):
     items: List[Project]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
+class ProjectListEnriched(BaseModel):
+    """Project list with team names enriched."""
+    items: List[ProjectWithTeam]
     total: int
     page: int
     size: int
