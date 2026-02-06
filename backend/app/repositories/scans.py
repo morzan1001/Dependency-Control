@@ -99,9 +99,10 @@ class ScanRepository:
         sort: Optional[List[tuple]] = None,
         skip: int = 0,
         limit: Optional[int] = None,
+        projection: Optional[Dict[str, int]] = None,
     ) -> List[Scan]:
         """Find multiple scans matching query. Returns Pydantic models."""
-        cursor = self.collection.find(query)
+        cursor = self.collection.find(query, projection)
         if sort:
             cursor = cursor.sort(sort)
         if skip:
