@@ -66,24 +66,26 @@ class TeamRepository:
         limit: int = 100,
         sort_by: str = "name",
         sort_order: int = 1,
-    ) -> List[Dict[str, Any]]:
-        """Find multiple teams with pagination."""
+    ) -> List[Team]:
+        """Find multiple teams with pagination. Returns Pydantic models."""
         cursor = (
             self.collection.find(query)
             .sort(sort_by, sort_order)
             .skip(skip)
             .limit(limit)
         )
-        return await cursor.to_list(limit)
+        docs = await cursor.to_list(limit)
+        return [Team(**doc) for doc in docs]
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
         """Count teams matching query."""
         return await self.collection.count_documents(query or {})
 
-    async def find_by_member(self, user_id: str) -> List[Dict[str, Any]]:
-        """Find teams where user is a member."""
+    async def find_by_member(self, user_id: str) -> List[Team]:
+        """Find teams where user is a member. Returns Pydantic models."""
         cursor = self.collection.find({"members.user_id": user_id})
-        return await cursor.to_list(None)
+        docs = await cursor.to_list(None)
+        return [Team(**doc) for doc in docs]
 
     async def add_member(self, team_id: str, member_data: Dict[str, Any]) -> None:
         """Add a member to team."""

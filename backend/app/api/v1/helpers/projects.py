@@ -48,7 +48,7 @@ async def build_user_project_query(
 
     # Find teams user is member of
     user_teams = await team_repo.find_by_member(str(user.id))
-    team_ids = [t["_id"] for t in user_teams]
+    team_ids = [t.id for t in user_teams]
 
     return {
         "$or": [

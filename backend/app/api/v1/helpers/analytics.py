@@ -66,7 +66,7 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str
         return [p.id for p in projects]
 
     user_teams = await team_repo.find_by_member(str(user.id))
-    user_team_ids = [str(t["_id"]) for t in user_teams]
+    user_team_ids = [str(t.id) for t in user_teams]
 
     projects = await project_repo.find_many_ids(
         {
