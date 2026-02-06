@@ -934,13 +934,15 @@ async def read_analysis_results(
     await check_project_access(scan.project_id, current_user, db)
 
     # Find all scans for this commit to aggregate results
-    # Note: commit_hash not in ScanMinimal, use get_by_id for full model
     full_scan = await scan_repo.get_by_id(scan_id)
-    related_scans = await scan_repo.find_many(
-        {"project_id": scan.project_id, "commit_hash": full_scan.commit_hash if full_scan else None},
-        projection={"_id": 1},
-    )
-    related_scan_ids = [s.id for s in related_scans]
+    if full_scan and full_scan.commit_hash:
+        related_scans = await scan_repo.find_many(
+            {"project_id": scan.project_id, "commit_hash": full_scan.commit_hash},
+            limit=100,
+        )
+        related_scan_ids = [s.id for s in related_scans]
+    else:
+        related_scan_ids = [scan_id]
 
     if not related_scan_ids:
         related_scan_ids = [scan_id]

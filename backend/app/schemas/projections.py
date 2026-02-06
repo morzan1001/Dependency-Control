@@ -20,6 +20,16 @@ class ProjectIdOnly(BaseModel):
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
 
 
+class ProjectMinimal(BaseModel):
+    """Project with ID and name only (for lookups/maps)."""
+
+    id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
+    name: str
+
+    class Config:
+        populate_by_name = True
+
+
 class ProjectWithScanId(BaseModel):
     """Project with ID, name, and latest scan ID."""
 

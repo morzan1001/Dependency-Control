@@ -973,12 +973,12 @@ async def search_vulnerabilities(
                     finding_type=finding.type or "vulnerability",
                     description=(
                         finding.get("description", "")[:200]
-                        if finding.get("description")
+                        if finding.description
                         else None
                     ),
                     fixed_version=details.get("fixed_version"),
-                    waived=finding.get("waived", False),
-                    waiver_reason=finding.get("waiver_reason"),
+                    waived=finding.waived if finding.waived is not None else False,
+                    waiver_reason=finding.waiver_reason,
                 )
             )
         else:
@@ -995,7 +995,7 @@ async def search_vulnerabilities(
                             else finding.aliases or []
                         ),
                         severity=(
-                            vuln.get("severity") or finding.get("severity", "UNKNOWN")
+                            vuln.get("severity") or finding.severity or "UNKNOWN"
                         ),
                         cvss_score=(
                             vuln.get("cvss_score") or details.get("cvss_score")
@@ -1012,13 +1012,13 @@ async def search_vulnerabilities(
                             vuln.get("kev_ransomware", False) or kev_ransomware
                         ),
                         kev_due_date=vuln.get("kev_due_date") or kev_due_date,
-                        component=finding.get("component", ""),
-                        version=finding.get("version", ""),
+                        component=finding.component or "",
+                        version=finding.version or "",
                         component_type=details.get("type"),
                         purl=details.get("purl"),
-                        project_id=finding.get("project_id", ""),
+                        project_id=finding.project_id or "",
                         project_name=project_name_map.get(
-                            finding.get("project_id", ""), "Unknown"
+                            finding.project_id or "", "Unknown"
                         ),
                         scan_id=finding.scan_id,
                         finding_id=finding.finding_id,
@@ -1028,7 +1028,7 @@ async def search_vulnerabilities(
                             if vuln.get("description")
                             else (
                                 finding.get("description", "")[:200]
-                                if finding.get("description")
+                                if finding.description
                                 else None
                             )
                         ),
@@ -1036,9 +1036,9 @@ async def search_vulnerabilities(
                             vuln.get("fixed_version") or details.get("fixed_version")
                         ),
                         waived=vuln.get("waived", False)
-                        or finding.get("waived", False),
+                        or finding.waived if finding.waived is not None else False,
                         waiver_reason=(
-                            vuln.get("waiver_reason") or finding.get("waiver_reason")
+                            vuln.get("waiver_reason") or finding.waiver_reason
                         ),
                     )
                 )
@@ -1138,12 +1138,11 @@ async def get_dependency_metadata_endpoint(
         return None
 
     # Get project names for enrichment
-    projects = await project_repo.find_many(
+    projects = await project_repo.find_many_minimal(
         {"_id": {"$in": project_ids}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
-        projection={"_id": 1, "name": 1},
     )
-    project_name_map = {p["_id"]: p["name"] for p in projects}
+    project_name_map = {p.id: p.name for p in projects}
 
     # Aggregate dependency-specific metadata (take first non-null value)
     first_dep = dependencies[0]
@@ -1348,7 +1347,6 @@ async def get_project_recommendations(
         {"project_id": project_id},
         limit=10,
         sort=[("created_at", -1)],
-        projection={"_id": 1, "findings_summary": 1, "created_at": 1},
     )
 
     if recent_scans:

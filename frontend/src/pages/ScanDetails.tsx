@@ -56,7 +56,27 @@ export default function ScanDetails() {
   const scrollToSbom = useCallback((index: number) => {
     const sbomElement = sbomRefs.current[index]
     if (sbomElement) {
-      sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      // Get the scrollable container (look for overflow-y-auto class or nearest scrollable parent)
+      let scrollContainer = sbomElement.parentElement
+      while (scrollContainer && scrollContainer !== document.body) {
+        const overflowY = window.getComputedStyle(scrollContainer).overflowY
+        if (overflowY === 'auto' || overflowY === 'scroll') {
+          break
+        }
+        scrollContainer = scrollContainer.parentElement
+      }
+
+      // If we found a scroll container, scroll within it
+      if (scrollContainer && scrollContainer !== document.body) {
+        const containerRect = scrollContainer.getBoundingClientRect()
+        const elementRect = sbomElement.getBoundingClientRect()
+        const scrollOffset = elementRect.top - containerRect.top + scrollContainer.scrollTop - 20
+        scrollContainer.scrollTo({ top: scrollOffset, behavior: 'smooth' })
+      } else {
+        // Fallback to regular scrollIntoView if no scrollable container found
+        sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+
       sbomElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
       setTimeout(() => {
         sbomElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2')
@@ -494,7 +514,7 @@ export default function ScanDetails() {
                     {/* Post-Processor Results (EPSS/KEV, Reachability) - RAW JSON */}
                     {scanResults && scanResults.filter(r => isPostProcessorResult(r.analyzer_name)).length > 0 && (
                         <div className="space-y-4">
-                            <h3 className="text-lg font-medium">Post-Processor Results (Raw JSON)</h3>
+                            <h3 className="text-lg font-medium">Post-Processor Results</h3>
                             <div className="grid gap-6">
                                 {scanResults
                                     .filter(r => isPostProcessorResult(r.analyzer_name))

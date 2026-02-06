@@ -79,8 +79,10 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
 
     useEffect(() => {
         if (!scrollContainer) return
+        // Only measure when scroll container becomes available
+        // The virtualizer handles dynamic content via measureElement ref
         rowVirtualizer.measure()
-    }, [scrollContainer, allRows.length, rowVirtualizer])
+    }, [scrollContainer, rowVirtualizer])
 
     useEffect(() => {
         if (!parentRef.current || typeof ResizeObserver === 'undefined') return

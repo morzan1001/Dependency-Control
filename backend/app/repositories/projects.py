@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.project import Project
-from app.schemas.projections import ProjectIdOnly, ProjectWithScanId
+from app.schemas.projections import ProjectIdOnly, ProjectMinimal, ProjectWithScanId
 
 
 class ProjectRepository:
@@ -109,6 +109,16 @@ class ProjectRepository:
         ).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectWithScanId(**doc) for doc in docs]
+
+    async def find_many_minimal(
+        self,
+        query: Dict[str, Any],
+        limit: int = 1000,
+    ) -> List[ProjectMinimal]:
+        """Find projects with ID and name only (performance optimized)."""
+        cursor = self.collection.find(query, {"_id": 1, "name": 1}).limit(limit)
+        docs = await cursor.to_list(limit)
+        return [ProjectMinimal(**doc) for doc in docs]
 
     async def find_all(
         self,

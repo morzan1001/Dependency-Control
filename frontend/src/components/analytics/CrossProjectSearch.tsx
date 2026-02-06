@@ -93,6 +93,12 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const virtualItems = rowVirtualizer.getVirtualItems()
   const lastItemIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]?.index : -1
 
+  // Trigger measurement when scroll container becomes available
+  useEffect(() => {
+    if (!scrollContainer) return
+    rowVirtualizer.measure()
+  }, [scrollContainer, allResults.length, rowVirtualizer])
+
   useEffect(() => {
     if (lastItemIndex === -1) return
     if (lastItemIndex >= allResults.length - 1 && hasNextPage && !isFetchingNextPage) {
@@ -122,9 +128,10 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
               Search for dependencies across all your projects with advanced filters
             </CardDescription>
           </div>
-          <Button 
-            variant={showFilters ? "default" : "outline"} 
+          <Button
+            variant={showFilters ? "default" : "outline"}
             size="sm"
+            type="button"
             onClick={() => setShowFilters(!showFilters)}
           >
             <Filter className="h-4 w-4 mr-2" />
@@ -153,7 +160,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
             <div className="flex items-center justify-between">
               <h4 className="font-medium">Filters</h4>
               {hasActiveFilters && (
-                <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <Button variant="ghost" size="sm" type="button" onClick={clearFilters}>
                   <X className="h-4 w-4 mr-1" />
                   Clear all
                 </Button>
