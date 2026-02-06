@@ -1,3 +1,11 @@
+# Release 1.4.28
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.28 and remove team name enrichment logic from read_projects endpoint (#0)
+
+
+
 # Release 1.4.27
 
 ## 📦 Build & CI
