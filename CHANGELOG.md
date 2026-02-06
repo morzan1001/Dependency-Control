@@ -1,3 +1,11 @@
+# Release 1.4.29
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.29 and add projection parameter to get_multiple_scans method (#0)
+
+
+
 # Release 1.4.28
 
 ## 📦 Build & CI
