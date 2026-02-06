@@ -1,3 +1,15 @@
+# Release 1.4.31
+
+## 🚀 Features
+
+- feat: enrich project list with team names and update response model (#0)
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.31 and update team ID retrieval to use Pydantic models (#0)
+
+
+
 # Release 1.4.29
 
 ## 📦 Build & CI
