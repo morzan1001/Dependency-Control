@@ -18,7 +18,14 @@ from app.core.constants import (
     GITLAB_JWKS_CACHE_TTL,
     GITLAB_JWKS_URI_CACHE_TTL,
 )
-from app.models.system import SystemSettings
+from app.models.gitlab_api import (
+    GitLabMember,
+    GitLabMergeRequest,
+    GitLabNote,
+    GitLabProjectDetails,
+    OIDCPayload,
+)
+from app.models.gitlab_instance import GitLabInstance
 from app.models.team import Team, TeamMember
 from app.models.user import User
 from app.repositories import TeamRepository, UserRepository
@@ -30,20 +37,28 @@ _GITLAB_API_TIMEOUT = 10.0
 
 
 class GitLabService:
-    def __init__(self, settings: SystemSettings):
-        self.settings = settings
-        self.base_url = settings.gitlab_url.rstrip("/")
+    def __init__(self, gitlab_instance: GitLabInstance):
+        """
+        Initialize GitLab service for a specific instance.
+
+        Args:
+            gitlab_instance: The GitLabInstance model (not SystemSettings)
+        """
+        self.instance = gitlab_instance
+        self.base_url = gitlab_instance.url.rstrip("/")
         self.api_url = f"{self.base_url}/api/v4"
-        # Generate a cache key prefix based on the GitLab URL
-        self._cache_key_prefix = hashlib.md5(self.base_url.encode()).hexdigest()[:8]
+        # Cache key prefix using instance ID (more reliable than URL hash)
+        self._cache_key_prefix = f"instance:{gitlab_instance.id}"
 
     def _get_cache_key(self, suffix: str) -> str:
-        """Generate a cache key for this GitLab instance."""
+        """Generate cache key for this specific instance."""
         return f"gitlab:{self._cache_key_prefix}:{suffix}"
 
     def _get_auth_headers(self) -> Dict[str, str]:
-        """Build authentication headers for GitLab API requests."""
-        return {"PRIVATE-TOKEN": self.settings.gitlab_access_token}
+        """Build authentication headers using instance token."""
+        if not self.instance.access_token:
+            raise ValueError(f"No access token configured for GitLab instance '{self.instance.name}'")
+        return {"PRIVATE-TOKEN": self.instance.access_token}
 
     @asynccontextmanager
     async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:
@@ -70,7 +85,7 @@ class GitLabService:
         Returns:
             Response object if successful, None if no token configured or request failed
         """
-        if not self.settings.gitlab_access_token:
+        if not self.instance.access_token:
             return None
 
         try:
@@ -97,7 +112,7 @@ class GitLabService:
         Returns:
             Response object if successful, None if no token configured or request failed
         """
-        if not self.settings.gitlab_access_token:
+        if not self.instance.access_token:
             return None
 
         try:
@@ -124,7 +139,7 @@ class GitLabService:
         Returns:
             Response object if successful, None if no token configured or request failed
         """
-        if not self.settings.gitlab_access_token:
+        if not self.instance.access_token:
             return None
 
         try:
@@ -157,7 +172,7 @@ class GitLabService:
         Returns:
             Combined list of all items from all pages
         """
-        if not self.settings.gitlab_access_token:
+        if not self.instance.access_token:
             return []
 
         all_items: List[Dict[str, Any]] = []
@@ -288,7 +303,7 @@ class GitLabService:
         cache_key = self._get_cache_key("jwks")
         await cache_service.delete(cache_key)
 
-    async def validate_oidc_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def validate_oidc_token(self, token: str) -> Optional[OIDCPayload]:
         """
         Validates a GitLab OIDC token (JWT).
 
@@ -330,46 +345,46 @@ class GitLabService:
             # 4. Verify
             # Verify issuer and optionally audience if configured
             jwt_options = {}
-            if self.settings.gitlab_oidc_audience:
+            if self.instance.oidc_audience:
                 jwt_options["verify_aud"] = True
             else:
                 # Audience verification disabled - tokens from other apps could be accepted
-                # Consider configuring gitlab_oidc_audience in system settings
+                # Consider configuring oidc_audience for this GitLab instance
                 jwt_options["verify_aud"] = False
 
             payload = jwt.decode(
                 token,
                 key,
                 algorithms=["RS256"],
-                issuer=self.settings.gitlab_url,
+                issuer=self.base_url,
                 audience=(
-                    self.settings.gitlab_oidc_audience
-                    if self.settings.gitlab_oidc_audience
+                    self.instance.oidc_audience
+                    if self.instance.oidc_audience
                     else None
                 ),
                 options=jwt_options,
             )
-            return payload
+            return OIDCPayload(**payload)
         except Exception as e:
             logger.error(f"OIDC Token validation error: {e}")
             return None
 
-    async def get_project_details(self, project_id: int) -> Optional[Dict[str, Any]]:
+    async def get_project_details(self, project_id: int) -> Optional[GitLabProjectDetails]:
         """Fetches project details using the system token."""
         response = await self._api_get(f"/projects/{project_id}")
         if response and response.status_code == 200:
-            return response.json()
+            return GitLabProjectDetails(**response.json())
         return None
 
     async def get_merge_requests_for_commit(
         self, project_id: int, commit_sha: str
-    ) -> List[Dict[str, Any]]:
+    ) -> List[GitLabMergeRequest]:
         """Fetches merge requests associated with a specific commit."""
         response = await self._api_get(
             f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests"
         )
         if response and response.status_code == 200:
-            return response.json()
+            return [GitLabMergeRequest(**mr) for mr in response.json()]
         return []
 
     async def post_merge_request_comment(
@@ -390,7 +405,7 @@ class GitLabService:
 
     async def get_merge_request_notes(
         self, project_id: int, mr_iid: int
-    ) -> List[Dict[str, Any]]:
+    ) -> List[GitLabNote]:
         """
         Fetches all notes (comments) from a merge request.
 
@@ -399,7 +414,7 @@ class GitLabService:
         notes = await self._api_get_paginated(
             f"/projects/{project_id}/merge_requests/{mr_iid}/notes"
         )
-        return notes
+        return [GitLabNote(**n) for n in notes]
 
     async def update_merge_request_comment(
         self, project_id: int, mr_iid: int, note_id: int, body: str
@@ -419,13 +434,13 @@ class GitLabService:
 
     async def get_project_members(
         self, project_id: int
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> Optional[List[GitLabMember]]:
         """
         Fetches all project members using the system-configured gitlab_access_token.
 
         Uses pagination to fetch all members (not just first page).
         """
-        if not self.settings.gitlab_access_token:
+        if not self.instance.access_token:
             logger.warning(
                 "Cannot fetch project members: No system GitLab Access Token configured."
             )
@@ -433,29 +448,29 @@ class GitLabService:
 
         # /members/all includes inherited members (from groups)
         members = await self._api_get_paginated(f"/projects/{project_id}/members/all")
-        return members if members else None
+        return [GitLabMember(**m) for m in members] if members else None
 
-    async def get_group_members(self, group_id: int) -> Optional[List[Dict[str, Any]]]:
+    async def get_group_members(self, group_id: int) -> Optional[List[GitLabMember]]:
         """
         Fetches all group members using the system-configured gitlab_access_token.
 
         Uses pagination to fetch all members (not just first page).
         """
-        if not self.settings.gitlab_access_token:
+        if not self.instance.access_token:
             logger.warning(
                 "Cannot fetch group members: No system GitLab Access Token configured."
             )
             return None
 
         members = await self._api_get_paginated(f"/groups/{group_id}/members/all")
-        return members if members else None
+        return [GitLabMember(**m) for m in members] if members else None
 
     async def sync_team_from_gitlab(
         self,
         db: AsyncIOMotorDatabase,
         gitlab_project_id: int,
         gitlab_project_path: str,  # Currently unused, kept for API compatibility
-        gitlab_project_data: Optional[Dict[str, Any]] = None,
+        gitlab_project_data: Optional[GitLabProjectDetails] = None,
     ) -> Optional[str]:
         """
         Syncs GitLab project members to a local Team.
@@ -479,11 +494,12 @@ class GitLabService:
             # Only sync if it's a group
             if (
                 gitlab_project_data
-                and gitlab_project_data.get("namespace", {}).get("kind") == "group"
+                and gitlab_project_data.namespace
+                and gitlab_project_data.namespace.kind == "group"
             ):
-                namespace = gitlab_project_data["namespace"]
-                group_id = namespace["id"]
-                group_path = namespace["full_path"]
+                namespace = gitlab_project_data.namespace
+                group_id = namespace.id
+                group_path = namespace.full_path
                 team_name = f"GitLab Group: {group_path}"
                 description = f"Imported from GitLab Group {group_path}"
 
@@ -507,20 +523,17 @@ class GitLabService:
 
             team_members = []
             for member in members:
-                member_email = member.get("email")
-                member_username = member.get("username")
-
                 user = None
-                if member_email:
-                    user = await user_repo.get_raw_by_email(member_email)
-                elif member_username:
-                    user = await user_repo.get_raw_by_username(member_username)
+                if member.email:
+                    user = await user_repo.get_raw_by_email(member.email)
+                elif member.username:
+                    user = await user_repo.get_raw_by_username(member.username)
 
-                if not user and member_email:
+                if not user and member.email:
                     # Create new user
                     new_user = User(
-                        username=member_username or member_email.split("@")[0],
-                        email=member_email,
+                        username=member.username or member.email.split("@")[0],
+                        email=member.email,
                         hashed_password=security.get_password_hash(
                             secrets.token_urlsafe(16)
                         ),
@@ -533,12 +546,12 @@ class GitLabService:
                 if user:
                     # Map GitLab access level to role
                     # See constants: GITLAB_ACCESS_GUEST (10), REPORTER (20), etc.
-                    access_level = member.get("access_level", 0)
                     role = "member"
-                    if access_level >= GITLAB_ADMIN_MIN_ACCESS:
+                    if member.access_level >= GITLAB_ADMIN_MIN_ACCESS:
                         role = "admin"
 
-                    team_members.append(TeamMember(user_id=str(user["id"]), role=role))
+                    user_id = str(user.get("_id", user.get("id")))
+                    team_members.append(TeamMember(user_id=user_id, role=role))
 
             if team:
                 await team_repo.set_members(

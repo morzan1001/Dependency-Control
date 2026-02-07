@@ -113,7 +113,13 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
 
     # Projects - Additional indexes
-    await database["projects"].create_index("gitlab_project_id")
+    # GitLab Multi-Instance Support: Compound index ensures project_id is unique per instance
+    await database["projects"].create_index(
+        [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
+        unique=True,
+        sparse=True  # Allow null values (projects without GitLab integration)
+    )
+    await database["projects"].create_index("gitlab_instance_id")  # For instance-wide queries
     await database["projects"].create_index("latest_scan_id")
     await database["projects"].create_index("retention_days")
     await database["projects"].create_index([("last_scan_at", pymongo.DESCENDING)])
@@ -220,6 +226,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["token_blacklist"].create_index(
         [("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0
     )
+
+    # GitLab Instances - Multi-Instance Support (NEW)
+    await database["gitlab_instances"].create_index("url", unique=True)
+    await database["gitlab_instances"].create_index("name", unique=True)
+    await database["gitlab_instances"].create_index("is_active")
+    await database["gitlab_instances"].create_index("is_default")
 
     # Scans - Additional index for reachability pending
     await database["scans"].create_index(

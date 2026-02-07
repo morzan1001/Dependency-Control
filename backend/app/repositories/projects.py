@@ -40,8 +40,53 @@ class ProjectRepository:
     async def get_raw_by_gitlab_id(
         self, gitlab_project_id: int
     ) -> Optional[Dict[str, Any]]:
-        """Get raw project document by GitLab project ID."""
+        """
+        Get raw project document by GitLab project ID.
+        DEPRECATED: Use get_by_gitlab_composite_key for multi-instance support.
+        """
         return await self.collection.find_one({"gitlab_project_id": gitlab_project_id})
+
+    async def get_by_gitlab_composite_key(
+        self, gitlab_instance_id: str, gitlab_project_id: int
+    ) -> Optional[Project]:
+        """
+        Get project by composite GitLab key (instance + project ID).
+        This is the PRIMARY lookup method for GitLab-integrated projects.
+        """
+        data = await self.collection.find_one({
+            "gitlab_instance_id": gitlab_instance_id,
+            "gitlab_project_id": gitlab_project_id
+        })
+        if data:
+            return Project(**data)
+        return None
+
+    async def get_raw_by_gitlab_composite_key(
+        self, gitlab_instance_id: str, gitlab_project_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get raw project document by composite GitLab key."""
+        return await self.collection.find_one({
+            "gitlab_instance_id": gitlab_instance_id,
+            "gitlab_project_id": gitlab_project_id
+        })
+
+    async def list_by_instance(
+        self, gitlab_instance_id: str, skip: int = 0, limit: int = 100
+    ) -> List[Project]:
+        """Get all projects for a specific GitLab instance."""
+        cursor = (
+            self.collection.find({"gitlab_instance_id": gitlab_instance_id})
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
+        return [Project(**doc) for doc in docs]
+
+    async def count_by_instance(self, gitlab_instance_id: str) -> int:
+        """Count projects for a specific GitLab instance."""
+        return await self.collection.count_documents({
+            "gitlab_instance_id": gitlab_instance_id
+        })
 
     async def create(self, project: Project) -> Project:
         """Create a new project."""

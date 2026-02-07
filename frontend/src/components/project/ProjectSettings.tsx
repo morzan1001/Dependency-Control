@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
+import { gitlabInstancesApi } from '@/api/gitlab-instances'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
@@ -64,7 +65,10 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [rescanEnabled, setRescanEnabled] = useState<boolean | undefined>(project.rescan_enabled)
   const [rescanInterval, setRescanInterval] = useState<number | undefined>(project.rescan_interval)
   const [gitlabMrCommentsEnabled, setGitlabMrCommentsEnabled] = useState<boolean>(project.gitlab_mr_comments_enabled || false)
-  
+  const [gitlabInstanceId, setGitlabInstanceId] = useState<string | undefined>(project.gitlab_instance_id)
+  const [gitlabProjectId, setGitlabProjectId] = useState<number | undefined>(project.gitlab_project_id)
+  const [gitlabProjectPath, setGitlabProjectPath] = useState<string | undefined>(project.gitlab_project_path)
+
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
@@ -96,6 +100,13 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const { data: branches } = useProjectBranches(projectId);
   const { data: appConfig } = useAppConfig();
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
+
+  // Fetch GitLab instances
+  const { data: gitlabInstances } = useQuery({
+    queryKey: ['gitlab-instances'],
+    queryFn: () => gitlabInstancesApi.list({ active_only: true }),
+    enabled: appConfig?.gitlab_integration_enabled || false,
+  });
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),
@@ -166,7 +177,10 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       default_branch: defaultBranch === "none" ? null : defaultBranch,
       rescan_enabled: rescanEnabled,
       rescan_interval: rescanInterval,
-      gitlab_mr_comments_enabled: gitlabMrCommentsEnabled
+      gitlab_mr_comments_enabled: gitlabMrCommentsEnabled,
+      gitlab_instance_id: gitlabInstanceId || null,
+      gitlab_project_id: gitlabProjectId || null,
+      gitlab_project_path: gitlabProjectPath || null,
     })
   }
 
@@ -312,25 +326,72 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     <div className="grid gap-2">
                         <Label>GitLab Integration</Label>
                         <div className="border rounded-md p-4 space-y-4">
-                            <div className="flex items-center justify-between">
-                                <div className="space-y-0.5">
-                                    <Label className="text-base">Merge Request Decoration</Label>
-                                    <p className="text-sm text-muted-foreground">
-                                        Post scan results as comments on GitLab Merge Requests.
-                                    </p>
-                                    {!appConfig.gitlab_token_configured && (
-                                        <p className="text-xs text-amber-600 flex items-center mt-1">
-                                            <AlertTriangle className="h-3 w-3 mr-1" />
-                                            Required GitLab Access Token is missing in System Settings.
-                                        </p>
-                                    )}
-                                </div>
-                                <Switch
-                                    checked={gitlabMrCommentsEnabled}
-                                    onCheckedChange={setGitlabMrCommentsEnabled}
-                                    disabled={!appConfig.gitlab_token_configured}
-                                />
+                            <div className="grid gap-2">
+                                <Label htmlFor="gitlab-instance">GitLab Instance</Label>
+                                <Select
+                                    value={gitlabInstanceId || "none"}
+                                    onValueChange={(value) => setGitlabInstanceId(value === "none" ? undefined : value)}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select GitLab instance" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="none">None (Auto-detect from OIDC)</SelectItem>
+                                        {gitlabInstances?.items.map((instance) => (
+                                            <SelectItem key={instance.id} value={instance.id}>
+                                                {instance.name} ({instance.url})
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                    For manually linked projects. Auto-created projects detect this automatically.
+                                </p>
                             </div>
+
+                            {gitlabInstanceId && (
+                                <>
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="gitlab-project-id">GitLab Project ID</Label>
+                                        <Input
+                                            id="gitlab-project-id"
+                                            type="number"
+                                            placeholder="12345"
+                                            value={gitlabProjectId || ''}
+                                            onChange={(e) => setGitlabProjectId(parseInt(e.target.value) || undefined)}
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            The numeric project ID from GitLab (found in project settings).
+                                        </p>
+                                    </div>
+
+                                    <div className="grid gap-2">
+                                        <Label htmlFor="gitlab-project-path">GitLab Project Path (Optional)</Label>
+                                        <Input
+                                            id="gitlab-project-path"
+                                            placeholder="namespace/project-name"
+                                            value={gitlabProjectPath || ''}
+                                            onChange={(e) => setGitlabProjectPath(e.target.value || undefined)}
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            For display purposes only. Example: "mygroup/myproject"
+                                        </p>
+                                    </div>
+
+                                    <div className="flex items-center justify-between">
+                                        <div className="space-y-0.5">
+                                            <Label className="text-base">Merge Request Decoration</Label>
+                                            <p className="text-sm text-muted-foreground">
+                                                Post scan results as comments on GitLab Merge Requests.
+                                            </p>
+                                        </div>
+                                        <Switch
+                                            checked={gitlabMrCommentsEnabled}
+                                            onCheckedChange={setGitlabMrCommentsEnabled}
+                                        />
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 )}

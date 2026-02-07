@@ -25,7 +25,9 @@ export interface Project {
   rescan_enabled?: boolean;
   rescan_interval?: number;
   gitlab_mr_comments_enabled?: boolean;
+  gitlab_instance_id?: string;
   gitlab_project_id?: number;
+  gitlab_project_path?: string;
   owner_notification_preferences?: {
     [key: string]: string[];
   };
@@ -52,6 +54,9 @@ export interface ProjectUpdate {
   rescan_enabled?: boolean;
   rescan_interval?: number;
   gitlab_mr_comments_enabled?: boolean;
+  gitlab_instance_id?: string | null;
+  gitlab_project_id?: number | null;
+  gitlab_project_path?: string | null;
   owner_notification_preferences?: Record<string, string[]>;
 }
 

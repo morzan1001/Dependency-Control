@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional, Union
 
 from fastapi import Depends, Header, HTTPException, status
@@ -18,6 +19,8 @@ from app.repositories import (
 )
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
+
+logger = logging.getLogger(__name__)
 
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/login/access-token"
@@ -206,14 +209,12 @@ async def get_project_for_ingest(
             raise HTTPException(status_code=403, detail="Invalid API Key")
         return Project(**project_data)
 
-    # 2. Try GitLab OIDC Token
+    # 2. Try GitLab OIDC Token (Multi-Instance Support)
     if oidc_token:
         if not settings.gitlab_integration_enabled:
             raise HTTPException(
                 status_code=403, detail="GitLab integration is disabled"
             )
-
-        gitlab_service = GitLabService(settings)
 
         # Check if token is OIDC (JWT)
         is_oidc = len(oidc_token.split(".")) == 3
@@ -224,21 +225,58 @@ async def get_project_for_ingest(
                 detail="Invalid Token. Only GitLab Identity Tokens (OIDC) are supported.",
             )
 
+        # STEP 1: Extract issuer from token (unverified) to identify GitLab instance
+        from jose import jwt as jose_jwt
+        from app.repositories.gitlab_instances import GitLabInstanceRepository
+
+        try:
+            unverified_payload = jose_jwt.get_unverified_claims(oidc_token)
+            issuer = unverified_payload.get("iss")
+        except Exception as e:
+            logger.error(f"Failed to decode OIDC token: {e}")
+            raise HTTPException(status_code=403, detail="Invalid OIDC token format")
+
+        if not issuer:
+            raise HTTPException(
+                status_code=403, detail="OIDC token missing issuer (iss) claim"
+            )
+
+        # STEP 2: Find matching GitLab instance by issuer URL
+        instance_repo = GitLabInstanceRepository(db)
+        gitlab_instance = await instance_repo.get_by_url(issuer)
+
+        if not gitlab_instance:
+            raise HTTPException(
+                status_code=403,
+                detail=f"No GitLab instance configured for issuer: {issuer}"
+            )
+
+        if not gitlab_instance.is_active:
+            raise HTTPException(
+                status_code=403,
+                detail=f"GitLab instance '{gitlab_instance.name}' is not active"
+            )
+
+        # STEP 3: Validate token using instance-specific service
+        gitlab_service = GitLabService(gitlab_instance)
+
         payload = await gitlab_service.validate_oidc_token(oidc_token)
         if not payload:
             raise HTTPException(status_code=403, detail="Invalid GitLab OIDC Token")
 
-        gitlab_project_id = int(payload["project_id"])
-        gitlab_project_path = payload["project_path"]
-        gitlab_user_email = payload.get("user_email")
+        gitlab_project_id = int(payload.project_id)
+        gitlab_project_path = payload.project_path
+        gitlab_user_email = payload.user_email
 
-        # Find project by gitlab_project_id
-        project_data = await project_repo.get_raw_by_gitlab_id(gitlab_project_id)
+        # STEP 4: Find project using composite key (instance + project ID)
+        project_data = await project_repo.get_raw_by_gitlab_composite_key(
+            str(gitlab_instance.id), gitlab_project_id
+        )
 
         if project_data:
             project = Project(**project_data)
-            # Sync Teams/Members if enabled (even for existing projects)
-            if settings.gitlab_sync_teams:
+            # Sync Teams/Members if enabled for this instance
+            if gitlab_instance.sync_teams:
                 gitlab_project_data = await gitlab_service.get_project_details(
                     gitlab_project_id
                 )
@@ -253,8 +291,8 @@ async def get_project_for_ingest(
                     await project_repo.update(project.id, {"team_id": team_id})
             return project
 
-        # Auto-create if enabled
-        if settings.gitlab_auto_create_projects:
+        # STEP 5: Auto-create project if enabled for this instance
+        if gitlab_instance.auto_create_projects:
             # Try to find an owner
             owner_id = None
 
@@ -279,13 +317,14 @@ async def get_project_for_ingest(
             new_project = Project(
                 name=gitlab_project_path,
                 owner_id=owner_id,
+                gitlab_instance_id=str(gitlab_instance.id),  # NEW: Link to instance
                 gitlab_project_id=gitlab_project_id,
                 gitlab_project_path=gitlab_project_path,
                 default_branch=None,  # We don't know default branch from OIDC token
             )
 
             # Sync Teams/Members if enabled
-            if settings.gitlab_sync_teams:
+            if gitlab_instance.sync_teams:
                 gitlab_project_data = await gitlab_service.get_project_details(
                     gitlab_project_id
                 )
@@ -300,10 +339,14 @@ async def get_project_for_ingest(
                     new_project.team_id = team_id
 
             await project_repo.create(new_project)
+            logger.info(
+                f"Auto-created project '{gitlab_project_path}' from GitLab instance '{gitlab_instance.name}'"
+            )
             return new_project
 
         raise HTTPException(
-            status_code=404, detail="Project not found and auto-creation disabled"
+            status_code=404,
+            detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled"
         )
 
     raise HTTPException(status_code=401, detail="Missing authentication credentials")

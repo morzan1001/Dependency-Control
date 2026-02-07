@@ -32,7 +32,7 @@ from app.services.analysis.stats import (
 )
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
-from app.services.analysis.types import Database, ScanDict, SystemSettingsDict
+from app.services.analysis.types import Database, ScanDict
 
 logger = logging.getLogger(__name__)
 
@@ -708,7 +708,7 @@ async def run_analysis(
 
             # GitLab Decoration
             await decorate_gitlab_mr(
-                scan_id, stats, scan_doc, project, system_settings.model_dump() if system_settings else {}
+                scan_id, stats, scan_doc, project, system_settings, db
             )
 
             # Notifications
