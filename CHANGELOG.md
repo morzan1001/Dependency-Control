@@ -1,3 +1,11 @@
+# Release 1.4.37
+
+## 📦 Build & CI
+
+- chore: update version to 1.4.37 (#0)
+
+
+
 # Release 1.4.36
 
 ## 📦 Build & CI
