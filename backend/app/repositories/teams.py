@@ -40,6 +40,14 @@ class TeamRepository:
         """Get raw team document by name."""
         return await self.collection.find_one({"name": name})
 
+    async def get_raw_by_gitlab_group(
+        self, gitlab_instance_id: str, gitlab_group_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get raw team document by GitLab instance + group ID."""
+        return await self.collection.find_one(
+            {"gitlab_instance_id": gitlab_instance_id, "gitlab_group_id": gitlab_group_id}
+        )
+
     async def create(self, team: Team) -> Team:
         """Create a new team."""
         await self.collection.insert_one(team.model_dump(by_alias=True))

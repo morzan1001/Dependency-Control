@@ -508,18 +508,24 @@ class GitLabService:
                 # Not a group project (e.g. user namespace), skip sync
                 return None
 
+            instance_id = str(self.instance.id)
+
             if not members:
                 logger.warning(
                     f"Failed to fetch members for group {team_name}. Skipping sync."
                 )
                 # Try to find existing team to return its ID at least
-                existing_team = await team_repo.get_raw_by_name(team_name)
-                if existing_team:
-                    return str(existing_team["_id"])
+                team = await team_repo.get_raw_by_gitlab_group(
+                    instance_id, group_id
+                ) or await team_repo.get_raw_by_name(team_name)
+                if team:
+                    return str(team["_id"])
                 return None
 
-            # Create or Update Team
-            team = await team_repo.get_raw_by_name(team_name)
+            # Find existing team by GitLab group ID (rename-safe) or fallback to name
+            team = await team_repo.get_raw_by_gitlab_group(
+                instance_id, group_id
+            ) or await team_repo.get_raw_by_name(team_name)
 
             team_members = []
             for member in members:
@@ -553,16 +559,29 @@ class GitLabService:
                     user_id = str(user.get("_id", user.get("id")))
                     team_members.append(TeamMember(user_id=user_id, role=role))
 
+            now = datetime.now(timezone.utc)
             if team:
-                await team_repo.set_members(
-                    team["_id"],
-                    [tm.model_dump() for tm in team_members],
-                    datetime.now(timezone.utc),
-                )
+                update_data: dict = {
+                    "members": [tm.model_dump() for tm in team_members],
+                    "updated_at": now,
+                }
+                # Sync name if group was renamed
+                if team.get("name") != team_name:
+                    update_data["name"] = team_name
+                    update_data["description"] = description
+                # Backfill gitlab IDs for legacy teams found by name
+                if not team.get("gitlab_group_id"):
+                    update_data["gitlab_instance_id"] = instance_id
+                    update_data["gitlab_group_id"] = group_id
+                await team_repo.update(team["_id"], update_data)
                 return str(team["_id"])
             elif team_members:
                 new_team = Team(
-                    name=team_name, description=description, members=team_members
+                    name=team_name,
+                    description=description,
+                    gitlab_instance_id=instance_id,
+                    gitlab_group_id=group_id,
+                    members=team_members,
                 )
                 await team_repo.create(new_team)
                 return str(new_team.id)

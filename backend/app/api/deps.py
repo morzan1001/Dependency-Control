@@ -270,6 +270,15 @@ async def get_project_for_ingest(
 
         if project_data:
             project = Project(**project_data)
+
+            # Sync project path/name if GitLab project was renamed
+            updates: dict = {}
+            if project.gitlab_project_path != gitlab_project_path:
+                updates["gitlab_project_path"] = gitlab_project_path
+                # Also update name if it still matches the old path
+                if project.name == project.gitlab_project_path:
+                    updates["name"] = gitlab_project_path
+
             # Sync Teams/Members if enabled for this instance
             if gitlab_instance.sync_teams:
                 gitlab_project_data = await gitlab_service.get_project_details(
@@ -283,7 +292,13 @@ async def get_project_for_ingest(
                     gitlab_project_data=gitlab_project_data,
                 )
                 if team_id and project.team_id != team_id:
-                    await project_repo.update(project.id, {"team_id": team_id})
+                    updates["team_id"] = team_id
+
+            if updates:
+                await project_repo.update(project.id, updates)
+                for key, value in updates.items():
+                    setattr(project, key, value)
+
             return project
 
         # STEP 5: Auto-create project if enabled for this instance

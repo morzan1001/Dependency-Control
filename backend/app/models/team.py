@@ -21,6 +21,8 @@ class Team(BaseModel):
     )
     name: str
     description: Optional[str] = None
+    gitlab_instance_id: Optional[str] = None
+    gitlab_group_id: Optional[int] = None
     members: List[TeamMember] = []
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
