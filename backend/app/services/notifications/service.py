@@ -54,9 +54,12 @@ class NotificationService:
             )
 
         if "mattermost" in channels and user.mattermost_username:
+            mm_dest = user.mattermost_username
+            if not mm_dest.startswith("@"):
+                mm_dest = f"@{mm_dest}"
             tasks.append(
                 self.mattermost_provider.send(
-                    user.mattermost_username,
+                    mm_dest,
                     subject,
                     message,
                     system_settings=system_settings,
