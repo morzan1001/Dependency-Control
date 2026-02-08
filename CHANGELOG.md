@@ -1,3 +1,11 @@
+# Release 1.4.38
+
+## 📦 Build & CI
+
+- chore: update version to 1.4.38 and add atomic upsert method in ScanRepository (#0)
+
+
+
 # Release 1.4.37
 
 ## 📦 Build & CI
