@@ -48,6 +48,10 @@ class ScanRepository:
         await self.collection.insert_one(scan.model_dump(by_alias=True))
         return scan
 
+    async def upsert(self, query: Dict[str, Any], update: Dict[str, Any]) -> None:
+        """Atomic upsert - update or insert a scan."""
+        await self.collection.update_one(query, update, upsert=True)
+
     async def update(self, scan_id: str, update_data: Dict[str, Any]) -> Optional[Scan]:
         """Update scan by ID."""
         await self.collection.update_one({"_id": scan_id}, {"$set": update_data})
