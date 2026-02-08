@@ -1,3 +1,11 @@
+# Release 1.4.36
+
+## 📦 Build & CI
+
+- chore: update version to 1.4.36 and rename ttl parameter in GitLabService caching methods (#0)
+
+
+
 # Release 1.4.35
 
 ## 📦 Build & CI
