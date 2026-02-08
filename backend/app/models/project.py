@@ -38,9 +38,23 @@ class Project(BaseModel):
     retention_days: int = 90  # Default retention period in days
     default_branch: Optional[str] = None
     enforce_notification_settings: bool = False
-    gitlab_project_id: Optional[int] = None
-    gitlab_project_path: Optional[str] = None
-    gitlab_mr_comments_enabled: bool = False
+    # GitLab Integration (Multi-Instance Support)
+    gitlab_instance_id: Optional[str] = Field(
+        None,
+        description="Reference to GitLabInstance._id. Required if gitlab_project_id is set."
+    )
+    gitlab_project_id: Optional[int] = Field(
+        None,
+        description="GitLab project numeric ID. Must be combined with gitlab_instance_id."
+    )
+    gitlab_project_path: Optional[str] = Field(
+        None,
+        description="GitLab project path (namespace/project). For display purposes."
+    )
+    gitlab_mr_comments_enabled: bool = Field(
+        False,
+        description="Enable posting scan results as comments on merge requests"
+    )
 
     # Periodic Scanning
     rescan_enabled: Optional[bool] = None  # If None, use system default

@@ -215,10 +215,17 @@ def extract_grype_cvss(
         return None, None
 
     best_cvss = None
-    best_version = "0.0"
+    best_version = (0, 0)
+
+    def _parse_cvss_version(v: str) -> Tuple[int, ...]:
+        """Parse CVSS version string to numeric tuple for correct comparison."""
+        try:
+            return tuple(int(p) for p in v.split("."))
+        except (ValueError, AttributeError):
+            return (0, 0)
 
     for cvss in cvss_list:
-        version = cvss.get("version", "0.0")
+        version = _parse_cvss_version(cvss.get("version", "0.0"))
         if version > best_version:
             best_version = version
             best_cvss = cvss

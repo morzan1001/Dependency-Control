@@ -7,11 +7,10 @@ Handles posting scan results to GitLab MRs and other external services.
 import logging
 from typing import List, Optional
 
-from app.models.project import Project
+from app.models.project import Project, Scan
 from app.models.stats import Stats
 from app.models.system import SystemSettings
 from app.services.gitlab import GitLabService
-from app.services.analysis.types import ScanDict, SystemSettingsDict
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +67,10 @@ def _build_mr_comment(
 async def decorate_gitlab_mr(
     scan_id: str,
     stats: Stats,
-    scan_doc: ScanDict,
+    scan_doc: Scan,
     project: Project,
-    system_settings: SystemSettingsDict,
+    system_settings: SystemSettings,
+    db: "AsyncIOMotorDatabase",
 ) -> None:
     """
     Post a comment to the GitLab Merge Request with scan results.
@@ -78,25 +78,47 @@ async def decorate_gitlab_mr(
     Args:
         scan_id: The scan ID
         stats: The scan statistics
-        scan_doc: The scan document from the database
+        scan_doc: The scan model
         project: The project model
-        system_settings: System settings dict containing GitLab config
+        system_settings: System settings model
+        db: Database connection for fetching GitLab instance
     """
     # Check preconditions
     if not project.gitlab_mr_comments_enabled:
         return
-    if not project.gitlab_project_id:
+    if not project.gitlab_instance_id or not project.gitlab_project_id:
+        logger.warning(
+            f"Project {project.id} has MR comments enabled but missing GitLab instance/project ID"
+        )
         return
-    if not scan_doc.get("commit_hash"):
+    if not scan_doc.commit_hash:
         return
 
     try:
-        settings_obj = SystemSettings(**system_settings)
-        gitlab_service = GitLabService(settings_obj)
+        # Fetch the GitLab instance
+        from app.repositories.gitlab_instances import GitLabInstanceRepository
+
+        instance_repo = GitLabInstanceRepository(db)
+        gitlab_instance = await instance_repo.get_by_id(project.gitlab_instance_id)
+
+        if not gitlab_instance:
+            logger.warning(
+                f"GitLab instance {project.gitlab_instance_id} not found for project {project.id}"
+            )
+            return
+
+        if not gitlab_instance.is_active:
+            logger.info(
+                f"GitLab instance '{gitlab_instance.name}' is inactive, skipping MR decoration for project {project.id}"
+            )
+            return
+
+        # Create instance-specific GitLab service
+        gitlab_service = GitLabService(gitlab_instance)
 
         # Find MRs for this commit
         mrs = await gitlab_service.get_merge_requests_for_commit(
-            project.gitlab_project_id, scan_doc["commit_hash"]
+            project.gitlab_project_id, scan_doc.commit_hash
         )
 
         if not mrs:
@@ -106,9 +128,9 @@ async def decorate_gitlab_mr(
         relevant_mrs = [
             mr
             for mr in mrs
-            if mr.get("state") == "opened"
-            and not mr.get("draft")
-            and not mr.get("work_in_progress")
+            if mr.state == "opened"
+            and not mr.draft
+            and not mr.work_in_progress
         ]
 
         if not relevant_mrs:
@@ -118,7 +140,7 @@ async def decorate_gitlab_mr(
             return
 
         # Build scan URL
-        dashboard_url = getattr(settings_obj, "dashboard_url", None)
+        dashboard_url = system_settings.dashboard_url
         if not dashboard_url:
             logger.warning(
                 f"Dashboard URL not configured; MR comment will omit links "
@@ -140,7 +162,7 @@ async def decorate_gitlab_mr(
                 await _update_or_create_mr_comment(
                     gitlab_service=gitlab_service,
                     gitlab_project_id=project.gitlab_project_id,
-                    mr_iid=mr["iid"],
+                    mr_iid=mr.iid,
                     comment_body=comment_body,
                     marker=marker,
                     project_id=str(project.id),
@@ -148,7 +170,7 @@ async def decorate_gitlab_mr(
                 )
             except Exception as mr_err:
                 logger.error(
-                    f"Failed to decorate MR !{mr.get('iid')} for project "
+                    f"Failed to decorate MR !{mr.iid} for project "
                     f"{project.id}, scan {scan_id}: {mr_err}"
                 )
 
@@ -188,10 +210,9 @@ async def _update_or_create_mr_comment(
     existing_body: Optional[str] = None
 
     for note in existing_notes:
-        body = note.get("body", "")
-        if marker in body:
-            existing_comment_id = note.get("id")
-            existing_body = body
+        if marker in note.body:
+            existing_comment_id = note.id
+            existing_body = note.body
             break
 
     if existing_comment_id:
