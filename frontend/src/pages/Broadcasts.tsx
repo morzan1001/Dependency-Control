@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Trash2, Megaphone, ShieldAlert, Users, Globe, Calculator, Send, History } from "lucide-react"
+import { Plus, Trash2, Megaphone, ShieldAlert, Users, Globe, Calculator, Send, History, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDistanceToNow } from "date-fns"
 
@@ -112,7 +112,7 @@ export default function Broadcasts() {
   }
 
   const handleSendAnnouncement = async () => {
-    await sendBroadcast({
+    const result = await sendBroadcast({
       type: "general",
       target_type: announcementTarget,
       target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
@@ -122,14 +122,16 @@ export default function Broadcasts() {
       dry_run: false
     })
     setImpactCount(null)
-    toast.success("Announcement sent successfully")
+    toast.success("Broadcast queued", {
+      description: `Sending notifications to ${result.recipient_count} users in the background.`
+    })
     refetchHistory()
   }
 
   const handleSendAdvisory = async () => {
     const validPackages = packages.filter(p => p.name.trim() !== "")
-    
-    await sendBroadcast({
+
+    const result = await sendBroadcast({
       type: "advisory",
       target_type: "advisory",
       packages: validPackages,
@@ -139,7 +141,9 @@ export default function Broadcasts() {
       dry_run: false
     })
     setImpactCount(null)
-    toast.success("Advisory broadcast sent successfully")
+    toast.success("Advisory queued", {
+      description: `Sending to owners of ${result.project_count || 0} affected projects in the background.`
+    })
     refetchHistory()
   }
 
@@ -280,12 +284,12 @@ export default function Broadcasts() {
                         </div>
                     )}
                 </div>
-                <Button 
-                   onClick={handleSendAnnouncement} 
+                <Button
+                   onClick={handleSendAnnouncement}
                    disabled={isPending || !announcementSubject || !announcementMessage || (announcementTarget === 'teams' && selectedTeams.length === 0)}
                 >
-                  <Send className="h-4 w-4 mr-2" />
-                  Send Announcement
+                  {isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
+                  {isPending ? "Sending..." : "Send Announcement"}
                 </Button>
             </CardFooter>
           </Card>
@@ -397,13 +401,13 @@ export default function Broadcasts() {
                         </Badge>
                     )}
                 </div>
-                <Button 
+                <Button
                     variant="destructive"
                     onClick={handleSendAdvisory}
                     disabled={isPending || !advisorySubject || !advisoryMessage || packages.every(p => !p.name)}
                 >
-                  <ShieldAlert className="h-4 w-4 mr-2" />
-                  Broadcast Security Advisory
+                  {isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ShieldAlert className="h-4 w-4 mr-2" />}
+                  {isPending ? "Sending..." : "Broadcast Security Advisory"}
                 </Button>
             </CardFooter>
           </Card>

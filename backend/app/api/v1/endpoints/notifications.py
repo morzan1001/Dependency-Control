@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Set
 
 import markdown
-from fastapi import Depends, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, HTTPException, Query
 
 from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -93,6 +93,7 @@ async def suggest_packages(
 @router.post("/broadcast", response_model=BroadcastResult)
 async def broadcast_message(
     payload: BroadcastRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(
         deps.PermissionChecker(["notifications:broadcast", "system:manage"])
     ),
@@ -140,17 +141,16 @@ async def broadcast_message(
         unique_user_count = len(users_to_notify)
 
         if users_to_notify and not payload.dry_run:
-            # Generate HTML template
             html_msg = get_announcement_template(
                 message=message_html_content,
                 link=dashboard_url,
             )
-
-            await notification_service.notify_users(
+            background_tasks.add_task(
+                notification_service.notify_users,
                 users_to_notify,
                 "analysis_completed",
                 payload.subject,
-                payload.message,  # Plaintext version
+                payload.message,
                 db=db,
                 forced_channels=forced_channels,
                 html_message=html_msg,
@@ -177,13 +177,12 @@ async def broadcast_message(
             unique_user_count = len(users_to_notify)
 
             if users_to_notify and not payload.dry_run:
-                # Generate HTML
                 html_msg = get_announcement_template(
                     message=message_html_content,
                     link=dashboard_url,
                 )
-
-                await notification_service.notify_users(
+                background_tasks.add_task(
+                    notification_service.notify_users,
                     users_to_notify,
                     "analysis_completed",
                     payload.subject,
@@ -396,10 +395,11 @@ async def broadcast_message(
                 </div>
                 """
 
-                # Send Notification
-                await notification_service.notify_users(
+                # Queue notification for background delivery
+                background_tasks.add_task(
+                    notification_service.notify_users,
                     [user],
-                    "vulnerability_found",  # Priority Event
+                    "vulnerability_found",
                     f"ACTION REQUIRED: {payload.subject}",
                     context_message,
                     db=db,

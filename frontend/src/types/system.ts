@@ -1,5 +1,6 @@
 export interface SystemSettings {
   instance_name?: string;
+  dashboard_url?: string;
   project_limit_per_user: number;
   allow_public_registration: boolean;
   enforce_2fa?: boolean;
