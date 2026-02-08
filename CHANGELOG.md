@@ -1,3 +1,11 @@
+# Release 1.4.35
+
+## 📦 Build & CI
+
+- chore: remove GitLab integration settings and related UI components (#0)
+
+
+
 # Release 1.4.34
 
 ## 📦 Build & CI
