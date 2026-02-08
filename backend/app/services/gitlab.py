@@ -246,7 +246,7 @@ class GitLabService:
                     if jwks_uri:
                         # Cache in Redis for all pods
                         await cache_service.set(
-                            cache_key, jwks_uri, ttl=GITLAB_JWKS_URI_CACHE_TTL
+                            cache_key, jwks_uri, ttl_seconds=GITLAB_JWKS_URI_CACHE_TTL
                         )
                     return jwks_uri
             except Exception as e:
@@ -277,7 +277,7 @@ class GitLabService:
                         jwks = response.json()
                         # Cache in Redis for all pods
                         await cache_service.set(
-                            cache_key, jwks, ttl=GITLAB_JWKS_CACHE_TTL
+                            cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL
                         )
                         return jwks
 
@@ -288,7 +288,7 @@ class GitLabService:
                         jwks = response.json()
                         # Cache in Redis for all pods
                         await cache_service.set(
-                            cache_key, jwks, ttl=GITLAB_JWKS_CACHE_TTL
+                            cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL
                         )
                         logger.info(f"JWKS fetched from fallback path: {path}")
                         return jwks
