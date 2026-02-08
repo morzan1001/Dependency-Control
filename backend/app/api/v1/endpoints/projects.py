@@ -968,48 +968,41 @@ async def read_analysis_results(
                 for other in current_scan_results[1:]:
                     # Merge logic based on analyzer type
                     if name == "trivy":
-                        if "Results" in other["result"] and isinstance(
-                            other["result"]["Results"], list
+                        if "Results" in other.result and isinstance(
+                            other.result["Results"], list
                         ):
-                            if "Results" not in base_result["result"]:
-                                base_result["result"]["Results"] = []
-                            base_result["result"]["Results"].extend(
-                                other["result"]["Results"]
+                            if "Results" not in base_result.result:
+                                base_result.result["Results"] = []
+                            base_result.result["Results"].extend(
+                                other.result["Results"]
                             )
 
                     elif name == "grype":
-                        if "matches" in other["result"] and isinstance(
-                            other["result"]["matches"], list
+                        if "matches" in other.result and isinstance(
+                            other.result["matches"], list
                         ):
-                            if "matches" not in base_result["result"]:
-                                base_result["result"]["matches"] = []
-                            base_result["result"]["matches"].extend(
-                                other["result"]["matches"]
+                            if "matches" not in base_result.result:
+                                base_result.result["matches"] = []
+                            base_result.result["matches"].extend(
+                                other.result["matches"]
                             )
 
                     elif name == "osv":
-                        if "results" in other["result"] and isinstance(
-                            other["result"]["results"], list
+                        if "results" in other.result and isinstance(
+                            other.result["results"], list
                         ):
-                            if "results" not in base_result["result"]:
-                                base_result["result"]["results"] = []
-                            base_result["result"]["results"].extend(
-                                other["result"]["results"]
+                            if "results" not in base_result.result:
+                                base_result.result["results"] = []
+                            base_result.result["results"].extend(
+                                other.result["results"]
                             )
 
             final_results.append(base_result)
         else:
             # 2. Fallback to newest result from related scans
             if group:
-                newest = max(group, key=lambda x: x["created_at"])
+                newest = max(group, key=lambda x: x.created_at)
                 final_results.append(newest)
-
-    # Convert ObjectId to string for response validation
-    for result in final_results:
-        if "_id" in result:
-            result["_id"] = str(result["_id"])
-        if "scan_id" in result:
-            result["scan_id"] = str(result["scan_id"])
 
     return final_results
 
