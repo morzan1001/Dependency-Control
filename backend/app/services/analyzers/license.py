@@ -22,6 +22,8 @@ from app.models.license import LicenseCategory, LicenseInfo
 
 from .base import Analyzer
 
+_SPDX_EXPR_SPLIT = re.compile(r"\s+(?:AND|OR|WITH)\s+")
+
 
 class LicenseAnalyzer(Analyzer):
     name = "license_compliance"
@@ -524,6 +526,16 @@ class LicenseAnalyzer(Analyzer):
     }
 
     # Aliases and variations
+    # Map license categories to stats keys
+    _CATEGORY_STAT_KEY = {
+        LicenseCategory.PERMISSIVE: "permissive",
+        LicenseCategory.PUBLIC_DOMAIN: "permissive",
+        LicenseCategory.WEAK_COPYLEFT: "weak_copyleft",
+        LicenseCategory.STRONG_COPYLEFT: "strong_copyleft",
+        LicenseCategory.NETWORK_COPYLEFT: "network_copyleft",
+        LicenseCategory.PROPRIETARY: "proprietary",
+    }
+
     async def analyze(
         self,
         sbom: Dict[str, Any],
@@ -546,116 +558,85 @@ class LicenseAnalyzer(Analyzer):
         ignore_transitive = settings.get("ignore_transitive", False)
 
         components = self._get_components(sbom, parsed_components)
-        issues = []
+        issues: List[Dict[str, Any]] = []
 
-        # Statistics
         stats = {
             "total_components": len(components),
             "permissive": 0,
             "weak_copyleft": 0,
             "strong_copyleft": 0,
             "network_copyleft": 0,
+            "proprietary": 0,
             "unknown": 0,
             "skipped": 0,
         }
 
         for component in components:
-            comp_name = component.get("name", "unknown")
-            comp_version = component.get("version", "unknown")
-            comp_scope = (component.get("scope") or "").lower()
-            comp_purl = component.get("purl", "")
-
-            # Skip dev dependencies if configured
-            if ignore_dev and comp_scope in ("dev", "development", "test", "optional"):
-                stats["skipped"] += 1
-                continue
-
-            # Skip transitive if configured
-            # Check via properties or bom-ref patterns
-            is_transitive = not component.get("properties", {}).get("direct", True)
-            if ignore_transitive and is_transitive:
-                stats["skipped"] += 1
-                continue
-
-            # Extract licenses
-            licenses = self._extract_licenses(component)
-
-            if not licenses:
-                stats["unknown"] += 1
-                # Only flag as issue for direct dependencies or if specifically requested
-                if not is_transitive or not ignore_transitive:
-                    issues.append(
-                        self._create_issue(
-                            component=comp_name,
-                            version=comp_version,
-                            license_id="UNKNOWN",
-                            severity=Severity.LOW,
-                            category=LicenseCategory.UNKNOWN,
-                            message="No license information found",
-                            explanation=(
-                                "This package does not specify a license. "
-                                "This could mean proprietary terms apply, or the maintainer "
-                                "simply forgot to include license information."
-                            ),
-                            recommendation=(
-                                "Contact the package maintainer to clarify licensing, "
-                                "or review the package's source repository for license files."
-                            ),
-                            purl=comp_purl,
-                        )
-                    )
-                continue
-
-            # Analyze each license
-            for lic_id, lic_url in licenses:
-                normalized = self._normalize_license(lic_id)
-                license_info = self.LICENSE_DATABASE.get(normalized)
-
-                if license_info:
-                    issue = self._evaluate_license(
-                        component=comp_name,
-                        version=comp_version,
-                        license_info=license_info,
-                        lic_url=lic_url,
-                        purl=comp_purl,
-                        allow_strong_copyleft=allow_strong_copyleft,
-                        allow_network_copyleft=allow_network_copyleft,
-                    )
-
-                    if issue:
-                        issues.append(issue)
-
-                    # Update stats
-                    if license_info.category == LicenseCategory.PERMISSIVE:
-                        stats["permissive"] += 1
-                    elif license_info.category == LicenseCategory.WEAK_COPYLEFT:
-                        stats["weak_copyleft"] += 1
-                    elif license_info.category == LicenseCategory.STRONG_COPYLEFT:
-                        stats["strong_copyleft"] += 1
-                    elif license_info.category == LicenseCategory.NETWORK_COPYLEFT:
-                        stats["network_copyleft"] += 1
-                else:
-                    # Unknown license
-                    stats["unknown"] += 1
-                    issues.append(
-                        self._create_issue(
-                            component=comp_name,
-                            version=comp_version,
-                            license_id=lic_id,
-                            severity=Severity.INFO,
-                            category=LicenseCategory.UNKNOWN,
-                            message=f"Unrecognized license: {lic_id}",
-                            explanation=(
-                                "This license identifier is not in our database. "
-                                "It may be a custom or uncommon license."
-                            ),
-                            recommendation="Review the license text manually to understand its terms and obligations.",
-                            purl=comp_purl,
-                            license_url=lic_url,
-                        )
-                    )
+            self._analyze_component(
+                component, stats, issues,
+                ignore_dev=ignore_dev,
+                ignore_transitive=ignore_transitive,
+                allow_strong_copyleft=allow_strong_copyleft,
+                allow_network_copyleft=allow_network_copyleft,
+            )
 
         return {"license_issues": issues, "summary": stats}
+
+    def _analyze_component(
+        self,
+        component: Dict[str, Any],
+        stats: Dict[str, int],
+        issues: List[Dict[str, Any]],
+        *,
+        ignore_dev: bool,
+        ignore_transitive: bool,
+        allow_strong_copyleft: bool,
+        allow_network_copyleft: bool,
+    ) -> None:
+        """Analyze a single component for license compliance."""
+        comp_scope = (component.get("scope") or "").lower()
+
+        if ignore_dev and comp_scope in ("dev", "development", "test", "optional"):
+            stats["skipped"] += 1
+            return
+
+        is_transitive = not component.get("properties", {}).get("direct", True)
+        if ignore_transitive and is_transitive:
+            stats["skipped"] += 1
+            return
+
+        licenses = self._extract_licenses(component)
+        if not licenses:
+            stats["unknown"] += 1
+            return
+
+        comp_name = component.get("name", "unknown")
+        comp_version = component.get("version", "unknown")
+        comp_purl = component.get("purl", "")
+
+        for lic_id, lic_url in licenses:
+            normalized = self._normalize_license(lic_id)
+            license_info = self.LICENSE_DATABASE.get(normalized)
+
+            if not license_info:
+                stats["unknown"] += 1
+                continue
+
+            stat_key = self._CATEGORY_STAT_KEY.get(license_info.category)
+            if stat_key:
+                stats[stat_key] += 1
+
+            issue = self._evaluate_license(
+                component=comp_name,
+                version=comp_version,
+                license_info=license_info,
+                lic_url=lic_url,
+                purl=comp_purl,
+                allow_strong_copyleft=allow_strong_copyleft,
+                allow_network_copyleft=allow_network_copyleft,
+            )
+            if issue:
+                issues.append(issue)
 
     def _extract_licenses(
         self, component: Dict[str, Any]
@@ -677,19 +658,33 @@ class LicenseAnalyzer(Analyzer):
                 expr = lic_entry["expression"]
                 if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
                     # Handle expressions like "MIT OR Apache-2.0"
-                    for lic_id in re.split(r"\s+(?:AND|OR|WITH)\s+", expr):
+                    for lic_id in _SPDX_EXPR_SPLIT.split(expr):
                         lic_id = lic_id.strip("() ")
                         if lic_id:
                             licenses.append((lic_id, None))
 
-        # Also check direct license field (SPDX format)
+        # Also check direct license field (parsed components / SPDX format)
         direct_license = component.get("license")
+        license_url = component.get("license_url")
         if (
             isinstance(direct_license, str)
             and direct_license.strip()
             and direct_license.upper() not in UNKNOWN_LICENSE_PATTERNS
         ):
-            licenses.append((direct_license, None))
+            # Handle SPDX expressions (e.g. "MIT OR Apache-2.0")
+            if _SPDX_EXPR_SPLIT.search(direct_license):
+                for lic_id in _SPDX_EXPR_SPLIT.split(direct_license):
+                    lic_id = lic_id.strip("() ")
+                    if lic_id:
+                        licenses.append((lic_id, license_url))
+            # Handle comma-separated licenses (e.g. "MIT, Apache-2.0")
+            elif "," in direct_license:
+                for lic_id in direct_license.split(","):
+                    lic_id = lic_id.strip()
+                    if lic_id:
+                        licenses.append((lic_id, license_url))
+            else:
+                licenses.append((direct_license, license_url))
 
         return licenses
 

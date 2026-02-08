@@ -166,6 +166,15 @@ class TestParsedPURLProperties:
         result = parse_purl("pkg:pypi/requests@1.0")
         assert result.deps_dev_name == "requests"
 
+    def test_deps_dev_name_go_no_doubling(self):
+        """Go module names must not double the domain prefix."""
+        result = parse_purl("pkg:golang/github.com/gin-gonic/gin@1.9.1")
+        assert result.deps_dev_name == "github.com/gin-gonic/gin"
+
+    def test_deps_dev_name_go_nested(self):
+        result = parse_purl("pkg:golang/github.com/cespare/xxhash/v2@v2.3.0")
+        assert result.deps_dev_name == "github.com/cespare/xxhash/v2"
+
 
 class TestGetPurlType:
     def test_extracts_pypi(self):

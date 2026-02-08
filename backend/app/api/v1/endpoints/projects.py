@@ -919,92 +919,17 @@ async def read_analysis_results(
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
-    """
-    Get the results of all analyzers for a specific scan.
-    Also includes results from other scans on the same commit to provide a complete view.
-    """
+    """Get the results of all analyzers for a specific scan."""
     scan_repo = ScanRepository(db)
     analysis_repo = AnalysisResultRepository(db)
 
-    # Need to find project_id from scan to check permissions
     scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
 
     await check_project_access(scan.project_id, current_user, db)
 
-    # Find all scans for this commit to aggregate results
-    full_scan = await scan_repo.get_by_id(scan_id)
-    if full_scan and full_scan.commit_hash:
-        related_scans = await scan_repo.find_many(
-            {"project_id": scan.project_id, "commit_hash": full_scan.commit_hash},
-            limit=100,
-        )
-        related_scan_ids = [s.id for s in related_scans]
-    else:
-        related_scan_ids = [scan_id]
-
-    if not related_scan_ids:
-        related_scan_ids = [scan_id]
-
-    results = await analysis_repo.find_by_scan_ids(related_scan_ids)
-
-    # Group results by analyzer_name
-    grouped_results = {}
-    for res in results:
-        name = res.analyzer_name
-        grouped_results.setdefault(name, []).append(res)
-
-    final_results = []
-
-    for name, group in grouped_results.items():
-        # 1. Prefer results from the requested scan_id
-        current_scan_results = [r for r in group if r.scan_id == scan_id]
-
-        if current_scan_results:
-            base_result = current_scan_results[0]
-
-            if len(current_scan_results) > 1:
-                for other in current_scan_results[1:]:
-                    # Merge logic based on analyzer type
-                    if name == "trivy":
-                        if "Results" in other.result and isinstance(
-                            other.result["Results"], list
-                        ):
-                            if "Results" not in base_result.result:
-                                base_result.result["Results"] = []
-                            base_result.result["Results"].extend(
-                                other.result["Results"]
-                            )
-
-                    elif name == "grype":
-                        if "matches" in other.result and isinstance(
-                            other.result["matches"], list
-                        ):
-                            if "matches" not in base_result.result:
-                                base_result.result["matches"] = []
-                            base_result.result["matches"].extend(
-                                other.result["matches"]
-                            )
-
-                    elif name == "osv":
-                        if "results" in other.result and isinstance(
-                            other.result["results"], list
-                        ):
-                            if "results" not in base_result.result:
-                                base_result.result["results"] = []
-                            base_result.result["results"].extend(
-                                other.result["results"]
-                            )
-
-            final_results.append(base_result)
-        else:
-            # 2. Fallback to newest result from related scans
-            if group:
-                newest = max(group, key=lambda x: x.created_at)
-                final_results.append(newest)
-
-    return final_results
+    return await analysis_repo.find_by_scan(scan_id)
 
 
 @router.get("/scans/{scan_id}", response_model=Scan, summary="Get scan details")

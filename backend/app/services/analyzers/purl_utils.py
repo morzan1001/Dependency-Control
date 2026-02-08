@@ -44,6 +44,9 @@ class ParsedPURL(NamedTuple):
         """Get the package name formatted for deps.dev API."""
         if self.type == "maven" and self.namespace:
             return f"{self.namespace}:{self.name}"
+        if self.type in ("golang", "go"):
+            # Go module names already include the full path (e.g. github.com/cespare/xxhash/v2)
+            return self.name
         if self.namespace:
             return f"{self.namespace}/{self.name}"
         return self.name

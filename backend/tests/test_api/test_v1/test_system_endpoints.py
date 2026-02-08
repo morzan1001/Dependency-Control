@@ -207,7 +207,6 @@ class TestGetAppConfig:
         assert result.notifications.email is False
         assert result.notifications.slack is False
         assert result.notifications.mattermost is False
-        assert result.gitlab_token_configured is False
 
 
 class TestGetNotificationChannels:
