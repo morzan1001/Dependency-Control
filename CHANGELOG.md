@@ -1,3 +1,11 @@
+# Release 1.4.40
+
+## 📦 Build & CI
+
+- chore: update version to 1.4.40 and enhance GitLab team synchronization logic (#0)
+
+
+
 # Release 1.4.39
 
 
