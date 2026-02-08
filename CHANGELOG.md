@@ -1,3 +1,11 @@
+# Release 1.4.33
+
+## 📦 Build & CI
+
+- chore: bump version to 1.4.33 (#0)
+
+
+
 # Release 1.4.32
 
 ## 📦 Build & CI
