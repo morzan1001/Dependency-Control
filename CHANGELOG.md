@@ -1,3 +1,15 @@
+# Release 1.4.41
+
+## 🚀 Features
+
+- feat: add dashboard URL field to system settings and update related components (#0)
+
+## 🐛 Fixes
+
+- fix: ensure Mattermost usernames are prefixed with '@' when sending notifications (#0)
+
+
+
 # Release 1.4.40
 
 ## 📦 Build & CI
