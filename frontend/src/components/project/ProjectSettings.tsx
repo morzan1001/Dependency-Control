@@ -105,7 +105,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const { data: gitlabInstances } = useQuery({
     queryKey: ['gitlab-instances'],
     queryFn: () => gitlabInstancesApi.list({ active_only: true }),
-    enabled: appConfig?.gitlab_integration_enabled || false,
   });
 
   const deleteProjectMutation = useMutation({
@@ -322,7 +321,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     )}
                 </div>
 
-                {appConfig?.gitlab_integration_enabled && (
+                {(gitlabInstances?.items?.length ?? 0) > 0 && (
                     <div className="grid gap-2">
                         <Label>GitLab Integration</Label>
                         <div className="border rounded-md p-4 space-y-4">

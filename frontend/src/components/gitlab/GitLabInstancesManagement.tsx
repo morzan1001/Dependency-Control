@@ -52,7 +52,7 @@ const emptyFormData: GitLabInstanceFormData = {
   is_default: false,
 };
 
-export function GitLabInstancesManagement({ globalEnabled }: { globalEnabled: boolean }) {
+export function GitLabInstancesManagement() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [deleteInstanceId, setDeleteInstanceId] = useState<string | null>(null);
@@ -186,19 +186,6 @@ export function GitLabInstancesManagement({ globalEnabled }: { globalEnabled: bo
     setTestingInstanceId(instanceId);
     testConnectionMutation.mutate(instanceId);
   };
-
-  if (!globalEnabled) {
-    return (
-      <Card className="opacity-50">
-        <CardHeader>
-          <CardTitle>GitLab Instances</CardTitle>
-          <CardDescription>
-            Enable GitLab Integration above to manage instances.
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
 
   return (
     <Card>

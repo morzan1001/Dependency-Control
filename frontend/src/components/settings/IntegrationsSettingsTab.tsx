@@ -2,9 +2,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { InfoIcon } from "lucide-react"
 import { SettingsTabProps } from "@/types/system"
 import { GitLabInstancesManagement } from "@/components/gitlab/GitLabInstancesManagement"
 
@@ -17,38 +14,7 @@ export function IntegrationsSettingsTab({
 }: SettingsTabProps) {
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>GitLab Integration</CardTitle>
-          <CardDescription>Configure GitLab integration for automatic project creation and CI/CD.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between space-x-2">
-            <Label htmlFor="gitlab-enabled">Enable GitLab Integration</Label>
-            <Switch
-              id="gitlab-enabled"
-              checked={formData.gitlab_integration_enabled || false}
-              onCheckedChange={(checked) => handleInputChange('gitlab_integration_enabled', checked)}
-            />
-          </div>
-          {formData.gitlab_integration_enabled && (
-            <Alert>
-              <InfoIcon className="h-4 w-4" />
-              <AlertDescription>
-                Multi-instance support is enabled. Configure individual GitLab instances below.
-                Legacy single-instance settings have been migrated to the instances list.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
-            {isPending ? "Saving..." : "Save GitLab Settings"}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Multi-Instance Management */}
-      <GitLabInstancesManagement globalEnabled={formData.gitlab_integration_enabled || false} />
+      <GitLabInstancesManagement />
 
       <Card>
         <CardHeader>

@@ -187,8 +187,6 @@ class TestGetAppConfig:
             )
 
         assert result.project_limit_per_user == 10
-        assert result.gitlab_integration_enabled is True
-        assert result.gitlab_token_configured is True
         assert result.notifications.slack is True
         assert result.notifications.email is True
 

@@ -117,8 +117,6 @@ async def get_app_config(
         rescan_mode=settings.rescan_mode,
         global_rescan_enabled=settings.global_rescan_enabled,
         global_rescan_interval=settings.global_rescan_interval,
-        gitlab_integration_enabled=settings.gitlab_integration_enabled,
-        gitlab_token_configured=bool(settings.gitlab_access_token),
         notifications=notifications,
     )
 

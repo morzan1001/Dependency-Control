@@ -88,19 +88,6 @@ class TestIngestApiKey:
 
 
 class TestIngestOidcBasicValidation:
-    def test_raises_403_when_gitlab_disabled(self):
-        from app.api.deps import get_project_for_ingest
-
-        db = MagicMock()
-        settings = SystemSettings(gitlab_integration_enabled=False)
-
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(get_project_for_ingest(
-                x_api_key=None, oidc_token="a.b.c", db=db, settings=settings,
-            ))
-        assert exc_info.value.status_code == 403
-        assert "disabled" in exc_info.value.detail.lower()
-
     def test_raises_403_for_non_jwt_token(self):
         from app.api.deps import get_project_for_ingest
 

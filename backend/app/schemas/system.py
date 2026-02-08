@@ -108,9 +108,5 @@ class AppConfig(BaseModel):
     global_rescan_enabled: bool = False
     global_rescan_interval: int = 24
 
-    # Integration status (only whether enabled, no secrets)
-    gitlab_integration_enabled: bool = False
-    gitlab_token_configured: bool = False
-
     # Available notification channels
     notifications: NotificationChannels = NotificationChannels()

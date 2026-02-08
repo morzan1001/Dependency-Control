@@ -31,12 +31,6 @@ export interface SystemSettings {
   slack_token_expires_at?: number;
   mattermost_url?: string;
   mattermost_bot_token?: string;
-  gitlab_integration_enabled: boolean;
-  gitlab_url?: string;
-  gitlab_oidc_audience?: string;
-  gitlab_auto_create_projects?: boolean;
-  gitlab_sync_teams?: boolean;
-  gitlab_access_token?: string;
   github_token?: string;
   open_source_malware_api_key?: string;
 }
@@ -62,8 +56,6 @@ export interface AppConfig {
   rescan_mode: 'global' | 'project';
   global_rescan_enabled: boolean;
   global_rescan_interval: number;
-  gitlab_integration_enabled: boolean;
-  gitlab_token_configured?: boolean;
   notifications: NotificationChannels;
 }
 

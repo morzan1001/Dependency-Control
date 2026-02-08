@@ -211,11 +211,6 @@ async def get_project_for_ingest(
 
     # 2. Try GitLab OIDC Token (Multi-Instance Support)
     if oidc_token:
-        if not settings.gitlab_integration_enabled:
-            raise HTTPException(
-                status_code=403, detail="GitLab integration is disabled"
-            )
-
         # Check if token is OIDC (JWT)
         is_oidc = len(oidc_token.split(".")) == 3
 
