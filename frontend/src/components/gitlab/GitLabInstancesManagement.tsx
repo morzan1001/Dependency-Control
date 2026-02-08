@@ -27,16 +27,6 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 interface GitLabInstanceFormData {
   name: string;
@@ -392,29 +382,32 @@ export function GitLabInstancesManagement({ globalEnabled }: { globalEnabled: bo
       </Dialog>
 
       {/* Delete Confirmation */}
-      <AlertDialog
+      <Dialog
         open={deleteInstanceId !== null}
         onOpenChange={() => setDeleteInstanceId(null)}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete GitLab Instance?</AlertDialogTitle>
-            <AlertDialogDescription>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete GitLab Instance?</DialogTitle>
+            <DialogDescription>
               This will remove the GitLab instance configuration. Projects linked to
               this instance will lose their GitLab integration.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteInstanceId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
               onClick={() => deleteInstanceId && deleteMutation.mutate(deleteInstanceId)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
