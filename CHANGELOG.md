@@ -1,3 +1,11 @@
+# Release 1.4.34
+
+## 📦 Build & CI
+
+- chore: update version to 1.4.34 and refactor delete confirmation dialog (#0)
+
+
+
 # Release 1.4.33
 
 ## 📦 Build & CI
