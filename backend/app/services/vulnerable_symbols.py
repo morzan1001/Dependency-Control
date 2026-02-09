@@ -59,9 +59,7 @@ def extract_symbols_from_vulnerability(vuln_data: Dict[str, Any]) -> ExtractedSy
                     )
 
     # 2. Check for 'affected_symbols' (common in some internal formats)
-    if "affected_symbols" in vuln_data and isinstance(
-        vuln_data["affected_symbols"], list
-    ):
+    if "affected_symbols" in vuln_data and isinstance(vuln_data["affected_symbols"], list):
         return ExtractedSymbols(
             cve=cve,
             package=package,

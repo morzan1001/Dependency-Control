@@ -48,9 +48,7 @@ class CLIAnalyzer(Analyzer):
         """Run CLI analysis with automatic temp file management."""
         # Check tool availability first
         if not self.is_tool_available():
-            logger.warning(
-                f"{self.name}: CLI tool '{self.cli_command}' not found in PATH"
-            )
+            logger.warning(f"{self.name}: CLI tool '{self.cli_command}' not found in PATH")
             return {
                 "error": f"CLI tool '{self.cli_command}' not found",
                 "details": f"Please install {self.cli_command} and ensure it's in your PATH",
@@ -65,9 +63,7 @@ class CLIAnalyzer(Analyzer):
             tmp_sbom_path = self._create_temp_sbom(sbom)
 
             # Allow subclasses to preprocess (e.g., convert SBOM format)
-            target_path, extra_paths = await self._preprocess_sbom(
-                sbom, tmp_sbom_path, settings
-            )
+            target_path, extra_paths = await self._preprocess_sbom(sbom, tmp_sbom_path, settings)
 
             # Build and execute command
             args = self._build_command_args(target_path, settings)
@@ -90,9 +86,7 @@ class CLIAnalyzer(Analyzer):
 
     def _create_temp_sbom(self, sbom: Dict[str, Any]) -> str:
         """Create a temporary file containing the SBOM JSON."""
-        with tempfile.NamedTemporaryFile(
-            mode="w+", suffix=".json", delete=False
-        ) as tmp_file:
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as tmp_file:
             json.dump(sbom, tmp_file)
             return tmp_file.name
 
@@ -113,9 +107,7 @@ class CLIAnalyzer(Analyzer):
         return tmp_sbom_path, []
 
     @abstractmethod
-    def _build_command_args(
-        self, sbom_path: str, settings: Optional[Dict[str, Any]]
-    ) -> List[str]:
+    def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
         """Build command line arguments. Must be implemented by subclasses."""
         raise NotImplementedError
 

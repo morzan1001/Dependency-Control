@@ -20,12 +20,8 @@ class KEVProvider:
         max_retries: Optional[int] = None,
         retry_delay: Optional[float] = None,
     ):
-        self._max_retries = (
-            max_retries if max_retries is not None else settings.ENRICHMENT_MAX_RETRIES
-        )
-        self._retry_delay = (
-            retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
-        )
+        self._max_retries = max_retries if max_retries is not None else settings.ENRICHMENT_MAX_RETRIES
+        self._retry_delay = retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
 
     async def load_kev_catalog(self, client: httpx.AsyncClient) -> Dict[str, KEVEntry]:
         """Load CISA KEV catalog, using Redis cache with distributed lock."""
@@ -49,9 +45,7 @@ class KEVProvider:
                         cve = vuln.get("cveID", "")
                         if cve:
                             # Handle potential None value for ransomware field
-                            ransomware_value = (
-                                vuln.get("knownRansomwareCampaignUse") or ""
-                            )
+                            ransomware_value = vuln.get("knownRansomwareCampaignUse") or ""
                             kev_entry = KEVEntry(
                                 cve=cve,
                                 vendor_project=vuln.get("vendorProject") or "",
@@ -61,14 +55,11 @@ class KEVProvider:
                                 short_description=vuln.get("shortDescription") or "",
                                 required_action=vuln.get("requiredAction") or "",
                                 due_date=vuln.get("dueDate") or "",
-                                known_ransomware_use=ransomware_value.lower()
-                                == "known",
+                                known_ransomware_use=ransomware_value.lower() == "known",
                             )
                             kev_dict[cve] = kev_entry.model_dump()
 
-                    logger.info(
-                        f"Fetched {len(kev_dict)} entries from CISA KEV catalog"
-                    )
+                    logger.info(f"Fetched {len(kev_dict)} entries from CISA KEV catalog")
                     if not kev_dict:
                         logger.warning("KEV catalog returned empty - not caching")
                         return None
@@ -76,16 +67,10 @@ class KEVProvider:
 
                 except httpx.TimeoutException:
                     last_error = "Timeout"
-                    logger.warning(
-                        f"KEV catalog fetch timeout "
-                        f"(attempt {attempt + 1}/{self._max_retries})"
-                    )
+                    logger.warning(f"KEV catalog fetch timeout (attempt {attempt + 1}/{self._max_retries})")
                 except httpx.ConnectError:
                     last_error = "Connection error"
-                    logger.warning(
-                        f"KEV catalog connection error "
-                        f"(attempt {attempt + 1}/{self._max_retries})"
-                    )
+                    logger.warning(f"KEV catalog connection error (attempt {attempt + 1}/{self._max_retries})")
                 except httpx.HTTPStatusError as e:
                     last_error = f"HTTP {e.response.status_code}"
                     if e.response.status_code >= 500:
@@ -99,18 +84,12 @@ class KEVProvider:
                         return None
                 except Exception as e:
                     last_error = str(e)
-                    logger.warning(
-                        f"Failed to fetch CISA KEV catalog "
-                        f"(attempt {attempt + 1}/{self._max_retries}): {e}"
-                    )
+                    logger.warning(f"Failed to fetch CISA KEV catalog (attempt {attempt + 1}/{self._max_retries}): {e}")
 
                 if attempt < self._max_retries - 1:
                     await asyncio.sleep(self._retry_delay * (attempt + 1))
 
-            logger.error(
-                f"KEV catalog fetch failed after {self._max_retries} attempts: "
-                f"{last_error}"
-            )
+            logger.error(f"KEV catalog fetch failed after {self._max_retries} attempts: {last_error}")
             return None
 
         # Use distributed lock to prevent multiple pods fetching simultaneously

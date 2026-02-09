@@ -13,9 +13,7 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
 
     recommendations = []
     severity_counts: Dict[str, int] = defaultdict(int)
-    components_by_issue: Dict[str, List[Any]] = defaultdict(
-        list
-    )  # issue_type -> [components]
+    components_by_issue: Dict[str, List[Any]] = defaultdict(list)  # issue_type -> [components]
     low_score_packages: List[Any] = []  # Packages with very low scores
     unmaintained_packages: List[Any] = []
 
@@ -133,9 +131,7 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
         )
 
     # 3. Generate recommendation for low-score packages (general quality concern)
-    if (
-        low_score_packages and not unmaintained_packages
-    ):  # Don't duplicate if already covered
+    if low_score_packages and not unmaintained_packages:  # Don't duplicate if already covered
         recommendations.append(
             Recommendation(
                 type=RecommendationType.SUPPLY_CHAIN_RISK,
@@ -148,8 +144,7 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
                 ),
                 impact={
                     "total": len(low_score_packages),
-                    "average_score": sum(p["score"] for p in low_score_packages)
-                    / len(low_score_packages),
+                    "average_score": sum(p["score"] for p in low_score_packages) / len(low_score_packages),
                 },
                 affected_components=[p["component"] for p in low_score_packages],
                 action={
@@ -166,9 +161,7 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
                             "score": p["score"],
                             "issues": p.get("critical_issues", []),
                         }
-                        for p in sorted(low_score_packages, key=lambda x: x["score"])[
-                            :10
-                        ]
+                        for p in sorted(low_score_packages, key=lambda x: x["score"])[:10]
                     ],
                 },
                 effort="medium",

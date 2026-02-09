@@ -21,21 +21,15 @@ class InvitationRepository:
         self.system_invitations = db.system_invitations
 
     # Project Invitations
-    async def get_project_invitation(
-        self, invitation_id: str
-    ) -> Optional[Dict[str, Any]]:
+    async def get_project_invitation(self, invitation_id: str) -> Optional[Dict[str, Any]]:
         """Get project invitation by ID."""
         return await self.project_invitations.find_one({"_id": invitation_id})
 
-    async def get_project_invitation_by_token(
-        self, token: str
-    ) -> Optional[Dict[str, Any]]:
+    async def get_project_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Get project invitation by token."""
         return await self.project_invitations.find_one({"token": token})
 
-    async def create_project_invitation(
-        self, invitation: ProjectInvitation
-    ) -> ProjectInvitation:
+    async def create_project_invitation(self, invitation: ProjectInvitation) -> ProjectInvitation:
         """Create a new project invitation."""
         await self.project_invitations.insert_one(invitation.model_dump(by_alias=True))
         return invitation
@@ -52,11 +46,7 @@ class InvitationRepository:
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
         """Find invitations for a project."""
-        cursor = (
-            self.project_invitations.find({"project_id": project_id})
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.project_invitations.find({"project_id": project_id}).skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
     async def delete_project_invitations_by_project(self, project_id: str) -> int:
@@ -65,15 +55,11 @@ class InvitationRepository:
         return result.deleted_count
 
     # System Invitations
-    async def get_system_invitation(
-        self, invitation_id: str
-    ) -> Optional[Dict[str, Any]]:
+    async def get_system_invitation(self, invitation_id: str) -> Optional[Dict[str, Any]]:
         """Get system invitation by ID."""
         return await self.system_invitations.find_one({"_id": invitation_id})
 
-    async def get_system_invitation_by_token(
-        self, token: str
-    ) -> Optional[Dict[str, Any]]:
+    async def get_system_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Get active system invitation by token (non-used, non-expired)."""
         return await self.system_invitations.find_one(
             {
@@ -83,9 +69,7 @@ class InvitationRepository:
             }
         )
 
-    async def get_system_invitation_by_email(
-        self, email: str
-    ) -> Optional[Dict[str, Any]]:
+    async def get_system_invitation_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """Get active system invitation by email (non-used, non-expired)."""
         return await self.system_invitations.find_one(
             {
@@ -95,20 +79,14 @@ class InvitationRepository:
             }
         )
 
-    async def create_system_invitation(
-        self, invitation: SystemInvitation
-    ) -> SystemInvitation:
+    async def create_system_invitation(self, invitation: SystemInvitation) -> SystemInvitation:
         """Create a new system invitation."""
         await self.system_invitations.insert_one(invitation.model_dump(by_alias=True))
         return invitation
 
-    async def update_system_invitation(
-        self, invitation_id: str, update_data: Dict[str, Any]
-    ) -> None:
+    async def update_system_invitation(self, invitation_id: str, update_data: Dict[str, Any]) -> None:
         """Update system invitation by ID."""
-        await self.system_invitations.update_one(
-            {"_id": invitation_id}, {"$set": update_data}
-        )
+        await self.system_invitations.update_one({"_id": invitation_id}, {"$set": update_data})
 
     async def delete_system_invitation(self, invitation_id: str) -> bool:
         """Delete system invitation by ID."""
@@ -130,6 +108,4 @@ class InvitationRepository:
 
     async def mark_system_invitation_used(self, invitation_id: str) -> None:
         """Mark system invitation as used."""
-        await self.system_invitations.update_one(
-            {"_id": invitation_id}, {"$set": {"is_used": True}}
-        )
+        await self.system_invitations.update_one({"_id": invitation_id}, {"$set": {"is_used": True}})

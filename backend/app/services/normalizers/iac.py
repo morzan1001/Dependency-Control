@@ -12,9 +12,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_kics(
-    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
-):
+def normalize_kics(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
     """Normalize KICS IaC scan results."""
     queries = result.get("queries") or []
     if not queries:
@@ -55,8 +53,7 @@ def normalize_kics(
                 # CWE if available
                 "cwe_ids": normalize_cwe_list(query.get("cwe")),
                 # Documentation
-                "documentation_url": query.get("description_url")
-                or f.get("resource_url"),
+                "documentation_url": query.get("description_url") or f.get("resource_url"),
                 "references": query.get("references") or [],
                 # Remediation
                 "full_description": description,

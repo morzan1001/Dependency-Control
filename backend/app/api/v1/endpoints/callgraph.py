@@ -95,14 +95,10 @@ async def upload_callgraph(
         elif format_type == "generic":
             imports, calls, module_usage = parse_generic_format(request.data, language)
         else:
-            raise HTTPException(
-                status_code=400, detail=f"Unsupported format: {format_type}"
-            )
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {format_type}")
     except Exception as e:
         logger.error(f"Failed to parse callgraph: {e}")
-        raise HTTPException(
-            status_code=400, detail=f"Failed to parse callgraph: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {str(e)}")
 
     import uuid
 
@@ -118,9 +114,7 @@ async def upload_callgraph(
             scan_id_seed = f"{project_id}-{request.pipeline_id}"
             scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
 
-        logger.debug(
-            f"Generated deterministic scan_id {scan_id} from pipeline_id {request.pipeline_id}"
-        )
+        logger.debug(f"Generated deterministic scan_id {scan_id} from pipeline_id {request.pipeline_id}")
 
     callgraph = Callgraph(
         project_id=project_id,
@@ -134,8 +128,7 @@ async def upload_callgraph(
         imports=imports,
         calls=calls,
         module_usage={k: v.model_dump() for k, v in module_usage.items()},
-        source_files_analyzed=request.source_files_count
-        or len(set(i.file for i in imports)),
+        source_files_analyzed=request.source_files_count or len(set(i.file for i in imports)),
         total_imports=len(imports),
         total_calls=len(calls),
         analysis_duration_ms=request.analysis_duration_ms,
@@ -153,9 +146,7 @@ async def upload_callgraph(
         # No scan_id or pipeline_id - this is unusual, warn the user
         upsert_filter = {"project_id": project_id, "scan_id": None, "pipeline_id": None}
         match_context = "project-level (no pipeline context)"
-        warnings.append(
-            "No pipeline_id or scan_id provided - callgraph may not match scans correctly"
-        )
+        warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
 
     await callgraph_repo.upsert(upsert_filter, callgraph.model_dump())
 
@@ -206,9 +197,7 @@ async def get_callgraph(
     callgraph_repo = CallgraphRepository(db)
     callgraph = await callgraph_repo.get_by_project(project_id)
     if not callgraph:
-        raise HTTPException(
-            status_code=404, detail="No callgraph found for this project"
-        )
+        raise HTTPException(status_code=404, detail="No callgraph found for this project")
 
     # Remove MongoDB _id
     callgraph.pop("_id", None)

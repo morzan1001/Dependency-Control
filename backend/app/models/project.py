@@ -40,20 +40,16 @@ class Project(BaseModel):
     enforce_notification_settings: bool = False
     # GitLab Integration (Multi-Instance Support)
     gitlab_instance_id: Optional[str] = Field(
-        None,
-        description="Reference to GitLabInstance._id. Required if gitlab_project_id is set."
+        None, description="Reference to GitLabInstance._id. Required if gitlab_project_id is set."
     )
     gitlab_project_id: Optional[int] = Field(
-        None,
-        description="GitLab project numeric ID. Must be combined with gitlab_instance_id."
+        None, description="GitLab project numeric ID. Must be combined with gitlab_instance_id."
     )
     gitlab_project_path: Optional[str] = Field(
-        None,
-        description="GitLab project path (namespace/project). For display purposes."
+        None, description="GitLab project path (namespace/project). For display purposes."
     )
     gitlab_mr_comments_enabled: bool = Field(
-        False,
-        description="Enable posting scan results as comments on merge requests"
+        False, description="Enable posting scan results as comments on merge requests"
     )
 
     # Periodic Scanning
@@ -112,12 +108,8 @@ class Scan(BaseModel):
     latest_run: Optional[Dict[str, Any]] = None
 
     # Pipeline result tracking - prevents premature completion when multiple scanners run
-    last_result_at: Optional[datetime] = (
-        None  # When the last scanner result was received
-    )
-    received_results: List[str] = (
-        []
-    )  # List of analyzer names that have submitted results
+    last_result_at: Optional[datetime] = None  # When the last scanner result was received
+    received_results: List[str] = []  # List of analyzer names that have submitted results
 
     class Config:
         populate_by_name = True

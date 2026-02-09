@@ -33,32 +33,20 @@ class TestNormalizeOutdated:
 
     def test_default_severity_info(self):
         """Outdated findings should default to INFO severity."""
-        result = {
-            "outdated_dependencies": [
-                {"component": "pkg", "current_version": "1.0"}
-            ]
-        }
+        result = {"outdated_dependencies": [{"component": "pkg", "current_version": "1.0"}]}
         self.agg.aggregate("outdated_packages", result)
         f = list(self.agg.findings.values())[0]
         assert f.severity == "INFO"
 
     def test_custom_severity(self):
-        result = {
-            "outdated_dependencies": [
-                {"component": "pkg", "current_version": "1.0", "severity": "MEDIUM"}
-            ]
-        }
+        result = {"outdated_dependencies": [{"component": "pkg", "current_version": "1.0", "severity": "MEDIUM"}]}
         self.agg.aggregate("outdated_packages", result)
         f = list(self.agg.findings.values())[0]
         assert f.severity == "MEDIUM"
 
     def test_default_description(self):
         """Without message, should generate default description."""
-        result = {
-            "outdated_dependencies": [
-                {"component": "lodash", "current_version": "1.0"}
-            ]
-        }
+        result = {"outdated_dependencies": [{"component": "lodash", "current_version": "1.0"}]}
         self.agg.aggregate("outdated_packages", result)
         f = list(self.agg.findings.values())[0]
         assert "lodash" in f.description

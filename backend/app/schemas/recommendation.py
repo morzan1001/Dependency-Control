@@ -118,9 +118,7 @@ class VulnerabilityInfo:
     epss_score: Optional[float] = None  # 0.0 to 1.0
     is_kev: bool = False  # In CISA KEV catalog
     kev_ransomware: bool = False  # Known ransomware use
-    is_reachable: Optional[bool] = (
-        None  # None = unknown, True = reachable, False = unreachable
-    )
+    is_reachable: Optional[bool] = None  # None = unknown, True = reachable, False = unreachable
     reachability_level: Optional[str] = None  # confirmed, likely, unknown, unreachable
     risk_score: Optional[float] = None  # Adjusted risk score (0-100)
 
@@ -132,9 +130,7 @@ class VulnerabilityInfo:
     def is_actionable(self) -> bool:
         """Returns True if this vulnerability should be prioritized for action."""
         # Actionable if: (KEV or high EPSS) AND (reachable or unknown reachability)
-        is_exploitable = self.is_kev or (
-            self.epss_score is not None and self.epss_score >= 0.1
-        )
+        is_exploitable = self.is_kev or (self.epss_score is not None and self.epss_score >= 0.1)
         is_reachable_or_unknown = self.is_reachable is None or self.is_reachable is True
         return bool(is_exploitable and is_reachable_or_unknown)
 
@@ -161,15 +157,11 @@ class Recommendation:
     affected_components: List[str]
     action: Dict[str, Any]  # Specific action details
     effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
-    affected_projects: List[Dict[str, Any]] = field(
-        default_factory=list
-    )  # [{id, name}]
+    affected_projects: List[Dict[str, Any]] = field(default_factory=list)  # [{id, name}]
 
     def to_dict(self) -> Dict[str, Any]:
         # Handle both Effort enum and string values
-        effort_value = (
-            self.effort.value if isinstance(self.effort, Effort) else self.effort
-        )
+        effort_value = self.effort.value if isinstance(self.effort, Effort) else self.effort
         return {
             "type": self.type.value,
             "priority": self.priority.value,

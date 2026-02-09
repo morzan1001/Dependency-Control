@@ -36,9 +36,7 @@ class OutdatedAnalyzer(Analyzer):
         results = []
 
         # Check cache for latest versions first
-        cached_versions, uncached_components = await self._get_cached_latest_versions(
-            components
-        )
+        cached_versions, uncached_components = await self._get_cached_latest_versions(components)
 
         # Process cached versions
         for component, latest_version in cached_versions:
@@ -58,9 +56,7 @@ class OutdatedAnalyzer(Analyzer):
                     }
                 )
 
-        logger.debug(
-            f"Outdated: {len(cached_versions)} from cache, {len(uncached_components)} to fetch"
-        )
+        logger.debug(f"Outdated: {len(cached_versions)} from cache, {len(uncached_components)} to fetch")
 
         # Process uncached components with distributed locking to prevent cache stampede
         if uncached_components:
@@ -71,22 +67,16 @@ class OutdatedAnalyzer(Analyzer):
                 batch_size = ANALYZER_BATCH_SIZES.get("outdated", 25)
                 for i in range(0, len(uncached_components), batch_size):
                     batch = uncached_components[i : i + batch_size]
-                    tasks = [
-                        self._check_component_for_batch(client, comp) for comp in batch
-                    ]
+                    tasks = [self._check_component_for_batch(client, comp) for comp in batch]
 
-                    component_results: List[Any] = await asyncio.gather(
-                        *tasks, return_exceptions=True
-                    )
+                    component_results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
 
                     for comp, result in zip(batch, component_results):
                         if isinstance(result, Exception):
                             continue
                         if result:
                             # Remove internal fields before adding to results
-                            result_clean = {
-                                k: v for k, v in result.items() if not k.startswith("_")
-                            }
+                            result_clean = {k: v for k, v in result.items() if not k.startswith("_")}
                             if result_clean:
                                 results.append(result_clean)
 
@@ -116,16 +106,12 @@ class OutdatedAnalyzer(Analyzer):
                 skipped_count += 1
                 continue
 
-            cache_key = CacheKeys.latest_version(
-                parsed.registry_system, parsed.deps_dev_name
-            )
+            cache_key = CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name)
             cache_keys.append(cache_key)
             component_map[cache_key] = component
 
         if skipped_count > 0:
-            logger.debug(
-                f"Outdated: Skipped {skipped_count} components without valid registry system"
-            )
+            logger.debug(f"Outdated: Skipped {skipped_count} components without valid registry system")
 
         if not cache_keys:
             return [], components

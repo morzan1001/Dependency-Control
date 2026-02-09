@@ -186,13 +186,9 @@ def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendati
                     f"Federal agencies are required to patch these within specific timeframes."
                 ),
                 impact={
-                    "critical": len(
-                        [v for v in kev_vulns if get_attr(v, "severity") == "CRITICAL"]
-                    ),
+                    "critical": len([v for v in kev_vulns if get_attr(v, "severity") == "CRITICAL"]),
                     "high": len([v for v in kev_vulns if get_attr(v, "severity") == "HIGH"]),
-                    "medium": len(
-                        [v for v in kev_vulns if get_attr(v, "severity") == "MEDIUM"]
-                    ),
+                    "medium": len([v for v in kev_vulns if get_attr(v, "severity") == "MEDIUM"]),
                     "low": 0,
                     "total": len(kev_vulns),
                     "kev_count": len(kev_vulns),
@@ -231,18 +227,12 @@ def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendati
                 description=(
                     f"Found {len(high_epss_vulns)} vulnerabilities with EPSS score > 50%. "
                     f"These have a very high probability of being exploited in the next 30 days. "
-                    f"Highest EPSS: {max_epss*100:.1f}%"
+                    f"Highest EPSS: {max_epss * 100:.1f}%"
                 ),
                 impact={
-                    "critical": len(
-                        [v for v in high_epss_vulns if get_attr(v, "severity") == "CRITICAL"]
-                    ),
-                    "high": len(
-                        [v for v in high_epss_vulns if get_attr(v, "severity") == "HIGH"]
-                    ),
-                    "medium": len(
-                        [v for v in high_epss_vulns if get_attr(v, "severity") == "MEDIUM"]
-                    ),
+                    "critical": len([v for v in high_epss_vulns if get_attr(v, "severity") == "CRITICAL"]),
+                    "high": len([v for v in high_epss_vulns if get_attr(v, "severity") == "HIGH"]),
+                    "medium": len([v for v in high_epss_vulns if get_attr(v, "severity") == "MEDIUM"]),
                     "low": 0,
                     "total": len(high_epss_vulns),
                     "high_epss_count": len(high_epss_vulns),
@@ -253,7 +243,7 @@ def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendati
                     "type": "fix_high_epss_vulns",
                     "cves": cves,
                     "packages": affected_packages,
-                    "max_epss_percent": f"{max_epss*100:.1f}%",
+                    "max_epss_percent": f"{max_epss * 100:.1f}%",
                     "steps": [
                         "1. These vulnerabilities are likely to be exploited soon",
                         "2. Prioritize remediation before exploit code becomes public",

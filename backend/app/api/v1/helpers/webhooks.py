@@ -69,9 +69,7 @@ async def check_webhook_permission(
             await check_project_access(webhook.project_id, current_user, db)
         else:
             # Fall back to requiring project admin role
-            await check_project_access(
-                webhook.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN
-            )
+            await check_project_access(webhook.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     else:
         # Global webhook: requires system:manage
         if not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
@@ -104,9 +102,7 @@ async def check_webhook_list_permission(
         await check_project_access(project_id, current_user, db)
     else:
         # No webhook:read permission, must be project admin
-        await check_project_access(
-            project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN
-        )
+        await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
 
 async def check_webhook_create_permission(
@@ -129,14 +125,10 @@ async def check_webhook_create_permission(
     Raises:
         HTTPException: 403 if user lacks permissions
     """
-    has_create_perm = has_permission(
-        current_user.permissions, Permissions.WEBHOOK_CREATE
-    )
+    has_create_perm = has_permission(current_user.permissions, Permissions.WEBHOOK_CREATE)
     if has_create_perm:
         # User has webhook:create, but still needs project access
         await check_project_access(project_id, current_user, db)
     else:
         # No webhook:create permission, must be project admin
-        await check_project_access(
-            project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN
-        )
+        await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)

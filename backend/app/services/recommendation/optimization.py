@@ -106,11 +106,7 @@ def identify_quick_wins(
                     if qw["vuln_count"] >= 3
                     else RecommendationType.QUICK_WIN
                 ),
-                priority=(
-                    Priority.HIGH
-                    if qw["kev_count"] > 0 or qw["critical_count"] > 0
-                    else Priority.MEDIUM
-                ),
+                priority=(Priority.HIGH if qw["kev_count"] > 0 or qw["critical_count"] > 0 else Priority.MEDIUM),
                 title=f"Quick Win: Update {qw['package']}",
                 description=(
                     f"Updating this {dep_type} from {qw['version']} to {qw['fixed_version']} "
@@ -120,9 +116,7 @@ def identify_quick_wins(
                 impact={
                     "critical": qw["critical_count"],
                     "high": qw["high_count"],
-                    "medium": qw["vuln_count"]
-                    - qw["critical_count"]
-                    - qw["high_count"],
+                    "medium": qw["vuln_count"] - qw["critical_count"] - qw["high_count"],
                     "low": 0,
                     "total": qw["vuln_count"],
                     "kev_count": qw["kev_count"],

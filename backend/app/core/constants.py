@@ -36,9 +36,7 @@ def sort_by_severity(items: list, key: str = "severity", reverse: bool = True) -
     """
     return sorted(
         items,
-        key=lambda x: get_severity_value(
-            x.get(key) if isinstance(x, dict) else getattr(x, key, None)
-        ),
+        key=lambda x: get_severity_value(x.get(key) if isinstance(x, dict) else getattr(x, key, None)),
         reverse=reverse,
     )
 
@@ -441,9 +439,7 @@ NPM_REGISTRY_URL = "https://registry.npmjs.org"
 # Other service APIs
 EOL_API_URL = "https://endoflife.date/api"
 MALWARE_API_URL = "https://api.opensourcemalware.com/functions/v1/check-malicious"
-TOP_PYPI_PACKAGES_URL = (
-    "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.json"
-)
+TOP_PYPI_PACKAGES_URL = "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.json"
 GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
@@ -807,9 +803,7 @@ REACHABILITY_LEVEL_SYMBOL = "symbol"
 # Confidence scores for reachability analysis
 REACHABILITY_CONFIDENCE_NOT_USED = 0.9  # High confidence package is NOT used
 REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS = 0.5  # Package imported, unknown functions
-REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO = (
-    0.4  # Package imported, no symbol analysis available
-)
+REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO = 0.4  # Package imported, no symbol analysis available
 
 # Confidence base scores for symbol extraction
 REACHABILITY_EXTRACTION_CONFIDENCE = {

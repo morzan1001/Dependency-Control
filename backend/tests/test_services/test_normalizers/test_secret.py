@@ -18,9 +18,7 @@ class TestNormalizeTrufflehog:
                     "DetectorType": "AWS",
                     "Raw": "AKIAIOSFODNN7EXAMPLE",
                     "Verified": True,
-                    "SourceMetadata": {
-                        "Data": {"Filesystem": {"file": "config/aws.env"}}
-                    },
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "config/aws.env"}}},
                 }
             ]
         }
@@ -41,9 +39,7 @@ class TestNormalizeTrufflehog:
                 {
                     "DetectorType": "GitHub Token",
                     "Raw": "ghp_test12345",
-                    "SourceMetadata": {
-                        "Data": {"Git": {"file": "src/auth.py"}}
-                    },
+                    "SourceMetadata": {"Data": {"Git": {"file": "src/auth.py"}}},
                 }
             ]
         }

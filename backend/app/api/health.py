@@ -84,9 +84,7 @@ async def readiness():
     # Checks if workers are configured and if at least one is running (not cancelled/done)
     active_workers = [t for t in worker_manager.workers if not t.done()]
     if active_workers:
-        components["workers"] = (
-            f"operational ({len(active_workers)}/{worker_manager.num_workers} active)"
-        )
+        components["workers"] = f"operational ({len(active_workers)}/{worker_manager.num_workers} active)"
     else:
         components["workers"] = "no_active_workers"
         # The service is considered degraded but not necessarily down if workers are missing,

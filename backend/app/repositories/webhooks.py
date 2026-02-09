@@ -34,9 +34,7 @@ class WebhookRepository:
         await self.collection.insert_one(webhook.model_dump(by_alias=True))
         return webhook
 
-    async def update(
-        self, webhook_id: str, update_data: Dict[str, Any]
-    ) -> Optional[Webhook]:
+    async def update(self, webhook_id: str, update_data: Dict[str, Any]) -> Optional[Webhook]:
         """Update webhook by ID."""
         await self.collection.update_one({"_id": webhook_id}, {"$set": update_data})
         return await self.get_by_id(webhook_id)
@@ -55,12 +53,7 @@ class WebhookRepository:
         sort_order: int = -1,
     ) -> List[Webhook]:
         """Find webhooks for a project."""
-        cursor = (
-            self.collection.find({"project_id": project_id})
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.collection.find({"project_id": project_id}).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Webhook(**doc) for doc in docs]
 
@@ -72,12 +65,7 @@ class WebhookRepository:
         sort_order: int = -1,
     ) -> List[Webhook]:
         """Find global webhooks (project_id is None)."""
-        cursor = (
-            self.collection.find({"project_id": None})
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.collection.find({"project_id": None}).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Webhook(**doc) for doc in docs]
 
@@ -90,12 +78,7 @@ class WebhookRepository:
         sort_order: int = -1,
     ) -> List[Webhook]:
         """Find multiple webhooks matching query."""
-        cursor = (
-            self.collection.find(query)
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Webhook(**doc) for doc in docs]
 
@@ -123,9 +106,7 @@ class WebhookRepository:
         docs = await cursor.to_list(None)
         return [Webhook(**doc) for doc in docs]
 
-    async def find_by_event(
-        self, project_id: Optional[str], event_type: str
-    ) -> List[Webhook]:
+    async def find_by_event(self, project_id: Optional[str], event_type: str) -> List[Webhook]:
         """Find webhooks subscribed to a specific event type."""
         query: Dict[str, Any] = {"events": event_type, "is_active": True}
 

@@ -77,9 +77,7 @@ class GitLabInstanceRepository:
         Update instance fields.
         Returns True if document was modified.
         """
-        result = await self.collection.update_one(
-            {"_id": instance_id}, {"$set": update_data}
-        )
+        result = await self.collection.update_one({"_id": instance_id}, {"$set": update_data})
         return result.modified_count > 0
 
     async def delete(self, instance_id: str) -> bool:
@@ -101,9 +99,7 @@ class GitLabInstanceRepository:
         await self.collection.update_many({}, {"$set": {"is_default": False}})
 
         # Then set the specified instance as default
-        result = await self.collection.update_one(
-            {"_id": instance_id}, {"$set": {"is_default": True}}
-        )
+        result = await self.collection.update_one({"_id": instance_id}, {"$set": {"is_default": True}})
         return result.modified_count > 0
 
     async def exists_by_url(self, url: str, exclude_id: Optional[str] = None) -> bool:

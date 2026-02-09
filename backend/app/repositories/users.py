@@ -79,12 +79,7 @@ class UserRepository:
         sort_order: int = 1,
     ) -> List[User]:
         """Find multiple users with pagination. Returns Pydantic models."""
-        cursor = (
-            self.collection.find(query)
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [User(**doc) for doc in docs]
 

@@ -68,10 +68,7 @@ def validate_webhook_events(events: List[str], allow_empty: bool = False) -> Lis
 
     invalid_events = [e for e in events if e not in WEBHOOK_VALID_EVENTS]
     if invalid_events:
-        raise ValueError(
-            f"Invalid event types: {invalid_events}. "
-            f"Valid events: {WEBHOOK_VALID_EVENTS}"
-        )
+        raise ValueError(f"Invalid event types: {invalid_events}. Valid events: {WEBHOOK_VALID_EVENTS}")
     return events
 
 
@@ -109,7 +106,5 @@ def validate_webhook_event_type(event_type: str) -> str:
         ValueError: If the event type is invalid
     """
     if event_type not in WEBHOOK_VALID_EVENTS:
-        raise ValueError(
-            f"Invalid event type: {event_type}. Valid events: {WEBHOOK_VALID_EVENTS}"
-        )
+        raise ValueError(f"Invalid event type: {event_type}. Valid events: {WEBHOOK_VALID_EVENTS}")
     return event_type

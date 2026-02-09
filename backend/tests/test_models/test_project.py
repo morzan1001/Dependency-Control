@@ -31,7 +31,6 @@ class TestProjectMemberModel:
         assert member.role == PROJECT_ROLE_VIEWER
 
 
-
 class TestScanModel:
     def test_minimal_valid_scan(self):
         scan = Scan(project_id="proj-1", branch="main")

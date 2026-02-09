@@ -84,9 +84,7 @@ class DependencyEnrichmentRepository:
             upsert=True,
         )
 
-    async def update_license_compliance(
-        self, purl: str, license_data: Dict[str, Any]
-    ) -> None:
+    async def update_license_compliance(self, purl: str, license_data: Dict[str, Any]) -> None:
         """
         Update license compliance data for a purl.
 

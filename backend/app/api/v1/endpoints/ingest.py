@@ -66,9 +66,7 @@ async def ingest_trufflehog(
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
     # Process findings
-    response = await process_findings_ingest(
-        manager, "trufflehog", result_dict, ctx.scan_id
-    )
+    response = await process_findings_ingest(manager, "trufflehog", result_dict, ctx.scan_id)
 
     # TruffleHog returns failure status if secrets found
     failed = response["findings_count"] > 0
@@ -103,9 +101,7 @@ async def ingest_opengrep(
     # Prepare result dict
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
-    response = await process_findings_ingest(
-        manager, "opengrep", result_dict, ctx.scan_id
-    )
+    response = await process_findings_ingest(manager, "opengrep", result_dict, ctx.scan_id)
     return FindingsIngestResponse(**response)
 
 
@@ -153,9 +149,7 @@ async def ingest_bearer(
     # Bearer uses the full model
     result_dict = data.model_dump()
 
-    response = await process_findings_ingest(
-        manager, "bearer", result_dict, ctx.scan_id
-    )
+    response = await process_findings_ingest(manager, "bearer", result_dict, ctx.scan_id)
     return FindingsIngestResponse(**response)
 
 
@@ -281,9 +275,7 @@ async def ingest_sbom(
             sboms_failed += 1
             warning_msg = f"SBOM {idx + 1}: Failed to parse dependencies"
             warnings.append(warning_msg)
-            logger.error(
-                f"Failed to extract dependencies from SBOM: {e}", exc_info=True
-            )
+            logger.error(f"Failed to extract dependencies from SBOM: {e}", exc_info=True)
 
     # Fail if ALL SBOMs failed to process
     if sboms_failed > 0 and sboms_processed == 0:
@@ -301,15 +293,11 @@ async def ingest_sbom(
 
             # Insert new dependencies with ordered=False to handle duplicates gracefully
             inserted_count = await dep_repo.create_many_raw(dependencies_to_insert)
-            logger.info(
-                f"Inserted {inserted_count}/{len(dependencies_to_insert)} dependencies for scan {scan_id}"
-            )
+            logger.info(f"Inserted {inserted_count}/{len(dependencies_to_insert)} dependencies for scan {scan_id}")
 
             if inserted_count < len(dependencies_to_insert):
                 skipped = len(dependencies_to_insert) - inserted_count
-                logger.warning(
-                    f"Skipped {skipped} duplicate dependencies for scan {scan_id}"
-                )
+                logger.warning(f"Skipped {skipped} duplicate dependencies for scan {scan_id}")
         except Exception as e:
             warnings.append("Failed to store dependencies")
             logger.error(f"Failed to insert dependencies: {e}", exc_info=True)

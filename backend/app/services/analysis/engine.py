@@ -80,9 +80,7 @@ except ImportError:
     ) = [None] * 17
 
 
-async def _carry_over_external_results(
-    scan_id: str, scan_doc: Optional[ScanDict], db: Database
-) -> None:
+async def _carry_over_external_results(scan_id: str, scan_doc: Optional[ScanDict], db: Database) -> None:
     """
     Copies analysis results from the original scan to the re-scan for analyzers
     that are NOT part of the internal SBOM analysis (e.g. Secret Scanning, SAST).
@@ -91,9 +89,7 @@ async def _carry_over_external_results(
         return
 
     original_scan_id = scan_doc.original_scan_id
-    logger.info(
-        f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}"
-    )
+    logger.info(f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}")
 
     internal_analyzer_names = list(analyzers.keys())
 
@@ -147,9 +143,7 @@ async def process_analyzer(
             analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
         # Pass parsed components to analyzer if available
-        result = await analyzer.analyze(
-            sbom, settings=settings, parsed_components=parsed_components
-        )
+        result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
 
         # Track duration
         if analysis_duration_seconds:
@@ -186,15 +180,11 @@ async def process_analyzer(
         if analysis_errors_total:
             analysis_errors_total.labels(analyzer=analyzer_name).inc()
         # Report failure to aggregator so it appears in findings
-        aggregator.aggregate(
-            analyzer_name, {"error": str(e)}, source=f"System: {analyzer_name}"
-        )
+        aggregator.aggregate(analyzer_name, {"error": str(e)}, source=f"System: {analyzer_name}")
         return f"{analyzer_name}: Failed"
 
 
-async def run_analysis(
-    scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db: Database
-) -> bool:
+async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db: Database) -> bool:
     """
     Orchestrates the analysis process for a given SBOM scan.
 
@@ -231,9 +221,7 @@ async def run_analysis(
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
     if internal_analyzers:
         # Delete via repository for consistency
-        await result_repo.delete_many(
-            {"scan_id": scan_id, "analyzer_name": {"$in": internal_analyzers}}
-        )
+        await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": internal_analyzers}})
 
     # Check if this is a re-scan and carry over external results
     if scan_doc.is_rescan:
@@ -258,24 +246,16 @@ async def run_analysis(
             gridfs_id = item.get("gridfs_id")
             try:
                 if analysis_gridfs_operations_total:
-                    analysis_gridfs_operations_total.labels(
-                        operation="download", status="attempt"
-                    ).inc()
+                    analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
                 stream = await fs.open_download_stream(ObjectId(gridfs_id))
                 content: bytes = await stream.read()
                 current_sbom = json.loads(content)
                 if analysis_gridfs_operations_total:
-                    analysis_gridfs_operations_total.labels(
-                        operation="download", status="success"
-                    ).inc()
+                    analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
             except Exception as gridfs_err:
-                logger.error(
-                    f"Failed to fetch SBOM from GridFS {gridfs_id}: {gridfs_err}"
-                )
+                logger.error(f"Failed to fetch SBOM from GridFS {gridfs_id}: {gridfs_err}")
                 if analysis_gridfs_operations_total:
-                    analysis_gridfs_operations_total.labels(
-                        operation="download", status="error"
-                    ).inc()
+                    analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
                 aggregator.aggregate(
                     "system",
                     {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"},
@@ -295,20 +275,14 @@ async def run_analysis(
         try:
             parsed_sbom = parse_sbom(current_sbom)
             parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
-            logger.info(
-                f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}"
-            )
+            logger.info(f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}")
             # Track metrics
             if analysis_sbom_processed_total:
-                analysis_sbom_processed_total.labels(
-                    format=parsed_sbom.format.value
-                ).inc()
+                analysis_sbom_processed_total.labels(format=parsed_sbom.format.value).inc()
             if analysis_components_parsed_total:
                 analysis_components_parsed_total.inc(len(parsed_components))
         except Exception as parse_err:
-            logger.warning(
-                f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing"
-            )
+            logger.warning(f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing")
             if analysis_sbom_parse_errors_total:
                 analysis_sbom_parse_errors_total.inc()
 
@@ -327,9 +301,7 @@ async def run_analysis(
                         aggregator,
                         settings=system_settings.model_dump() if system_settings else None,
                         fallback_source=fallback_source,
-                        parsed_components=(
-                            parsed_components if parsed_components else None
-                        ),
+                        parsed_components=(parsed_components if parsed_components else None),
                     )
                 )
 
@@ -368,9 +340,7 @@ async def run_analysis(
 
     # Enrich dependencies with aggregated data
     if dependency_enrichments:
-        logger.info(
-            f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata"
-        )
+        logger.info(f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata")
 
         bulk_ops = []
         for key, enrichment_data in dependency_enrichments.items():
@@ -402,12 +372,7 @@ async def run_analysis(
 
     # Filter active waivers
     active_waivers = [
-        w
-        for w in waivers
-        if not (
-            w.get("expiration_date")
-            and w["expiration_date"] < datetime.now(timezone.utc)
-        )
+        w for w in waivers if not (w.get("expiration_date") and w["expiration_date"] < datetime.now(timezone.utc))
     ]
 
     # Save Findings to 'findings' collection
@@ -423,18 +388,14 @@ async def run_analysis(
         findings_to_insert.append(record)
 
     # Post-Processing: Enrich vulnerability findings
-    vulnerability_findings = [
-        f for f in findings_to_insert if f.get("type") == "vulnerability"
-    ]
+    vulnerability_findings = [f for f in findings_to_insert if f.get("type") == "vulnerability"]
 
     github_token = system_settings.github_token
 
     # EPSS/KEV Enrichment
     if "epss_kev" in active_analyzers and vulnerability_findings:
         try:
-            await enrich_vulnerability_findings(
-                vulnerability_findings, github_token=github_token
-            )
+            await enrich_vulnerability_findings(vulnerability_findings, github_token=github_token)
             epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
             # Store EPSS/KEV summary via repository
             await result_repo.create_raw(
@@ -446,15 +407,11 @@ async def run_analysis(
                     "created_at": datetime.now(timezone.utc),
                 }
             )
-            logger.info(
-                f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data"
-            )
+            logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
             # Track EPSS/KEV metrics
             if analysis_enrichment_total:
-                analysis_enrichment_total.labels(type="epss_kev").inc(
-                    len(vulnerability_findings)
-                )
+                analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
 
             # Track EPSS scores and KEV findings
             for finding in vulnerability_findings:
@@ -479,9 +436,7 @@ async def run_analysis(
         if not callgraph:
             pipeline_id = scan_doc.pipeline_id if scan_doc else None
             if pipeline_id:
-                callgraph = await callgraph_repo.get_minimal_by_pipeline(
-                    project_id, pipeline_id
-                )
+                callgraph = await callgraph_repo.get_minimal_by_pipeline(project_id, pipeline_id)
 
         if callgraph:
             try:
@@ -504,15 +459,11 @@ async def run_analysis(
                         "created_at": datetime.now(timezone.utc),
                     }
                 )
-                logger.info(
-                    f"[reachability] Enriched {enriched_count} findings for scan {scan_id}"
-                )
+                logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
 
                 # Track reachability metrics
                 if analysis_enrichment_total:
-                    analysis_enrichment_total.labels(type="reachability").inc(
-                        enriched_count
-                    )
+                    analysis_enrichment_total.labels(type="reachability").inc(enriched_count)
 
                 # Track reachable vulnerabilities by level
                 if analysis_reachable_vulnerabilities_total:
@@ -521,9 +472,7 @@ async def run_analysis(
                         reachability = details.get("reachability", {})
                         if reachability.get("is_reachable"):
                             level = reachability.get("level", "unknown")
-                            analysis_reachable_vulnerabilities_total.labels(
-                                reachability_level=level
-                            ).inc()
+                            analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
             except Exception as e:
                 logger.warning(f"[reachability] Failed to enrich findings: {e}")
         else:
@@ -536,9 +485,7 @@ async def run_analysis(
                     }
                 },
             )
-            logger.info(
-                f"[reachability] No callgraph available for scan {scan_id}. Marked as pending."
-            )
+            logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
 
     if findings_to_insert:
         await finding_repo.create_many_raw(findings_to_insert)
@@ -589,11 +536,7 @@ async def run_analysis(
                     else (
                         "type"
                         if waiver.get("finding_type")
-                        else (
-                            "vulnerability_id"
-                            if waiver.get("vulnerability_id")
-                            else "other"
-                        )
+                        else ("vulnerability_id" if waiver.get("vulnerability_id") else "other")
                     )
                 )
             )
@@ -707,13 +650,9 @@ async def run_analysis(
             project = Project(**project_data)
 
             # GitLab Decoration
-            await decorate_gitlab_mr(
-                scan_id, stats, scan_doc, project, db
-            )
+            await decorate_gitlab_mr(scan_id, stats, scan_doc, project, db)
 
             # Notifications
-            await send_scan_notifications(
-                scan_id, project, aggregated_findings, results_summary, db
-            )
+            await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
 
     return True

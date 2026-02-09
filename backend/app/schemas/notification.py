@@ -11,26 +11,16 @@ class AdvisoryPackage(BaseModel):
 
 class BroadcastRequest(BaseModel):
     type: str = Field(..., description="Type of message: 'general' or 'advisory'")
-    target_type: str = Field(
-        ..., description="Target audience: 'global', 'teams', 'advisory'"
-    )
-    target_teams: Optional[List[str]] = Field(
-        None, description="List of Team IDs if target_type is 'teams'"
-    )
-    channels: Optional[List[str]] = Field(
-        None, description="Channels to send to (email, slack, mattermost)"
-    )
+    target_type: str = Field(..., description="Target audience: 'global', 'teams', 'advisory'")
+    target_teams: Optional[List[str]] = Field(None, description="List of Team IDs if target_type is 'teams'")
+    channels: Optional[List[str]] = Field(None, description="Channels to send to (email, slack, mattermost)")
 
     # For Advisory
-    packages: Optional[List[AdvisoryPackage]] = Field(
-        None, description="List of affected packages for advisory"
-    )
+    packages: Optional[List[AdvisoryPackage]] = Field(None, description="List of affected packages for advisory")
 
     subject: str
     message: str
-    dry_run: bool = Field(
-        False, description="If true, only calculates impact without sending"
-    )
+    dry_run: bool = Field(False, description="If true, only calculates impact without sending")
 
 
 class BroadcastResult(BaseModel):

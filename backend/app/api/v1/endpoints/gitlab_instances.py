@@ -1,8 +1,7 @@
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Response, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
@@ -88,8 +87,7 @@ async def get_instance(
 
     if not instance:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"GitLab instance with ID {instance_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"GitLab instance with ID {instance_id} not found"
         )
 
     return _to_response(instance)
@@ -114,14 +112,14 @@ async def create_instance(
     if await instance_repo.exists_by_url(instance_data.url):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"A GitLab instance with URL '{instance_data.url}' already exists"
+            detail=f"A GitLab instance with URL '{instance_data.url}' already exists",
         )
 
     # Validate name uniqueness
     if await instance_repo.exists_by_name(instance_data.name):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"A GitLab instance with name '{instance_data.name}' already exists"
+            detail=f"A GitLab instance with name '{instance_data.name}' already exists",
         )
 
     # Create instance object
@@ -143,20 +141,16 @@ async def create_instance(
     gitlab_service = GitLabService(new_instance)
     try:
         async with gitlab_service._api_client() as client:
-            response = await client.get(
-                f"{gitlab_service.api_url}/version",
-                headers=gitlab_service._get_auth_headers()
-            )
+            response = await client.get(f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers())
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Failed to connect to GitLab instance: HTTP {response.status_code}"
+                    detail=f"Failed to connect to GitLab instance: HTTP {response.status_code}",
                 )
     except Exception as e:
         logger.error(f"Connection test failed for {instance_data.url}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to connect to GitLab instance: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {str(e)}"
         )
 
     # Save to database
@@ -190,8 +184,7 @@ async def update_instance(
 
     if not instance:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"GitLab instance with ID {instance_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"GitLab instance with ID {instance_id} not found"
         )
 
     # Build update dict (only non-None values)
@@ -202,7 +195,7 @@ async def update_instance(
         if await instance_repo.exists_by_url(update_dict["url"], exclude_id=instance_id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Another instance with URL '{update_dict['url']}' already exists"
+                detail=f"Another instance with URL '{update_dict['url']}' already exists",
             )
         # Normalize URL
         update_dict["url"] = update_dict["url"].rstrip("/")
@@ -212,7 +205,7 @@ async def update_instance(
         if await instance_repo.exists_by_name(update_dict["name"], exclude_id=instance_id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Another instance with name '{update_dict['name']}' already exists"
+                detail=f"Another instance with name '{update_dict['name']}' already exists",
             )
 
     # Add last_modified metadata
@@ -222,10 +215,7 @@ async def update_instance(
     success = await instance_repo.update(instance_id, update_dict)
 
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update instance"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update instance")
 
     # If setting as default, unset all others
     if update_dict.get("is_default"):
@@ -260,8 +250,7 @@ async def delete_instance(
 
     if not instance:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"GitLab instance with ID {instance_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"GitLab instance with ID {instance_id} not found"
         )
 
     # Check for dependent projects
@@ -274,17 +263,14 @@ async def delete_instance(
                 f"Cannot delete instance '{instance.name}': {project_count} projects "
                 f"are still linked. Set gitlab_instance_id=null on projects first "
                 f"or use force=true to delete anyway."
-            )
+            ),
         )
 
     # Delete instance
     success = await instance_repo.delete(instance_id)
 
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete instance"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete instance")
 
     logger.warning(
         f"Deleted GitLab instance '{instance.name}' by user {current_user.username} "
@@ -311,8 +297,7 @@ async def test_connection(
 
     if not instance:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"GitLab instance with ID {instance_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"GitLab instance with ID {instance_id} not found"
         )
 
     if not instance.access_token:
@@ -328,10 +313,7 @@ async def test_connection(
 
     try:
         async with gitlab_service._api_client() as client:
-            response = await client.get(
-                f"{gitlab_service.api_url}/version",
-                headers=gitlab_service._get_auth_headers()
-            )
+            response = await client.get(f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers())
 
             if response.status_code == 200:
                 version_data = response.json()

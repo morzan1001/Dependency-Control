@@ -41,15 +41,11 @@ async def create_waiver(
     """
     if waiver_in.project_id:
         # Check if user has access to the project (editor or admin)
-        await check_project_access(
-            waiver_in.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR
-        )
+        await check_project_access(waiver_in.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
     else:
         # Global waiver requires waiver:manage permission
         if not has_permission(current_user.permissions, "waiver:manage"):
-            raise HTTPException(
-                status_code=403, detail="Only admins can create global waivers"
-            )
+            raise HTTPException(status_code=403, detail="Only admins can create global waivers")
 
     waiver_repo = WaiverRepository(db)
     waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
@@ -70,9 +66,7 @@ async def list_waivers(
     project_id: Optional[str] = None,
     finding_id: Optional[str] = None,
     package_name: Optional[str] = None,
-    search: Optional[str] = Query(
-        None, description="Search in package name, reason, or finding ID"
-    ),
+    search: Optional[str] = Query(None, description="Search in package name, reason, or finding ID"),
     sort_by: str = Query("created_at", description="Field to sort by"),
     sort_order: str = Query("desc", description="Sort order: asc or desc"),
     skip: int = Query(0, ge=0, description="Number of items to skip"),
@@ -94,9 +88,7 @@ async def list_waivers(
 
     if project_id:
         # Check access to specific project
-        await check_project_access(
-            project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER
-        )
+        await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
         query["project_id"] = project_id
     elif not has_read_all:
         # User can only see waivers from their projects + global waivers
@@ -137,9 +129,7 @@ async def list_waivers(
     sort_direction = parse_sort_direction(sort_order)
 
     # Fetch paginated results
-    waivers = await waiver_repo.find_many(
-        query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction
-    )
+    waivers = await waiver_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
 
     items = [Waiver(**w).model_dump() for w in waivers]
     return build_pagination_response(items, total, skip, limit)
@@ -165,13 +155,9 @@ async def delete_waiver(
 
     if waiver.project_id:
         if not has_permission(current_user.permissions, "waiver:delete"):
-            await check_project_access(
-                waiver.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN
-            )
+            await check_project_access(waiver.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     else:
-        if not has_permission(
-            current_user.permissions, ["waiver:manage", "waiver:delete"]
-        ):
+        if not has_permission(current_user.permissions, ["waiver:manage", "waiver:delete"]):
             raise HTTPException(status_code=403, detail="Not enough permissions")
 
     await waiver_repo.delete(waiver_id)

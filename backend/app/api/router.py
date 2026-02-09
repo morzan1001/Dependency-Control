@@ -8,7 +8,7 @@ Models can still use serialization_alias="_id" for MongoDB serialization
 with model_dump(by_alias=True), while API responses will use the field name.
 """
 
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.routing import APIRoute

@@ -20,9 +20,7 @@ class EPSSProvider:
         self._batch_size = ANALYZER_BATCH_SIZES.get("epss", 100)
         self._timeout = ANALYZER_TIMEOUTS.get("epss", ANALYZER_TIMEOUTS["default"])
 
-    async def fetch_epss_batch(
-        self, client: httpx.AsyncClient, cves: List[str]
-    ) -> Dict[str, EPSSData]:
+    async def fetch_epss_batch(self, client: httpx.AsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
         """Fetch EPSS scores for a batch of CVEs with retry logic."""
         if not cves:
             return {}
@@ -32,9 +30,7 @@ class EPSSProvider:
             try:
                 # EPSS API accepts comma-separated CVE list
                 cve_param = ",".join(cves)
-                response = await client.get(
-                    f"{EPSS_API_URL}?cve={cve_param}", timeout=self._timeout
-                )
+                response = await client.get(f"{EPSS_API_URL}?cve={cve_param}", timeout=self._timeout)
                 response.raise_for_status()
 
                 data = response.json()
@@ -49,11 +45,7 @@ class EPSSProvider:
                         results[cve] = EPSSData(
                             cve=cve,
                             epss_score=float(epss_val) if epss_val is not None else 0.0,
-                            percentile=(
-                                float(percentile_val) * 100
-                                if percentile_val is not None
-                                else 0.0
-                            ),
+                            percentile=(float(percentile_val) * 100 if percentile_val is not None else 0.0),
                             date=entry.get("date") or "",
                         )
 
@@ -61,22 +53,16 @@ class EPSSProvider:
                 if len(results) < len(cves):
                     missing = set(cves) - set(results.keys())
                     if missing:
-                        logger.debug(
-                            f"EPSS: No data for {len(missing)} CVEs (may be too new or invalid)"
-                        )
+                        logger.debug(f"EPSS: No data for {len(missing)} CVEs (may be too new or invalid)")
 
                 return results
 
             except httpx.TimeoutException:
                 last_error = "Timeout"
-                logger.warning(
-                    f"EPSS API timeout (attempt {attempt + 1}/{self._max_retries})"
-                )
+                logger.warning(f"EPSS API timeout (attempt {attempt + 1}/{self._max_retries})")
             except httpx.ConnectError:
                 last_error = "Connection error"
-                logger.warning(
-                    f"EPSS API connection error (attempt {attempt + 1}/{self._max_retries})"
-                )
+                logger.warning(f"EPSS API connection error (attempt {attempt + 1}/{self._max_retries})")
             except httpx.HTTPStatusError as e:
                 last_error = f"HTTP {e.response.status_code}"
                 if e.response.status_code == 429:  # Rate limited
@@ -84,30 +70,22 @@ class EPSSProvider:
                     logger.warning(f"EPSS API rate limited, waiting {wait_time}s")
                     await asyncio.sleep(wait_time)
                 elif e.response.status_code >= 500:  # Server error
-                    logger.warning(
-                        f"EPSS API server error {e.response.status_code} (attempt {attempt + 1})"
-                    )
+                    logger.warning(f"EPSS API server error {e.response.status_code} (attempt {attempt + 1})")
                 else:
                     # Client error (4xx except 429) - don't retry
                     logger.warning(f"EPSS API client error: {e}")
                     return {}
             except Exception as e:
                 last_error = str(e)
-                logger.warning(
-                    f"Failed to fetch EPSS data (attempt {attempt + 1}): {e}"
-                )
+                logger.warning(f"Failed to fetch EPSS data (attempt {attempt + 1}): {e}")
 
             if attempt < self._max_retries - 1:
                 await asyncio.sleep(self._retry_delay)
 
-        logger.error(
-            f"EPSS API failed after {self._max_retries} attempts: {last_error}"
-        )
+        logger.error(f"EPSS API failed after {self._max_retries} attempts: {last_error}")
         return {}
 
-    async def load_epss_scores(
-        self, client: httpx.AsyncClient, cves: List[str]
-    ) -> Dict[str, EPSSData]:
+    async def load_epss_scores(self, client: httpx.AsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
         """Load EPSS scores for given CVEs, using Redis cache where available."""
         result = {}
         missing_cves = []

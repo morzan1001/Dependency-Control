@@ -229,11 +229,7 @@ def detect_critical_hotspots(
     for hotspot in hotspots[:10]:  # Top 10 hotspots
         priority = (
             Priority.CRITICAL
-            if (
-                hotspot["has_malware"]
-                or hotspot["kev_count"] > 0
-                or hotspot["critical_count"] > 0
-            )
+            if (hotspot["has_malware"] or hotspot["kev_count"] > 0 or hotspot["critical_count"] > 0)
             else Priority.HIGH
         )
 
@@ -246,9 +242,7 @@ def detect_critical_hotspots(
         desc_parts.extend(hotspot["reasons"])
 
         if hotspot["fixed_versions"]:
-            desc_parts.append(
-                f"Available fix: Update to {hotspot['fixed_versions'][0]}"
-            )
+            desc_parts.append(f"Available fix: Update to {hotspot['fixed_versions'][0]}")
 
         recommendations.append(
             Recommendation(
@@ -390,22 +384,14 @@ def detect_toxic_dependencies(
             pkg["risk_factors"].append(
                 {
                     "type": "vulnerabilities",
-                    "severity": (
-                        "CRITICAL"
-                        if critical > 0 or kev > 0
-                        else ("HIGH" if high > 0 else "MEDIUM")
-                    ),
+                    "severity": ("CRITICAL" if critical > 0 or kev > 0 else ("HIGH" if high > 0 else "MEDIUM")),
                     "description": f"{vuln_count} vulnerabilities ({critical} critical, {high} high, {kev} KEV)",
                 }
             )
             pkg["total_score"] += critical * 50 + high * 20 + vuln_count * 5 + kev * 100
 
     # Filter to packages with 2+ risk factors
-    toxic_packages = [
-        (component, pkg)
-        for component, pkg in package_risks.items()
-        if len(pkg["risk_factors"]) >= 2
-    ]
+    toxic_packages = [(component, pkg) for component, pkg in package_risks.items() if len(pkg["risk_factors"]) >= 2]
 
     # Sort by total score
     toxic_packages.sort(key=lambda x: x[1]["total_score"], reverse=True)
@@ -424,23 +410,15 @@ def detect_toxic_dependencies(
                     f"Consider replacing it with a safer alternative."
                 ),
                 impact={
-                    "critical": len(
-                        [v for v in pkg["vulns"] if get_attr(v, "severity") == "CRITICAL"]
-                    ),
-                    "high": len(
-                        [v for v in pkg["vulns"] if get_attr(v, "severity") == "HIGH"]
-                    ),
-                    "medium": len(
-                        [v for v in pkg["vulns"] if get_attr(v, "severity") == "MEDIUM"]
-                    ),
+                    "critical": len([v for v in pkg["vulns"] if get_attr(v, "severity") == "CRITICAL"]),
+                    "high": len([v for v in pkg["vulns"] if get_attr(v, "severity") == "HIGH"]),
+                    "medium": len([v for v in pkg["vulns"] if get_attr(v, "severity") == "MEDIUM"]),
                     "low": 0,
                     "total": len(pkg["vulns"]),
                     "risk_factor_count": len(pkg["risk_factors"]),
                     "toxic_score": pkg["total_score"],
                 },
-                affected_components=[
-                    f"{component}@{pkg['details'].get('version', 'unknown')}"
-                ],
+                affected_components=[f"{component}@{pkg['details'].get('version', 'unknown')}"],
                 action={
                     "type": "replace_toxic_dependency",
                     "package": component,
@@ -526,8 +504,7 @@ def analyze_attack_surface(
                     "total": total_vulns,
                 },
                 affected_components=[
-                    f"{t['name']}@{t['version']} (via {t['parent']})"
-                    for t in transitive_with_vulns[:10]
+                    f"{t['name']}@{t['version']} (via {t['parent']})" for t in transitive_with_vulns[:10]
                 ],
                 action={
                     "type": "reduce_attack_surface",
@@ -564,9 +541,7 @@ def analyze_attack_surface(
                     "low": total_deps,
                     "total": total_deps,
                 },
-                affected_components=[
-                    f"Total: {total_deps} deps, Direct: {direct_deps} deps"
-                ],
+                affected_components=[f"Total: {total_deps} deps, Direct: {direct_deps} deps"],
                 action={
                     "type": "audit_dependencies",
                     "total_deps": total_deps,

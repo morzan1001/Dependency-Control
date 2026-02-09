@@ -22,8 +22,10 @@ class TestGetByUrl:
 
     def test_returns_instance_when_found(self):
         doc = {
-            "_id": "test-id", "name": "Test",
-            "url": "https://gitlab.com", "created_by": "admin",
+            "_id": "test-id",
+            "name": "Test",
+            "url": "https://gitlab.com",
+            "created_by": "admin",
         }
         collection = create_mock_collection(find_one=doc)
         db = create_mock_db({"gitlab_instances": collection})
@@ -50,14 +52,16 @@ class TestGetDefault:
 
         asyncio.run(repo.get_default())
 
-        collection.find_one.assert_called_once_with(
-            {"is_default": True, "is_active": True}
-        )
+        collection.find_one.assert_called_once_with({"is_default": True, "is_active": True})
 
     def test_returns_instance_when_found(self):
         doc = {
-            "_id": "default-id", "name": "Default", "url": "https://gitlab.com",
-            "is_default": True, "is_active": True, "created_by": "admin",
+            "_id": "default-id",
+            "name": "Default",
+            "url": "https://gitlab.com",
+            "is_default": True,
+            "is_active": True,
+            "created_by": "admin",
         }
         collection = create_mock_collection(find_one=doc)
         db = create_mock_db({"gitlab_instances": collection})
@@ -84,12 +88,8 @@ class TestSetAsDefault:
 
         asyncio.run(repo.set_as_default("instance-1"))
 
-        collection.update_many.assert_called_once_with(
-            {}, {"$set": {"is_default": False}}
-        )
-        collection.update_one.assert_called_once_with(
-            {"_id": "instance-1"}, {"$set": {"is_default": True}}
-        )
+        collection.update_many.assert_called_once_with({}, {"$set": {"is_default": False}})
+        collection.update_one.assert_called_once_with({"_id": "instance-1"}, {"$set": {"is_default": True}})
 
     def test_returns_true_on_success(self):
         collection = create_mock_collection()
@@ -118,9 +118,7 @@ class TestExistsByUrl:
 
         asyncio.run(repo.exists_by_url("https://gitlab.com/"))
 
-        collection.count_documents.assert_called_once_with(
-            {"url": "https://gitlab.com"}
-        )
+        collection.count_documents.assert_called_once_with({"url": "https://gitlab.com"})
 
     def test_returns_true_when_exists(self):
         collection = create_mock_collection(count_documents=1)
@@ -145,9 +143,7 @@ class TestExistsByUrl:
 
         asyncio.run(repo.exists_by_url("https://gitlab.com", exclude_id="excluded-id"))
 
-        collection.count_documents.assert_called_once_with(
-            {"url": "https://gitlab.com", "_id": {"$ne": "excluded-id"}}
-        )
+        collection.count_documents.assert_called_once_with({"url": "https://gitlab.com", "_id": {"$ne": "excluded-id"}})
 
 
 class TestExistsByName:
@@ -174,9 +170,7 @@ class TestExistsByName:
 
         asyncio.run(repo.exists_by_name("Test GitLab", exclude_id="some-id"))
 
-        collection.count_documents.assert_called_once_with(
-            {"name": "Test GitLab", "_id": {"$ne": "some-id"}}
-        )
+        collection.count_documents.assert_called_once_with({"name": "Test GitLab", "_id": {"$ne": "some-id"}})
 
 
 class TestCRUD:
@@ -192,8 +186,10 @@ class TestCRUD:
 
     def test_get_by_id_found(self):
         doc = {
-            "_id": "test-id", "name": "Test",
-            "url": "https://gitlab.com", "created_by": "admin",
+            "_id": "test-id",
+            "name": "Test",
+            "url": "https://gitlab.com",
+            "created_by": "admin",
         }
         collection = create_mock_collection(find_one=doc)
         db = create_mock_db({"gitlab_instances": collection})
@@ -219,9 +215,7 @@ class TestCRUD:
 
         result = asyncio.run(repo.update("test-id", {"name": "Updated"}))
         assert result is True
-        collection.update_one.assert_called_once_with(
-            {"_id": "test-id"}, {"$set": {"name": "Updated"}}
-        )
+        collection.update_one.assert_called_once_with({"_id": "test-id"}, {"$set": {"name": "Updated"}})
 
     def test_update_returns_false_when_not_found(self):
         collection = create_mock_collection()
@@ -251,8 +245,7 @@ class TestCRUD:
 
     def test_list_active_queries_active_only(self):
         docs = [
-            {"_id": "1", "name": "Active", "url": "https://a.com",
-             "is_active": True, "created_by": "admin"},
+            {"_id": "1", "name": "Active", "url": "https://a.com", "is_active": True, "created_by": "admin"},
         ]
         collection = create_mock_collection(find=docs)
         db = create_mock_db({"gitlab_instances": collection})

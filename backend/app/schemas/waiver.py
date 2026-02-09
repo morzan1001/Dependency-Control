@@ -28,9 +28,7 @@ class WaiverCreate(BaseModel):
     @classmethod
     def validate_status(cls, v: str) -> str:
         if v not in WAIVER_STATUSES:
-            raise ValueError(
-                f"Invalid status. Must be one of: {', '.join(WAIVER_STATUSES)}"
-            )
+            raise ValueError(f"Invalid status. Must be one of: {', '.join(WAIVER_STATUSES)}")
         return v
 
 
@@ -43,9 +41,7 @@ class WaiverUpdate(BaseModel):
     @classmethod
     def validate_status(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in WAIVER_STATUSES:
-            raise ValueError(
-                f"Invalid status. Must be one of: {', '.join(WAIVER_STATUSES)}"
-            )
+            raise ValueError(f"Invalid status. Must be one of: {', '.join(WAIVER_STATUSES)}")
         return v
 
 

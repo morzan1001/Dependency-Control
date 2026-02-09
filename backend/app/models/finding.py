@@ -36,17 +36,11 @@ class Finding(BaseModel):
     version: Optional[str] = Field(None, description="Affected version")
     description: str = Field(..., description="Short description")
     scanners: List[str] = Field(..., description="List of scanners that detected this")
-    details: Dict[str, Any] = Field(
-        default_factory=dict, description="Analyzer-specific details"
-    )
+    details: Dict[str, Any] = Field(default_factory=dict, description="Analyzer-specific details")
 
     # Additional metadata
-    found_in: List[str] = Field(
-        default_factory=list, description="Source files where this was found"
-    )
-    aliases: List[str] = Field(
-        default_factory=list, description="Alternative IDs (e.g. GHSA vs CVE)"
-    )
+    found_in: List[str] = Field(default_factory=list, description="Source files where this was found")
+    aliases: List[str] = Field(default_factory=list, description="Alternative IDs (e.g. GHSA vs CVE)")
     related_findings: List[str] = Field(
         default_factory=list,
         description="IDs of related findings (e.g. same CVEs in different packages)",

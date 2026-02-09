@@ -152,9 +152,7 @@ async def update_webhook(
     """
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
-    await check_webhook_permission(
-        webhook, current_user, db, Permissions.WEBHOOK_UPDATE
-    )
+    await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)
 
     # Build update dict with only provided fields
     update_data = webhook_update.model_dump(exclude_unset=True)
@@ -180,9 +178,7 @@ async def delete_webhook(
     """
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
-    await check_webhook_permission(
-        webhook, current_user, db, Permissions.WEBHOOK_DELETE
-    )
+    await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_DELETE)
 
     await webhook_repo.delete(webhook_id)
 
@@ -204,9 +200,7 @@ async def test_webhook(
     """
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
-    await check_webhook_permission(
-        webhook, current_user, db, Permissions.WEBHOOK_UPDATE
-    )
+    await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)
 
     # Send test webhook
     result = await webhook_service.test_webhook(webhook, test_request.event_type)

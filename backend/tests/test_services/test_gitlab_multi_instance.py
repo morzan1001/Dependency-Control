@@ -7,7 +7,6 @@ instance-specific configuration rather than legacy global settings.
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
@@ -80,76 +79,114 @@ class TestMrDecorationEarlyReturns:
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         project = Project(
-            name="Test", owner_id="u1",
-            gitlab_instance_id="inst-1", gitlab_project_id=100,
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-1",
+            gitlab_project_id=100,
             gitlab_mr_comments_enabled=False,
         )
-        asyncio.run(decorate_gitlab_mr(
-            scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-            project=project, db=MagicMock(),
-        ))
+        asyncio.run(
+            decorate_gitlab_mr(
+                scan_id="s1",
+                stats=Stats(),
+                scan_doc=_make_scan(commit_hash="abc"),
+                project=project,
+                db=MagicMock(),
+            )
+        )
 
     def test_skips_when_no_gitlab_ids(self):
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         project = Project(
-            name="Test", owner_id="u1",
+            name="Test",
+            owner_id="u1",
             gitlab_mr_comments_enabled=True,
-            gitlab_instance_id=None, gitlab_project_id=None,
+            gitlab_instance_id=None,
+            gitlab_project_id=None,
         )
-        asyncio.run(decorate_gitlab_mr(
-            scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-            project=project, db=MagicMock(),
-        ))
+        asyncio.run(
+            decorate_gitlab_mr(
+                scan_id="s1",
+                stats=Stats(),
+                scan_doc=_make_scan(commit_hash="abc"),
+                project=project,
+                db=MagicMock(),
+            )
+        )
 
     def test_skips_when_no_commit_hash(self):
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         project = Project(
-            name="Test", owner_id="u1",
-            gitlab_instance_id="inst-1", gitlab_project_id=100,
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-1",
+            gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
-        asyncio.run(decorate_gitlab_mr(
-            scan_id="s1", stats=Stats(), scan_doc=_make_scan(),
-            project=project, db=MagicMock(),
-        ))
+        asyncio.run(
+            decorate_gitlab_mr(
+                scan_id="s1",
+                stats=Stats(),
+                scan_doc=_make_scan(),
+                project=project,
+                db=MagicMock(),
+            )
+        )
 
     def test_skips_when_instance_not_found(self):
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         project = Project(
-            name="Test", owner_id="u1",
-            gitlab_instance_id="nonexistent", gitlab_project_id=100,
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="nonexistent",
+            gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
         collection = create_mock_collection(find_one=None)
         db = create_mock_db({"gitlab_instances": collection})
 
-        asyncio.run(decorate_gitlab_mr(
-            scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-            project=project, db=db,
-        ))
+        asyncio.run(
+            decorate_gitlab_mr(
+                scan_id="s1",
+                stats=Stats(),
+                scan_doc=_make_scan(commit_hash="abc"),
+                project=project,
+                db=db,
+            )
+        )
 
     def test_skips_when_instance_inactive(self):
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         project = Project(
-            name="Test", owner_id="u1",
-            gitlab_instance_id="inst-1", gitlab_project_id=100,
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-1",
+            gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
         instance_doc = {
-            "_id": "inst-1", "name": "Test", "url": "https://gitlab.com",
-            "is_active": False, "created_by": "admin",
+            "_id": "inst-1",
+            "name": "Test",
+            "url": "https://gitlab.com",
+            "is_active": False,
+            "created_by": "admin",
         }
         collection = create_mock_collection(find_one=instance_doc)
         db = create_mock_db({"gitlab_instances": collection})
 
-        asyncio.run(decorate_gitlab_mr(
-            scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-            project=project, db=db,
-        ))
+        asyncio.run(
+            decorate_gitlab_mr(
+                scan_id="s1",
+                stats=Stats(),
+                scan_doc=_make_scan(commit_hash="abc"),
+                project=project,
+                db=db,
+            )
+        )
 
 
 class TestMrDecorationInstanceRouting:
@@ -159,13 +196,19 @@ class TestMrDecorationInstanceRouting:
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         project = Project(
-            name="Test", owner_id="u1",
-            gitlab_instance_id="inst-a", gitlab_project_id=100,
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-a",
+            gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
         instance_doc = {
-            "_id": "inst-a", "name": "GitLab A", "url": "https://gitlab-a.com",
-            "access_token": "token-a", "is_active": True, "created_by": "admin",
+            "_id": "inst-a",
+            "name": "GitLab A",
+            "url": "https://gitlab-a.com",
+            "access_token": "token-a",
+            "is_active": True,
+            "created_by": "admin",
         }
         collection = create_mock_collection(find_one=instance_doc)
         db = create_mock_db({"gitlab_instances": collection})
@@ -175,10 +218,15 @@ class TestMrDecorationInstanceRouting:
             mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=[])
             MockService.return_value = mock_svc
 
-            asyncio.run(decorate_gitlab_mr(
-                scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc123"),
-                project=project, db=db,
-            ))
+            asyncio.run(
+                decorate_gitlab_mr(
+                    scan_id="s1",
+                    stats=Stats(),
+                    scan_doc=_make_scan(commit_hash="abc123"),
+                    project=project,
+                    db=db,
+                )
+            )
 
             MockService.assert_called_once()
             created_instance = MockService.call_args[0][0]
@@ -191,24 +239,36 @@ class TestMrDecorationInstanceRouting:
 
         projects = [
             Project(
-                name="Proj A", owner_id="u1",
-                gitlab_instance_id="inst-a", gitlab_project_id=100,
+                name="Proj A",
+                owner_id="u1",
+                gitlab_instance_id="inst-a",
+                gitlab_project_id=100,
                 gitlab_mr_comments_enabled=True,
             ),
             Project(
-                name="Proj B", owner_id="u1",
-                gitlab_instance_id="inst-b", gitlab_project_id=100,
+                name="Proj B",
+                owner_id="u1",
+                gitlab_instance_id="inst-b",
+                gitlab_project_id=100,
                 gitlab_mr_comments_enabled=True,
             ),
         ]
         instance_docs = {
             "inst-a": {
-                "_id": "inst-a", "name": "GitLab A", "url": "https://gitlab-a.com",
-                "access_token": "token-a", "is_active": True, "created_by": "admin",
+                "_id": "inst-a",
+                "name": "GitLab A",
+                "url": "https://gitlab-a.com",
+                "access_token": "token-a",
+                "is_active": True,
+                "created_by": "admin",
             },
             "inst-b": {
-                "_id": "inst-b", "name": "GitLab B", "url": "https://gitlab-b.com",
-                "access_token": "token-b", "is_active": True, "created_by": "admin",
+                "_id": "inst-b",
+                "name": "GitLab B",
+                "url": "https://gitlab-b.com",
+                "access_token": "token-b",
+                "is_active": True,
+                "created_by": "admin",
             },
         }
 
@@ -224,10 +284,15 @@ class TestMrDecorationInstanceRouting:
                 mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=[])
                 MockService.return_value = mock_svc
 
-                asyncio.run(decorate_gitlab_mr(
-                    scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-                    project=proj, db=db,
-                ))
+                asyncio.run(
+                    decorate_gitlab_mr(
+                        scan_id="s1",
+                        stats=Stats(),
+                        scan_doc=_make_scan(commit_hash="abc"),
+                        project=proj,
+                        db=db,
+                    )
+                )
 
                 created_instance = MockService.call_args[0][0]
                 urls_used.append(created_instance.url)
@@ -238,13 +303,19 @@ class TestMrDecorationInstanceRouting:
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         project = Project(
-            name="Test", owner_id="u1",
-            gitlab_instance_id="inst-a", gitlab_project_id=100,
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-a",
+            gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
         instance_doc = {
-            "_id": "inst-a", "name": "A", "url": "https://gitlab-a.com",
-            "access_token": "tok", "is_active": True, "created_by": "admin",
+            "_id": "inst-a",
+            "name": "A",
+            "url": "https://gitlab-a.com",
+            "access_token": "tok",
+            "is_active": True,
+            "created_by": "admin",
         }
         collection = create_mock_collection(find_one=instance_doc)
         db = create_mock_db({"gitlab_instances": collection})
@@ -263,11 +334,15 @@ class TestMrDecorationInstanceRouting:
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
             MockService.return_value = mock_svc
 
-            asyncio.run(decorate_gitlab_mr(
-                scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-                project=project,
-                db=db,
-            ))
+            asyncio.run(
+                decorate_gitlab_mr(
+                    scan_id="s1",
+                    stats=Stats(),
+                    scan_doc=_make_scan(commit_hash="abc"),
+                    project=project,
+                    db=db,
+                )
+            )
 
             # Only MR !1 should get a comment (open, non-draft, non-WIP)
             assert mock_svc.post_merge_request_comment.call_count == 1
@@ -278,13 +353,19 @@ class TestMrDecorationInstanceRouting:
         from app.services.analysis.integrations import decorate_gitlab_mr
 
         project = Project(
-            name="Test", owner_id="u1",
-            gitlab_instance_id="inst-a", gitlab_project_id=100,
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-a",
+            gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
         instance_doc = {
-            "_id": "inst-a", "name": "A", "url": "https://gitlab-a.com",
-            "access_token": "tok", "is_active": True, "created_by": "admin",
+            "_id": "inst-a",
+            "name": "A",
+            "url": "https://gitlab-a.com",
+            "access_token": "tok",
+            "is_active": True,
+            "created_by": "admin",
         }
         collection = create_mock_collection(find_one=instance_doc)
         db = create_mock_db({"gitlab_instances": collection})
@@ -302,11 +383,15 @@ class TestMrDecorationInstanceRouting:
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
             MockService.return_value = mock_svc
 
-            asyncio.run(decorate_gitlab_mr(
-                scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-                project=project,
-                db=db,
-            ))
+            asyncio.run(
+                decorate_gitlab_mr(
+                    scan_id="s1",
+                    stats=Stats(),
+                    scan_doc=_make_scan(commit_hash="abc"),
+                    project=project,
+                    db=db,
+                )
+            )
 
             mock_svc.update_merge_request_comment.assert_called_once()
             mock_svc.post_merge_request_comment.assert_not_called()
@@ -322,13 +407,19 @@ class TestMrDecorationInstanceRouting:
 
         project = Project(
             id="fixed-proj-id",
-            name="Test", owner_id="u1",
-            gitlab_instance_id="inst-a", gitlab_project_id=100,
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-a",
+            gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
         instance_doc = {
-            "_id": "inst-a", "name": "A", "url": "https://gitlab-a.com",
-            "access_token": "tok", "is_active": True, "created_by": "admin",
+            "_id": "inst-a",
+            "name": "A",
+            "url": "https://gitlab-a.com",
+            "access_token": "tok",
+            "is_active": True,
+            "created_by": "admin",
         }
         collection = create_mock_collection(find_one=instance_doc)
         db = create_mock_db({"gitlab_instances": collection})
@@ -348,11 +439,15 @@ class TestMrDecorationInstanceRouting:
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
             MockService.return_value = mock_svc
 
-            asyncio.run(decorate_gitlab_mr(
-                scan_id="s1", stats=stats, scan_doc=_make_scan(commit_hash="abc"),
-                project=project,
-                db=db,
-            ))
+            asyncio.run(
+                decorate_gitlab_mr(
+                    scan_id="s1",
+                    stats=stats,
+                    scan_doc=_make_scan(commit_hash="abc"),
+                    project=project,
+                    db=db,
+                )
+            )
 
             # Neither update nor create should be called
             mock_svc.update_merge_request_comment.assert_not_called()
@@ -370,25 +465,31 @@ class TestTeamSyncNamespaceCheck:
     def test_returns_none_for_user_namespace(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
 
-        result = asyncio.run(service.sync_team_from_gitlab(
-            db=MagicMock(),
-            gitlab_project_id=100,
-            gitlab_project_path="john/proj",
-            gitlab_project_data=make_project_details(
-                namespace_kind="user", namespace_id=1, namespace_path="john",
-            ),
-        ))
+        result = asyncio.run(
+            service.sync_team_from_gitlab(
+                db=MagicMock(),
+                gitlab_project_id=100,
+                gitlab_project_path="john/proj",
+                gitlab_project_data=make_project_details(
+                    namespace_kind="user",
+                    namespace_id=1,
+                    namespace_path="john",
+                ),
+            )
+        )
         assert result is None
 
     def test_returns_none_when_no_project_data(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
 
-        result = asyncio.run(service.sync_team_from_gitlab(
-            db=MagicMock(),
-            gitlab_project_id=100,
-            gitlab_project_path="group/proj",
-            gitlab_project_data=None,
-        ))
+        result = asyncio.run(
+            service.sync_team_from_gitlab(
+                db=MagicMock(),
+                gitlab_project_id=100,
+                gitlab_project_path="group/proj",
+                gitlab_project_data=None,
+            )
+        )
         assert result is None
 
 
@@ -404,14 +505,18 @@ class TestTeamSyncGroupMembers:
             teams_coll = create_mock_collection(find_one=None)
             db = create_mock_db({"teams": teams_coll, "users": create_mock_collection()})
 
-            asyncio.run(service.sync_team_from_gitlab(
-                db=db,
-                gitlab_project_id=100,
-                gitlab_project_path="my-group/proj",
-                gitlab_project_data=make_project_details(
-                    namespace_kind="group", namespace_id=42, namespace_path="my-group",
-                ),
-            ))
+            asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="my-group/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group",
+                        namespace_id=42,
+                        namespace_path="my-group",
+                    ),
+                )
+            )
 
             mock_members.assert_called_once_with(42)
 
@@ -435,14 +540,18 @@ class TestTeamSyncGroupMembers:
             teams_coll.insert_one = AsyncMock()
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
-            result = asyncio.run(service.sync_team_from_gitlab(
-                db=db,
-                gitlab_project_id=100,
-                gitlab_project_path="grp/proj",
-                gitlab_project_data=make_project_details(
-                    namespace_kind="group", namespace_id=42, namespace_path="grp",
-                ),
-            ))
+            result = asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="grp/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group",
+                        namespace_id=42,
+                        namespace_path="grp",
+                    ),
+                )
+            )
 
             # A team should have been created
             assert result is not None
@@ -464,14 +573,18 @@ class TestTeamSyncGroupMembers:
             teams_coll.insert_one = AsyncMock()
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
-            asyncio.run(service.sync_team_from_gitlab(
-                db=db,
-                gitlab_project_id=100,
-                gitlab_project_path="org/subgroup/proj",
-                gitlab_project_data=make_project_details(
-                    namespace_kind="group", namespace_id=42, namespace_path="org/subgroup",
-                ),
-            ))
+            asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="org/subgroup/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group",
+                        namespace_id=42,
+                        namespace_path="org/subgroup",
+                    ),
+                )
+            )
 
             # Team must have been inserted
             teams_coll.insert_one.assert_called_once()
@@ -496,14 +609,18 @@ class TestTeamSyncGroupMembers:
             teams_coll = create_mock_collection(find_one=existing_team)
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
-            result = asyncio.run(service.sync_team_from_gitlab(
-                db=db,
-                gitlab_project_id=100,
-                gitlab_project_path="grp/proj",
-                gitlab_project_data=make_project_details(
-                    namespace_kind="group", namespace_id=42, namespace_path="grp",
-                ),
-            ))
+            result = asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="grp/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group",
+                        namespace_id=42,
+                        namespace_path="grp",
+                    ),
+                )
+            )
 
             # Should return existing team ID
             assert result == "existing-team-id"

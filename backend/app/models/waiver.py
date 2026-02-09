@@ -18,14 +18,10 @@ class Waiver(BaseModel):
     project_id: Optional[str] = None  # If None, applies globally (admin only)
 
     # Matching Criteria
-    finding_id: Optional[str] = (
-        None  # e.g. "CVE-2023-1234", "LIC-GPL-3.0", "EOL-python"
-    )
+    finding_id: Optional[str] = None  # e.g. "CVE-2023-1234", "LIC-GPL-3.0", "EOL-python"
     package_name: Optional[str] = None  # e.g. "requests"
     package_version: Optional[str] = None  # e.g. "2.26.0"
-    finding_type: Optional[FindingType] = (
-        None  # e.g. "vulnerability", "license", "malware", "eol"
-    )
+    finding_type: Optional[FindingType] = None  # e.g. "vulnerability", "license", "malware", "eol"
     vulnerability_id: Optional[str] = None  # e.g. "CVE-2021-23337"
 
     reason: str

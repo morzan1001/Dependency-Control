@@ -62,9 +62,7 @@ class DepsDevAnalyzer(Analyzer):
                 pass  # Keep default threshold
 
         # First, check Redis cache for all components
-        cached_results, uncached_components = await self._get_cached_components(
-            components
-        )
+        cached_results, uncached_components = await self._get_cached_components(components)
 
         # Add cached results to metadata
         for key, data in cached_results.items():
@@ -72,17 +70,11 @@ class DepsDevAnalyzer(Analyzer):
                 package_metadata[key] = data.get("metadata")
                 if data.get("scorecard_issue"):
                     # Re-check threshold in case settings changed
-                    score = (
-                        data["scorecard_issue"]
-                        .get("scorecard", {})
-                        .get("overallScore", 10)
-                    )
+                    score = data["scorecard_issue"].get("scorecard", {}).get("overallScore", 10)
                     if score < threshold:
                         scorecard_issues.append(data["scorecard_issue"])
 
-        logger.debug(
-            f"deps_dev: {len(cached_results)} from cache, {len(uncached_components)} to fetch"
-        )
+        logger.debug(f"deps_dev: {len(cached_results)} from cache, {len(uncached_components)} to fetch")
 
         # Use semaphore to limit concurrent requests for uncached components
         # Distributed locking in _check_component_with_limit prevents cache stampede
@@ -93,15 +85,9 @@ class DepsDevAnalyzer(Analyzer):
             async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
                 tasks = []
                 for component in uncached_components:
-                    tasks.append(
-                        self._check_component_with_limit(
-                            semaphore, client, component, threshold
-                        )
-                    )
+                    tasks.append(self._check_component_with_limit(semaphore, client, component, threshold))
 
-                component_results: List[Any] = await asyncio.gather(
-                    *tasks, return_exceptions=True
-                )
+                component_results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for component, result in zip(uncached_components, component_results):
                     if isinstance(result, Exception):
@@ -150,9 +136,7 @@ class DepsDevAnalyzer(Analyzer):
             if not parsed or not parsed.registry_system or not version:
                 continue
 
-            cache_key = CacheKeys.deps_dev(
-                parsed.registry_system, parsed.deps_dev_name, version
-            )
+            cache_key = CacheKeys.deps_dev(parsed.registry_system, parsed.deps_dev_name, version)
             cache_keys.append(cache_key)
             component_map[cache_key] = component
 
@@ -234,9 +218,7 @@ class DepsDevAnalyzer(Analyzer):
                 return None
 
             if response.status_code != 200:
-                logger.debug(
-                    f"deps.dev API returned {response.status_code} for {name}@{version}"
-                )
+                logger.debug(f"deps.dev API returned {response.status_code} for {name}@{version}")
                 return None
 
             data = response.json()
@@ -301,8 +283,7 @@ class DepsDevAnalyzer(Analyzer):
             # Step 4: Fetch dependent count (popularity indicator)
             try:
                 dependents_url = (
-                    f"{self.base_url}/systems/{system}/packages/{encoded_name}"
-                    f"/versions/{encoded_version}:dependents"
+                    f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}:dependents"
                 )
                 dep_response = await client.get(dependents_url)
                 if dep_response.status_code == 200:
@@ -341,12 +322,7 @@ class DepsDevAnalyzer(Analyzer):
                 # Normalize common label names
                 if "home" in label or label == "homepage":
                     links["homepage"] = url
-                elif (
-                    "repo" in label
-                    or "source" in label
-                    or "github" in label
-                    or "gitlab" in label
-                ):
+                elif "repo" in label or "source" in label or "github" in label or "gitlab" in label:
                     links["repository"] = url
                 elif "doc" in label:
                     links["documentation"] = url
@@ -405,9 +381,7 @@ class DepsDevAnalyzer(Analyzer):
                 continue
 
             if check_score < 5:
-                failed_checks.append(
-                    {"name": check_name, "score": check_score, "reason": check_reason}
-                )
+                failed_checks.append({"name": check_name, "score": check_score, "reason": check_reason})
 
                 # Identify critical security issues
                 if check_name in [
@@ -452,15 +426,10 @@ class DepsDevAnalyzer(Analyzer):
             "warning": message,  # Keep for backward compatibility
         }
 
-    def _calculate_scorecard_severity(
-        self, overall_score: float, critical_issues: List[str]
-    ) -> str:
+    def _calculate_scorecard_severity(self, overall_score: float, critical_issues: List[str]) -> str:
         """Calculate severity based on scorecard score and critical issues."""
         # Critical issues always elevate severity
-        if (
-            "Vulnerabilities" in critical_issues
-            or "Dangerous-Workflow" in critical_issues
-        ):
+        if "Vulnerabilities" in critical_issues or "Dangerous-Workflow" in critical_issues:
             return Severity.HIGH.value
         if critical_issues:
             return Severity.MEDIUM.value

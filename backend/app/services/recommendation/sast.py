@@ -46,9 +46,7 @@ def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
             severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
             files_affected.add(get_attr(f, "component", "unknown"))
 
-        critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get(
-            "HIGH", 0
-        )
+        critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)
 
         # Only create recommendations for significant issues
         if critical_high < 1 and len(cat_findings) < 3:

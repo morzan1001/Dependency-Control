@@ -22,8 +22,10 @@ class TestGitLabServiceInitialization:
 
     def test_strips_trailing_slash(self):
         instance = GitLabInstance(
-            name="Test", url="https://gitlab.com/",
-            access_token="token", created_by="test",
+            name="Test",
+            url="https://gitlab.com/",
+            access_token="token",
+            created_by="test",
         )
         service = GitLabService(instance)
         assert service.base_url == "https://gitlab.com"
@@ -31,12 +33,13 @@ class TestGitLabServiceInitialization:
 
     def test_strips_multiple_trailing_slashes(self):
         instance = GitLabInstance(
-            name="Test", url="https://gitlab.com//",
-            access_token="token", created_by="test",
+            name="Test",
+            url="https://gitlab.com//",
+            access_token="token",
+            created_by="test",
         )
         service = GitLabService(instance)
         assert service.base_url == "https://gitlab.com"
-
 
 
 class TestGitLabServiceCacheKeys:
@@ -56,7 +59,6 @@ class TestGitLabServiceCacheKeys:
         assert "instance-b-id" in key_b
 
 
-
 class TestGitLabServiceAuth:
     def test_uses_instance_token(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -65,8 +67,10 @@ class TestGitLabServiceAuth:
 
     def test_raises_error_if_no_token(self):
         instance = GitLabInstance(
-            name="No Token", url="https://gitlab.com",
-            access_token=None, created_by="test",
+            name="No Token",
+            url="https://gitlab.com",
+            access_token=None,
+            created_by="test",
         )
         service = GitLabService(instance)
         with pytest.raises(ValueError, match="No access token configured"):
@@ -84,9 +88,7 @@ class TestGitLabServiceOIDC:
         service = GitLabService(gitlab_instance_a)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {
-                "keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]
-            }
+            mock_jwks.return_value = {"keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]}
             with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "test-key-id"}
                 with patch("app.services.gitlab.jwt.decode") as mock_decode:
@@ -100,15 +102,16 @@ class TestGitLabServiceOIDC:
 
     def test_audience_none_when_not_configured(self):
         instance = GitLabInstance(
-            name="No Audience", url="https://gitlab.com",
-            access_token="token", oidc_audience=None, created_by="test",
+            name="No Audience",
+            url="https://gitlab.com",
+            access_token="token",
+            oidc_audience=None,
+            created_by="test",
         )
         service = GitLabService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {
-                "keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]
-            }
+            mock_jwks.return_value = {"keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]}
             with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "test-key-id"}
                 with patch("app.services.gitlab.jwt.decode") as mock_decode:
@@ -130,9 +133,7 @@ class TestGitLabServiceOIDC:
         service = GitLabService(gitlab_instance_a)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {
-                "keys": [{"kid": "other-key", "kty": "RSA", "n": "n", "e": "AQAB"}]
-            }
+            mock_jwks.return_value = {"keys": [{"kid": "other-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
             with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock):
                 with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "missing-key"}
@@ -143,9 +144,7 @@ class TestGitLabServiceOIDC:
         service = GitLabService(gitlab_instance_a)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {
-                "keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]
-            }
+            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
             with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.gitlab.jwt.decode") as mock_decode:
@@ -160,15 +159,16 @@ class TestGitLabServiceOIDC:
         """Issuer verification must use URL without trailing slash,
         even if the stored instance URL has one."""
         instance = GitLabInstance(
-            name="Trailing Slash", url="https://gitlab.com/",
-            access_token="token", oidc_audience=None, created_by="test",
+            name="Trailing Slash",
+            url="https://gitlab.com/",
+            access_token="token",
+            oidc_audience=None,
+            created_by="test",
         )
         service = GitLabService(instance)
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
-            mock_jwks.return_value = {
-                "keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]
-            }
+            mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
             with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.gitlab.jwt.decode") as mock_decode:
@@ -185,10 +185,12 @@ class TestGitLabServiceOIDC:
         service = GitLabService(gitlab_instance_a)
 
         jwks_old = {"keys": [{"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-        jwks_new = {"keys": [
-            {"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"},
-            {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"},
-        ]}
+        jwks_new = {
+            "keys": [
+                {"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"},
+                {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"},
+            ]
+        }
 
         call_count = 0
 

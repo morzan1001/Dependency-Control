@@ -37,26 +37,21 @@ class ProjectRepository:
             return Project(**data)
         return None
 
-    async def get_raw_by_gitlab_id(
-        self, gitlab_project_id: int
-    ) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_gitlab_id(self, gitlab_project_id: int) -> Optional[Dict[str, Any]]:
         """
         Get raw project document by GitLab project ID.
         DEPRECATED: Use get_by_gitlab_composite_key for multi-instance support.
         """
         return await self.collection.find_one({"gitlab_project_id": gitlab_project_id})
 
-    async def get_by_gitlab_composite_key(
-        self, gitlab_instance_id: str, gitlab_project_id: int
-    ) -> Optional[Project]:
+    async def get_by_gitlab_composite_key(self, gitlab_instance_id: str, gitlab_project_id: int) -> Optional[Project]:
         """
         Get project by composite GitLab key (instance + project ID).
         This is the PRIMARY lookup method for GitLab-integrated projects.
         """
-        data = await self.collection.find_one({
-            "gitlab_instance_id": gitlab_instance_id,
-            "gitlab_project_id": gitlab_project_id
-        })
+        data = await self.collection.find_one(
+            {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id}
+        )
         if data:
             return Project(**data)
         return None
@@ -65,28 +60,19 @@ class ProjectRepository:
         self, gitlab_instance_id: str, gitlab_project_id: int
     ) -> Optional[Dict[str, Any]]:
         """Get raw project document by composite GitLab key."""
-        return await self.collection.find_one({
-            "gitlab_instance_id": gitlab_instance_id,
-            "gitlab_project_id": gitlab_project_id
-        })
-
-    async def list_by_instance(
-        self, gitlab_instance_id: str, skip: int = 0, limit: int = 100
-    ) -> List[Project]:
-        """Get all projects for a specific GitLab instance."""
-        cursor = (
-            self.collection.find({"gitlab_instance_id": gitlab_instance_id})
-            .skip(skip)
-            .limit(limit)
+        return await self.collection.find_one(
+            {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id}
         )
+
+    async def list_by_instance(self, gitlab_instance_id: str, skip: int = 0, limit: int = 100) -> List[Project]:
+        """Get all projects for a specific GitLab instance."""
+        cursor = self.collection.find({"gitlab_instance_id": gitlab_instance_id}).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [Project(**doc) for doc in docs]
 
     async def count_by_instance(self, gitlab_instance_id: str) -> int:
         """Count projects for a specific GitLab instance."""
-        return await self.collection.count_documents({
-            "gitlab_instance_id": gitlab_instance_id
-        })
+        return await self.collection.count_documents({"gitlab_instance_id": gitlab_instance_id})
 
     async def create(self, project: Project) -> Project:
         """Create a new project."""
@@ -97,9 +83,7 @@ class ProjectRepository:
         """Create a new project from raw data."""
         await self.collection.insert_one(project_data)
 
-    async def update(
-        self, project_id: str, update_data: Dict[str, Any]
-    ) -> Optional[Project]:
+    async def update(self, project_id: str, update_data: Dict[str, Any]) -> Optional[Project]:
         """Update project by ID."""
         if update_data:
             await self.collection.update_one({"_id": project_id}, {"$set": update_data})
@@ -124,12 +108,7 @@ class ProjectRepository:
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Project]:
         """Find multiple projects with pagination. Returns Pydantic models."""
-        cursor = (
-            self.collection.find(query, projection)
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Project(**doc) for doc in docs]
 
@@ -149,9 +128,7 @@ class ProjectRepository:
         limit: int = 1000,
     ) -> List[ProjectWithScanId]:
         """Find projects with scan IDs. Returns Pydantic models."""
-        cursor = self.collection.find(
-            query, {"_id": 1, "name": 1, "latest_scan_id": 1}
-        ).limit(limit)
+        cursor = self.collection.find(query, {"_id": 1, "name": 1, "latest_scan_id": 1}).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectWithScanId(**doc) for doc in docs]
 
@@ -182,28 +159,20 @@ class ProjectRepository:
         """Run aggregation pipeline."""
         return await self.collection.aggregate(pipeline).to_list(None)
 
-    async def update_many(
-        self, query: Dict[str, Any], update_data: Dict[str, Any]
-    ) -> int:
+    async def update_many(self, query: Dict[str, Any], update_data: Dict[str, Any]) -> int:
         """Update multiple projects matching query."""
         result = await self.collection.update_many(query, {"$set": update_data})
         return result.modified_count
 
     async def add_member(self, project_id: str, member_data: Dict[str, Any]) -> None:
         """Add a member to project."""
-        await self.collection.update_one(
-            {"_id": project_id}, {"$push": {"members": member_data}}
-        )
+        await self.collection.update_one({"_id": project_id}, {"$push": {"members": member_data}})
 
     async def remove_member(self, project_id: str, user_id: str) -> None:
         """Remove a member from project."""
-        await self.collection.update_one(
-            {"_id": project_id}, {"$pull": {"members": {"user_id": user_id}}}
-        )
+        await self.collection.update_one({"_id": project_id}, {"$pull": {"members": {"user_id": user_id}}})
 
-    async def update_member(
-        self, project_id: str, user_id: str, update_data: Dict[str, Any]
-    ) -> None:
+    async def update_member(self, project_id: str, user_id: str, update_data: Dict[str, Any]) -> None:
         """Update a member's data in project.
 
         Args:
@@ -211,9 +180,7 @@ class ProjectRepository:
             user_id: The user ID of the member
             update_data: Dictionary with full field paths (e.g., {'members.0.role': 'admin'})
         """
-        await self.collection.update_one(
-            {"_id": project_id, "members.user_id": user_id}, {"$set": update_data}
-        )
+        await self.collection.update_one({"_id": project_id, "members.user_id": user_id}, {"$set": update_data})
 
     async def iterate_all(self, query: Optional[Dict[str, Any]] = None):
         """Iterate over all projects (async generator)."""

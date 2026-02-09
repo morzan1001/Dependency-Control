@@ -26,22 +26,16 @@ def process_vulnerabilities(
     vulns_by_source = _categorize_by_source(findings, dep_by_purl, dep_by_name_version)
 
     # 1. Check for base image update recommendation
-    base_image_rec = _analyze_base_image_vulns(
-        vulns_by_source.get("image", []), dependencies, source_target
-    )
+    base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), dependencies, source_target)
     if base_image_rec:
         recommendations.append(base_image_rec)
 
     # 2. Analyze direct dependency updates
-    direct_recs = _analyze_direct_dependencies(
-        vulns_by_source.get("application", []), dep_by_purl, dep_by_name_version
-    )
+    direct_recs = _analyze_direct_dependencies(vulns_by_source.get("application", []), dep_by_purl, dep_by_name_version)
     recommendations.extend(direct_recs)
 
     # 3. Analyze transitive dependencies
-    transitive_recs = _analyze_transitive_dependencies(
-        vulns_by_source.get("transitive", []), dependencies
-    )
+    transitive_recs = _analyze_transitive_dependencies(vulns_by_source.get("transitive", []), dependencies)
     recommendations.extend(transitive_recs)
 
     # 4. Handle vulns with no fix
@@ -253,9 +247,7 @@ def _analyze_direct_dependencies(
             continue
 
         # Get current version (ensure it's never None)
-        current_version = (
-            component_vulns[0].current_version if component_vulns else None
-        ) or "unknown"
+        current_version = (component_vulns[0].current_version if component_vulns else None) or "unknown"
 
         # Calculate best fixed version
         best_fix = calculate_best_fix_version(fixed_versions)
@@ -316,9 +308,7 @@ def _analyze_direct_dependencies(
         elif severity_counts.get("CRITICAL", 0) > 0:
             # Check if ALL critical vulns are confirmed unreachable - can downgrade
             critical_vulns = [v for v in component_vulns if v.severity == "CRITICAL"]
-            critical_all_unreachable = all(
-                v.is_reachable is False for v in critical_vulns
-            )
+            critical_all_unreachable = all(v.is_reachable is False for v in critical_vulns)
             # Only downgrade if we have confirmed unreachability (not just unknown)
             if critical_all_unreachable and len(critical_vulns) > 0:
                 # Downgrade to HIGH (not MEDIUM) since critical vulns still exist
@@ -336,26 +326,17 @@ def _analyze_direct_dependencies(
 
         # Build enhanced description with threat context
         desc_parts = [
-            f"Update {component} from {current_version} to {best_fix} "
-            f"to fix {len(component_vulns)} vulnerabilities."
+            f"Update {component} from {current_version} to {best_fix} to fix {len(component_vulns)} vulnerabilities."
         ]
 
         if kev_count > 0:
-            desc_parts.append(
-                f"{kev_count} CVE(s) are in CISA KEV (actively exploited)."
-            )
+            desc_parts.append(f"{kev_count} CVE(s) are in CISA KEV (actively exploited).")
         if kev_ransomware_count > 0:
-            desc_parts.append(
-                f"{kev_ransomware_count} are used in ransomware campaigns."
-            )
+            desc_parts.append(f"{kev_ransomware_count} are used in ransomware campaigns.")
         if high_epss_count > 0:
-            desc_parts.append(
-                f"{high_epss_count} have high exploitation probability (EPSS >10%)."
-            )
+            desc_parts.append(f"{high_epss_count} have high exploitation probability (EPSS >10%).")
         if reachable_count > 0:
-            desc_parts.append(
-                f"{reachable_count} are confirmed reachable in your code."
-            )
+            desc_parts.append(f"{reachable_count} are confirmed reachable in your code.")
         if unreachable_count > 0 and unreachable_count == len(component_vulns):
             desc_parts.append("All vulnerabilities are unreachable - lower priority.")
 
@@ -376,11 +357,7 @@ def _analyze_direct_dependencies(
                     "kev_ransomware_count": kev_ransomware_count,
                     "high_epss_count": high_epss_count,
                     "medium_epss_count": medium_epss_count,
-                    "avg_epss": (
-                        round(sum(epss_scores) / len(epss_scores), 4)
-                        if epss_scores
-                        else None
-                    ),
+                    "avg_epss": (round(sum(epss_scores) / len(epss_scores), 4) if epss_scores else None),
                     # Reachability data
                     "reachable_count": reachable_count,
                     "unreachable_count": unreachable_count,
@@ -397,11 +374,7 @@ def _analyze_direct_dependencies(
                     "target_version": best_fix,
                     "cves": cves[:10],  # Limit CVEs shown
                     "kev_cves": [v.cve_id for v in component_vulns if v.is_kev][:5],
-                    "high_epss_cves": [
-                        v.cve_id
-                        for v in component_vulns
-                        if v.epss_score and v.epss_score >= 0.1
-                    ][:5],
+                    "high_epss_cves": [v.cve_id for v in component_vulns if v.epss_score and v.epss_score >= 0.1][:5],
                 },
                 effort="low",
             )
@@ -429,9 +402,7 @@ def _analyze_transitive_dependencies(
             continue
 
         # Get current version (ensure it's never None)
-        current_version = (
-            component_vulns[0].current_version if component_vulns else None
-        ) or "unknown"
+        current_version = (component_vulns[0].current_version if component_vulns else None) or "unknown"
         best_fix = calculate_best_fix_version(fixed_versions)
 
         # Count severities and gather threat intelligence stats
@@ -481,9 +452,7 @@ def _analyze_transitive_dependencies(
         elif severity_counts.get("CRITICAL", 0) > 0:
             # Check if ALL critical vulns are confirmed unreachable
             critical_vulns = [v for v in component_vulns if v.severity == "CRITICAL"]
-            critical_all_unreachable = all(
-                v.is_reachable is False for v in critical_vulns
-            )
+            critical_all_unreachable = all(v.is_reachable is False for v in critical_vulns)
             if critical_all_unreachable and len(critical_vulns) > 0:
                 priority = Priority.HIGH  # Downgrade since critical are unreachable
             else:

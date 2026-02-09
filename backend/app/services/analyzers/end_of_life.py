@@ -61,11 +61,7 @@ class EndOfLifeAnalyzer(Analyzer):
                 if cycles:  # Not a negative cache entry
                     eol_info = self._check_version(version, cycles)
                     if eol_info:
-                        results.append(
-                            self._create_eol_issue(
-                                comp_name, version, product, eol_info
-                            )
-                        )
+                        results.append(self._create_eol_issue(comp_name, version, product, eol_info))
             else:
                 products_to_fetch.append((product, comp_name, version))
 
@@ -86,9 +82,7 @@ class EndOfLifeAnalyzer(Analyzer):
                         """Fetch EOL data for a product."""
                         try:
                             safe_product = quote(prod, safe="")
-                            response = await cli.get(
-                                f"{self.api_url}/{safe_product}.json"
-                            )
+                            response = await cli.get(f"{self.api_url}/{safe_product}.json")
                             if response.status_code == 200:
                                 return response.json()
                             elif response.status_code == 404:
@@ -111,11 +105,7 @@ class EndOfLifeAnalyzer(Analyzer):
                     if cycles:  # Non-empty list means we have EOL data
                         eol_info = self._check_version(version, cycles)
                         if eol_info:
-                            results.append(
-                                self._create_eol_issue(
-                                    comp_name, version, product, eol_info
-                                )
-                            )
+                            results.append(self._create_eol_issue(comp_name, version, product, eol_info))
 
         return {"eol_issues": results}
 
@@ -134,9 +124,7 @@ class EndOfLifeAnalyzer(Analyzer):
             severity = Severity.HIGH.value
         elif isinstance(eol_date, str):
             try:
-                eol_dt = datetime.strptime(eol_date, "%Y-%m-%d").replace(
-                    tzinfo=timezone.utc
-                )
+                eol_dt = datetime.strptime(eol_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                 days_past_eol = (datetime.now(timezone.utc) - eol_dt).days
                 if days_past_eol > 365:
                     severity = Severity.HIGH.value
@@ -185,9 +173,7 @@ class EndOfLifeAnalyzer(Analyzer):
 
         return products
 
-    def _check_version(
-        self, version: str, cycles: List[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+    def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Check if a version matches an EOL cycle."""
         if not version:
             return None
@@ -211,9 +197,7 @@ class EndOfLifeAnalyzer(Analyzer):
                     return cycle
                 elif eol and eol is not False:
                     try:
-                        eol_date = datetime.strptime(str(eol), "%Y-%m-%d").replace(
-                            tzinfo=timezone.utc
-                        )
+                        eol_date = datetime.strptime(str(eol), "%Y-%m-%d").replace(tzinfo=timezone.utc)
                         if eol_date < datetime.now(timezone.utc):
                             return cycle
                     except ValueError:

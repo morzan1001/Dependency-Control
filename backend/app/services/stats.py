@@ -9,9 +9,7 @@ from app.models.stats import Stats
 logger = logging.getLogger(__name__)
 
 
-async def recalculate_project_stats(
-    project_id: str, db: AsyncIOMotorDatabase
-) -> Optional[Stats]:
+async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Optional[Stats]:
     """
     Recalculates statistics for a project based on its latest scan and active waivers.
     This should be called whenever waivers are added, updated, or removed.
@@ -60,15 +58,10 @@ async def recalculate_project_stats(
         return None
 
     try:
-        logger.info(
-            f"Recalculating stats for project {project_id} (scan {scan_id}) "
-            f"with lock {lock_name}"
-        )
+        logger.info(f"Recalculating stats for project {project_id} (scan {scan_id}) with lock {lock_name}")
 
         # 1. Reset waivers for this scan
-        await finding_repo.update_many(
-            {"scan_id": scan_id}, {"waived": False, "waiver_reason": None}
-        )
+        await finding_repo.update_many({"scan_id": scan_id}, {"waived": False, "waiver_reason": None})
 
         # 2. Fetch active waivers via repository
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
@@ -138,21 +131,13 @@ async def recalculate_project_stats(
             {
                 "$group": {
                     "_id": None,
-                    "critical": {
-                        "$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}
-                    },
+                    "critical": {"$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}},
                     "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
                     "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
                     "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
                     "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
-                    "unknown": {
-                        "$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}
-                    },
-                    "risk_score": {
-                        "$sum": {
-                            "$toDouble": {"$ifNull": ["$cvss_score", "$calculated_score"]}
-                        }
-                    },
+                    "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
+                    "risk_score": {"$sum": {"$toDouble": {"$ifNull": ["$cvss_score", "$calculated_score"]}}},
                 }
             },
         ]
@@ -171,9 +156,7 @@ async def recalculate_project_stats(
             stats.risk_score = round(res.get("risk_score", 0.0), 1)
 
         # Calculate ignored count via repository
-        ignored_count = await finding_repo.count(
-            {"scan_id": scan_id, "waived": True}
-        )
+        ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
 
         # 5. Update Scan and Project via repositories
         from app.repositories import ScanRepository
@@ -184,9 +167,7 @@ async def recalculate_project_stats(
             {"$set": {"stats": stats.model_dump(), "ignored_count": ignored_count}},
         )
 
-        await project_repo.update_raw(
-            project_id, {"$set": {"stats": stats.model_dump()}}
-        )
+        await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
 
         logger.info(f"Stats updated for project {project_id}: {stats.model_dump()}")
         return stats

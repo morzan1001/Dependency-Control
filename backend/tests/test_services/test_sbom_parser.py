@@ -320,9 +320,7 @@ class TestSPDXParsing:
                     "versionInfo": "1.0",
                     "licenseConcluded": "NOASSERTION",
                     "licenseDeclared": "MIT",
-                    "externalRefs": [
-                        {"referenceType": "purl", "referenceLocator": "pkg:pypi/test-pkg@1.0"}
-                    ],
+                    "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:pypi/test-pkg@1.0"}],
                 }
             ],
             "relationships": [],

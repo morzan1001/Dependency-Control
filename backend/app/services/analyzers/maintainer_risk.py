@@ -83,12 +83,9 @@ class MaintainerRiskAnalyzer(Analyzer):
         batch_size = ANALYZER_BATCH_SIZES.get("maintainer_risk", 10)
 
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
-
             for i in range(0, len(components), batch_size):
                 batch = components[i : i + batch_size]
-                tasks = [
-                    self._check_component(client, comp, github_token) for comp in batch
-                ]
+                tasks = [self._check_component(client, comp, github_token) for comp in batch]
                 results = await asyncio.gather(*tasks)
 
                 for result in results:
@@ -211,9 +208,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             return Severity.MEDIUM.value
         return Severity.LOW.value
 
-    def _create_summary_message(
-        self, name: str, version: str, risks: List[Dict[str, Any]]
-    ) -> str:
+    def _create_summary_message(self, name: str, version: str, risks: List[Dict[str, Any]]) -> str:
         """Create a human-readable summary message for maintainer risks."""
         if not risks:
             return ""
@@ -234,9 +229,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         # Generic message for other risks
         return f"{name}@{version} has {risk_count} maintainer risk{'s' if risk_count > 1 else ''}"
 
-    async def _check_pypi(
-        self, client: httpx.AsyncClient, name: str
-    ) -> Optional[Dict[str, Any]]:
+    async def _check_pypi(self, client: httpx.AsyncClient, name: str) -> Optional[Dict[str, Any]]:
         """Fetch maintainer info from PyPI."""
         try:
             response = await client.get(f"{PYPI_API_URL}/{name}/json")
@@ -261,13 +254,9 @@ class MaintainerRiskAnalyzer(Analyzer):
                 "author_email": info.get("author_email"),
                 "maintainer": info.get("maintainer"),
                 "maintainer_email": info.get("maintainer_email"),
-                "latest_release_date": (
-                    latest_release_date.isoformat() if latest_release_date else None
-                ),
+                "latest_release_date": (latest_release_date.isoformat() if latest_release_date else None),
                 "days_since_release": (
-                    (datetime.now(timezone.utc) - latest_release_date).days
-                    if latest_release_date
-                    else None
+                    (datetime.now(timezone.utc) - latest_release_date).days if latest_release_date else None
                 ),
                 "release_count": len(releases),
                 "home_page": info.get("home_page"),
@@ -283,9 +272,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             logger.debug(f"PyPI check failed for {name}: {e}")
             return None
 
-    async def _check_npm(
-        self, client: httpx.AsyncClient, name: str
-    ) -> Optional[Dict[str, Any]]:
+    async def _check_npm(self, client: httpx.AsyncClient, name: str) -> Optional[Dict[str, Any]]:
         """Fetch maintainer info from npm."""
         try:
             encoded_name = name.replace("/", "%2F") if "/" in name else name
@@ -305,13 +292,9 @@ class MaintainerRiskAnalyzer(Analyzer):
             return {
                 "maintainers": maintainers,
                 "maintainer_count": len(maintainers),
-                "latest_release_date": (
-                    latest_release_date.isoformat() if latest_release_date else None
-                ),
+                "latest_release_date": (latest_release_date.isoformat() if latest_release_date else None),
                 "days_since_release": (
-                    (datetime.now(timezone.utc) - latest_release_date).days
-                    if latest_release_date
-                    else None
+                    (datetime.now(timezone.utc) - latest_release_date).days if latest_release_date else None
                 ),
                 "version_count": len(data.get("versions", {})),
                 "homepage": data.get("homepage"),
@@ -360,9 +343,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                 "open_issues": data.get("open_issues_count", 0),
                 "archived": data.get("archived", False),
                 "pushed_at": pushed_at.isoformat() if pushed_at else None,
-                "days_since_push": (
-                    (datetime.now(timezone.utc) - pushed_at).days if pushed_at else None
-                ),
+                "days_since_push": ((datetime.now(timezone.utc) - pushed_at).days if pushed_at else None),
             }
         except httpx.TimeoutException:
             logger.debug(f"GitHub API timeout for {repo}")
@@ -374,9 +355,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             logger.debug(f"GitHub check failed for {repo}: {e}")
             return None
 
-    def _assess_risks(
-        self, info: Dict[str, Any], registry: str
-    ) -> List[Dict[str, Any]]:
+    def _assess_risks(self, info: Dict[str, Any], registry: str) -> List[Dict[str, Any]]:
         """Assess maintainer risks based on registry info."""
         risks = []
 
@@ -457,11 +436,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             )
 
         # High open issues with no activity
-        if (
-            gh_info.get("open_issues", 0) > 100
-            and days_since_push
-            and days_since_push > 180
-        ):
+        if gh_info.get("open_issues", 0) > 100 and days_since_push and days_since_push > 180:
             risks.append(
                 {
                     "type": "unaddressed_issues",

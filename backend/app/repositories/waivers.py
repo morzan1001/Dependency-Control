@@ -34,9 +34,7 @@ class WaiverRepository:
         await self.collection.insert_one(waiver.model_dump(by_alias=True))
         return waiver
 
-    async def update(
-        self, waiver_id: str, update_data: Dict[str, Any]
-    ) -> Optional[Waiver]:
+    async def update(self, waiver_id: str, update_data: Dict[str, Any]) -> Optional[Waiver]:
         """Update waiver by ID."""
         await self.collection.update_one({"_id": waiver_id}, {"$set": update_data})
         return await self.get_by_id(waiver_id)
@@ -58,9 +56,7 @@ class WaiverRepository:
         limit: int = 1000,
     ) -> List[Dict[str, Any]]:
         """Find waivers for a project."""
-        cursor = (
-            self.collection.find({"project_id": project_id}).skip(skip).limit(limit)
-        )
+        cursor = self.collection.find({"project_id": project_id}).skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
     async def find_many(
@@ -72,21 +68,14 @@ class WaiverRepository:
         sort_order: int = -1,
     ) -> List[Dict[str, Any]]:
         """Find multiple waivers matching query."""
-        cursor = (
-            self.collection.find(query)
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
         """Count waivers matching query."""
         return await self.collection.count_documents(query or {})
 
-    async def find_active_for_project(
-        self, project_id: str, include_global: bool = True
-    ) -> List[Dict[str, Any]]:
+    async def find_active_for_project(self, project_id: str, include_global: bool = True) -> List[Dict[str, Any]]:
         """
         Find all active (non-expired) waivers for a project.
 
@@ -141,9 +130,7 @@ class WaiverRepository:
         cursor = self.collection.find(query)
         return await cursor.to_list(length=10000)
 
-    async def find_by_finding(
-        self, project_id: str, finding_id: str
-    ) -> Optional[Waiver]:
+    async def find_by_finding(self, project_id: str, finding_id: str) -> Optional[Waiver]:
         """Find waiver for a specific finding."""
         data = await self.collection.find_one(
             {

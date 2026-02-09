@@ -26,12 +26,8 @@ class GHSAProvider:
         retry_delay: Optional[float] = None,
     ):
         self._github_token: Optional[str] = None
-        self._max_retries = (
-            max_retries if max_retries is not None else settings.ENRICHMENT_MAX_RETRIES
-        )
-        self._retry_delay = (
-            retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
-        )
+        self._max_retries = max_retries if max_retries is not None else settings.ENRICHMENT_MAX_RETRIES
+        self._retry_delay = retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
 
     def set_token(self, token: Optional[str]) -> None:
         """Set the GitHub Personal Access Token for authenticated API requests."""
@@ -55,9 +51,7 @@ class GHSAProvider:
             headers["Authorization"] = f"Bearer {self._github_token}"
         return headers
 
-    async def fetch_ghsa_advisory(
-        self, client: httpx.AsyncClient, ghsa_id: str
-    ) -> Optional[GHSAData]:
+    async def fetch_ghsa_advisory(self, client: httpx.AsyncClient, ghsa_id: str) -> Optional[GHSAData]:
         """
         Fetch a single GitHub Security Advisory by its GHSA ID.
 
@@ -92,8 +86,7 @@ class GHSAProvider:
                         # Rate limited - exponential backoff
                         wait_time = self._retry_delay * (2**attempt)
                         logger.warning(
-                            f"GitHub API rate limited for {ghsa_id}, "
-                            f"waiting {wait_time}s (attempt {attempt + 1})"
+                            f"GitHub API rate limited for {ghsa_id}, waiting {wait_time}s (attempt {attempt + 1})"
                         )
                         if attempt < self._max_retries - 1:
                             await asyncio.sleep(wait_time)
@@ -129,9 +122,7 @@ class GHSAProvider:
                         published_at=data.get("published_at"),
                         updated_at=data.get("updated_at"),
                         withdrawn_at=data.get("withdrawn_at"),
-                        github_url=data.get(
-                            "html_url", f"https://github.com/advisories/{ghsa_id}"
-                        ),
+                        github_url=data.get("html_url", f"https://github.com/advisories/{ghsa_id}"),
                         aliases=aliases,
                     )
 
@@ -140,15 +131,11 @@ class GHSAProvider:
 
                 except httpx.TimeoutException:
                     last_error = "Timeout"
-                    logger.warning(
-                        f"Timeout fetching GHSA {ghsa_id} "
-                        f"(attempt {attempt + 1}/{self._max_retries})"
-                    )
+                    logger.warning(f"Timeout fetching GHSA {ghsa_id} (attempt {attempt + 1}/{self._max_retries})")
                 except httpx.ConnectError:
                     last_error = "Connection error"
                     logger.warning(
-                        f"Connection error fetching GHSA {ghsa_id} "
-                        f"(attempt {attempt + 1}/{self._max_retries})"
+                        f"Connection error fetching GHSA {ghsa_id} (attempt {attempt + 1}/{self._max_retries})"
                     )
                 except httpx.HTTPStatusError as e:
                     last_error = f"HTTP {e.response.status_code}"
@@ -164,18 +151,12 @@ class GHSAProvider:
                         return None
                 except Exception as e:
                     last_error = str(e)
-                    logger.warning(
-                        f"Failed to fetch GHSA {ghsa_id} "
-                        f"(attempt {attempt + 1}/{self._max_retries}): {e}"
-                    )
+                    logger.warning(f"Failed to fetch GHSA {ghsa_id} (attempt {attempt + 1}/{self._max_retries}): {e}")
 
                 if attempt < self._max_retries - 1:
                     await asyncio.sleep(self._retry_delay)
 
-            logger.error(
-                f"GHSA {ghsa_id} fetch failed after {self._max_retries} attempts: "
-                f"{last_error}"
-            )
+            logger.error(f"GHSA {ghsa_id} fetch failed after {self._max_retries} attempts: {last_error}")
             return None
 
         # Use distributed lock to prevent multiple pods fetching same advisory
@@ -189,9 +170,7 @@ class GHSAProvider:
             return GHSAData(**cached)
         return None
 
-    async def resolve_ghsa_to_cve(
-        self, client: httpx.AsyncClient, ghsa_ids: List[str]
-    ) -> Dict[str, GHSAData]:
+    async def resolve_ghsa_to_cve(self, client: httpx.AsyncClient, ghsa_ids: List[str]) -> Dict[str, GHSAData]:
         """
         Resolve multiple GHSA IDs to CVEs and get advisory metadata.
 

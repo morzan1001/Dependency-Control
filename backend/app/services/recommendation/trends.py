@@ -65,23 +65,17 @@ def analyze_regressions(
                 impact={
                     "critical": len(new_critical),
                     "high": len(new_high),
-                    "medium": len(
-                        [f for f in new_vulns if get_attr(f, "severity") == "MEDIUM"]
-                    ),
+                    "medium": len([f for f in new_vulns if get_attr(f, "severity") == "MEDIUM"]),
                     "low": len([f for f in new_vulns if get_attr(f, "severity") == "LOW"]),
                     "total": len(new_vulns),
                 },
                 affected_components=list(
-                    set(
-                        get_attr(f, "component", "unknown")
-                        for f in (new_critical + new_high)[:15]
-                    )
+                    set(get_attr(f, "component", "unknown") for f in (new_critical + new_high)[:15])
                 ),
                 action={
                     "type": "investigate_regression",
                     "new_critical_cves": [
-                        get_attr(f, "details", {}).get("cve_id", get_attr(f, "id"))
-                        for f in new_critical
+                        get_attr(f, "details", {}).get("cve_id", get_attr(f, "id")) for f in new_critical
                     ],
                     "suggestion": "Review recent dependency updates and code changes",
                 },
@@ -124,9 +118,7 @@ def analyze_recurring_issues(
         return recommendations
 
     # Count how often each CVE/finding appears across scans
-    finding_frequency: Dict[str, Dict[str, Any]] = defaultdict(
-        lambda: {"count": 0, "scans": set(), "info": None}
-    )
+    finding_frequency: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"count": 0, "scans": set(), "info": None})
 
     for scan in scan_history:
         scan_id = get_attr(scan, "_id") or get_attr(scan, "id")
@@ -148,9 +140,7 @@ def analyze_recurring_issues(
 
     # Find truly recurring issues (appear in N+ scans)
     recurring = [
-        {"cve": cve, **data}
-        for cve, data in finding_frequency.items()
-        if data["count"] >= RECURRING_ISSUE_THRESHOLD
+        {"cve": cve, **data} for cve, data in finding_frequency.items() if data["count"] >= RECURRING_ISSUE_THRESHOLD
     ]
 
     if recurring:
@@ -158,16 +148,12 @@ def analyze_recurring_issues(
         recurring.sort(
             key=lambda x: (
                 x["count"],
-                {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(
-                    x.get("info", {}).get("severity", ""), 0
-                ),
+                {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(x.get("info", {}).get("severity", ""), 0),
             ),
             reverse=True,
         )
 
-        critical_recurring = [
-            r for r in recurring if r.get("info", {}).get("severity") == "CRITICAL"
-        ]
+        critical_recurring = [r for r in recurring if r.get("info", {}).get("severity") == "CRITICAL"]
 
         recommendations.append(
             Recommendation(
@@ -181,27 +167,9 @@ def analyze_recurring_issues(
                 ),
                 impact={
                     "critical": len(critical_recurring),
-                    "high": len(
-                        [
-                            r
-                            for r in recurring
-                            if r.get("info", {}).get("severity") == "HIGH"
-                        ]
-                    ),
-                    "medium": len(
-                        [
-                            r
-                            for r in recurring
-                            if r.get("info", {}).get("severity") == "MEDIUM"
-                        ]
-                    ),
-                    "low": len(
-                        [
-                            r
-                            for r in recurring
-                            if r.get("info", {}).get("severity") == "LOW"
-                        ]
-                    ),
+                    "high": len([r for r in recurring if r.get("info", {}).get("severity") == "HIGH"]),
+                    "medium": len([r for r in recurring if r.get("info", {}).get("severity") == "MEDIUM"]),
+                    "low": len([r for r in recurring if r.get("info", {}).get("severity") == "LOW"]),
                     "total": len(recurring),
                 },
                 affected_components=[

@@ -47,9 +47,7 @@ class ParsedDependency(BaseModel):
     # Scope and relationships
     scope: Optional[str] = None
     direct: bool = False
-    direct_inferred: bool = Field(
-        False, description="True if 'direct' was inferred (no dependency graph in SBOM)"
-    )
+    direct_inferred: bool = Field(False, description="True if 'direct' was inferred (no dependency graph in SBOM)")
     parent_components: List[str] = Field(default_factory=list)
 
     # Source/Origin information

@@ -11,9 +11,7 @@ class GrypeAnalyzer(CLIAnalyzer):
     cli_command = "grype"
     empty_result_key = "matches"
 
-    def _build_command_args(
-        self, sbom_path: str, settings: Optional[Dict[str, Any]]
-    ) -> List[str]:
+    def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
         """Build Grype command arguments."""
         return [
             "grype",
@@ -64,9 +62,7 @@ class GrypeAnalyzer(CLIAnalyzer):
                 fixed_version = str(fixed_versions[0]) if fixed_versions[0] else ""
             description = vuln.get("description", "")
 
-            message = self._create_message(
-                vuln_id, pkg_name, installed_version, fixed_version, description
-            )
+            message = self._create_message(vuln_id, pkg_name, installed_version, fixed_version, description)
 
             normalized.append(
                 {
@@ -80,9 +76,7 @@ class GrypeAnalyzer(CLIAnalyzer):
                     "data_source": vuln.get("dataSource", ""),
                     "urls": vuln.get("urls", []),
                     "cvss": vuln.get("cvss", []),
-                    "related_vulnerabilities": [
-                        rv.get("id") for rv in related_vulns if rv.get("id")
-                    ],
+                    "related_vulnerabilities": [rv.get("id") for rv in related_vulns if rv.get("id")],
                     "artifact_type": artifact.get("type", ""),
                     "artifact_purl": artifact.get("purl", ""),
                 }

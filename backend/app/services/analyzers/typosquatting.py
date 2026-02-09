@@ -61,17 +61,13 @@ class TyposquattingAnalyzer(Analyzer):
         else:
             result["npm"] = self._get_static_npm()
             # Cache npm packages
-            await cache_service.set(
-                npm_cache_key, list(result["npm"]), CacheTTL.POPULAR_PACKAGES
-            )
+            await cache_service.set(npm_cache_key, list(result["npm"]), CacheTTL.POPULAR_PACKAGES)
 
         # Update fallback with size limit to prevent memory issues
         for registry in result:
             if len(result[registry]) > TYPOSQUATTING_MAX_FALLBACK_PACKAGES:
                 # Keep only a subset if too large
-                result[registry] = set(
-                    list(result[registry])[:TYPOSQUATTING_MAX_FALLBACK_PACKAGES]
-                )
+                result[registry] = set(list(result[registry])[:TYPOSQUATTING_MAX_FALLBACK_PACKAGES])
         self._popular_packages_fallback = result
         return result
 
@@ -85,16 +81,10 @@ class TyposquattingAnalyzer(Analyzer):
                 resp = await client.get(TOP_PYPI_PACKAGES_URL)
                 if resp.status_code == 200:
                     data = resp.json()
-                    packages = {
-                        row["project"].lower() for row in data.get("rows", [])[:5000]
-                    }
+                    packages = {row["project"].lower() for row in data.get("rows", [])[:5000]}
                     # Cache in Redis
-                    await cache_service.set(
-                        cache_key, list(packages), CacheTTL.POPULAR_PACKAGES
-                    )
-                    logger.info(
-                        f"Loaded {len(packages)} popular PyPI packages (cached in Redis)"
-                    )
+                    await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
+                    logger.info(f"Loaded {len(packages)} popular PyPI packages (cached in Redis)")
                     return packages
         except httpx.TimeoutException:
             logger.debug("Timeout fetching PyPI top packages, using fallback")

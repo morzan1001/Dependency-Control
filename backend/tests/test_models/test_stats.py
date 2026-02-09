@@ -27,7 +27,6 @@ class TestStatsModel:
         assert stats.prioritized is None
 
 
-
 class TestThreatIntelligenceStats:
     def test_defaults(self):
         ti = ThreatIntelligenceStats()

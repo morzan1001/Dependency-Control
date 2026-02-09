@@ -1,7 +1,6 @@
 """Tests for PURL parsing and utility functions."""
 
 from app.services.analyzers.purl_utils import (
-    ParsedPURL,
     parse_purl,
     get_purl_type,
     is_purl_type,
@@ -15,7 +14,6 @@ from app.services.analyzers.purl_utils import (
     MAX_PURL_LENGTH,
     MAX_NAME_LENGTH,
     MAX_VERSION_LENGTH,
-    MAX_NAMESPACE_LENGTH,
 )
 
 

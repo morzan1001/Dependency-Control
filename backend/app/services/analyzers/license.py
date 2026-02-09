@@ -573,7 +573,9 @@ class LicenseAnalyzer(Analyzer):
 
         for component in components:
             self._analyze_component(
-                component, stats, issues,
+                component,
+                stats,
+                issues,
                 ignore_dev=ignore_dev,
                 ignore_transitive=ignore_transitive,
                 allow_strong_copyleft=allow_strong_copyleft,
@@ -638,9 +640,7 @@ class LicenseAnalyzer(Analyzer):
             if issue:
                 issues.append(issue)
 
-    def _extract_licenses(
-        self, component: Dict[str, Any]
-    ) -> List[Tuple[str, Optional[str]]]:
+    def _extract_licenses(self, component: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
         """Extract license identifiers and URLs from a component."""
         licenses = []
 

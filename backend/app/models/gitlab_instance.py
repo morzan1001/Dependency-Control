@@ -35,22 +35,15 @@ class GitLabInstance(BaseModel):
     access_token: Optional[str] = Field(
         None,
         exclude=True,  # Never expose in API responses
-        description="Personal or Group Access Token with 'api' scope for GitLab API operations"
+        description="Personal or Group Access Token with 'api' scope for GitLab API operations",
     )
-    oidc_audience: Optional[str] = Field(
-        None,
-        description="Expected 'aud' claim for OIDC tokens from this instance"
-    )
+    oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
 
     # Features
     auto_create_projects: bool = Field(
-        False,
-        description="Automatically create projects from OIDC tokens if they don't exist"
+        False, description="Automatically create projects from OIDC tokens if they don't exist"
     )
-    sync_teams: bool = Field(
-        False,
-        description="Sync GitLab group members to local teams"
-    )
+    sync_teams: bool = Field(False, description="Sync GitLab group members to local teams")
 
     # Metadata
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

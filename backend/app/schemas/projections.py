@@ -5,7 +5,6 @@ These schemas define minimal models for performance-critical queries
 that only need specific fields.
 """
 
-from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field

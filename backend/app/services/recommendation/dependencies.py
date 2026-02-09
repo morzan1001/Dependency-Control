@@ -33,11 +33,7 @@ def analyze_outdated_dependencies(
 
         # Skip python library packages (python3-*, python-*, *-python)
         # These are NOT Python interpreter versions
-        if (
-            name.startswith("python3-")
-            or name.startswith("python-")
-            or name.endswith("-python")
-        ):
+        if name.startswith("python3-") or name.startswith("python-") or name.endswith("-python"):
             continue
 
         # Use scanner data to determine if outdated
@@ -74,9 +70,7 @@ def analyze_outdated_dependencies(
                     "low": 0,
                     "total": len(direct_outdated),
                 },
-                affected_components=[
-                    f"{d['name']}@{d['version']}" for d in direct_outdated
-                ],
+                affected_components=[f"{d['name']}@{d['version']}" for d in direct_outdated],
                 action={
                     "type": "upgrade_outdated",
                     "packages": [
@@ -110,9 +104,7 @@ def analyze_outdated_dependencies(
                     "low": len(transitive_outdated),
                     "total": len(transitive_outdated),
                 },
-                affected_components=[
-                    f"{d['name']}@{d['version']}" for d in transitive_outdated[:10]
-                ],
+                affected_components=[f"{d['name']}@{d['version']}" for d in transitive_outdated[:10]],
                 action={
                     "type": "review_transitive",
                     "suggestion": "Update direct dependencies to pull in newer transitive versions",
@@ -165,16 +157,12 @@ def analyze_version_fragmentation(
     fragmented.sort(key=lambda x: x["count"], reverse=True)
 
     # Only report if there are significant fragmentation issues (N+ versions)
-    significant_fragmented = [
-        f for f in fragmented if f["count"] >= SIGNIFICANT_FRAGMENTATION_THRESHOLD
-    ]
+    significant_fragmented = [f for f in fragmented if f["count"] >= SIGNIFICANT_FRAGMENTATION_THRESHOLD]
 
     if significant_fragmented:
         # High priority if many packages have multiple versions
         priority = (
-            Priority.MEDIUM
-            if len(significant_fragmented) > SIGNIFICANT_FRAGMENTATION_THRESHOLD
-            else Priority.LOW
+            Priority.MEDIUM if len(significant_fragmented) > SIGNIFICANT_FRAGMENTATION_THRESHOLD else Priority.LOW
         )
 
         # Limit to top 15 most fragmented
@@ -198,18 +186,12 @@ def analyze_version_fragmentation(
                     "critical": 0,
                     "high": len([f for f in significant_fragmented if f["count"] >= 5]),
                     "medium": len(
-                        [
-                            f
-                            for f in significant_fragmented
-                            if SIGNIFICANT_FRAGMENTATION_THRESHOLD <= f["count"] < 5
-                        ]
+                        [f for f in significant_fragmented if SIGNIFICANT_FRAGMENTATION_THRESHOLD <= f["count"] < 5]
                     ),
                     "low": 0,
                     "total": len(significant_fragmented),
                 },
-                affected_components=[
-                    f"{f['name']} ({f['count']} versions)" for f in top_fragmented
-                ],
+                affected_components=[f"{f['name']} ({f['count']} versions)" for f in top_fragmented],
                 action={
                     "type": "deduplicate_versions",
                     "packages": [
@@ -282,9 +264,7 @@ def analyze_dev_in_production(
                     "low": len(potential_dev_deps),
                     "total": len(potential_dev_deps),
                 },
-                affected_components=[
-                    f"{d['name']}@{d['version']}" for d in potential_dev_deps[:15]
-                ],
+                affected_components=[f"{d['name']}@{d['version']}" for d in potential_dev_deps[:15]],
                 action={
                     "type": "review_dev_deps",
                     "packages": [d["name"] for d in potential_dev_deps],
@@ -332,9 +312,7 @@ def analyze_end_of_life(eol_findings: List[ModelOrDict]) -> List[Recommendation]
             impact={
                 "critical": critical_count,
                 "high": high_count,
-                "medium": len(
-                    [f for f in eol_findings if get_attr(f, "severity") == "MEDIUM"]
-                ),
+                "medium": len([f for f in eol_findings if get_attr(f, "severity") == "MEDIUM"]),
                 "low": len([f for f in eol_findings if get_attr(f, "severity") == "LOW"]),
                 "total": len(eol_findings),
             },

@@ -226,9 +226,7 @@ class TestNormalizeMaintainerRisk:
                     "component": "old-package",
                     "version": "1.0.0",
                     "severity": "MEDIUM",
-                    "risks": [
-                        {"type": "stale_package", "message": "No releases in 2+ years"}
-                    ],
+                    "risks": [{"type": "stale_package", "message": "No releases in 2+ years"}],
                 }
             ]
         }

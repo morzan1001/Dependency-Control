@@ -37,9 +37,7 @@ logger = logging.getLogger(__name__)
 
 @router.get("/history", response_model=List[BroadcastHistoryItem])
 async def get_broadcast_history(
-    current_user: User = Depends(
-        deps.PermissionChecker(["notifications:broadcast", "system:manage"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["notifications:broadcast", "system:manage"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
@@ -54,11 +52,7 @@ async def get_broadcast_history(
             type=h.type,
             target_type=h.target_type,
             subject=h.subject,
-            created_at=(
-                h.created_at.isoformat()
-                if isinstance(h.created_at, datetime)
-                else str(h.created_at)
-            ),
+            created_at=(h.created_at.isoformat() if isinstance(h.created_at, datetime) else str(h.created_at)),
             recipient_count=h.recipient_count,
             project_count=h.project_count,
         )
@@ -69,9 +63,7 @@ async def get_broadcast_history(
 @router.get("/packages/suggest", response_model=List[str])
 async def suggest_packages(
     q: str = Query(..., min_length=2, description="Search query for package name"),
-    current_user: User = Depends(
-        deps.PermissionChecker(["notifications:broadcast", "system:manage"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["notifications:broadcast", "system:manage"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
@@ -95,9 +87,7 @@ async def suggest_packages(
 async def broadcast_message(
     payload: BroadcastRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(
-        deps.PermissionChecker(["notifications:broadcast", "system:manage"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["notifications:broadcast", "system:manage"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
@@ -156,9 +146,7 @@ async def broadcast_message(
             return BroadcastResult(recipient_count=0)
 
         # Find teams -> members -> users
-        teams = await team_repo.find_many(
-            {"_id": {"$in": payload.target_teams}}, limit=100
-        )
+        teams = await team_repo.find_many({"_id": {"$in": payload.target_teams}}, limit=100)
         user_ids: Set[str] = set()
 
         for t in teams:
@@ -189,19 +177,13 @@ async def broadcast_message(
 
     elif payload.target_type == "advisory":
         if not payload.packages:
-            raise HTTPException(
-                status_code=400, detail="At least one package required for advisory"
-            )
+            raise HTTPException(status_code=400, detail="At least one package required for advisory")
 
         # 1. Get all projects with latest_scan_id
-        projects_list = await project_repo.find_many(
-            {"latest_scan_id": {"$exists": True}}, limit=10000
-        )
+        projects_list = await project_repo.find_many({"latest_scan_id": {"$exists": True}}, limit=10000)
 
         # Map scan_id -> Project Data
-        scan_map = {
-            p["latest_scan_id"]: p for p in projects_list if p.get("latest_scan_id")
-        }
+        scan_map = {p["latest_scan_id"]: p for p in projects_list if p.get("latest_scan_id")}
 
         if not scan_map:
             return BroadcastResult(recipient_count=0)
@@ -230,8 +212,7 @@ async def broadcast_message(
         dependencies = await dep_repo.find_many(match_query, limit=100000)
 
         logger.info(
-            f"Advisory broadcast: Found {len(dependencies)} dependencies "
-            f"matching {len(package_names)} packages"
+            f"Advisory broadcast: Found {len(dependencies)} dependencies matching {len(package_names)} packages"
         )
 
         # Process dependencies and check version ranges
@@ -262,9 +243,7 @@ async def broadcast_message(
                     if dep_ver <= target_ver:
                         is_affected = True
                 except Exception as e:
-                    logger.debug(
-                        f"Could not parse version '{dep_version}' for '{dep_name}': {e}"
-                    )
+                    logger.debug(f"Could not parse version '{dep_version}' for '{dep_name}': {e}")
                     # If version parsing fails, assume affected (conservative)
                     is_affected = True
             else:
@@ -296,9 +275,7 @@ async def broadcast_message(
         for p in affected_projects_map.values():
             all_owner_ids.add(p.owner_id)
 
-        owner_users = await user_repo.find_many(
-            {"_id": {"$in": list(all_owner_ids)}, "is_active": True}, limit=10000
-        )
+        owner_users = await user_repo.find_many({"_id": {"$in": list(all_owner_ids)}, "is_active": True}, limit=10000)
         users_dict = {str(u.id): u for u in owner_users}
 
         for pid, project in affected_projects_map.items():
@@ -338,19 +315,13 @@ async def broadcast_message(
                     projects_html_parts.append(
                         f"<li><strong><a href='{p_link}'>{safe_name}</a></strong>: {safe_findings}</li>"
                     )
-                    projects_text_parts.append(
-                        f"- {p['name']}: {', '.join(p['findings'])}"
-                    )
+                    projects_text_parts.append(f"- {p['name']}: {', '.join(p['findings'])}")
 
                 # Build Context Message
                 findings_list_html = "<ul>" + "".join(projects_html_parts) + "</ul>"
                 findings_text_block = "\n".join(projects_text_parts)
 
-                context_message = (
-                    f"{payload.message}\n\n"
-                    f"--- Affected Projects ---\n"
-                    f"{findings_text_block}\n"
-                )
+                context_message = f"{payload.message}\n\n--- Affected Projects ---\n{findings_text_block}\n"
 
                 # Use Announcement Template but injected with Project List
                 # Generic HTML wrapper used because custom construction is safer for multi-project listings.
@@ -365,9 +336,7 @@ async def broadcast_message(
                 )
 
                 dashboard_button = (
-                    f'<p style="margin-top: 20px;">'
-                    f'<a href="{frontend_url}" style="{btn_style}">View Dashboard</a>'
-                    f"</p>"
+                    f'<p style="margin-top: 20px;"><a href="{frontend_url}" style="{btn_style}">View Dashboard</a></p>'
                 )
 
                 final_html = f"""
@@ -405,9 +374,7 @@ async def broadcast_message(
             created_by=str(current_user.id),
             recipient_count=unique_user_count,
             project_count=project_count,
-            packages=(
-                [p.model_dump() for p in payload.packages] if payload.packages else None
-            ),
+            packages=([p.model_dump() for p in payload.packages] if payload.packages else None),
             channels=payload.channels,
             teams=payload.target_teams,
         )

@@ -55,9 +55,7 @@ async def check_callgraph_access(
         if has_permission(user.permissions, Permissions.PROJECT_UPDATE):
             return project
     else:
-        if has_permission(
-            user.permissions, [Permissions.PROJECT_READ_ALL, Permissions.PROJECT_UPDATE]
-        ):
+        if has_permission(user.permissions, [Permissions.PROJECT_READ_ALL, Permissions.PROJECT_UPDATE]):
             return project
 
     # Check team membership
@@ -262,18 +260,12 @@ def parse_pyan_format(
                             used_symbols=[],
                         )
                     module_usage[base_module].import_count += 1
-                    if (
-                        file_path
-                        and file_path not in module_usage[base_module].import_locations
-                    ):
+                    if file_path and file_path not in module_usage[base_module].import_locations:
                         module_usage[base_module].import_locations.append(file_path)
 
                 # Always track the symbol
                 base_module = normalize_module_name(module, language)
-                if (
-                    base_module in module_usage
-                    and symbol not in module_usage[base_module].used_symbols
-                ):
+                if base_module in module_usage and symbol not in module_usage[base_module].used_symbols:
                     module_usage[base_module].used_symbols.append(symbol)
 
     return imports, calls, module_usage

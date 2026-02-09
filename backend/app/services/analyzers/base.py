@@ -92,11 +92,7 @@ class Analyzer(ABC):
                     "purl": comp.get("purl"),
                     "type": comp.get("type", "library"),
                     "hashes": hashes,
-                    "cpes": [
-                        c.get("cpe")
-                        for c in comp.get("cpes", [])
-                        if isinstance(c, dict) and c.get("cpe")
-                    ],
+                    "cpes": [c.get("cpe") for c in comp.get("cpes", []) if isinstance(c, dict) and c.get("cpe")],
                     "licenses": comp.get("licenses", []),
                 }
                 components.append(normalized)
@@ -116,11 +112,7 @@ class Analyzer(ABC):
                     "purl": artifact.get("purl"),
                     "type": artifact.get("type", "library"),
                     "hashes": {},  # Syft hashes need special extraction
-                    "cpes": [
-                        c.get("cpe")
-                        for c in artifact.get("cpes", [])
-                        if isinstance(c, dict) and c.get("cpe")
-                    ],
+                    "cpes": [c.get("cpe") for c in artifact.get("cpes", []) if isinstance(c, dict) and c.get("cpe")],
                 }
                 components.append(comp)
             return components

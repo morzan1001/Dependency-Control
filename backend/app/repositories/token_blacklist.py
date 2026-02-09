@@ -17,9 +17,7 @@ class TokenBlacklistRepository:
         self.db = db
         self.collection = db.token_blacklist
 
-    async def blacklist_token(
-        self, jti: str, expires_at: datetime, reason: str = "logout"
-    ) -> bool:
+    async def blacklist_token(self, jti: str, expires_at: datetime, reason: str = "logout") -> bool:
         """
         Add a token to the blacklist.
 

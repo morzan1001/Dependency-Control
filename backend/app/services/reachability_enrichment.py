@@ -91,9 +91,7 @@ async def enrich_findings_with_reachability(
         # Fallback: try to find callgraph via pipeline_id
         scan = await scan_repo.get_by_id(scan_id)
         if scan and scan.pipeline_id:
-            callgraph = await callgraph_repo.get_minimal_by_pipeline(
-                project_id, scan.pipeline_id
-            )
+            callgraph = await callgraph_repo.get_minimal_by_pipeline(project_id, scan.pipeline_id)
 
     if not callgraph:
         logger.debug(f"No callgraph available for scan {scan_id}")
@@ -173,9 +171,7 @@ def _analyze_reachability(
         result["is_reachable"] = False
         result["confidence_score"] = REACHABILITY_CONFIDENCE_NOT_USED
         result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
-        result["message"] = (
-            f"Package '{component}' is not imported in any analyzed source file."
-        )
+        result["message"] = f"Package '{component}' is not imported in any analyzed source file."
         return result
 
     # Package is imported - collect import locations
@@ -197,8 +193,7 @@ def _analyze_reachability(
         result["confidence_score"] = REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS
         result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
         result["message"] = (
-            f"Package is imported in {import_count} file(s). "
-            "Could not determine specific vulnerable functions."
+            f"Package is imported in {import_count} file(s). Could not determine specific vulnerable functions."
         )
         return result
 
@@ -211,20 +206,14 @@ def _analyze_reachability(
     if matched_symbols:
         # Vulnerable functions ARE used
         result["is_reachable"] = True
-        result["confidence_score"] = _calculate_confidence(
-            extracted.confidence, "matched"
-        )
+        result["confidence_score"] = _calculate_confidence(extracted.confidence, "matched")
         result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["matched_symbols"] = matched_symbols
-        result["message"] = (
-            f"Vulnerable function(s) {', '.join(matched_symbols[:5])} are used in the codebase."
-        )
+        result["message"] = f"Vulnerable function(s) {', '.join(matched_symbols[:5])} are used in the codebase."
     elif used_symbols:
         # Package is used but not the vulnerable functions (potentially)
         result["is_reachable"] = True  # Still mark as reachable but lower confidence
-        result["confidence_score"] = _calculate_confidence(
-            extracted.confidence, "partial"
-        )
+        result["confidence_score"] = _calculate_confidence(extracted.confidence, "partial")
         result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["message"] = (
             f"Package is imported but extracted vulnerable functions "
@@ -236,9 +225,7 @@ def _analyze_reachability(
         result["is_reachable"] = True
         result["confidence_score"] = REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO
         result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
-        result["message"] = (
-            f"Package is imported in {import_count} file(s). Symbol-level analysis not available."
-        )
+        result["message"] = f"Package is imported in {import_count} file(s). Symbol-level analysis not available."
 
     # Add extraction metadata
     result["extraction_method"] = extracted.extraction_method
@@ -280,9 +267,7 @@ def _normalize_component(component: str, language: str) -> str:
     return component.lower()
 
 
-def _check_package_in_imports(
-    package: str, import_map: Dict[str, List[str]], language: str
-) -> List[str]:
+def _check_package_in_imports(package: str, import_map: Dict[str, List[str]], language: str) -> List[str]:
     """
     Check if a package appears anywhere in the import map.
     Returns list of files that import it.
@@ -416,9 +401,7 @@ async def run_pending_reachability_for_scan(
 
     try:
         # Fetch vulnerability findings for this scan
-        findings = await finding_repo.find_many(
-            {"scan_id": scan_id, "type": "vulnerability"}, limit=10000
-        )
+        findings = await finding_repo.find_many({"scan_id": scan_id, "type": "vulnerability"}, limit=10000)
 
         if not findings:
             logger.debug(f"No vulnerability findings for scan {scan_id}")
@@ -453,9 +436,7 @@ async def run_pending_reachability_for_scan(
                     {
                         "reachable": finding_dict.get("reachable"),
                         "reachability_level": finding_dict.get("reachability_level"),
-                        "reachable_functions": finding_dict.get(
-                            "reachable_functions", []
-                        ),
+                        "reachable_functions": finding_dict.get("reachable_functions", []),
                     },
                 )
 
@@ -488,9 +469,7 @@ async def run_pending_reachability_for_scan(
         )
 
         result["findings_enriched"] = enriched_count
-        logger.info(
-            f"[reachability] Processed scan {scan_id}: enriched {enriched_count} findings"
-        )
+        logger.info(f"[reachability] Processed scan {scan_id}: enriched {enriched_count} findings")
 
     except Exception as e:
         result["error"] = str(e)

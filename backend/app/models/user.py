@@ -59,9 +59,7 @@ class User(BaseModel):
 
         # Validate structure
         if not isinstance(v, dict):
-            logger.warning(
-                f"Invalid notification_preferences type: {type(v)}. Using defaults."
-            )
+            logger.warning(f"Invalid notification_preferences type: {type(v)}. Using defaults.")
             return {
                 "analysis_completed": ["email"],
                 "vulnerability_found": ["email", "slack"],
@@ -71,24 +69,18 @@ class User(BaseModel):
         for event, channels in v.items():
             # Check if event is valid
             if event not in valid_events:
-                logger.warning(
-                    f"Unknown notification event type '{event}' (valid: {valid_events}). Skipping."
-                )
+                logger.warning(f"Unknown notification event type '{event}' (valid: {valid_events}). Skipping.")
                 continue
 
             # Validate channels
             if not isinstance(channels, list):
-                logger.warning(
-                    f"Invalid channels for event '{event}': expected list, got {type(channels)}"
-                )
+                logger.warning(f"Invalid channels for event '{event}': expected list, got {type(channels)}")
                 continue
 
             valid_event_channels = [c for c in channels if c in valid_channels]
             if len(valid_event_channels) != len(channels):
                 invalid = set(channels) - valid_channels
-                logger.warning(
-                    f"Invalid channels for event '{event}': {invalid} (valid: {valid_channels})"
-                )
+                logger.warning(f"Invalid channels for event '{event}': {invalid} (valid: {valid_channels})")
 
             if valid_event_channels:
                 validated[event] = valid_event_channels

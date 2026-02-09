@@ -59,9 +59,7 @@ class WebhookDeliveriesRepository:
         await self.collection.insert_one(log_entry)
         return log_entry["_id"]
 
-    async def get_recent_deliveries(
-        self, webhook_id: str, limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    async def get_recent_deliveries(self, webhook_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """
         Get recent delivery logs for a webhook.
 
@@ -72,17 +70,11 @@ class WebhookDeliveriesRepository:
         Returns:
             List of delivery log entries, sorted by timestamp (newest first)
         """
-        cursor = (
-            self.collection.find({"webhook_id": webhook_id})
-            .sort("timestamp", -1)
-            .limit(limit)
-        )
+        cursor = self.collection.find({"webhook_id": webhook_id}).sort("timestamp", -1).limit(limit)
 
         return await cursor.to_list(length=limit)
 
-    async def get_failure_count(
-        self, webhook_id: str, since: Optional[datetime] = None
-    ) -> int:
+    async def get_failure_count(self, webhook_id: str, since: Optional[datetime] = None) -> int:
         """
         Get count of failed deliveries for a webhook.
 
@@ -116,9 +108,7 @@ class WebhookDeliveriesRepository:
                 "$group": {
                     "_id": None,
                     "total": {"$sum": 1},
-                    "successful": {
-                        "$sum": {"$cond": [{"$eq": ["$success", True]}, 1, 0]}
-                    },
+                    "successful": {"$sum": {"$cond": [{"$eq": ["$success", True]}, 1, 0]}},
                     "failed": {"$sum": {"$cond": [{"$eq": ["$success", False]}, 1, 0]}},
                 }
             },
@@ -152,18 +142,12 @@ class WebhookDeliveriesRepository:
             Number of logs deleted
         """
         # Find IDs to keep (most recent N)
-        cursor = (
-            self.collection.find({"webhook_id": webhook_id}, {"_id": 1})
-            .sort("timestamp", -1)
-            .limit(keep_count)
-        )
+        cursor = self.collection.find({"webhook_id": webhook_id}, {"_id": 1}).sort("timestamp", -1).limit(keep_count)
 
         ids_to_keep = [doc["_id"] async for doc in cursor]
 
         # Delete all others
-        result = await self.collection.delete_many(
-            {"webhook_id": webhook_id, "_id": {"$nin": ids_to_keep}}
-        )
+        result = await self.collection.delete_many({"webhook_id": webhook_id, "_id": {"$nin": ids_to_keep}})
 
         return result.deleted_count
 

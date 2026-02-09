@@ -211,9 +211,7 @@ async def get_script(
 
         # Log version mismatch for debugging
         if v and v != version:
-            logger.warning(
-                f"Script {script_name} version mismatch: requested={v}, current={version}"
-            )
+            logger.warning(f"Script {script_name} version mismatch: requested={v}, current={version}")
 
         return PlainTextResponse(
             content=content,

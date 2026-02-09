@@ -20,8 +20,17 @@ class TestSeverityEnum:
 class TestFindingTypeEnum:
     def test_all_types(self):
         expected = {
-            "vulnerability", "license", "secret", "malware", "eol",
-            "iac", "sast", "system_warning", "outdated", "quality", "other",
+            "vulnerability",
+            "license",
+            "secret",
+            "malware",
+            "eol",
+            "iac",
+            "sast",
+            "system_warning",
+            "outdated",
+            "quality",
+            "other",
         }
         actual = {t.value for t in FindingType}
         assert actual == expected
@@ -76,4 +85,3 @@ class TestFindingModel:
                 type=FindingType.VULNERABILITY,
                 # missing severity, component, description, scanners
             )
-

@@ -9,9 +9,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_trufflehog(
-    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
-):
+def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
     """Normalize TruffleHog secret scan results."""
     # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
     for finding in result.get("findings") or []:
@@ -34,9 +32,7 @@ def normalize_trufflehog(
 
         # Create a unique ID based on detector, file path, and secret hash
         raw_secret = finding.get("Raw") or ""
-        secret_hash = (
-            hashlib.md5(raw_secret.encode()).hexdigest() if raw_secret else "nohash"
-        )
+        secret_hash = hashlib.md5(raw_secret.encode()).hexdigest() if raw_secret else "nohash"
 
         finding_id = build_finding_id("SECRET", detector, secret_hash[:8])
 

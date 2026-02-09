@@ -194,9 +194,7 @@ def calculate_score(rec: Recommendation) -> int:
         reachable_high = impact.get("reachable_high", 0)
         threat_intel_score += reachable_critical * _REACH_CRITICAL_BONUS
         threat_intel_score += reachable_high * _REACH_HIGH_BONUS
-        threat_intel_score += (
-            reachable_count - reachable_critical - reachable_high
-        ) * _REACH_OTHER_BONUS
+        threat_intel_score += (reachable_count - reachable_critical - reachable_high) * _REACH_OTHER_BONUS
 
     # Unreachable vulnerabilities should be deprioritized
     unreachable_count = impact.get("unreachable_count", 0)
@@ -220,7 +218,5 @@ def calculate_score(rec: Recommendation) -> int:
     type_bonus = RECOMMENDATION_TYPE_BONUSES.get(rec.type.value, 0)
 
     # Calculate final score with reachability modifier
-    total_score = (
-        base_score + impact_score + threat_intel_score + effort_bonus + type_bonus
-    )
+    total_score = base_score + impact_score + threat_intel_score + effort_bonus + type_bonus
     return int(total_score * reachability_modifier)

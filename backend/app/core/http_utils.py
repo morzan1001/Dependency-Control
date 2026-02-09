@@ -339,27 +339,19 @@ def with_http_error_handling(
             try:
                 result = await func(*args, **kwargs)
                 duration = time.time() - start_time
-                external_api_duration_seconds.labels(service=service_name).observe(
-                    duration
-                )
+                external_api_duration_seconds.labels(service=service_name).observe(duration)
                 return result
             except httpx.TimeoutException:
                 external_api_errors_total.labels(service=service_name).inc()
-                getattr(logger, log_level)(
-                    f"Timeout in {func.__name__} ({service_name})"
-                )
+                getattr(logger, log_level)(f"Timeout in {func.__name__} ({service_name})")
                 return default_return
             except httpx.ConnectError:
                 external_api_errors_total.labels(service=service_name).inc()
-                getattr(logger, log_level)(
-                    f"Connection error in {func.__name__} ({service_name})"
-                )
+                getattr(logger, log_level)(f"Connection error in {func.__name__} ({service_name})")
                 return default_return
             except httpx.HTTPStatusError as e:
                 external_api_errors_total.labels(service=service_name).inc()
-                getattr(logger, log_level)(
-                    f"HTTP {e.response.status_code} in {func.__name__} ({service_name})"
-                )
+                getattr(logger, log_level)(f"HTTP {e.response.status_code} in {func.__name__} ({service_name})")
                 return default_return
             except Exception as e:
                 external_api_errors_total.labels(service=service_name).inc()

@@ -274,36 +274,22 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             "$group": {
                 "_id": None,
                 # Traditional severity counts
-                "critical": {
-                    "$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}
-                },
+                "critical": {"$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}},
                 "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
                 "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
                 "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
                 "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
-                "unknown": {
-                    "$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}
-                },
+                "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
                 "total": {"$sum": 1},
                 # Traditional risk score (use average, not sum)
-                "avg_risk_score": {
-                    "$avg": {"$ifNull": ["$cvss_score", "$calculated_score"]}
-                },
-                "max_risk_score": {
-                    "$max": {"$ifNull": ["$cvss_score", "$calculated_score"]}
-                },
+                "avg_risk_score": {"$avg": {"$ifNull": ["$cvss_score", "$calculated_score"]}},
+                "max_risk_score": {"$max": {"$ifNull": ["$cvss_score", "$calculated_score"]}},
                 # Adjusted risk scores (including enrichment data)
-                "avg_adjusted_risk_score": {
-                    "$avg": {"$ifNull": ["$risk_score", "$calculated_score"]}
-                },
-                "max_adjusted_risk_score": {
-                    "$max": {"$ifNull": ["$risk_score", "$calculated_score"]}
-                },
+                "avg_adjusted_risk_score": {"$avg": {"$ifNull": ["$risk_score", "$calculated_score"]}},
+                "max_adjusted_risk_score": {"$max": {"$ifNull": ["$risk_score", "$calculated_score"]}},
                 # KEV statistics
                 "kev_count": {"$sum": {"$cond": [{"$eq": ["$is_kev", True]}, 1, 0]}},
-                "kev_ransomware_count": {
-                    "$sum": {"$cond": [{"$eq": ["$kev_ransomware", True]}, 1, 0]}
-                },
+                "kev_ransomware_count": {"$sum": {"$cond": [{"$eq": ["$kev_ransomware", True]}, 1, 0]}},
                 # EPSS statistics
                 "epss_scores": {
                     "$push": {
@@ -314,9 +300,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         ]
                     }
                 },
-                "high_epss_count": {
-                    "$sum": {"$cond": [{"$gte": ["$epss_score", 0.1]}, 1, 0]}
-                },
+                "high_epss_count": {"$sum": {"$cond": [{"$gte": ["$epss_score", 0.1]}, 1, 0]}},
                 "medium_epss_count": {
                     "$sum": {
                         "$cond": [
@@ -332,25 +316,11 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                     }
                 },
                 # Reachability statistics
-                "reachability_analyzed": {
-                    "$sum": {"$cond": [{"$ne": ["$reachable", None]}, 1, 0]}
-                },
-                "reachable_count": {
-                    "$sum": {"$cond": [{"$eq": ["$reachable", True]}, 1, 0]}
-                },
-                "unreachable_count": {
-                    "$sum": {"$cond": [{"$eq": ["$reachable", False]}, 1, 0]}
-                },
-                "confirmed_reachable": {
-                    "$sum": {
-                        "$cond": [{"$eq": ["$reachability_level", "confirmed"]}, 1, 0]
-                    }
-                },
-                "likely_reachable": {
-                    "$sum": {
-                        "$cond": [{"$eq": ["$reachability_level", "likely"]}, 1, 0]
-                    }
-                },
+                "reachability_analyzed": {"$sum": {"$cond": [{"$ne": ["$reachable", None]}, 1, 0]}},
+                "reachable_count": {"$sum": {"$cond": [{"$eq": ["$reachable", True]}, 1, 0]}},
+                "unreachable_count": {"$sum": {"$cond": [{"$eq": ["$reachable", False]}, 1, 0]}},
+                "confirmed_reachable": {"$sum": {"$cond": [{"$eq": ["$reachability_level", "confirmed"]}, 1, 0]}},
+                "likely_reachable": {"$sum": {"$cond": [{"$eq": ["$reachability_level", "likely"]}, 1, 0]}},
                 # Reachable by severity
                 "reachable_critical": {
                     "$sum": {
@@ -543,12 +513,8 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         stats.adjusted_risk_score = round(res.get("avg_adjusted_risk_score", 0.0), 1)
 
         # Calculate EPSS statistics
-        epss_scores: List[float] = [
-            s for s in res.get("epss_scores", []) if s is not None
-        ]
-        avg_epss: Optional[float] = (
-            sum(epss_scores) / len(epss_scores) if epss_scores else None
-        )
+        epss_scores: List[float] = [s for s in res.get("epss_scores", []) if s is not None]
+        avg_epss: Optional[float] = sum(epss_scores) / len(epss_scores) if epss_scores else None
         max_epss: Optional[float] = max(epss_scores) if epss_scores else None
 
         # Threat Intelligence Stats

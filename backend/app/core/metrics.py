@@ -409,9 +409,7 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         content_length = request.headers.get("content-length")
         if content_length:
             try:
-                http_request_size_bytes.labels(
-                    method=method, endpoint=endpoint
-                ).observe(int(content_length))
+                http_request_size_bytes.labels(method=method, endpoint=endpoint).observe(int(content_length))
             except ValueError:
                 pass
 
@@ -427,9 +425,7 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
 
             # Track response size
             if hasattr(response, "body"):
-                http_response_size_bytes.labels(
-                    method=method, endpoint=endpoint
-                ).observe(len(response.body))
+                http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(len(response.body))
 
         except Exception as e:
             status = 500
@@ -438,12 +434,8 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         finally:
             # Record metrics
             duration = time.time() - start_time
-            http_request_duration_seconds.labels(
-                method=method, endpoint=endpoint
-            ).observe(duration)
-            http_requests_total.labels(
-                method=method, endpoint=endpoint, status=status
-            ).inc()
+            http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
+            http_requests_total.labels(method=method, endpoint=endpoint, status=status).inc()
             http_requests_in_progress.labels(method=method, endpoint=endpoint).dec()
 
         return response
@@ -484,9 +476,7 @@ def track_db_operation(collection: str, operation: str):
             yield
             duration = time.time() - start_time
             db_operations_total.labels(collection=collection, operation=operation).inc()
-            db_operation_duration_seconds.labels(
-                collection=collection, operation=operation
-            ).observe(duration)
+            db_operation_duration_seconds.labels(collection=collection, operation=operation).observe(duration)
         except Exception as e:
             error_type = type(e).__name__
             db_errors_total.labels(error_type=error_type).inc()
@@ -505,9 +495,7 @@ def track_cache_operation(operation: str):
             yield
             duration = time.time() - start_time
             cache_operations_total.labels(operation=operation).inc()
-            cache_operation_duration_seconds.labels(operation=operation).observe(
-                duration
-            )
+            cache_operation_duration_seconds.labels(operation=operation).observe(duration)
         except Exception:
             raise
 

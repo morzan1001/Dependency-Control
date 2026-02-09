@@ -13,9 +13,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_opengrep(
-    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
-):
+def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
     """Normalize OpenGrep (Semgrep) SAST results."""
     # OpenGrep can send data as "findings" or "results"
     results = result.get("findings") or result.get("results") or []
@@ -76,8 +74,7 @@ def normalize_opengrep(
             "vulnerability_class": normalize_list(metadata.get("vulnerability_class")),
             # Documentation
             "references": metadata.get("references") or [],
-            "source_rule_url": metadata.get("source-rule-url")
-            or metadata.get("source_rule_url"),
+            "source_rule_url": metadata.get("source-rule-url") or metadata.get("source_rule_url"),
             "source": metadata.get("source"),
             "shortlink": metadata.get("shortlink"),
             "license": metadata.get("license"),
@@ -107,9 +104,7 @@ def normalize_opengrep(
         )
 
 
-def normalize_bearer(
-    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
-):
+def normalize_bearer(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
     """Normalize Bearer SAST results."""
     findings_container = result.get("findings") or {}
 
@@ -135,12 +130,7 @@ def normalize_bearer(
         severity = safe_severity(BEARER_SEVERITY_MAP.get(sev_str, sev_str))
 
         # Bearer uses full_filename or filename
-        filename = (
-            item.get("full_filename")
-            or item.get("filename")
-            or item.get("file")
-            or "unknown"
-        )
+        filename = item.get("full_filename") or item.get("filename") or item.get("file") or "unknown"
 
         # Line numbers from direct fields or source object
         source_obj = item.get("source") or {}

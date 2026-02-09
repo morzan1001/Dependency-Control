@@ -15,9 +15,7 @@ class TrivyAnalyzer(CLIAnalyzer):
     cli_command = "trivy"
     empty_result_key = "Results"
 
-    def _build_command_args(
-        self, sbom_path: str, settings: Optional[Dict[str, Any]]
-    ) -> List[str]:
+    def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
         """Build Trivy command arguments."""
         return [
             "trivy",
@@ -47,10 +45,7 @@ class TrivyAnalyzer(CLIAnalyzer):
             return tmp_sbom_path, []
 
         # Attempt to convert using Syft
-        logger.info(
-            "SBOM format not natively supported by Trivy (likely Syft JSON). "
-            "Attempting conversion..."
-        )
+        logger.info("SBOM format not natively supported by Trivy (likely Syft JSON). Attempting conversion...")
         converted_sbom_path = tmp_sbom_path + ".cdx.json"
 
         convert_process = await asyncio.create_subprocess_exec(
@@ -71,10 +66,7 @@ class TrivyAnalyzer(CLIAnalyzer):
             logger.info("Successfully converted SBOM to CycloneDX for Trivy.")
             return converted_sbom_path, [converted_sbom_path]
 
-        logger.warning(
-            f"Syft conversion failed: {stderr.decode()}. "
-            "Proceeding with original file."
-        )
+        logger.warning(f"Syft conversion failed: {stderr.decode()}. Proceeding with original file.")
         return tmp_sbom_path, []
 
     def _parse_output(self, stdout: bytes) -> Dict[str, Any]:
@@ -115,9 +107,7 @@ class TrivyAnalyzer(CLIAnalyzer):
                 fixed_version = vuln.get("FixedVersion", "")
                 title = vuln.get("Title", "")
 
-                message = self._create_message(
-                    vuln_id, pkg_name, installed_version, fixed_version, title
-                )
+                message = self._create_message(vuln_id, pkg_name, installed_version, fixed_version, title)
 
                 normalized.append(
                     {

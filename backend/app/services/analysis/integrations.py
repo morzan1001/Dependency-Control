@@ -4,8 +4,13 @@ External integrations for scan results.
 Handles posting scan results to GitLab MRs and other external services.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
+
+if TYPE_CHECKING:
+    from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.project import Project, Scan
 from app.models.stats import Stats
@@ -68,7 +73,7 @@ async def decorate_gitlab_mr(
     stats: Stats,
     scan_doc: Scan,
     project: Project,
-    db: "AsyncIOMotorDatabase",
+    db: AsyncIOMotorDatabase,
 ) -> None:
     """
     Post a comment to the GitLab Merge Request with scan results.
@@ -84,9 +89,7 @@ async def decorate_gitlab_mr(
     if not project.gitlab_mr_comments_enabled:
         return
     if not project.gitlab_instance_id or not project.gitlab_project_id:
-        logger.warning(
-            f"Project {project.id} has MR comments enabled but missing GitLab instance/project ID"
-        )
+        logger.warning(f"Project {project.id} has MR comments enabled but missing GitLab instance/project ID")
         return
     if not scan_doc.commit_hash:
         return
@@ -99,9 +102,7 @@ async def decorate_gitlab_mr(
         gitlab_instance = await instance_repo.get_by_id(project.gitlab_instance_id)
 
         if not gitlab_instance:
-            logger.warning(
-                f"GitLab instance {project.gitlab_instance_id} not found for project {project.id}"
-            )
+            logger.warning(f"GitLab instance {project.gitlab_instance_id} not found for project {project.id}")
             return
 
         if not gitlab_instance.is_active:
@@ -114,26 +115,16 @@ async def decorate_gitlab_mr(
         gitlab_service = GitLabService(gitlab_instance)
 
         # Find MRs for this commit
-        mrs = await gitlab_service.get_merge_requests_for_commit(
-            project.gitlab_project_id, scan_doc.commit_hash
-        )
+        mrs = await gitlab_service.get_merge_requests_for_commit(project.gitlab_project_id, scan_doc.commit_hash)
 
         if not mrs:
             return
 
         # Filter to only open, non-draft MRs
-        relevant_mrs = [
-            mr
-            for mr in mrs
-            if mr.state == "opened"
-            and not mr.draft
-            and not mr.work_in_progress
-        ]
+        relevant_mrs = [mr for mr in mrs if mr.state == "opened" and not mr.draft and not mr.work_in_progress]
 
         if not relevant_mrs:
-            logger.info(
-                f"No relevant open MRs for scan {scan_id} in project {project.id}"
-            )
+            logger.info(f"No relevant open MRs for scan {scan_id} in project {project.id}")
             return
 
         # Build scan URL
@@ -159,15 +150,10 @@ async def decorate_gitlab_mr(
                     scan_id=scan_id,
                 )
             except Exception as mr_err:
-                logger.error(
-                    f"Failed to decorate MR !{mr.iid} for project "
-                    f"{project.id}, scan {scan_id}: {mr_err}"
-                )
+                logger.error(f"Failed to decorate MR !{mr.iid} for project {project.id}, scan {scan_id}: {mr_err}")
 
     except Exception as e:
-        logger.error(
-            f"Failed to decorate GitLab MR for project {project.id}, scan {scan_id}: {e}"
-        )
+        logger.error(f"Failed to decorate GitLab MR for project {project.id}, scan {scan_id}: {e}")
 
 
 async def _update_or_create_mr_comment(
@@ -191,9 +177,7 @@ async def _update_or_create_mr_comment(
         project_id: The project ID (for logging)
         scan_id: The scan ID (for logging)
     """
-    existing_notes = await gitlab_service.get_merge_request_notes(
-        gitlab_project_id, mr_iid
-    )
+    existing_notes = await gitlab_service.get_merge_request_notes(gitlab_project_id, mr_iid)
 
     # Find existing comment
     existing_comment_id: Optional[int] = None
@@ -208,10 +192,7 @@ async def _update_or_create_mr_comment(
     if existing_comment_id:
         # Check if update is needed
         if existing_body == comment_body:
-            logger.info(
-                f"MR comment already up to date for project {project_id}, "
-                f"MR !{mr_iid}, scan {scan_id}"
-            )
+            logger.info(f"MR comment already up to date for project {project_id}, MR !{mr_iid}, scan {scan_id}")
             return
 
         # Update existing comment
@@ -222,25 +203,13 @@ async def _update_or_create_mr_comment(
             comment_body,
         )
         if success:
-            logger.info(
-                f"Updated MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}"
-            )
+            logger.info(f"Updated MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}")
         else:
-            logger.warning(
-                f"Failed to update MR comment for project {project_id}, "
-                f"MR !{mr_iid}, scan {scan_id}"
-            )
+            logger.warning(f"Failed to update MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}")
     else:
         # Create new comment
-        success = await gitlab_service.post_merge_request_comment(
-            gitlab_project_id, mr_iid, comment_body
-        )
+        success = await gitlab_service.post_merge_request_comment(gitlab_project_id, mr_iid, comment_body)
         if success:
-            logger.info(
-                f"Posted MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}"
-            )
+            logger.info(f"Posted MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}")
         else:
-            logger.warning(
-                f"Failed to post MR comment for project {project_id}, "
-                f"MR !{mr_iid}, scan {scan_id}"
-            )
+            logger.warning(f"Failed to post MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}")

@@ -141,9 +141,9 @@ class BaseRepository(Generic[T]):
             return len(result.inserted_ids)
         except Exception as e:
             # Handle BulkWriteError - some documents may have been inserted
-            if hasattr(e, 'details') and 'writeErrors' in e.details:
+            if hasattr(e, "details") and "writeErrors" in e.details:
                 # Count successful inserts
-                inserted_count = e.details.get('nInserted', 0)
+                inserted_count = e.details.get("nInserted", 0)
                 return inserted_count
             raise
 
@@ -157,9 +157,7 @@ class BaseRepository(Generic[T]):
         """Update a document with raw MongoDB operations (e.g., $set, $push)."""
         await self.collection.update_one({"_id": id}, update_ops)
 
-    async def update_many(
-        self, query: Dict[str, Any], update_data: Dict[str, Any]
-    ) -> int:
+    async def update_many(self, query: Dict[str, Any], update_data: Dict[str, Any]) -> int:
         """Update multiple documents matching query."""
         result = await self.collection.update_many(query, {"$set": update_data})
         return result.modified_count
@@ -178,9 +176,7 @@ class BaseRepository(Generic[T]):
         result = await self.collection.delete_many(query)
         return result.deleted_count
 
-    async def aggregate(
-        self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Run an aggregation pipeline."""
         return await self.collection.aggregate(pipeline).to_list(limit)
 

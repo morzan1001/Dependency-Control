@@ -4,7 +4,6 @@ Tests composite key lookups, instance-based queries, and pagination using mocked
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
 
 from app.repositories.projects import ProjectRepository
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
@@ -18,15 +17,20 @@ class TestCompositeKeyLookup:
 
         asyncio.run(repo.get_by_gitlab_composite_key("instance-a", 12345))
 
-        collection.find_one.assert_called_once_with({
-            "gitlab_instance_id": "instance-a",
-            "gitlab_project_id": 12345,
-        })
+        collection.find_one.assert_called_once_with(
+            {
+                "gitlab_instance_id": "instance-a",
+                "gitlab_project_id": 12345,
+            }
+        )
 
     def test_returns_project_when_found(self):
         doc = {
-            "_id": "proj-id", "name": "Test Project", "owner_id": "user-1",
-            "gitlab_instance_id": "instance-a", "gitlab_project_id": 12345,
+            "_id": "proj-id",
+            "name": "Test Project",
+            "owner_id": "user-1",
+            "gitlab_instance_id": "instance-a",
+            "gitlab_project_id": 12345,
         }
         collection = create_mock_collection(find_one=doc)
         db = create_mock_db({"projects": collection})
@@ -47,8 +51,11 @@ class TestCompositeKeyLookup:
 
     def test_raw_returns_dict(self):
         doc = {
-            "_id": "proj-id", "name": "Test", "owner_id": "user-1",
-            "gitlab_instance_id": "instance-a", "gitlab_project_id": 12345,
+            "_id": "proj-id",
+            "name": "Test",
+            "owner_id": "user-1",
+            "gitlab_instance_id": "instance-a",
+            "gitlab_project_id": 12345,
         }
         collection = create_mock_collection(find_one=doc)
         db = create_mock_db({"projects": collection})
@@ -95,7 +102,4 @@ class TestInstanceQueries:
         result = asyncio.run(repo.count_by_instance("instance-a"))
 
         assert result == 3
-        collection.count_documents.assert_called_once_with(
-            {"gitlab_instance_id": "instance-a"}
-        )
-
+        collection.count_documents.assert_called_once_with({"gitlab_instance_id": "instance-a"})

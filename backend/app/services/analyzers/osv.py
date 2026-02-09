@@ -47,14 +47,10 @@ class OSVAnalyzer(Analyzer):
         results = []
 
         # Check cache first for all components
-        cached_results, uncached_components = await self._get_cached_components(
-            components
-        )
+        cached_results, uncached_components = await self._get_cached_components(components)
         results.extend(cached_results)
 
-        logger.debug(
-            f"OSV: {len(cached_results)} from cache, {len(uncached_components)} to fetch"
-        )
+        logger.debug(f"OSV: {len(cached_results)} from cache, {len(uncached_components)} to fetch")
 
         if not uncached_components:
             return {"osv_vulnerabilities": results}
@@ -63,7 +59,6 @@ class OSVAnalyzer(Analyzer):
         batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
 
         async with InstrumentedAsyncClient("OSV API", timeout=timeout) as client:
-
             for chunk_start in range(0, len(uncached_components), batch_size):
                 chunk = uncached_components[chunk_start : chunk_start + batch_size]
 
@@ -80,9 +75,7 @@ class OSVAnalyzer(Analyzer):
                         skipped_count += 1
 
                 if skipped_count > 0:
-                    logger.debug(
-                        f"OSV: Skipped {skipped_count} components without PURL"
-                    )
+                    logger.debug(f"OSV: Skipped {skipped_count} components without PURL")
 
                 if not batch_payload["queries"]:
                     continue
@@ -120,12 +113,8 @@ class OSVAnalyzer(Analyzer):
                                 "version": comp_version,
                                 "purl": purl,
                                 "vulnerabilities": normalized_vulns,
-                                "severity": self._get_highest_severity(
-                                    normalized_vulns
-                                ),
-                                "message": self._create_summary_message(
-                                    comp_name, comp_version, normalized_vulns
-                                ),
+                                "severity": self._get_highest_severity(normalized_vulns),
+                                "message": self._create_summary_message(comp_name, comp_version, normalized_vulns),
                             }
                             cache_mapping[cache_key] = cache_data
 
@@ -134,9 +123,7 @@ class OSVAnalyzer(Analyzer):
 
                         # Batch cache all results
                         if cache_mapping:
-                            await cache_service.mset(
-                                cache_mapping, CacheTTL.OSV_VULNERABILITY
-                            )
+                            await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
 
                     elif response.status_code == 429:
                         logger.warning("OSV API rate limit hit, waiting...")
@@ -145,9 +132,7 @@ class OSVAnalyzer(Analyzer):
                         logger.warning(f"OSV Batch API error: {response.status_code}")
 
                 except httpx.TimeoutException:
-                    logger.warning(
-                        f"OSV API timeout for batch starting at {chunk_start}"
-                    )
+                    logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
                 except httpx.ConnectError:
                     logger.warning("OSV API connection error")
                 except Exception as e:
@@ -197,9 +182,7 @@ class OSVAnalyzer(Analyzer):
 
         return cached_results, uncached_components
 
-    def _normalize_vulnerabilities(
-        self, vulns: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _normalize_vulnerabilities(self, vulns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Normalize OSV vulnerabilities with severity and message."""
         normalized = []
         for vuln in vulns:
@@ -219,11 +202,7 @@ class OSVAnalyzer(Analyzer):
                     "details": details,
                     "severity": severity,
                     "message": summary or f"Vulnerability {vuln_id} detected",
-                    "references": [
-                        ref.get("url")
-                        for ref in vuln.get("references", [])
-                        if ref.get("url")
-                    ],
+                    "references": [ref.get("url") for ref in vuln.get("references", []) if ref.get("url")],
                     "affected": vuln.get("affected", []),
                 }
             )
@@ -306,9 +285,7 @@ class OSVAnalyzer(Analyzer):
 
         return Severity.MEDIUM.value
 
-    def _create_summary_message(
-        self, component: str, version: str, vulns: List[Dict[str, Any]]
-    ) -> str:
+    def _create_summary_message(self, component: str, version: str, vulns: List[Dict[str, Any]]) -> str:
         """Create a summary message for the component's vulnerabilities."""
         if not vulns:
             return ""
@@ -317,9 +294,7 @@ class OSVAnalyzer(Analyzer):
         critical = sum(1 for v in vulns if v.get("severity") == Severity.CRITICAL.value)
         high = sum(1 for v in vulns if v.get("severity") == Severity.HIGH.value)
 
-        parts = [
-            f"{component}@{version} has {count} known vulnerabilit{'y' if count == 1 else 'ies'}"
-        ]
+        parts = [f"{component}@{version} has {count} known vulnerabilit{'y' if count == 1 else 'ies'}"]
 
         severity_parts = []
         if critical:

@@ -19,32 +19,44 @@ class TestHasPermission:
         assert has_permission(viewer_permissions, Permissions.SYSTEM_MANAGE) is False
 
     def test_any_mode_one_present(self, user_permissions):
-        assert has_permission(
-            user_permissions,
-            [Permissions.SYSTEM_MANAGE, Permissions.PROJECT_READ],
-            require_all=False,
-        ) is True
+        assert (
+            has_permission(
+                user_permissions,
+                [Permissions.SYSTEM_MANAGE, Permissions.PROJECT_READ],
+                require_all=False,
+            )
+            is True
+        )
 
     def test_any_mode_none_present(self, viewer_permissions):
-        assert has_permission(
-            viewer_permissions,
-            [Permissions.SYSTEM_MANAGE, Permissions.USER_DELETE],
-            require_all=False,
-        ) is False
+        assert (
+            has_permission(
+                viewer_permissions,
+                [Permissions.SYSTEM_MANAGE, Permissions.USER_DELETE],
+                require_all=False,
+            )
+            is False
+        )
 
     def test_all_mode_all_present(self, admin_permissions):
-        assert has_permission(
-            admin_permissions,
-            [Permissions.USER_READ, Permissions.USER_DELETE],
-            require_all=True,
-        ) is True
+        assert (
+            has_permission(
+                admin_permissions,
+                [Permissions.USER_READ, Permissions.USER_DELETE],
+                require_all=True,
+            )
+            is True
+        )
 
     def test_all_mode_one_missing(self, user_permissions):
-        assert has_permission(
-            user_permissions,
-            [Permissions.USER_READ, Permissions.USER_DELETE],
-            require_all=True,
-        ) is False
+        assert (
+            has_permission(
+                user_permissions,
+                [Permissions.USER_READ, Permissions.USER_DELETE],
+                require_all=True,
+            )
+            is False
+        )
 
     def test_empty_user_permissions(self):
         assert has_permission([], Permissions.USER_READ) is False
@@ -110,8 +122,5 @@ class TestPresets:
 
     def test_all_permissions_count(self):
         # Ensure consistency between Permissions class and ALL_PERMISSIONS list
-        perm_attrs = [
-            v for k, v in vars(Permissions).items()
-            if not k.startswith("_") and isinstance(v, str)
-        ]
+        perm_attrs = [v for k, v in vars(Permissions).items() if not k.startswith("_") and isinstance(v, str)]
         assert set(perm_attrs) == set(ALL_PERMISSIONS)

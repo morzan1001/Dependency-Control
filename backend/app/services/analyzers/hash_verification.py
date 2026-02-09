@@ -56,9 +56,7 @@ class HashVerificationAnalyzer(Analyzer):
         unverifiable_count = 0
         no_hash_in_sbom_count = 0
         fetched_hashes = {}  # package@version -> {alg: hash}
-        timeout = ANALYZER_TIMEOUTS.get(
-            "hash_verification", ANALYZER_TIMEOUTS["default"]
-        )
+        timeout = ANALYZER_TIMEOUTS.get("hash_verification", ANALYZER_TIMEOUTS["default"])
 
         async with InstrumentedAsyncClient("Package Registry API", timeout=timeout) as client:
             tasks = []
@@ -92,9 +90,7 @@ class HashVerificationAnalyzer(Analyzer):
             },
         }
 
-    async def _verify_component(
-        self, client: httpx.AsyncClient, component: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    async def _verify_component(self, client: httpx.AsyncClient, component: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Verify a single component's hash against the registry."""
 
         name = component.get("name", "")
@@ -265,9 +261,7 @@ class HashVerificationAnalyzer(Analyzer):
             """Fetch hashes from npm registry."""
             try:
                 encoded_name = name.replace("/", "%2F") if "/" in name else name
-                url = self.REGISTRY_APIS["npm"].format(
-                    package=encoded_name, version=version
-                )
+                url = self.REGISTRY_APIS["npm"].format(package=encoded_name, version=version)
                 response = await client.get(url)
 
                 if response.status_code != 200:
@@ -288,9 +282,7 @@ class HashVerificationAnalyzer(Analyzer):
                             hex_value = base64.b64decode(b64_part).hex()
                             registry_hashes_flat["sha512"] = hex_value
                         except Exception as e:
-                            logger.warning(
-                                f"Failed to decode npm integrity hash for {name}@{version}: {e}"
-                            )
+                            logger.warning(f"Failed to decode npm integrity hash for {name}@{version}: {e}")
 
                 return registry_hashes_flat if registry_hashes_flat else {}
             except httpx.TimeoutException:

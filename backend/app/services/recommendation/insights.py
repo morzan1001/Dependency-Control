@@ -59,9 +59,7 @@ def correlate_scorecard_with_vulnerabilities(
         is_unmaintained = "Maintained" in critical_issues
 
         # High risk: Critical/High vuln in unmaintained or low-score package
-        if severity in ["CRITICAL", "HIGH"] and (
-            is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD
-        ):
+        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD):
             vf_details = get_attr(vf, "details", {})
             high_risk_vulns.append(
                 {
@@ -80,9 +78,7 @@ def correlate_scorecard_with_vulnerabilities(
 
     if high_risk_vulns:
         # Sort by risk (unmaintained first, then by score)
-        high_risk_vulns.sort(
-            key=lambda x: (not x["unmaintained"], x["scorecard_score"])
-        )
+        high_risk_vulns.sort(key=lambda x: (not x["unmaintained"], x["scorecard_score"]))
 
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])
         low_score_count = len(high_risk_vulns) - unmaintained_count
@@ -100,12 +96,8 @@ def correlate_scorecard_with_vulnerabilities(
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={
-                    "critical": sum(
-                        1 for v in high_risk_vulns if v["vuln_severity"] == "CRITICAL"
-                    ),
-                    "high": sum(
-                        1 for v in high_risk_vulns if v["vuln_severity"] == "HIGH"
-                    ),
+                    "critical": sum(1 for v in high_risk_vulns if v["vuln_severity"] == "CRITICAL"),
+                    "high": sum(1 for v in high_risk_vulns if v["vuln_severity"] == "HIGH"),
                     "medium": 0,
                     "low": 0,
                     "total": len(high_risk_vulns),
@@ -167,9 +159,7 @@ def analyze_cross_project_patterns(
 
     for proj in projects:
         for cve in proj.get("cves", []):
-            cve_project_map[cve].append(
-                proj.get("project_name", proj.get("project_id"))
-            )
+            cve_project_map[cve].append(proj.get("project_name", proj.get("project_id")))
 
     # CVEs affecting multiple projects
     widespread_cves = [
@@ -184,9 +174,7 @@ def analyze_cross_project_patterns(
         recommendations.append(
             Recommendation(
                 type=RecommendationType.SHARED_VULNERABILITY,
-                priority=(
-                    Priority.HIGH if len(widespread_cves) > 5 else Priority.MEDIUM
-                ),
+                priority=(Priority.HIGH if len(widespread_cves) > 5 else Priority.MEDIUM),
                 title=f"{len(widespread_cves)} vulnerabilities affect multiple projects",
                 description=(
                     f"These CVEs appear in {len(widespread_cves)} or more of your projects. "
@@ -201,8 +189,7 @@ def analyze_cross_project_patterns(
                     "total": len(widespread_cves),
                 },
                 affected_components=[
-                    f"{c['cve']} ({c['count']}/{total_projects} projects)"
-                    for c in widespread_cves[:10]
+                    f"{c['cve']} ({c['count']}/{total_projects} projects)" for c in widespread_cves[:10]
                 ],
                 action={
                     "type": "fix_cross_project_vuln",
@@ -220,9 +207,7 @@ def analyze_cross_project_patterns(
             )
         )
 
-    package_usage: Dict[str, Dict[str, Any]] = defaultdict(
-        lambda: {"versions": set(), "projects": []}
-    )
+    package_usage: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"versions": set(), "projects": []})
 
     for proj in projects:
         for pkg in proj.get("packages", []):
@@ -240,15 +225,12 @@ def analyze_cross_project_patterns(
             "version_count": len(data["versions"]),
         }
         for name, data in package_usage.items()
-        if len(data["versions"]) > 1
-        and len(set(data["projects"])) >= CROSS_PROJECT_MIN_OCCURRENCES
+        if len(data["versions"]) > 1 and len(set(data["projects"])) >= CROSS_PROJECT_MIN_OCCURRENCES
     ]
 
     if inconsistent_packages:
         # Sort by spread (how many different versions)
-        inconsistent_packages.sort(
-            key=lambda x: int(cast(int, x["version_count"])), reverse=True
-        )
+        inconsistent_packages.sort(key=lambda x: int(cast(int, x["version_count"])), reverse=True)
 
         recommendations.append(
             Recommendation(
@@ -263,20 +245,8 @@ def analyze_cross_project_patterns(
                 impact={
                     "critical": 0,
                     "high": 0,
-                    "medium": len(
-                        [
-                            p
-                            for p in inconsistent_packages
-                            if int(cast(int, p["version_count"])) > 2
-                        ]
-                    ),
-                    "low": len(
-                        [
-                            p
-                            for p in inconsistent_packages
-                            if int(cast(int, p["version_count"])) <= 2
-                        ]
-                    ),
+                    "medium": len([p for p in inconsistent_packages if int(cast(int, p["version_count"])) > 2]),
+                    "low": len([p for p in inconsistent_packages if int(cast(int, p["version_count"])) <= 2]),
                     "total": len(inconsistent_packages),
                 },
                 affected_components=[
@@ -327,16 +297,11 @@ def analyze_cross_project_patterns(
                         "on these projects."
                     ),
                     impact={
-                        "critical": sum(
-                            p.get("total_critical", 0) for p in top_problematic
-                        ),
+                        "critical": sum(p.get("total_critical", 0) for p in top_problematic),
                         "high": sum(p.get("total_high", 0) for p in top_problematic),
                         "medium": 0,
                         "low": 0,
-                        "total": sum(
-                            p.get("total_critical", 0) + p.get("total_high", 0)
-                            for p in top_problematic
-                        ),
+                        "total": sum(p.get("total_critical", 0) + p.get("total_high", 0) for p in top_problematic),
                     },
                     affected_components=[
                         (

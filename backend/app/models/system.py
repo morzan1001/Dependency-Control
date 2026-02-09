@@ -29,8 +29,7 @@ class SystemSettings(BaseModel):
     github_token: Optional[str] = Field(
         None,
         description=(
-            "Personal Access Token for GitHub API. "
-            "Increases rate limits for GHSA lookups and maintainer checks."
+            "Personal Access Token for GitHub API. Increases rate limits for GHSA lookups and maintainer checks."
         ),
     )
     open_source_malware_api_key: Optional[str] = None

@@ -105,9 +105,7 @@ class DependencyEnrichment(BaseModel):
     version: str
 
     # License info (aggregated from multiple sources)
-    licenses: List[Dict[str, Any]] = Field(
-        default_factory=list
-    )  # [{spdx_id, source, category, ...}]
+    licenses: List[Dict[str, Any]] = Field(default_factory=list)  # [{spdx_id, source, category, ...}]
     primary_license: Optional[str] = None  # Best determined license
     license_category: Optional[str] = None  # permissive, copyleft, etc.
     license_risks: List[str] = Field(default_factory=list)
@@ -199,12 +197,7 @@ class DependencyEnrichment(BaseModel):
             }
 
         # Additional links from deps.dev
-        if (
-            self.documentation_url
-            or self.issues_url
-            or self.changelog_url
-            or self.additional_links
-        ):
+        if self.documentation_url or self.issues_url or self.changelog_url or self.additional_links:
             deps_dev["links"] = {}
             if self.documentation_url:
                 deps_dev["links"]["documentation"] = self.documentation_url

@@ -216,9 +216,7 @@ class SBOMParser:
             if isinstance(tools, list) and len(tools) > 0:
                 first_tool = tools[0]
                 if isinstance(first_tool, dict):
-                    result.tool_name = first_tool.get("name") or first_tool.get(
-                        "vendor"
-                    )
+                    result.tool_name = first_tool.get("name") or first_tool.get("vendor")
                     result.tool_version = first_tool.get("version")
             elif isinstance(tools, dict):
                 # CycloneDX 1.5+ tools object
@@ -297,9 +295,7 @@ class SBOMParser:
             else:
                 result.skipped_components += 1
 
-    def _extract_cyclonedx_source(
-        self, metadata: Dict[str, Any]
-    ) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_cyclonedx_source(self, metadata: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
         """Extract source information from CycloneDX metadata."""
 
         source_type = None
@@ -314,9 +310,7 @@ class SBOMParser:
 
             if comp_type == "container":
                 source_type = SOURCE_TYPE_IMAGE
-                source_target = (
-                    f"{comp_name}:{comp_version}" if comp_version else comp_name
-                )
+                source_target = f"{comp_name}:{comp_version}" if comp_version else comp_name
             elif comp_type in ["application", "library"]:
                 source_type = SOURCE_TYPE_APPLICATION
                 source_target = comp_name
@@ -412,9 +406,7 @@ class SBOMParser:
         # Fallback to global source type
         return global_source_type
 
-    def _construct_purl(
-        self, pkg_type: str, name: str, version: str, group: Optional[str] = None
-    ) -> str:
+    def _construct_purl(self, pkg_type: str, name: str, version: str, group: Optional[str] = None) -> str:
         """Construct a PURL from component metadata."""
         # Normalize type to PURL namespace
         type_mapping = {
@@ -471,11 +463,7 @@ class SBOMParser:
         # Only determine direct status if we have dependency relationship info
         has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
 
-        if (
-            has_dependency_graph
-            and direct_refs is not None
-            and all_transitive_refs is not None
-        ):
+        if has_dependency_graph and direct_refs is not None and all_transitive_refs is not None:
             # Use bom-ref or purl to check
             if check_ref in direct_refs:
                 direct = True
@@ -599,9 +587,7 @@ class SBOMParser:
             properties=properties,
         )
 
-    def _extract_cyclonedx_licenses_full(
-        self, licenses: List[Any]
-    ) -> Tuple[str, Optional[str]]:
+    def _extract_cyclonedx_licenses_full(self, licenses: List[Any]) -> Tuple[str, Optional[str]]:
         """Extract license string and URL from CycloneDX license array."""
         if not licenses:
             return "", None
@@ -845,9 +831,7 @@ class SBOMParser:
             access_path = loc.get("accessPath", "")
 
             # Use accessPath if different from path
-            effective_path = (
-                access_path if access_path and access_path != path else path
-            )
+            effective_path = access_path if access_path and access_path != path else path
 
             if effective_path and effective_path not in locations:
                 locations.append(effective_path)
@@ -950,9 +934,7 @@ class SBOMParser:
             properties=properties,
         )
 
-    def _extract_syft_licenses_full(
-        self, licenses: List[Any]
-    ) -> Tuple[str, Optional[str]]:
+    def _extract_syft_licenses_full(self, licenses: List[Any]) -> Tuple[str, Optional[str]]:
         """Extract license string and URL from Syft license array."""
         if not licenses:
             return "", None
@@ -963,9 +945,7 @@ class SBOMParser:
         for lic in licenses:
             if isinstance(lic, dict):
                 # Syft license object
-                value = (
-                    lic.get("value") or lic.get("spdxExpression") or lic.get("type", "")
-                )
+                value = lic.get("value") or lic.get("spdxExpression") or lic.get("type", "")
                 if value:
                     # Check if value is a URL
                     if is_url(value):
@@ -1032,9 +1012,7 @@ class SBOMParser:
         # Direct = packages that the root DESCRIBES or CONTAINS
         # Also packages that have DEPENDS_ON from root
         direct_package_ids = set()
-        all_dependency_targets = (
-            set()
-        )  # All packages that are dependencies of something
+        all_dependency_targets = set()  # All packages that are dependencies of something
 
         # Build reverse dependency graph: child -> list of parents
         reverse_deps_graph: Dict[str, list] = {}
@@ -1077,10 +1055,7 @@ class SBOMParser:
             is_direct = False
             if pkg_spdx_id in direct_package_ids:
                 is_direct = True
-            elif (
-                pkg_spdx_id in packages_with_deps
-                and pkg_spdx_id not in all_dependency_targets
-            ):
+            elif pkg_spdx_id in packages_with_deps and pkg_spdx_id not in all_dependency_targets:
                 # Has dependencies but no one depends on it - likely a root package
                 is_direct = True
 
@@ -1091,9 +1066,7 @@ class SBOMParser:
             # Get parent components
             parent_components = reverse_deps_graph.get(pkg_spdx_id, [])
 
-            parsed = self._parse_spdx_package(
-                pkg, is_direct, inferred, parent_components
-            )
+            parsed = self._parse_spdx_package(pkg, is_direct, inferred, parent_components)
             if parsed:
                 result.dependencies.append(parsed)
             else:
@@ -1155,11 +1128,7 @@ class SBOMParser:
         # Extract license
         license_concluded = pkg.get("licenseConcluded", "")
         license_declared = pkg.get("licenseDeclared", "")
-        license_str = (
-            license_concluded
-            if license_concluded != "NOASSERTION"
-            else license_declared
-        )
+        license_str = license_concluded if license_concluded != "NOASSERTION" else license_declared
         if license_str == "NOASSERTION":
             license_str = ""
 

@@ -52,7 +52,6 @@ from app.schemas.project import (
     DashboardStats,
     ProjectApiKeyResponse,
     ProjectCreate,
-    ProjectList,
     ProjectListEnriched,
     ProjectWithTeam,
     ProjectMemberInvite,
@@ -210,9 +209,7 @@ async def create_project(
     if project_in.team_id:
         is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
         if not is_member:
-            raise HTTPException(
-                status_code=403, detail="You are not a member of the specified team"
-            )
+            raise HTTPException(status_code=403, detail="You are not a member of the specified team")
 
     # Generate API Key
     project_id = str(uuid.uuid4())
@@ -225,9 +222,7 @@ async def create_project(
         team_id=project_in.team_id,
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
-        retention_days=(
-            project_in.retention_days if project_in.retention_days is not None else 90
-        ),
+        retention_days=(project_in.retention_days if project_in.retention_days is not None else 90),
         members=[ProjectMember(user_id=str(current_user.id), role="admin")],
     )
 
@@ -292,9 +287,7 @@ async def read_projects(
     team_repo = TeamRepository(db)
 
     # Check permission
-    if not has_permission(
-        current_user.permissions, ["project:read", "project:read_all"]
-    ):
+    if not has_permission(current_user.permissions, ["project:read", "project:read_all"]):
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     # Build search query
@@ -365,9 +358,7 @@ async def read_all_scans(
     scan_repo = ScanRepository(db)
 
     # Check permission
-    if not has_permission(
-        current_user.permissions, ["project:read", "project:read_all"]
-    ):
+    if not has_permission(current_user.permissions, ["project:read", "project:read_all"]):
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     # 1. Get accessible project IDs
@@ -377,9 +368,7 @@ async def read_all_scans(
         projection={"_id": 1, "name": 1},
     )
 
-    project_map: Dict[str, str] = {
-        str(p["_id"]): str(p.get("name", "")) for p in projects
-    }
+    project_map: Dict[str, str] = {str(p["_id"]): str(p.get("name", "")) for p in projects}
     project_ids = list(project_map.keys())
 
     if not project_ids:
@@ -441,11 +430,7 @@ async def read_project(
                 "from": "users",
                 "let": {"member_ids": "$members.user_id"},
                 "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}
-                        }
-                    },
+                    {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}}},
                     {"$project": {"_id": 1, "username": 1}},
                 ],
                 "as": "project_users",
@@ -455,17 +440,9 @@ async def read_project(
         {
             "$lookup": {
                 "from": "users",
-                "let": {
-                    "team_member_ids": {"$ifNull": ["$team_data.members.user_id", []]}
-                },
+                "let": {"team_member_ids": {"$ifNull": ["$team_data.members.user_id", []]}},
                 "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {
-                                "$in": [{"$toString": "$_id"}, "$$team_member_ids"]
-                            }
-                        }
-                    },
+                    {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$team_member_ids"]}}},
                     {"$project": {"_id": 1, "username": 1}},
                 ],
                 "as": "team_users",
@@ -547,22 +524,16 @@ async def update_project(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
     else:
-        project = await check_project_access(
-            project_id, current_user, db, required_role="admin"
-        )
+        project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     # If transferring to a team, verify membership
     if project_in.team_id and project_in.team_id != project.team_id:
         # Check if user is member of the new team
         # Exception: Users with project:update can transfer to any team
         if not has_permission(current_user.permissions, "project:update"):
-            is_member = await team_repo.is_member(
-                project_in.team_id, str(current_user.id)
-            )
+            is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
             if not is_member:
-                raise HTTPException(
-                    status_code=403, detail="You are not a member of the target team"
-                )
+                raise HTTPException(status_code=403, detail="You are not a member of the target team")
 
     update_data = {k: v for k, v in project_in.model_dump(exclude_unset=True).items()}
 
@@ -583,9 +554,7 @@ async def update_project(
     raise HTTPException(status_code=404, detail="Project not found")
 
 
-@router.get(
-    "/{project_id}/branches", response_model=List[str], summary="List project branches"
-)
+@router.get("/{project_id}/branches", response_model=List[str], summary="List project branches")
 async def read_project_branches(
     project_id: str,
     current_user: User = Depends(deps.get_current_active_user),
@@ -601,9 +570,7 @@ async def read_project_branches(
     return sorted(branches)
 
 
-@router.get(
-    "/{project_id}/scans", response_model=List[Scan], summary="List project scans"
-)
+@router.get("/{project_id}/scans", response_model=List[Scan], summary="List project scans")
 async def read_project_scans(
     project_id: str,
     skip: int = 0,
@@ -669,9 +636,7 @@ async def trigger_rescan(
 
     # Ensure scan has SBOMs
     if not scan.get("sbom_refs"):
-        raise HTTPException(
-            status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan."
-        )
+        raise HTTPException(status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan.")
 
     # Determine original scan ID
     # If the source scan is already a re-scan, trace back to find the original
@@ -790,16 +755,12 @@ async def update_notification_settings(
     # Handle enforcement setting (Owner/Admin only)
     if settings.enforce_notification_settings is not None:
         if is_owner or has_update_perm:
-            update_data["enforce_notification_settings"] = (
-                settings.enforce_notification_settings
-            )
+            update_data["enforce_notification_settings"] = settings.enforce_notification_settings
 
     project_repo = ProjectRepository(db)
 
     if is_owner:
-        update_data["owner_notification_preferences"] = (
-            settings.notification_preferences
-        )
+        update_data["owner_notification_preferences"] = settings.notification_preferences
         await project_repo.update(project_id, update_data)
     else:
         # If settings are enforced, regular members cannot update their preferences
@@ -821,9 +782,7 @@ async def update_notification_settings(
                 await project_repo.update_member(
                     project_id,
                     str(current_user.id),
-                    {
-                        f"members.{i}.notification_preferences": settings.notification_preferences
-                    },
+                    {f"members.{i}.notification_preferences": settings.notification_preferences},
                 )
                 member_found = True
                 break
@@ -865,9 +824,7 @@ async def invite_user(
     If the user already exists, they are added immediately.
     Otherwise, an invitation record is created (email sending to be implemented).
     """
-    project = await check_project_access(
-        project_id, current_user, db, required_role="admin"
-    )
+    project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     user_repo = UserRepository(db)
     project_repo = ProjectRepository(db)
@@ -981,9 +938,7 @@ async def read_scan_sboms(
     sbom_refs = scan_data.sbom_refs or []
 
     if not sbom_refs:
-        raise HTTPException(
-            status_code=404, detail="No SBOM data available for this scan"
-        )
+        raise HTTPException(status_code=404, detail="No SBOM data available for this scan")
 
     return await resolve_sbom_refs(db, sbom_refs)
 
@@ -1096,9 +1051,7 @@ async def read_scan_findings(
                 "id": "$finding_id",
                 # Flatten dependency info
                 "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
-                "source_target": {
-                    "$arrayElemAt": ["$dependency_info.source_target", 0]
-                },
+                "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
                 "layer_digest": {"$arrayElemAt": ["$dependency_info.layer_digest", 0]},
                 "found_by": {"$arrayElemAt": ["$dependency_info.found_by", 0]},
                 "locations": {"$arrayElemAt": ["$dependency_info.locations", 0]},
@@ -1180,9 +1133,7 @@ async def update_project_member(
     Update the role of a project member.
     Requires 'admin' role on the project.
     """
-    project = await check_project_access(
-        project_id, current_user, db, required_role="admin"
-    )
+    project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     # Check if target user is a member
     member_index = -1
@@ -1192,15 +1143,11 @@ async def update_project_member(
             break
 
     if member_index == -1:
-        raise HTTPException(
-            status_code=404, detail="User is not a member of this project"
-        )
+        raise HTTPException(status_code=404, detail="User is not a member of this project")
 
     # Prevent changing owner's role via this endpoint (though owner is not in members list usually, but just in case)
     if project.owner_id == user_id:
-        raise HTTPException(
-            status_code=400, detail="Cannot change role of project owner"
-        )
+        raise HTTPException(status_code=400, detail="Cannot change role of project owner")
 
     project_repo = ProjectRepository(db)
 
@@ -1208,9 +1155,7 @@ async def update_project_member(
     if member_in.role:
         update_fields[f"members.{member_index}.role"] = member_in.role
     if member_in.notification_preferences:
-        update_fields[f"members.{member_index}.notification_preferences"] = (
-            member_in.notification_preferences
-        )
+        update_fields[f"members.{member_index}.notification_preferences"] = member_in.notification_preferences
 
     if update_fields:
         await project_repo.update_member(project_id, user_id, update_fields)
@@ -1236,9 +1181,7 @@ async def remove_project_member(
     Remove a user from the project.
     Requires 'admin' role on the project.
     """
-    project = await check_project_access(
-        project_id, current_user, db, required_role="admin"
-    )
+    project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     # Check if target user is a member
     member_exists = False
@@ -1248,9 +1191,7 @@ async def remove_project_member(
             break
 
     if not member_exists:
-        raise HTTPException(
-            status_code=404, detail="User is not a member of this project"
-        )
+        raise HTTPException(status_code=404, detail="User is not a member of this project")
 
     if project.owner_id == user_id:
         raise HTTPException(status_code=400, detail="Cannot remove project owner")
@@ -1278,9 +1219,7 @@ async def export_project_csv(
     scan = await scan_repo.get_latest_for_project(project_id, status="completed")
 
     if not scan:
-        raise HTTPException(
-            status_code=404, detail="No completed scans found for this project"
-        )
+        raise HTTPException(status_code=404, detail="No completed scans found for this project")
 
     # Prepare CSV
     output = io.StringIO()
@@ -1319,9 +1258,7 @@ async def export_project_csv(
     return Response(
         content=output.getvalue(),
         media_type="text/csv",
-        headers={
-            "Content-Disposition": f"attachment; filename=project_{project_id}_scan.csv"
-        },
+        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_scan.csv"},
     )
 
 
@@ -1338,9 +1275,7 @@ async def export_project_sbom(
     scan_data = await scan_repo.get_latest_for_project(project_id, status="completed")
 
     if not scan_data:
-        raise HTTPException(
-            status_code=404, detail="No completed scans found for this project"
-        )
+        raise HTTPException(status_code=404, detail="No completed scans found for this project")
 
     scan = Scan(**scan_data)
 
@@ -1351,9 +1286,7 @@ async def export_project_sbom(
 
     ref = scan.sbom_refs[0]
     if ref.get("storage") != "gridfs" or not ref.get("file_id"):
-        raise HTTPException(
-            status_code=500, detail="Invalid SBOM reference (not GridFS)"
-        )
+        raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
 
     sbom_content = await load_from_gridfs(db, ref["file_id"])
 
@@ -1363,9 +1296,7 @@ async def export_project_sbom(
     return Response(
         content=json.dumps(sbom_content, indent=2),
         media_type="application/json",
-        headers={
-            "Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"
-        },
+        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"},
     )
 
 
@@ -1379,9 +1310,7 @@ async def delete_project(
     Delete a project and all associated data (scans, results).
     Requires 'project:delete' permission or being the project owner.
     """
-    project = await check_project_access(
-        project_id, current_user, db, required_role="admin"
-    )
+    project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     # Additional check: Only global admin or project owner can delete
     has_delete_perm = has_permission(current_user.permissions, "project:delete")

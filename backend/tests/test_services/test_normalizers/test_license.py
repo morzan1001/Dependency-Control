@@ -56,21 +56,13 @@ class TestNormalizeLicense:
 
     def test_default_severity_medium(self):
         """License issues should default to MEDIUM severity."""
-        result = {
-            "license_issues": [
-                {"component": "pkg", "version": "1.0", "license": "MIT"}
-            ]
-        }
+        result = {"license_issues": [{"component": "pkg", "version": "1.0", "license": "MIT"}]}
         self.agg.aggregate("license_compliance", result)
         f = list(self.agg.findings.values())[0]
         assert f.severity == "MEDIUM"
 
     def test_default_description(self):
-        result = {
-            "license_issues": [
-                {"component": "pkg", "version": "1.0", "license": "GPL-2.0"}
-            ]
-        }
+        result = {"license_issues": [{"component": "pkg", "version": "1.0", "license": "GPL-2.0"}]}
         self.agg.aggregate("license_compliance", result)
         f = list(self.agg.findings.values())[0]
         assert "GPL-2.0" in f.description
@@ -96,11 +88,7 @@ class TestNormalizeLicense:
         assert len(self.agg.findings) == 0
 
     def test_unknown_license(self):
-        result = {
-            "license_issues": [
-                {"component": "pkg", "version": "1.0"}
-            ]
-        }
+        result = {"license_issues": [{"component": "pkg", "version": "1.0"}]}
         self.agg.aggregate("license_compliance", result)
         f = list(self.agg.findings.values())[0]
         assert f.details["license"] == "UNKNOWN"

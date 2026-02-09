@@ -3,9 +3,7 @@ from typing import Optional
 from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD
 
 
-def calculate_exploit_maturity(
-    is_kev: bool, kev_ransomware: bool, epss_score: Optional[float]
-) -> str:
+def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: Optional[float]) -> str:
     """
     Determine exploit maturity level.
 

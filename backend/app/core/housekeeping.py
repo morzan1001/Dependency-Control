@@ -105,9 +105,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                 )
 
                 if not latest_valid_scan:
-                    logger.info(
-                        f"Project {project.name} due for re-scan, but no valid previous scan with SBOMs found."
-                    )
+                    logger.info(f"Project {project.name} due for re-scan, but no valid previous scan with SBOMs found.")
                     continue
 
                 # Acquire distributed lock to prevent duplicate rescans
@@ -120,8 +118,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
 
                 if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=60):
                     logger.debug(
-                        f"Could not acquire lock for rescanning {project.name}. "
-                        f"Another pod is creating rescan."
+                        f"Could not acquire lock for rescanning {project.name}. Another pod is creating rescan."
                     )
                     continue
 
@@ -139,9 +136,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                         continue
 
                     # Create rescan
-                    logger.info(
-                        f"Triggering re-scan for project {project.name} (Last scan: {project.last_scan_at})"
-                    )
+                    logger.info(f"Triggering re-scan for project {project.name} (Last scan: {project.last_scan_at})")
 
                     new_scan = Scan(
                         project_id=project.id,
@@ -178,9 +173,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                     # Always release lock
                     await lock_repo.release_lock(lock_name)
             except Exception as e:
-                logger.error(
-                    f"Error processing project {project_data.get('name')}: {e}"
-                )
+                logger.error(f"Error processing project {project_data.get('name')}: {e}")
 
     except Exception as e:
         logger.error(f"Scheduled re-scan check failed: {e}")
@@ -203,12 +196,8 @@ async def run_housekeeping() -> None:
         if system_settings.retention_mode == "global":
             retention_days = system_settings.global_retention_days
             if retention_days > 0:
-                cutoff_date = datetime.now(timezone.utc) - timedelta(
-                    days=retention_days
-                )
-                logger.info(
-                    f"Running global housekeeping. Deleting scans older than {cutoff_date}"
-                )
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
+                logger.info(f"Running global housekeeping. Deleting scans older than {cutoff_date}")
 
                 # Find old scans
                 # IMPORTANT: Don't delete scans that are referenced by rescans (orphaned SBOM protection)
@@ -227,24 +216,12 @@ async def run_housekeeping() -> None:
 
                 if scan_ids_to_delete:
                     # Bulk delete all related data
-                    await db.analysis_results.delete_many(
-                        {"scan_id": {"$in": scan_ids_to_delete}}
-                    )
-                    await db.findings.delete_many(
-                        {"scan_id": {"$in": scan_ids_to_delete}}
-                    )
-                    await db.finding_records.delete_many(
-                        {"scan_id": {"$in": scan_ids_to_delete}}
-                    )
-                    await db.dependencies.delete_many(
-                        {"scan_id": {"$in": scan_ids_to_delete}}
-                    )
-                    result = await db.scans.delete_many(
-                        {"_id": {"$in": scan_ids_to_delete}}
-                    )
-                    logger.info(
-                        f"Global housekeeping: Deleted {result.deleted_count} scans."
-                    )
+                    await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.findings.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.finding_records.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.dependencies.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    result = await db.scans.delete_many({"_id": {"$in": scan_ids_to_delete}})
+                    logger.info(f"Global housekeeping: Deleted {result.deleted_count} scans.")
 
         else:
             # Project-specific retention (Optimized: Group by retention_days)
@@ -288,25 +265,14 @@ async def run_housekeeping() -> None:
 
                 if scan_ids_to_delete:
                     # Bulk delete all related data for this retention group
-                    await db.analysis_results.delete_many(
-                        {"scan_id": {"$in": scan_ids_to_delete}}
-                    )
-                    await db.findings.delete_many(
-                        {"scan_id": {"$in": scan_ids_to_delete}}
-                    )
-                    await db.finding_records.delete_many(
-                        {"scan_id": {"$in": scan_ids_to_delete}}
-                    )
-                    await db.dependencies.delete_many(
-                        {"scan_id": {"$in": scan_ids_to_delete}}
-                    )
-                    result = await db.scans.delete_many(
-                        {"_id": {"$in": scan_ids_to_delete}}
-                    )
+                    await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.findings.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.finding_records.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    await db.dependencies.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
+                    result = await db.scans.delete_many({"_id": {"$in": scan_ids_to_delete}})
 
                     logger.info(
-                        f"Retention {days} days: Deleted {result.deleted_count} scans "
-                        f"from {len(project_ids)} projects."
+                        f"Retention {days} days: Deleted {result.deleted_count} scans from {len(project_ids)} projects."
                     )
 
     except Exception as e:
@@ -336,9 +302,7 @@ async def trigger_stale_pending_scans(
         db = await get_database()
 
         # Threshold since last result
-        stale_threshold = datetime.now(timezone.utc) - timedelta(
-            seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS
-        )
+        stale_threshold = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
 
         # Find pending scans that have results but are stale
         cursor = db.scans.find(

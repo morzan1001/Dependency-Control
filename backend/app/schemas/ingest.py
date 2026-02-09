@@ -20,9 +20,7 @@ class BaseIngest(BaseModel):
     project_name: Optional[str] = Field(None, description="Name of the project")
     commit_message: Optional[str] = Field(None, description="Commit message")
     commit_tag: Optional[str] = Field(None, description="Git tag")
-    pipeline_user: Optional[str] = Field(
-        None, description="User who triggered the pipeline"
-    )
+    pipeline_user: Optional[str] = Field(None, description="User who triggered the pipeline")
 
 
 class ScanContext(BaseModel):
@@ -37,9 +35,7 @@ class ScanContext(BaseModel):
 
 
 class SBOMIngest(BaseIngest):
-    sboms: List[Dict[str, Any]] = Field(
-        default_factory=list, description="List of SBOM JSON contents"
-    )
+    sboms: List[Dict[str, Any]] = Field(default_factory=list, description="List of SBOM JSON contents")
 
 
 class ScanStatsResponse(BaseModel):
@@ -59,17 +55,13 @@ class FindingsIngestResponse(BaseModel):
     scan_id: str = Field(..., description="Unique identifier of the scan")
     findings_count: int = Field(..., description="Number of findings processed")
     waived_count: int = Field(0, description="Number of findings waived")
-    stats: ScanStatsResponse = Field(
-        default_factory=ScanStatsResponse, description="Statistics breakdown"
-    )
+    stats: ScanStatsResponse = Field(default_factory=ScanStatsResponse, description="Statistics breakdown")
 
 
 class SecretScanResponse(BaseModel):
     """Response for secret scanning (TruffleHog) - includes failure status."""
 
-    status: str = Field(
-        ..., description="'failed' if secrets found, 'success' otherwise"
-    )
+    status: str = Field(..., description="'failed' if secrets found, 'success' otherwise")
     scan_id: str = Field(..., description="Unique identifier of the scan")
     findings_count: int = Field(..., description="Number of secrets found")
     waived_count: int = Field(0, description="Number of findings waived")
@@ -82,9 +74,7 @@ class SBOMIngestResponse(BaseModel):
     status: str = Field(..., description="'queued' when successfully submitted")
     scan_id: str = Field(..., description="Unique identifier of the scan")
     message: str = Field(..., description="Human-readable status message")
-    sboms_processed: int = Field(
-        0, description="Number of SBOMs successfully processed"
-    )
+    sboms_processed: int = Field(0, description="Number of SBOMs successfully processed")
     sboms_failed: int = Field(0, description="Number of SBOMs that failed to process")
     dependencies_count: int = Field(0, description="Total dependencies extracted")
     warnings: List[str] = Field(default_factory=list, description="Processing warnings")
@@ -93,7 +83,5 @@ class SBOMIngestResponse(BaseModel):
 class ProjectConfigResponse(BaseModel):
     """Response for project configuration endpoint."""
 
-    active_analyzers: List[str] = Field(
-        default_factory=list, description="List of active analyzer names"
-    )
+    active_analyzers: List[str] = Field(default_factory=list, description="List of active analyzer names")
     retention_days: int = Field(90, description="Scan retention period in days")

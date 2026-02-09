@@ -71,9 +71,7 @@ except ImportError:
 router = CustomAPIRouter()
 
 
-@router.post(
-    "/login/access-token", response_model=Token, summary="Login to get access token"
-)
+@router.post("/login/access-token", response_model=Token, summary="Login to get access token")
 async def login_access_token(
     db: AsyncIOMotorDatabase = Depends(get_database),
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -92,9 +90,7 @@ async def login_access_token(
     if not user:
         user = await user_repo.get_raw_by_email(form_data.username)
 
-    if not user or not security.verify_password(
-        form_data.password, user.get("hashed_password")
-    ):
+    if not user or not security.verify_password(form_data.password, user.get("hashed_password")):
         if auth_login_attempts_total:
             auth_login_attempts_total.labels(status="failed").inc()
         raise HTTPException(
@@ -132,9 +128,7 @@ async def login_access_token(
 
         totp_secret = user.get("totp_secret")
         if not totp_secret:
-            logger.error(
-                f"User {user.get('username')} has totp_enabled=True but no totp_secret"
-            )
+            logger.error(f"User {user.get('username')} has totp_enabled=True but no totp_secret")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="2FA configuration error. Please contact support.",
@@ -176,22 +170,16 @@ async def login_access_token(
     }
 
 
-@router.post(
-    "/login/refresh-token", response_model=Token, summary="Refresh access token"
-)
+@router.post("/login/refresh-token", response_model=Token, summary="Refresh access token")
 async def refresh_token(
-    refresh_token: str = Body(
-        ..., embed=True, description="The refresh token obtained during login"
-    ),
+    refresh_token: str = Body(..., embed=True, description="The refresh token obtained during login"),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> Any:
     """
     Get a new access token using a valid refresh token.
     """
     try:
-        payload = jwt.decode(
-            refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         token_data = TokenPayload(**payload)
     except (JWTError, ValidationError) as exc:
         raise HTTPException(
@@ -327,9 +315,7 @@ async def logout(
 
         # Decode token to get JTI and expiration
         try:
-            payload = jwt.decode(
-                token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-            )
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             jti = payload.get("jti")
             exp_timestamp = payload.get("exp")
 
@@ -340,18 +326,14 @@ async def logout(
                 # Blacklist the token
                 blacklist_repo = TokenBlacklistRepository(db)
                 await blacklist_repo.blacklist_token(jti, exp_datetime, reason="logout")
-                logger.info(
-                    f"Token {jti[:8]}... blacklisted for user {current_user.username}"
-                )
+                logger.info(f"Token {jti[:8]}... blacklisted for user {current_user.username}")
         except Exception as e:
             logger.warning(f"Could not blacklist token on logout: {e}")
 
     # Update last_logout_at for backward compatibility
     # (invalidates tokens without JTI or issued before this timestamp)
     user_repo = UserRepository(db)
-    await user_repo.update(
-        current_user.id, {"last_logout_at": datetime.now(timezone.utc)}
-    )
+    await user_repo.update(current_user.id, {"last_logout_at": datetime.now(timezone.utc)})
 
     return LogoutResponse(message="Successfully logged out")
 
@@ -390,9 +372,7 @@ async def request_verification_email(
     response_model=EmailVerifyResponse,
     summary="Verify email address",
 )
-async def verify_email(
-    token: str, db: AsyncIOMotorDatabase = Depends(get_database)
-) -> EmailVerifyResponse:
+async def verify_email(token: str, db: AsyncIOMotorDatabase = Depends(get_database)) -> EmailVerifyResponse:
     """
     Verify email address using the token sent via email.
     """
@@ -458,9 +438,7 @@ async def resend_verification_email_public(
     # Always return generic response to prevent email enumeration
     # Only send email if user exists, is active, and is not verified
     if user and user.get("is_active", True) and not user.get("is_verified"):
-        await send_verification_email(
-            background_tasks, user["email"], system_settings=system_config
-        )
+        await send_verification_email(background_tasks, user["email"], system_settings=system_config)
 
     return generic_response
 
@@ -470,22 +448,15 @@ async def resend_verification_email_public(
     summary="Initiate OIDC login",
     description="Redirects the user to the configured OIDC provider for authentication.",
 )
-async def login_oidc_authorize(
-    request: Request, db: AsyncIOMotorDatabase = Depends(get_database)
-):
+async def login_oidc_authorize(request: Request, db: AsyncIOMotorDatabase = Depends(get_database)):
     """
     Initiate OIDC login flow by redirecting to the identity provider.
     """
     system_config = await deps.get_system_settings(db)
     if not system_config.oidc_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC is not enabled"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC is not enabled")
 
-    if (
-        not system_config.oidc_client_id
-        or not system_config.oidc_authorization_endpoint
-    ):
+    if not system_config.oidc_client_id or not system_config.oidc_authorization_endpoint:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OIDC is not properly configured",
@@ -503,9 +474,7 @@ async def login_oidc_authorize(
     state = secrets.token_urlsafe(32)
 
     # Store state in cache for validation in callback
-    await cache_service.set(
-        f"oidc_state:{state}", {"valid": True}, OIDC_STATE_TTL_SECONDS
-    )
+    await cache_service.set(f"oidc_state:{state}", {"valid": True}, OIDC_STATE_TTL_SECONDS)
 
     params = {
         "client_id": system_config.oidc_client_id,
@@ -536,14 +505,9 @@ async def login_oidc_callback(
     """
     system_config = await deps.get_system_settings(db)
     if not system_config.oidc_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC is not enabled"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC is not enabled")
 
-    if (
-        not system_config.oidc_token_endpoint
-        or not system_config.oidc_userinfo_endpoint
-    ):
+    if not system_config.oidc_token_endpoint or not system_config.oidc_userinfo_endpoint:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OIDC endpoints not configured",
@@ -551,9 +515,7 @@ async def login_oidc_callback(
 
     # Validate OIDC state to prevent CSRF attacks
     if not state:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing state parameter"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing state parameter")
 
     # If two requests arrive with same state, only one succeeds
     state_key = f"oidc_state:{state}"
@@ -601,21 +563,15 @@ async def login_oidc_callback(
     async with InstrumentedAsyncClient("OIDC Provider", timeout=OIDC_HTTP_TIMEOUT_SECONDS) as client:
         # Exchange code for token
         try:
-            response = await client.post(
-                system_config.oidc_token_endpoint, data=token_data
-            )
+            response = await client.post(system_config.oidc_token_endpoint, data=token_data)
         except httpx.TimeoutException:
-            logger.error(
-                f"Timeout while requesting OIDC token from {system_config.oidc_token_endpoint}"
-            )
+            logger.error(f"Timeout while requesting OIDC token from {system_config.oidc_token_endpoint}")
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail="OIDC provider request timed out. Please try again.",
             )
         except httpx.RequestError as exc:
-            logger.error(
-                f"An error occurred while requesting {exc.request.url!r}: {exc}"
-            )
+            logger.error(f"An error occurred while requesting {exc.request.url!r}: {exc}")
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=(
@@ -643,17 +599,13 @@ async def login_oidc_callback(
                 headers={"Authorization": f"Bearer {access_token}"},
             )
         except httpx.TimeoutException:
-            logger.error(
-                f"Timeout while requesting user info from {system_config.oidc_userinfo_endpoint}"
-            )
+            logger.error(f"Timeout while requesting user info from {system_config.oidc_userinfo_endpoint}")
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail="OIDC provider request timed out. Please try again.",
             )
         except httpx.RequestError as exc:
-            logger.error(
-                f"An error occurred while requesting user info {exc.request.url!r}: {exc}"
-            )
+            logger.error(f"An error occurred while requesting user info {exc.request.url!r}: {exc}")
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=(
@@ -727,9 +679,7 @@ async def login_oidc_callback(
         if existing_auth_provider == "local" or existing_auth_provider is None:
             if auth_oidc_logins_total:
                 auth_oidc_logins_total.labels(status="local_user_blocked").inc()
-            logger.warning(
-                f"OIDC login attempt blocked for local user: {email}"
-            )
+            logger.warning(f"OIDC login attempt blocked for local user: {email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="This account uses local authentication. Please login with your password.",

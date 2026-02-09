@@ -63,9 +63,7 @@ def _verify_token(token: str, expected_type: str) -> Optional[str]:
         The subject (sub claim) if valid, None otherwise
     """
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("type") != expected_type:
             return None
         return payload.get("sub")
@@ -89,9 +87,7 @@ def create_access_token(
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        )
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     return _create_token(
         subject=str(subject),
@@ -101,16 +97,12 @@ def create_access_token(
     )
 
 
-def create_refresh_token(
-    subject: Union[str, Any], expires_delta: Optional[timedelta] = None
-) -> str:
+def create_refresh_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     """Create a refresh token."""
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(
-            days=settings.REFRESH_TOKEN_EXPIRE_DAYS
-        )
+        expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
     return _create_token(subject=str(subject), token_type="refresh", expire=expire)
 
@@ -129,9 +121,7 @@ def get_password_hash(password: str) -> str:
 
 def create_email_verification_token(email: str) -> str:
     """Create an email verification token (valid for 24 hours)."""
-    expire = datetime.now(timezone.utc) + timedelta(
-        hours=EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS
-    )
+    expire = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS)
     return _create_token(subject=email, token_type="email_verification", expire=expire)
 
 
@@ -142,9 +132,7 @@ def verify_email_verification_token(token: str) -> Optional[str]:
 
 def create_password_reset_token(email: str) -> str:
     """Create a password reset token (valid for 1 hour)."""
-    expire = datetime.now(timezone.utc) + timedelta(
-        hours=PASSWORD_RESET_TOKEN_EXPIRE_HOURS
-    )
+    expire = datetime.now(timezone.utc) + timedelta(hours=PASSWORD_RESET_TOKEN_EXPIRE_HOURS)
     return _create_token(subject=email, token_type="password_reset", expire=expire)
 
 

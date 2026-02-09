@@ -22,9 +22,7 @@ class FindingRecord(Finding):
     scan_id: str = Field(..., description="Reference to the scan")
 
     # The logical ID from the analyzer (e.g. CVE-xxx)
-    finding_id: str = Field(
-        ..., description="Logical ID of the finding (e.g. CVE-2021-44228)"
-    )
+    finding_id: str = Field(..., description="Logical ID of the finding (e.g. CVE-2021-44228)")
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

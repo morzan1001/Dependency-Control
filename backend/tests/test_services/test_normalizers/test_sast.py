@@ -3,7 +3,6 @@
 Tests verify correct normalization of SAST scanner output into findings.
 """
 
-from app.models.finding import FindingType
 from app.services.aggregator import ResultAggregator
 
 
@@ -17,19 +16,21 @@ class TestNormalizeOpengrep:
         return {"results": findings}
 
     def test_basic_finding(self):
-        result = self._opengrep_result([
-            {
-                "check_id": "rules.python.sql-injection",
-                "path": "app/views.py",
-                "start": {"line": 42, "col": 5},
-                "end": {"line": 42, "col": 60},
-                "extra": {
-                    "severity": "ERROR",
-                    "message": "SQL injection detected",
-                    "metadata": {},
-                },
-            }
-        ])
+        result = self._opengrep_result(
+            [
+                {
+                    "check_id": "rules.python.sql-injection",
+                    "path": "app/views.py",
+                    "start": {"line": 42, "col": 5},
+                    "end": {"line": 42, "col": 60},
+                    "extra": {
+                        "severity": "ERROR",
+                        "message": "SQL injection detected",
+                        "metadata": {},
+                    },
+                }
+            ]
+        )
         self.agg.aggregate("opengrep", result)
         findings = self.agg.get_findings()
         assert len(findings) == 1
@@ -42,70 +43,78 @@ class TestNormalizeOpengrep:
         """OpenGrep ERROR -> HIGH, WARNING -> MEDIUM, INFO -> LOW."""
         for og_sev, expected in [("ERROR", "HIGH"), ("WARNING", "MEDIUM"), ("INFO", "LOW")]:
             agg = ResultAggregator()
-            result = self._opengrep_result([
-                {
-                    "check_id": "test-rule",
-                    "path": "file.py",
-                    "start": {"line": 1, "col": 1},
-                    "end": {"line": 1, "col": 10},
-                    "extra": {"severity": og_sev, "message": "test", "metadata": {}},
-                }
-            ])
+            result = self._opengrep_result(
+                [
+                    {
+                        "check_id": "test-rule",
+                        "path": "file.py",
+                        "start": {"line": 1, "col": 1},
+                        "end": {"line": 1, "col": 10},
+                        "extra": {"severity": og_sev, "message": "test", "metadata": {}},
+                    }
+                ]
+            )
             agg.aggregate("opengrep", result)
             f = list(agg.findings.values())[0]
             assert f.severity == expected, f"OpenGrep {og_sev} should map to {expected}"
 
     def test_cwe_ids_normalized(self):
-        result = self._opengrep_result([
-            {
-                "check_id": "test-rule",
-                "path": "file.py",
-                "start": {"line": 1, "col": 1},
-                "end": {"line": 1, "col": 10},
-                "extra": {
-                    "severity": "ERROR",
-                    "message": "test",
-                    "metadata": {"cwe": ["CWE-79", "CWE-89"]},
-                },
-            }
-        ])
+        result = self._opengrep_result(
+            [
+                {
+                    "check_id": "test-rule",
+                    "path": "file.py",
+                    "start": {"line": 1, "col": 1},
+                    "end": {"line": 1, "col": 10},
+                    "extra": {
+                        "severity": "ERROR",
+                        "message": "test",
+                        "metadata": {"cwe": ["CWE-79", "CWE-89"]},
+                    },
+                }
+            ]
+        )
         self.agg.aggregate("opengrep", result)
         f = list(self.agg.findings.values())[0]
         assert f.details["cwe_ids"] == ["79", "89"]
 
     def test_owasp_metadata_captured(self):
-        result = self._opengrep_result([
-            {
-                "check_id": "test-rule",
-                "path": "file.py",
-                "start": {"line": 1, "col": 1},
-                "end": {"line": 1, "col": 10},
-                "extra": {
-                    "severity": "ERROR",
-                    "message": "test",
-                    "metadata": {"owasp": ["A01:2021"]},
-                },
-            }
-        ])
+        result = self._opengrep_result(
+            [
+                {
+                    "check_id": "test-rule",
+                    "path": "file.py",
+                    "start": {"line": 1, "col": 1},
+                    "end": {"line": 1, "col": 10},
+                    "extra": {
+                        "severity": "ERROR",
+                        "message": "test",
+                        "metadata": {"owasp": ["A01:2021"]},
+                    },
+                }
+            ]
+        )
         self.agg.aggregate("opengrep", result)
         f = list(self.agg.findings.values())[0]
         assert f.details["owasp"] == ["A01:2021"]
 
     def test_rule_name_in_description(self):
         """When check_id has dots, last part should prefix the description."""
-        result = self._opengrep_result([
-            {
-                "check_id": "rules.python.sql-injection",
-                "path": "file.py",
-                "start": {"line": 1, "col": 1},
-                "end": {"line": 1, "col": 10},
-                "extra": {
-                    "severity": "ERROR",
-                    "message": "Raw query used",
-                    "metadata": {},
-                },
-            }
-        ])
+        result = self._opengrep_result(
+            [
+                {
+                    "check_id": "rules.python.sql-injection",
+                    "path": "file.py",
+                    "start": {"line": 1, "col": 1},
+                    "end": {"line": 1, "col": 10},
+                    "extra": {
+                        "severity": "ERROR",
+                        "message": "Raw query used",
+                        "metadata": {},
+                    },
+                }
+            ]
+        )
         self.agg.aggregate("opengrep", result)
         f = list(self.agg.findings.values())[0]
         assert "sql-injection" in f.description
@@ -136,15 +145,17 @@ class TestNormalizeOpengrep:
         assert len(self.agg.findings) == 0
 
     def test_location_captured(self):
-        result = self._opengrep_result([
-            {
-                "check_id": "rule",
-                "path": "src/app.py",
-                "start": {"line": 10, "col": 5},
-                "end": {"line": 15, "col": 20},
-                "extra": {"severity": "ERROR", "message": "test", "metadata": {}},
-            }
-        ])
+        result = self._opengrep_result(
+            [
+                {
+                    "check_id": "rule",
+                    "path": "src/app.py",
+                    "start": {"line": 10, "col": 5},
+                    "end": {"line": 15, "col": 20},
+                    "extra": {"severity": "ERROR", "message": "test", "metadata": {}},
+                }
+            ]
+        )
         self.agg.aggregate("opengrep", result)
         f = list(self.agg.findings.values())[0]
         assert f.details["start"] == {"line": 10, "column": 5}
@@ -207,12 +218,8 @@ class TestNormalizeBearer:
         """Bearer can group findings by severity key in a dict."""
         result = {
             "findings": {
-                "high": [
-                    {"id": "rule1", "title": "High issue", "full_filename": "a.py", "line_number": 1}
-                ],
-                "low": [
-                    {"id": "rule2", "title": "Low issue", "full_filename": "b.py", "line_number": 1}
-                ],
+                "high": [{"id": "rule1", "title": "High issue", "full_filename": "a.py", "line_number": 1}],
+                "low": [{"id": "rule2", "title": "Low issue", "full_filename": "b.py", "line_number": 1}],
             }
         }
         self.agg.aggregate("bearer", result)
@@ -220,13 +227,7 @@ class TestNormalizeBearer:
 
     def test_severity_injected_from_group_key(self):
         """When findings are grouped by severity, items without 'severity' get it from the key."""
-        result = {
-            "findings": {
-                "high": [
-                    {"id": "rule1", "title": "test", "full_filename": "a.py", "line_number": 1}
-                ]
-            }
-        }
+        result = {"findings": {"high": [{"id": "rule1", "title": "test", "full_filename": "a.py", "line_number": 1}]}}
         self.agg.aggregate("bearer", result)
         f = list(self.agg.findings.values())[0]
         assert f.severity == "HIGH"

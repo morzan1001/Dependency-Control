@@ -50,9 +50,7 @@ class VulnerabilityEnrichmentService:
             if self._http_client is not None and self._http_client._client is not None:
                 return self._http_client
             timeout = ANALYZER_TIMEOUTS.get("default", 30.0)
-            self._http_client = InstrumentedAsyncClient(
-                "Enrichment Service", timeout=timeout
-            )
+            self._http_client = InstrumentedAsyncClient("Enrichment Service", timeout=timeout)
             await self._http_client.start()
         return self._http_client
 
@@ -124,27 +122,19 @@ class VulnerabilityEnrichmentService:
                 kev_due_date=kev_entry.due_date if kev_entry else None,
                 kev_required_action=kev_entry.required_action if kev_entry else None,
                 kev_ransomware_use=kev_ransomware,
-                exploit_maturity=calculate_exploit_maturity(
-                    is_kev, kev_ransomware, epss_score
-                ),
-                risk_score=calculate_risk_score(
-                    cvss, epss_score, is_kev, kev_ransomware
-                ),
+                exploit_maturity=calculate_exploit_maturity(is_kev, kev_ransomware, epss_score),
+                risk_score=calculate_risk_score(cvss, epss_score, is_kev, kev_ransomware),
             )
 
             results[cve] = enrichment
 
         kev_count = sum(1 for e in results.values() if e.is_kev)
         epss_count = sum(1 for e in results.values() if e.epss_score is not None)
-        logger.info(
-            f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {epss_count})"
-        )
+        logger.info(f"Enriched {len(results)} CVEs (KEV: {kev_count}, EPSS: {epss_count})")
 
         return results
 
-    async def enrich_findings(
-        self, findings: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    async def enrich_findings(self, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Enrich a list of vulnerability findings with EPSS and KEV data.
         Modifies findings in-place and returns them.
@@ -262,9 +252,7 @@ class VulnerabilityEnrichmentService:
                             finding["aliases"].append(ghsa_data.cve_id)
 
         # Enrich CVEs (only CVE- prefixed, not GHSA-)
-        cves_to_enrich = [
-            cve for cve in cve_to_findings.keys() if cve.startswith("CVE-")
-        ]
+        cves_to_enrich = [cve for cve in cve_to_findings.keys() if cve.startswith("CVE-")]
         enrichments = await self.enrich_cves(cves_to_enrich, cvss_scores)
 
         # Apply enrichment to findings and their vulnerabilities
@@ -294,36 +282,23 @@ class VulnerabilityEnrichmentService:
                 if enrichment.epss_score is not None:
                     if max_epss is None or enrichment.epss_score > max_epss:
                         finding["details"]["epss_score"] = enrichment.epss_score
-                        finding["details"][
-                            "epss_percentile"
-                        ] = enrichment.epss_percentile
+                        finding["details"]["epss_percentile"] = enrichment.epss_percentile
                         finding["details"]["epss_date"] = enrichment.epss_date
 
                 if enrichment.is_kev:
                     finding["details"]["in_kev"] = True
                     finding["details"]["kev_date_added"] = enrichment.kev_date_added
                     finding["details"]["kev_due_date"] = enrichment.kev_due_date
-                    finding["details"][
-                        "kev_required_action"
-                    ] = enrichment.kev_required_action
-                    finding["details"][
-                        "kev_ransomware_use"
-                    ] = enrichment.kev_ransomware_use
+                    finding["details"]["kev_required_action"] = enrichment.kev_required_action
+                    finding["details"]["kev_ransomware_use"] = enrichment.kev_ransomware_use
 
-                if (
-                    enrichment.exploit_maturity
-                    and enrichment.exploit_maturity != "unknown"
-                ):
-                    current_maturity = finding["details"].get(
-                        "exploit_maturity", "unknown"
-                    )
+                if enrichment.exploit_maturity and enrichment.exploit_maturity != "unknown":
+                    current_maturity = finding["details"].get("exploit_maturity", "unknown")
                     # Keep the more severe maturity level
-                    if EXPLOIT_MATURITY_ORDER.get(
-                        enrichment.exploit_maturity, 0
-                    ) > EXPLOIT_MATURITY_ORDER.get(current_maturity, 0):
-                        finding["details"][
-                            "exploit_maturity"
-                        ] = enrichment.exploit_maturity
+                    if EXPLOIT_MATURITY_ORDER.get(enrichment.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(
+                        current_maturity, 0
+                    ):
+                        finding["details"]["exploit_maturity"] = enrichment.exploit_maturity
 
                 if enrichment.risk_score is not None:
                     current_risk = finding["details"].get("risk_score")
@@ -343,6 +318,4 @@ class VulnerabilityEnrichmentService:
         Calculate an adjusted risk score considering reachability.
         Delegates to scoring module.
         """
-        return calculate_adjusted_risk_score(
-            base_risk_score, is_reachable, reachability_level
-        )
+        return calculate_adjusted_risk_score(base_risk_score, is_reachable, reachability_level)

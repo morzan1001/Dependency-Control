@@ -83,12 +83,8 @@ class WebhookService:
             timeout: Timeout for webhook HTTP requests in seconds (default from settings)
             max_retries: Maximum number of retry attempts for failed deliveries (default from settings)
         """
-        self.timeout = (
-            timeout if timeout is not None else settings.WEBHOOK_TIMEOUT_SECONDS
-        )
-        self.max_retries = (
-            max_retries if max_retries is not None else settings.WEBHOOK_MAX_RETRIES
-        )
+        self.timeout = timeout if timeout is not None else settings.WEBHOOK_TIMEOUT_SECONDS
+        self.max_retries = max_retries if max_retries is not None else settings.WEBHOOK_MAX_RETRIES
 
     def _generate_signature(self, secret: str, payload: str) -> str:
         """
@@ -384,25 +380,16 @@ class WebhookService:
                             f"Webhook {webhook.id} returned non-success status {response.status_code} "
                             f"for {event_type}: {response.text[:200]}"
                         )
-                        last_error = (
-                            f"HTTP {response.status_code}: {response.text[:200]}"
-                        )
+                        last_error = f"HTTP {response.status_code}: {response.text[:200]}"
 
             except httpx.TimeoutException:
-                logger.warning(
-                    f"Webhook {webhook.id} timed out for {event_type} (attempt {retry_count + 1})"
-                )
+                logger.warning(f"Webhook {webhook.id} timed out for {event_type} (attempt {retry_count + 1})")
                 last_error = "Timeout"
             except httpx.RequestError as e:
-                logger.warning(
-                    f"Webhook {webhook.id} request failed for {event_type}: {e} "
-                    f"(attempt {retry_count + 1})"
-                )
+                logger.warning(f"Webhook {webhook.id} request failed for {event_type}: {e} (attempt {retry_count + 1})")
                 last_error = str(e)
             except Exception as e:
-                logger.error(
-                    f"Unexpected error sending webhook {webhook.id} for {event_type}: {e}"
-                )
+                logger.error(f"Unexpected error sending webhook {webhook.id} for {event_type}: {e}")
                 last_error = str(e)
 
             retry_count += 1
@@ -412,8 +399,7 @@ class WebhookService:
 
         # All retries failed
         logger.error(
-            f"Webhook {webhook.id} failed after {self.max_retries} attempts for {event_type}. "
-            f"Last error: {last_error}"
+            f"Webhook {webhook.id} failed after {self.max_retries} attempts for {event_type}. Last error: {last_error}"
         )
         await self._update_webhook_status(db, webhook.id, success=False)
         # Log failed delivery
@@ -507,21 +493,15 @@ class WebhookService:
                 return
 
             logger.info(
-                f"Triggering {len(webhooks)} webhook(s) for event {event_type} "
-                f"(project: {project_id or 'global'})"
+                f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})"
             )
 
             # Track metric
             if webhooks_triggered_total:
-                webhooks_triggered_total.labels(event_type=event_type).inc(
-                    len(webhooks)
-                )
+                webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
 
             # Trigger webhooks concurrently
-            tasks = [
-                self._send_webhook(db, webhook, payload, event_type)
-                for webhook in webhooks
-            ]
+            tasks = [self._send_webhook(db, webhook, payload, event_type) for webhook in webhooks]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -529,9 +509,7 @@ class WebhookService:
             failed_count = 0
             for idx, result in enumerate(results):
                 if isinstance(result, Exception):
-                    logger.error(
-                        f"Webhook {webhooks[idx].id} raised exception: {result}"
-                    )
+                    logger.error(f"Webhook {webhooks[idx].id} raised exception: {result}")
                     failed_count += 1
                 elif result is False:
                     failed_count += 1
@@ -541,8 +519,7 @@ class WebhookService:
                 webhooks_failed_total.labels(event_type=event_type).inc(failed_count)
 
             logger.info(
-                f"Webhooks for {event_type} completed: "
-                f"{len(webhooks) - failed_count} succeeded, {failed_count} failed"
+                f"Webhooks for {event_type} completed: {len(webhooks) - failed_count} succeeded, {failed_count} failed"
             )
 
         except Exception as e:
@@ -585,9 +562,7 @@ class WebhookService:
             },
         }
 
-        await self.trigger_webhooks(
-            db, WEBHOOK_EVENT_SCAN_COMPLETED, payload, project_id
-        )
+        await self.trigger_webhooks(db, WEBHOOK_EVENT_SCAN_COMPLETED, payload, project_id)
 
     async def trigger_vulnerability_found(
         self,
@@ -635,9 +610,7 @@ class WebhookService:
             },
         }
 
-        await self.trigger_webhooks(
-            db, WEBHOOK_EVENT_VULNERABILITY_FOUND, payload, project_id
-        )
+        await self.trigger_webhooks(db, WEBHOOK_EVENT_VULNERABILITY_FOUND, payload, project_id)
 
     async def trigger_analysis_failed(
         self,
@@ -671,9 +644,7 @@ class WebhookService:
             "error": error_message,
         }
 
-        await self.trigger_webhooks(
-            db, WEBHOOK_EVENT_ANALYSIS_FAILED, payload, project_id
-        )
+        await self.trigger_webhooks(db, WEBHOOK_EVENT_ANALYSIS_FAILED, payload, project_id)
 
     async def test_webhook(
         self,

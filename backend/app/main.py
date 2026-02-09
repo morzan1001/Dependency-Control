@@ -75,9 +75,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global exception handler caught: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={
-            "detail": "Internal Server Error. Please check the logs for more details."
-        },
+        content={"detail": "Internal Server Error. Please check the logs for more details."},
     )
 
 
@@ -95,9 +93,7 @@ async def startup_event():
             logger.info("Application startup complete.")
             break
         except (ServerSelectionTimeoutError, ConnectionFailure) as e:
-            logger.warning(
-                f"Database connection failed (Attempt {i+1}/{max_retries}): {e}"
-            )
+            logger.warning(f"Database connection failed (Attempt {i + 1}/{max_retries}): {e}")
             await close_mongo_connection()
             if i < max_retries - 1:
                 logger.info(f"Retrying in {retry_interval} seconds...")
@@ -122,20 +118,12 @@ app.get("/metrics", include_in_schema=False)(metrics_endpoint)
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}", tags=["auth"])
 app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest"])
-app.include_router(
-    projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"]
-)
+app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(teams.router, prefix=f"{settings.API_V1_STR}/teams", tags=["teams"])
-app.include_router(
-    waivers.router, prefix=f"{settings.API_V1_STR}/waivers", tags=["waivers"]
-)
-app.include_router(
-    webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["webhooks"]
-)
-app.include_router(
-    system.router, prefix=f"{settings.API_V1_STR}/system", tags=["system"]
-)
+app.include_router(waivers.router, prefix=f"{settings.API_V1_STR}/waivers", tags=["waivers"])
+app.include_router(webhooks.router, prefix=f"{settings.API_V1_STR}/webhooks", tags=["webhooks"])
+app.include_router(system.router, prefix=f"{settings.API_V1_STR}/system", tags=["system"])
 app.include_router(
     gitlab_instances.router,
     prefix=f"{settings.API_V1_STR}/gitlab-instances",
@@ -156,12 +144,8 @@ app.include_router(
     prefix=f"{settings.API_V1_STR}/notifications",
     tags=["notifications"],
 )
-app.include_router(
-    analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"]
-)
-app.include_router(
-    callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"]
-)
+app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
+app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 
 

@@ -25,9 +25,7 @@ class MattermostProvider(NotificationProvider):
         # Lock to prevent concurrent bot ID fetches within the same pod
         self._bot_id_lock = asyncio.Lock()
 
-    async def _get_bot_user_id(
-        self, client: httpx.AsyncClient, base_url: str, headers: dict
-    ) -> Optional[str]:
+    async def _get_bot_user_id(self, client: httpx.AsyncClient, base_url: str, headers: dict) -> Optional[str]:
         if self._bot_user_id:
             return self._bot_user_id
 
@@ -38,9 +36,7 @@ class MattermostProvider(NotificationProvider):
                 return self._bot_user_id
 
             try:
-                response = await client.get(
-                    f"{base_url}/api/v4/users/me", headers=headers
-                )
+                response = await client.get(f"{base_url}/api/v4/users/me", headers=headers)
                 if response.status_code == 200:
                     self._bot_user_id = response.json()["id"]
                     return self._bot_user_id
@@ -57,15 +53,11 @@ class MattermostProvider(NotificationProvider):
         # Remove @ if present
         username = username.lstrip("@")
         try:
-            response = await client.get(
-                f"{base_url}/api/v4/users/username/{username}", headers=headers
-            )
+            response = await client.get(f"{base_url}/api/v4/users/username/{username}", headers=headers)
             if response.status_code == 200:
                 return response.json()["id"]
             else:
-                logger.warning(
-                    f"Mattermost user '{username}' not found: {response.text}"
-                )
+                logger.warning(f"Mattermost user '{username}' not found: {response.text}")
                 return None
         except Exception as e:
             logger.error(f"Error getting Mattermost user ID for {username}: {e}")
@@ -80,9 +72,7 @@ class MattermostProvider(NotificationProvider):
 
         try:
             payload = [bot_id, user_id]
-            response = await client.post(
-                f"{base_url}/api/v4/channels/direct", headers=headers, json=payload
-            )
+            response = await client.post(f"{base_url}/api/v4/channels/direct", headers=headers, json=payload)
             if response.status_code in [200, 201]:
                 return response.json()["id"]
             else:
@@ -100,9 +90,7 @@ class MattermostProvider(NotificationProvider):
 
         # First, get teams the bot is in
         try:
-            response = await client.get(
-                f"{base_url}/api/v4/users/me/teams", headers=headers
-            )
+            response = await client.get(f"{base_url}/api/v4/users/me/teams", headers=headers)
             if response.status_code != 200:
                 logger.warning(f"Failed to get Mattermost teams: {response.text}")
                 return None
@@ -118,9 +106,7 @@ class MattermostProvider(NotificationProvider):
                 if chan_response.status_code == 200:
                     return chan_response.json()["id"]
 
-            logger.warning(
-                f"Mattermost channel '{channel_name}' not found in any team."
-            )
+            logger.warning(f"Mattermost channel '{channel_name}' not found in any team.")
             return None
 
         except Exception as e:
@@ -136,9 +122,7 @@ class MattermostProvider(NotificationProvider):
     ) -> bool:
         # Determine configuration
         mattermost_url = system_settings.mattermost_url if system_settings else None
-        mattermost_token = (
-            system_settings.mattermost_bot_token if system_settings else None
-        )
+        mattermost_token = system_settings.mattermost_bot_token if system_settings else None
 
         if not mattermost_token or not mattermost_url:
             logger.warning("Mattermost not configured. Skipping notification.")
@@ -158,24 +142,16 @@ class MattermostProvider(NotificationProvider):
 
                 # If destination looks like a username, try to resolve it to a DM channel
                 if destination.startswith("@"):
-                    user_id = await self._get_user_id_by_username(
-                        client, destination, base_url, headers
-                    )
+                    user_id = await self._get_user_id_by_username(client, destination, base_url, headers)
                     if not user_id:
-                        logger.error(
-                            f"Cannot send Mattermost DM: User {destination} not found"
-                        )
+                        logger.error(f"Cannot send Mattermost DM: User {destination} not found")
                         if notifications_failed_total:
                             notifications_failed_total.labels(type="mattermost").inc()
                         return False
 
-                    dm_channel_id = await self._create_dm_channel(
-                        client, user_id, base_url, headers
-                    )
+                    dm_channel_id = await self._create_dm_channel(client, user_id, base_url, headers)
                     if not dm_channel_id:
-                        logger.error(
-                            f"Cannot send Mattermost DM: Failed to create channel for {destination}"
-                        )
+                        logger.error(f"Cannot send Mattermost DM: Failed to create channel for {destination}")
                         if notifications_failed_total:
                             notifications_failed_total.labels(type="mattermost").inc()
                         return False
@@ -184,22 +160,16 @@ class MattermostProvider(NotificationProvider):
                 # If it looks like a channel name (starts with # or no special chars and not a UUID)
                 elif destination.startswith("#"):
                     # Channel name with # prefix - must be resolved
-                    resolved_id = await self._get_channel_id_by_name(
-                        client, destination, base_url, headers
-                    )
+                    resolved_id = await self._get_channel_id_by_name(client, destination, base_url, headers)
                     if not resolved_id:
-                        logger.error(
-                            f"Cannot send Mattermost message: Channel {destination} not found"
-                        )
+                        logger.error(f"Cannot send Mattermost message: Channel {destination} not found")
                         if notifications_failed_total:
                             notifications_failed_total.labels(type="mattermost").inc()
                         return False
                     channel_id = resolved_id
                 elif destination.count("-") != 4:
                     # Not a UUID (UUIDs have exactly 4 dashes) - try to resolve as channel name
-                    resolved_id = await self._get_channel_id_by_name(
-                        client, destination, base_url, headers
-                    )
+                    resolved_id = await self._get_channel_id_by_name(client, destination, base_url, headers)
                     if resolved_id:
                         channel_id = resolved_id
 
@@ -208,9 +178,7 @@ class MattermostProvider(NotificationProvider):
                     "message": f"#### {subject}\n{message}",
                 }
 
-                response = await client.post(
-                    f"{base_url}/api/v4/posts", headers=headers, json=payload
-                )
+                response = await client.post(f"{base_url}/api/v4/posts", headers=headers, json=payload)
 
                 if response.status_code == 201:
                     logger.info(f"Mattermost message sent to {destination}")
@@ -218,9 +186,7 @@ class MattermostProvider(NotificationProvider):
                         notifications_sent_total.labels(type="mattermost").inc()
                     return True
                 else:
-                    logger.error(
-                        f"Failed to send Mattermost notification: {response.text}"
-                    )
+                    logger.error(f"Failed to send Mattermost notification: {response.text}")
                     if notifications_failed_total:
                         notifications_failed_total.labels(type="mattermost").inc()
                     return False

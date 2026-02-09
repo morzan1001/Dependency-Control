@@ -140,15 +140,11 @@ class ScanManager:
             if cache_age < self._cache_ttl_minutes:
                 return self._waivers_cache
             else:
-                logger.debug(
-                    f"Waiver cache expired (age: {cache_age:.1f} min, TTL: {self._cache_ttl_minutes} min)"
-                )
+                logger.debug(f"Waiver cache expired (age: {cache_age:.1f} min, TTL: {self._cache_ttl_minutes} min)")
 
         # Fetch fresh waivers from database via repository
         waiver_repo = WaiverRepository(self.db)
-        self._waivers_cache = await waiver_repo.find_active_for_project(
-            str(self.project.id), include_global=True
-        )
+        self._waivers_cache = await waiver_repo.find_active_for_project(str(self.project.id), include_global=True)
         self._waivers_cache_time = now
 
         return self._waivers_cache
@@ -181,9 +177,7 @@ class ScanManager:
         waived_count = 0
 
         for finding in findings:
-            is_waived = any(
-                self._finding_matches_waiver(finding, waiver) for waiver in waivers
-            )
+            is_waived = any(self._finding_matches_waiver(finding, waiver) for waiver in waivers)
 
             if is_waived:
                 waived_count += 1
@@ -193,9 +187,7 @@ class ScanManager:
 
         return final_findings, waived_count
 
-    async def store_results(
-        self, analyzer_name: str, result: Dict[str, Any], scan_id: str
-    ) -> str:
+    async def store_results(self, analyzer_name: str, result: Dict[str, Any], scan_id: str) -> str:
         """Store analysis results in the database using AnalysisResultRepository."""
         from app.repositories import AnalysisResultRepository
 
@@ -217,9 +209,7 @@ class ScanManager:
         """Add scan to worker queue for aggregation."""
         await worker_manager.add_job(scan_id)
 
-    async def register_result(
-        self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False
-    ) -> None:
+    async def register_result(self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False) -> None:
         """
         Register that a scanner has submitted results.
 
@@ -287,9 +277,7 @@ class ScanManager:
         from app.repositories import ProjectRepository
 
         project_repo = ProjectRepository(self.db)
-        await project_repo.update_raw(
-            str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}}
-        )
+        await project_repo.update_raw(str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}})
 
     @staticmethod
     def compute_stats(findings: List[Finding]) -> Stats:

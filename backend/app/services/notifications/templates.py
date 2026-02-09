@@ -14,17 +14,11 @@ def render_template(template_name: str, context: Dict[str, Any]) -> str:
     return template.render(**context)
 
 
-def get_verification_email_template(
-    verification_link: str, project_name: str = "Dependency Control"
-) -> str:
-    return render_template(
-        "verification.html", {"link": verification_link, "project_name": project_name}
-    )
+def get_verification_email_template(verification_link: str, project_name: str = "Dependency Control") -> str:
+    return render_template("verification.html", {"link": verification_link, "project_name": project_name})
 
 
-def get_password_reset_template(
-    username: str, link: str, project_name: str, valid_hours: int = 1
-) -> str:
+def get_password_reset_template(username: str, link: str, project_name: str, valid_hours: int = 1) -> str:
     return render_template(
         "password_reset.html",
         {
@@ -36,9 +30,7 @@ def get_password_reset_template(
     )
 
 
-def get_invitation_template(
-    invitation_link: str, project_name: str, inviter_name: str, team_name: str
-) -> str:
+def get_invitation_template(invitation_link: str, project_name: str, inviter_name: str, team_name: str) -> str:
     return render_template(
         "invitation.html",
         {
@@ -50,9 +42,7 @@ def get_invitation_template(
     )
 
 
-def get_system_invitation_template(
-    invitation_link: str, project_name: str, inviter_name: str
-) -> str:
+def get_system_invitation_template(invitation_link: str, project_name: str, inviter_name: str) -> str:
     return render_template(
         "system_invitation.html",
         {
@@ -126,18 +116,14 @@ def get_advisory_template(
     )
 
 
-def get_announcement_template(
-    message: str, link: str = "#", project_name: str = "Dependency Control"
-) -> str:
+def get_announcement_template(message: str, link: str = "#", project_name: str = "Dependency Control") -> str:
     return render_template(
         "announcement.html",
         {"message": message, "link": link, "project_name": project_name},
     )
 
 
-def get_password_changed_template(
-    username: str, login_link: str, project_name: str
-) -> str:
+def get_password_changed_template(username: str, login_link: str, project_name: str) -> str:
     return render_template(
         "password_changed.html",
         {"username": username, "login_link": login_link, "project_name": project_name},
@@ -145,12 +131,8 @@ def get_password_changed_template(
 
 
 def get_2fa_enabled_template(username: str, project_name: str) -> str:
-    return render_template(
-        "2fa_enabled.html", {"username": username, "project_name": project_name}
-    )
+    return render_template("2fa_enabled.html", {"username": username, "project_name": project_name})
 
 
 def get_2fa_disabled_template(username: str, project_name: str) -> str:
-    return render_template(
-        "2fa_disabled.html", {"username": username, "project_name": project_name}
-    )
+    return render_template("2fa_disabled.html", {"username": username, "project_name": project_name})

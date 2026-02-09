@@ -12,21 +12,11 @@ def create_mock_collection(**method_returns):
     """
     collection = MagicMock()
     collection.find_one = AsyncMock(return_value=method_returns.get("find_one"))
-    collection.insert_one = AsyncMock(
-        return_value=MagicMock(inserted_id="mock-id")
-    )
-    collection.update_one = AsyncMock(
-        return_value=MagicMock(modified_count=1)
-    )
-    collection.update_many = AsyncMock(
-        return_value=MagicMock(modified_count=1)
-    )
-    collection.delete_one = AsyncMock(
-        return_value=MagicMock(deleted_count=1)
-    )
-    collection.count_documents = AsyncMock(
-        return_value=method_returns.get("count_documents", 0)
-    )
+    collection.insert_one = AsyncMock(return_value=MagicMock(inserted_id="mock-id"))
+    collection.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    collection.update_many = AsyncMock(return_value=MagicMock(modified_count=1))
+    collection.delete_one = AsyncMock(return_value=MagicMock(deleted_count=1))
+    collection.count_documents = AsyncMock(return_value=method_returns.get("count_documents", 0))
 
     # find() returns a chainable cursor mock
     cursor = MagicMock()

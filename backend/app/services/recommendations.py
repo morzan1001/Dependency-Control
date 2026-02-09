@@ -133,8 +133,7 @@ class RecommendationEngine:
         previous_findings_list = previous_scan_findings
 
         logger.debug(
-            f"Generating recommendations for {len(findings_list)} findings, "
-            f"{len(dependencies_list)} dependencies"
+            f"Generating recommendations for {len(findings_list)} findings, {len(dependencies_list)} dependencies"
         )
 
         recommendations: List[Recommendation] = []
@@ -146,13 +145,8 @@ class RecommendationEngine:
             findings_by_type[finding_type].append(f)
 
         # Build lookup maps for dependencies
-        dep_by_purl = {
-            get_attr(d, "purl"): d for d in dependencies_list if get_attr(d, "purl")
-        }
-        dep_by_name_version = {
-            f"{get_attr(d, 'name')}@{get_attr(d, 'version')}": d
-            for d in dependencies_list
-        }
+        dep_by_purl = {get_attr(d, "purl"): d for d in dependencies_list if get_attr(d, "purl")}
+        dep_by_name_version = {f"{get_attr(d, 'name')}@{get_attr(d, 'version')}": d for d in dependencies_list}
 
         # 1. Process VULNERABILITIES
         _safe_extend(
@@ -252,9 +246,7 @@ class RecommendationEngine:
         if cross_project_data:
             _safe_extend(
                 recommendations,
-                lambda: insights.analyze_cross_project_patterns(
-                    findings_list, dependencies_list, cross_project_data
-                ),
+                lambda: insights.analyze_cross_project_patterns(findings_list, dependencies_list, cross_project_data),
                 "cross_project_patterns",
             )
 
@@ -270,17 +262,13 @@ class RecommendationEngine:
         # 11. Risks & Hotspots
         _safe_extend(
             recommendations,
-            lambda: risks.detect_critical_hotspots(
-                findings_list, dependencies_list, dep_by_purl, dep_by_name_version
-            ),
+            lambda: risks.detect_critical_hotspots(findings_list, dependencies_list, dep_by_purl, dep_by_name_version),
             "critical_hotspots",
         )
 
         _safe_extend(
             recommendations,
-            lambda: risks.detect_toxic_dependencies(
-                findings_list, dependencies_list, dep_by_purl, dep_by_name_version
-            ),
+            lambda: risks.detect_toxic_dependencies(findings_list, dependencies_list, dep_by_purl, dep_by_name_version),
             "toxic_dependencies",
         )
 
@@ -299,9 +287,7 @@ class RecommendationEngine:
 
         _safe_extend(
             recommendations,
-            lambda: incidents.detect_known_exploits(
-                findings_by_type.get("vulnerability", [])
-            ),
+            lambda: incidents.detect_known_exploits(findings_by_type.get("vulnerability", [])),
             "known_exploits",
         )
 
@@ -321,9 +307,7 @@ class RecommendationEngine:
         if findings_by_type.get("typosquatting"):
             _safe_extend(
                 recommendations,
-                lambda: incidents.process_typosquatting(
-                    findings_by_type["typosquatting"]
-                ),
+                lambda: incidents.process_typosquatting(findings_by_type["typosquatting"]),
                 "typosquatting",
             )
 
@@ -337,9 +321,7 @@ class RecommendationEngine:
         # 14. Optimization (Quick Wins)
         _safe_extend(
             recommendations,
-            lambda: optimization.identify_quick_wins(
-                findings_by_type.get("vulnerability", []), dependencies_list
-            ),
+            lambda: optimization.identify_quick_wins(findings_by_type.get("vulnerability", []), dependencies_list),
             "quick_wins",
         )
 
@@ -347,9 +329,7 @@ class RecommendationEngine:
         before_dedup = len(recommendations)
         recommendations = _deduplicate_recommendations(recommendations)
         if before_dedup != len(recommendations):
-            logger.debug(
-                f"Deduplicated {before_dedup - len(recommendations)} duplicate recommendations"
-            )
+            logger.debug(f"Deduplicated {before_dedup - len(recommendations)} duplicate recommendations")
 
         # Sort by priority and impact using common scoring logic
         recommendations.sort(key=lambda r: common.calculate_score(r), reverse=True)

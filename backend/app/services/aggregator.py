@@ -40,25 +40,15 @@ class ResultAggregator:
     def __init__(self):
         self.findings: Dict[str, Finding] = {}
         self.alias_map: Dict[str, str] = {}
-        self._scorecard_cache: Dict[str, Dict[str, Any]] = (
-            {}
-        )  # component@version -> scorecard data
-        self._dependency_enrichments: Dict[str, DependencyEnrichment] = (
-            {}
-        )  # name@version -> enrichment
-        self._license_data: Dict[str, Dict[str, Any]] = (
-            {}
-        )  # name@version -> license analysis from scanner
+        self._scorecard_cache: Dict[str, Dict[str, Any]] = {}  # component@version -> scorecard data
+        self._dependency_enrichments: Dict[str, DependencyEnrichment] = {}  # name@version -> enrichment
+        self._license_data: Dict[str, Dict[str, Any]] = {}  # name@version -> license analysis from scanner
 
-    def _get_or_create_enrichment(
-        self, name: str, version: str
-    ) -> DependencyEnrichment:
+    def _get_or_create_enrichment(self, name: str, version: str) -> DependencyEnrichment:
         """Get or create a DependencyEnrichment for the given package."""
         key = f"{name}@{version}"
         if key not in self._dependency_enrichments:
-            self._dependency_enrichments[key] = DependencyEnrichment(
-                name=name, version=version
-            )
+            self._dependency_enrichments[key] = DependencyEnrichment(name=name, version=version)
         return self._dependency_enrichments[key]
 
     def enrich_from_deps_dev(self, name: str, version: str, metadata: Dict[str, Any]):
@@ -80,9 +70,7 @@ class ResultAggregator:
             # Add license from project if we don't have one yet
             if project.get("license") and not enrichment.primary_license:
                 enrichment.primary_license = project.get("license")
-                enrichment.licenses.append(
-                    {"spdx_id": project.get("license"), "source": "deps_dev_project"}
-                )
+                enrichment.licenses.append({"spdx_id": project.get("license"), "source": "deps_dev_project"})
 
         # Dependents
         dependents = metadata.get("dependents", {})
@@ -145,9 +133,7 @@ class ResultAggregator:
         if metadata.get("has_slsa_provenance"):
             enrichment.has_slsa_provenance = True
 
-    def enrich_from_license_scanner(
-        self, name: str, version: str, license_info: Dict[str, Any]
-    ):
+    def enrich_from_license_scanner(self, name: str, version: str, license_info: Dict[str, Any]):
         """Enrich dependency with data from license compliance scanner."""
         enrichment = self._get_or_create_enrichment(name, version)
         if "license_compliance" not in enrichment.sources:
@@ -171,16 +157,12 @@ class ResultAggregator:
             if license_info.get("risks"):
                 enrichment.license_risks.extend(license_info.get("risks", []))
             if license_info.get("obligations"):
-                enrichment.license_obligations.extend(
-                    license_info.get("obligations", [])
-                )
+                enrichment.license_obligations.extend(license_info.get("obligations", []))
 
             # Store full license data for reference
             self._license_data[f"{name}@{version}"] = license_info
 
-    def aggregate(
-        self, analyzer_name: str, result: Dict[str, Any], source: Optional[str] = None
-    ):
+    def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: Optional[str] = None):
         """
         Dispatches the result to the specific normalizer based on analyzer name.
         """
@@ -198,11 +180,7 @@ class ResultAggregator:
                     version="",
                     description=f"Scanner '{analyzer_name}' failed: {result.get('error')}",
                     scanners=[analyzer_name],
-                    details={
-                        "error_details": result.get(
-                            "details", result.get("output", "No details provided")
-                        )
-                    },
+                    details={"error_details": result.get("details", result.get("output", "No details provided"))},
                 ),
                 source=source,
             )
@@ -239,9 +217,7 @@ class ResultAggregator:
         # 2. Group by Version + CVE-Set hash to find potential duplicates
         # Map: (version, cve_set_hash) -> List[Finding]
         groups: Dict[str, List[Finding]] = {}
-        sast_groups: Dict[Any, List[Finding]] = (
-            {}
-        )  # Map: (component, line) -> List[Finding]
+        sast_groups: Dict[Any, List[Finding]] = {}  # Map: (component, line) -> List[Finding]
 
         for f in current_findings:
             if f.type == FindingType.SAST:
@@ -424,9 +400,7 @@ class ResultAggregator:
                     self._add_context_to_vulnerability(f1, f2)
                     self._add_context_to_vulnerability(f2, f1)
 
-    def _add_context_to_vulnerability(
-        self, vuln_finding: Finding, other_finding: Finding
-    ):
+    def _add_context_to_vulnerability(self, vuln_finding: Finding, other_finding: Finding):
         """
         Adds contextual information from other finding types to a vulnerability finding.
         """
@@ -449,9 +423,7 @@ class ResultAggregator:
                     "has_quality_issues": True,
                     "issue_count": len(quality_issues),
                     "overall_score": other_finding.details.get("overall_score"),
-                    "has_maintenance_issues": other_finding.details.get(
-                        "has_maintenance_issues", False
-                    ),
+                    "has_maintenance_issues": other_finding.details.get("has_maintenance_issues", False),
                     "quality_finding_id": other_finding.id,
                 }
 
@@ -507,17 +479,11 @@ class ResultAggregator:
 
         for finding in findings:
             # Skip scorecard findings themselves
-            if finding.type == FindingType.QUALITY and finding.id.startswith(
-                "SCORECARD-"
-            ):
+            if finding.type == FindingType.QUALITY and finding.id.startswith("SCORECARD-"):
                 continue
 
             # Try to find scorecard data for this component
-            component_key = (
-                f"{finding.component}@{finding.version}"
-                if finding.version
-                else finding.component
-            )
+            component_key = f"{finding.component}@{finding.version}" if finding.version else finding.component
             scorecard_data = self._scorecard_cache.get(component_key)
 
             # Also try without version
@@ -533,10 +499,8 @@ class ResultAggregator:
                     "overall_score": scorecard_data.get("overall_score"),
                     "project_url": scorecard_data.get("project_url"),
                     "critical_issues": scorecard_data.get("critical_issues", []),
-                    "maintenance_risk": "Maintained"
-                    in scorecard_data.get("critical_issues", []),
-                    "has_vulnerabilities_issue": "Vulnerabilities"
-                    in scorecard_data.get("critical_issues", []),
+                    "maintenance_risk": "Maintained" in scorecard_data.get("critical_issues", []),
+                    "has_vulnerabilities_issue": "Vulnerabilities" in scorecard_data.get("critical_issues", []),
                 }
 
                 # If this is a vulnerability in a poorly maintained package, consider upgrading severity
@@ -549,9 +513,7 @@ class ResultAggregator:
                         finding.details["maintenance_warning"] = True
                         finding.details["maintenance_warning_text"] = (
                             "This package has a low OpenSSF Scorecard score ({:.1f}/10) "
-                            "which may indicate maintenance or security concerns.".format(
-                                score
-                            )
+                            "which may indicate maintenance or security concerns.".format(score)
                         )
 
     def _parse_version_key(self, v: str) -> Tuple[Union[int, str], ...]:
@@ -572,9 +534,7 @@ class ResultAggregator:
                 parts.append(part)
         return tuple(parts)
 
-    def _calculate_aggregated_fixed_version(
-        self, fixed_versions_list: List[str]
-    ) -> Optional[str]:
+    def _calculate_aggregated_fixed_version(self, fixed_versions_list: List[str]) -> Optional[str]:
         """
         Calculates the best fixed version(s) considering multiple vulnerabilities and major versions.
         Input: List of fixed version strings (e.g. ["1.2.5, 2.0.1", "1.2.6"])
@@ -638,9 +598,7 @@ class ResultAggregator:
 
         # Sort by major version (try to sort numerically if possible)
         try:
-            valid_majors.sort(
-                key=lambda x: x[0] if isinstance(x[0], int) else str(x[0])
-            )
+            valid_majors.sort(key=lambda x: x[0] if isinstance(x[0], int) else str(x[0]))
         except TypeError:
             valid_majors.sort(key=lambda x: str(x[0]))
 
@@ -674,8 +632,7 @@ class ResultAggregator:
             "sast_findings": [],
             # Keep common top-level fields for easy access/compatibility
             "file": base.component,
-            "line": base.details.get("line")
-            or base.details.get("start", {}).get("line"),
+            "line": base.details.get("line") or base.details.get("start", {}).get("line"),
             # Merge lists
             "cwe_ids": [],
             "category_groups": [],
@@ -743,9 +700,7 @@ class ResultAggregator:
         # Construct new Finding
         return Finding(
             id=(
-                base.id
-                if len(findings) == 1
-                else f"{AGG_KEY_SAST}-{base.component}-{merged_details['line']}"
+                base.id if len(findings) == 1 else f"{AGG_KEY_SAST}-{base.component}-{merged_details['line']}"
             ),  # create stable ID for group
             type=FindingType.SAST,
             severity=max_severity,
@@ -755,11 +710,7 @@ class ResultAggregator:
             scanners=list(merged_scanners),
             details=merged_details,
             found_in=base.found_in,  # simplistic merge
-            aliases=(
-                [f.id for f in findings if f.id != base.id]
-                if len(findings) > 1
-                else base.aliases
-            ),
+            aliases=([f.id for f in findings if f.id != base.id] if len(findings) > 1 else base.aliases),
         )
 
     def _is_same_component_name(self, name1: str, name2: str) -> bool:
@@ -790,9 +741,7 @@ class ResultAggregator:
 
         return False
 
-    def _merge_vulnerability_into_list(
-        self, target_list: List[Any], source_entry: Dict[str, Any]
-    ):
+    def _merge_vulnerability_into_list(self, target_list: List[Any], source_entry: Dict[str, Any]):
         """
         Merges a source vulnerability entry into a target list, handling deduplication by ID and Aliases.
         """
@@ -807,14 +756,10 @@ class ResultAggregator:
                 match_found = True
 
                 # Merge Scanners
-                tv["scanners"] = list(
-                    set(tv.get("scanners", []) + source_entry.get("scanners", []))
-                )
+                tv["scanners"] = list(set(tv.get("scanners", []) + source_entry.get("scanners", [])))
 
                 # Merge Aliases
-                all_aliases = set(
-                    tv.get("aliases", []) + source_entry.get("aliases", [])
-                )
+                all_aliases = set(tv.get("aliases", []) + source_entry.get("aliases", []))
                 if source_entry["id"] != tv["id"]:
                     all_aliases.add(source_entry["id"])
                 tv["aliases"] = list(all_aliases)
@@ -826,13 +771,9 @@ class ResultAggregator:
                     tv["severity"] = source_entry["severity"]
 
                 # Description merge (prefer longer)
-                if len(source_entry.get("description", "")) > len(
-                    tv.get("description", "")
-                ):
+                if len(source_entry.get("description", "")) > len(tv.get("description", "")):
                     tv["description"] = source_entry["description"]
-                    tv["description_source"] = source_entry.get(
-                        "description_source", "unknown"
-                    )
+                    tv["description_source"] = source_entry.get("description_source", "unknown")
 
                 # Fixed version merge (prefer non-empty)
                 if not tv.get("fixed_version") and source_entry.get("fixed_version"):
@@ -840,8 +781,7 @@ class ResultAggregator:
 
                 # CVSS merge (prefer higher)
                 if source_entry.get("cvss_score") and (
-                    not tv.get("cvss_score")
-                    or source_entry["cvss_score"] > tv["cvss_score"]
+                    not tv.get("cvss_score") or source_entry["cvss_score"] > tv["cvss_score"]
                 ):
                     tv["cvss_score"] = source_entry["cvss_score"]
                     tv["cvss_vector"] = source_entry.get("cvss_vector")
@@ -909,11 +849,7 @@ class ResultAggregator:
         target.details["vulnerabilities"] = t_vulns_list
 
         # Recalculate top-level fixed version
-        fvs = [
-            v.get("fixed_version")
-            for v in target.details["vulnerabilities"]
-            if v.get("fixed_version")
-        ]
+        fvs = [v.get("fixed_version") for v in target.details["vulnerabilities"] if v.get("fixed_version")]
         target.details["fixed_version"] = self._resolve_fixed_versions(fvs)
 
     def _normalize_version(self, version: str) -> str:
@@ -939,9 +875,7 @@ class ResultAggregator:
         else:
             self._add_generic_finding(finding, source)
 
-    def _add_vulnerability_finding(
-        self, finding: Finding, source: Optional[str] = None
-    ):
+    def _add_vulnerability_finding(self, finding: Finding, source: Optional[str] = None):
         # Normalize keys
         raw_comp = finding.component if finding.component else "unknown"
         comp_key = self._normalize_component(raw_comp)
@@ -963,31 +897,17 @@ class ResultAggregator:
             "id": finding.id,
             "severity": finding.severity,
             "description": finding.description,
-            "description_source": (
-                finding.scanners[0] if finding.scanners else "unknown"
-            ),
+            "description_source": (finding.scanners[0] if finding.scanners else "unknown"),
             "fixed_version": (
-                str(finding.details.get("fixed_version"))
-                if finding.details.get("fixed_version")
-                else None
+                str(finding.details.get("fixed_version")) if finding.details.get("fixed_version") else None
             ),
-            "cvss_score": (
-                float(finding.details.get("cvss_score"))
-                if finding.details.get("cvss_score")
-                else None
-            ),
-            "cvss_vector": (
-                str(finding.details.get("cvss_vector"))
-                if finding.details.get("cvss_vector")
-                else None
-            ),
+            "cvss_score": (float(finding.details.get("cvss_score")) if finding.details.get("cvss_score") else None),
+            "cvss_vector": (str(finding.details.get("cvss_vector")) if finding.details.get("cvss_vector") else None),
             "references": combined_refs,
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
-            "details": {
-                k: v for k, v in (finding.details or {}).items() if k != "urls"
-            },  # nested details without urls
+            "details": {k: v for k, v in (finding.details or {}).items() if k != "urls"},  # nested details without urls
         }
 
         if agg_key in self.findings:
@@ -1003,9 +923,7 @@ class ResultAggregator:
                 existing.severity = finding.severity
 
             # 3. Merge into vulnerabilities list
-            vuln_list: List[VulnerabilityEntry] = existing.details.get(
-                "vulnerabilities", []
-            )
+            vuln_list: List[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
 
             self._merge_vulnerability_into_list(vuln_list, vuln_entry)
 
@@ -1018,9 +936,7 @@ class ResultAggregator:
 
             # Update top-level fixed_version
             # Only consider vulnerabilities that actually HAVE a fixed version
-            fvs = [
-                str(v.get("fixed_version")) for v in vuln_list if v.get("fixed_version")
-            ]
+            fvs = [str(v.get("fixed_version")) for v in vuln_list if v.get("fixed_version")]
 
             if not fvs:
                 existing.details["fixed_version"] = None
@@ -1033,9 +949,7 @@ class ResultAggregator:
             agg_details: VulnerabilityAggregatedDetails = {
                 "vulnerabilities": [vuln_entry],
                 "fixed_version": (
-                    str(finding.details.get("fixed_version"))
-                    if finding.details.get("fixed_version")
-                    else None
+                    str(finding.details.get("fixed_version")) if finding.details.get("fixed_version") else None
                 ),
             }
 
@@ -1119,9 +1033,7 @@ class ResultAggregator:
                 existing.severity = finding.severity
 
             # 3. Add to quality_issues list (check for duplicates by ID)
-            quality_list: List[QualityEntry] = existing.details.get(
-                "quality_issues", []
-            )
+            quality_list: List[QualityEntry] = existing.details.get("quality_issues", [])
             existing_ids = {q.get("id") for q in quality_list}
 
             if finding.id not in existing_ids:
@@ -1130,10 +1042,7 @@ class ResultAggregator:
                 existing.details["issue_count"] = len(quality_list)
 
             # 4. Update overall_score if this is a scorecard finding
-            if (
-                issue_type == "scorecard"
-                and finding.details.get("overall_score") is not None
-            ):
+            if issue_type == "scorecard" and finding.details.get("overall_score") is not None:
                 existing.details["overall_score"] = finding.details.get("overall_score")
 
             # 5. Update maintenance flag
@@ -1151,11 +1060,7 @@ class ResultAggregator:
             # Create new Aggregate Quality Finding
             agg_details: QualityAggregatedDetails = {
                 "quality_issues": [quality_entry],
-                "overall_score": (
-                    finding.details.get("overall_score")
-                    if issue_type == "scorecard"
-                    else None
-                ),
+                "overall_score": (finding.details.get("overall_score") if issue_type == "scorecard" else None),
                 "has_maintenance_issues": has_maintenance,
                 "issue_count": 1,
                 "scanners": finding.scanners or [],
@@ -1185,9 +1090,7 @@ class ResultAggregator:
 
         if count == 1:
             # Use the original description from the single issue
-            finding.description = quality_issues[0].get(
-                "description", "Quality issue detected"
-            )
+            finding.description = quality_issues[0].get("description", "Quality issue detected")
             return
 
         # Multiple issues - create summary
@@ -1239,9 +1142,7 @@ class ResultAggregator:
         # 2. If not found, check aliases
         if not existing_key:
             for alias in finding.aliases:
-                lookup_key_alias = (
-                    f"{finding.type}:{comp_key}:{finding.version}:{alias}"
-                )
+                lookup_key_alias = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
                 if lookup_key_alias in self.alias_map:
                     existing_key = self.alias_map[lookup_key_alias]
                     break

@@ -19,9 +19,7 @@ class TestNormalizeKics:
                     "description": "Container should have memory limits",
                     "platform": "Kubernetes",
                     "category": "Resource Management",
-                    "files": [
-                        {"file_name": "deployment.yaml", "line": 25, "end_line": 30}
-                    ],
+                    "files": [{"file_name": "deployment.yaml", "line": 25, "end_line": 30}],
                 }
             ]
         }

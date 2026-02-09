@@ -60,9 +60,7 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str
     team_repo = TeamRepository(db)
 
     if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
-        projects = await project_repo.find_many_ids(
-            {}, limit=ANALYTICS_MAX_QUERY_LIMIT
-        )
+        projects = await project_repo.find_many_ids({}, limit=ANALYTICS_MAX_QUERY_LIMIT)
         return [p.id for p in projects]
 
     user_teams = await team_repo.find_by_member(str(user.id))
@@ -82,9 +80,7 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str
     return [p.id for p in projects]
 
 
-async def get_latest_scan_ids(
-    project_ids: List[str], db: AsyncIOMotorDatabase
-) -> List[str]:
+async def get_latest_scan_ids(project_ids: List[str], db: AsyncIOMotorDatabase) -> List[str]:
     """Get latest scan IDs for given projects."""
     project_repo = ProjectRepository(db)
     projects = await project_repo.find_many_with_scan_id(
@@ -95,9 +91,7 @@ async def get_latest_scan_ids(
     return [p.latest_scan_id for p in projects if p.latest_scan_id]
 
 
-async def get_projects_with_scans(
-    project_ids: List[str], db: AsyncIOMotorDatabase
-) -> Tuple[Dict[str, str], List[str]]:
+async def get_projects_with_scans(project_ids: List[str], db: AsyncIOMotorDatabase) -> Tuple[Dict[str, str], List[str]]:
     """
     Get project name mapping and scan IDs for given projects.
 
@@ -150,9 +144,7 @@ def extract_fix_versions(details_list: List[Any]) -> set:
     return fix_versions
 
 
-def process_cve_enrichments(
-    finding_ids: List[str], enrichments: Dict[str, Any]
-) -> Dict[str, Any]:
+def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process CVE enrichment data and extract maximum values.
 
@@ -195,16 +187,13 @@ def process_cve_enrichments(
             if enr.kev_ransomware_use:
                 result["kev_ransomware_use"] = True
             if enr.kev_due_date:
-                if (
-                    result["kev_due_date"] is None
-                    or enr.kev_due_date < result["kev_due_date"]
-                ):
+                if result["kev_due_date"] is None or enr.kev_due_date < result["kev_due_date"]:
                     result["kev_due_date"] = enr.kev_due_date
 
         # Exploit maturity
-        if EXPLOIT_MATURITY_ORDER.get(
-            enr.exploit_maturity, 0
-        ) > EXPLOIT_MATURITY_ORDER.get(result["exploit_maturity"], 0):
+        if EXPLOIT_MATURITY_ORDER.get(enr.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(
+            result["exploit_maturity"], 0
+        ):
             result["exploit_maturity"] = enr.exploit_maturity
 
     return result
@@ -231,9 +220,7 @@ def calculate_impact_score(
     8. Days known (older = more urgent)
     """
     # Base score from severity (weighted)
-    severity_score = sum(
-        severity_counts.get(sev, 0) * weight for sev, weight in SEVERITY_WEIGHTS.items()
-    )
+    severity_score = sum(severity_counts.get(sev, 0) * weight for sev, weight in SEVERITY_WEIGHTS.items())
 
     # Reach multiplier (how many projects affected)
     reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)
@@ -292,9 +279,7 @@ def build_priority_reasons(
         reasons.append("ransomware:Used in ransomware campaigns - fix immediately")
 
     if days_until_due is not None and days_until_due < 0:
-        reasons.append(
-            f"deadline_overdue:CISA deadline overdue by {abs(days_until_due)} days"
-        )
+        reasons.append(f"deadline_overdue:CISA deadline overdue by {abs(days_until_due)} days")
     elif days_until_due is not None and days_until_due <= KEV_DUE_SOON_DAYS:
         reasons.append(f"deadline:CISA deadline in {days_until_due} days")
 
@@ -302,19 +287,13 @@ def build_priority_reasons(
         reasons.append("kev:Actively exploited in the wild (CISA KEV)")
 
     if max_epss and max_epss >= EPSS_HIGH_THRESHOLD:
-        reasons.append(
-            f"epss:High exploitation probability ({max_epss * 100:.1f}% EPSS)"
-        )
+        reasons.append(f"epss:High exploitation probability ({max_epss * 100:.1f}% EPSS)")
 
     if severity_counts.get("critical", 0) > 0:
-        reasons.append(
-            f"critical:{severity_counts['critical']} critical vulnerabilities"
-        )
+        reasons.append(f"critical:{severity_counts['critical']} critical vulnerabilities")
 
     if affected_projects >= BLAST_RADIUS_THRESHOLD:
-        reasons.append(
-            f"blast_radius:Affects {affected_projects} projects (high blast radius)"
-        )
+        reasons.append(f"blast_radius:Affects {affected_projects} projects (high blast radius)")
 
     if has_fix:
         reasons.append("fix_available:Fix available - easy to remediate")
@@ -404,9 +383,7 @@ def build_hotspot_priority_reasons(
         reasons.append("ransomware:Used in ransomware campaigns")
 
     if days_until_due is not None and days_until_due < 0:
-        reasons.append(
-            f"deadline_overdue:CISA deadline overdue by {abs(days_until_due)} days"
-        )
+        reasons.append(f"deadline_overdue:CISA deadline overdue by {abs(days_until_due)} days")
     elif days_until_due is not None and days_until_due <= KEV_DUE_SOON_DAYS:
         reasons.append(f"deadline:CISA deadline in {days_until_due} days")
 
@@ -469,9 +446,7 @@ async def gather_cross_project_data(
     }
 
     # Get other projects (limit to 20 for performance)
-    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][
-        :20
-    ]
+    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][:20]
 
     # Batch fetch: Get all projects info at once
     other_projects = await project_repo.find_many_with_scan_id(

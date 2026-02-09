@@ -22,9 +22,7 @@ from app.services.gitlab import GitLabService
 
 logger = logging.getLogger(__name__)
 
-oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl=f"{settings.API_V1_STR}/login/access-token"
-)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 
 # Import metrics for token validation tracking
 try:
@@ -58,9 +56,7 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
-        )
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         username: str = payload.get("sub")
         permissions: list[str] = payload.get("permissions", [])
         jti: str = payload.get("jti")  # JWT ID for blacklist check
@@ -111,11 +107,7 @@ async def get_current_user(
     user_obj = User(**user)
 
     # If token has restricted permissions (e.g. only setup_2fa), override user permissions
-    if (
-        token_data.permissions
-        and "auth:setup_2fa" in token_data.permissions
-        and len(token_data.permissions) == 1
-    ):
+    if token_data.permissions and "auth:setup_2fa" in token_data.permissions and len(token_data.permissions) == 1:
         user_obj.permissions = token_data.permissions
 
     return user_obj
@@ -139,9 +131,7 @@ class PermissionChecker:
 
     def __init__(self, required_permissions: Union[str, List[str]]):
         self.required_permissions = (
-            required_permissions
-            if isinstance(required_permissions, list)
-            else [required_permissions]
+            required_permissions if isinstance(required_permissions, list) else [required_permissions]
         )
 
     def __call__(self, current_user: User = Depends(get_current_active_user)) -> User:
@@ -232,25 +222,17 @@ async def get_project_for_ingest(
             raise HTTPException(status_code=403, detail="Invalid OIDC token format")
 
         if not issuer:
-            raise HTTPException(
-                status_code=403, detail="OIDC token missing issuer (iss) claim"
-            )
+            raise HTTPException(status_code=403, detail="OIDC token missing issuer (iss) claim")
 
         # STEP 2: Find matching GitLab instance by issuer URL
         instance_repo = GitLabInstanceRepository(db)
         gitlab_instance = await instance_repo.get_by_url(issuer)
 
         if not gitlab_instance:
-            raise HTTPException(
-                status_code=403,
-                detail=f"No GitLab instance configured for issuer: {issuer}"
-            )
+            raise HTTPException(status_code=403, detail=f"No GitLab instance configured for issuer: {issuer}")
 
         if not gitlab_instance.is_active:
-            raise HTTPException(
-                status_code=403,
-                detail=f"GitLab instance '{gitlab_instance.name}' is not active"
-            )
+            raise HTTPException(status_code=403, detail=f"GitLab instance '{gitlab_instance.name}' is not active")
 
         # STEP 3: Validate token using instance-specific service
         gitlab_service = GitLabService(gitlab_instance)
@@ -264,9 +246,7 @@ async def get_project_for_ingest(
         gitlab_user_email = payload.user_email
 
         # STEP 4: Find project using composite key (instance + project ID)
-        project_data = await project_repo.get_raw_by_gitlab_composite_key(
-            str(gitlab_instance.id), gitlab_project_id
-        )
+        project_data = await project_repo.get_raw_by_gitlab_composite_key(str(gitlab_instance.id), gitlab_project_id)
 
         if project_data:
             project = Project(**project_data)
@@ -281,9 +261,7 @@ async def get_project_for_ingest(
 
             # Sync Teams/Members if enabled for this instance
             if gitlab_instance.sync_teams:
-                gitlab_project_data = await gitlab_service.get_project_details(
-                    gitlab_project_id
-                )
+                gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
 
                 team_id = await gitlab_service.sync_team_from_gitlab(
                     db,
@@ -335,9 +313,7 @@ async def get_project_for_ingest(
 
             # Sync Teams/Members if enabled
             if gitlab_instance.sync_teams:
-                gitlab_project_data = await gitlab_service.get_project_details(
-                    gitlab_project_id
-                )
+                gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
 
                 team_id = await gitlab_service.sync_team_from_gitlab(
                     db,
@@ -349,14 +325,12 @@ async def get_project_for_ingest(
                     new_project.team_id = team_id
 
             await project_repo.create(new_project)
-            logger.info(
-                f"Auto-created project '{gitlab_project_path}' from GitLab instance '{gitlab_instance.name}'"
-            )
+            logger.info(f"Auto-created project '{gitlab_project_path}' from GitLab instance '{gitlab_instance.name}'")
             return new_project
 
         raise HTTPException(
             status_code=404,
-            detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled"
+            detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled",
         )
 
     raise HTTPException(status_code=401, detail="Missing authentication credentials")

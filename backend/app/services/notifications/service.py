@@ -124,11 +124,7 @@ class NotificationService:
         tasks = []
         for user in users:
             # If forced_channels is set use it, otherwise use user prefs for event
-            prefs = (
-                {event_type: forced_channels}
-                if forced_channels
-                else (user.notification_preferences or {})
-            )
+            prefs = {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
 
             tasks.append(
                 self._send_based_on_prefs(
@@ -178,11 +174,7 @@ class NotificationService:
             for member in project.members:
                 # If member has configured preferences (non-empty), use them.
                 # Otherwise, treat as None (fallback to Global later)
-                m_prefs = (
-                    member.notification_preferences
-                    if member.notification_preferences
-                    else None
-                )
+                m_prefs = member.notification_preferences if member.notification_preferences else None
 
                 # If user already in targets (e.g. Owner), prioritize existing value IF it is set
                 # But here, Owner prefs is managed in project.owner_notification_preferences.
@@ -199,9 +191,7 @@ class NotificationService:
                 for tm in team_data.get("members", []):
                     uid = tm["user_id"]
                     if uid not in targets:
-                        targets[uid] = (
-                            None  # No project specific override possible for implicit team members
-                        )
+                        targets[uid] = None  # No project specific override possible for implicit team members
 
         # 2. Bulk Fetch Users
         user_ids = list(targets.keys())
@@ -213,11 +203,7 @@ class NotificationService:
         users_map = {str(u["_id"]): User(**u) for u in users_list}
 
         # 3. Determine Enforced Settings
-        enforced_prefs = (
-            project.owner_notification_preferences
-            if project.enforce_notification_settings
-            else None
-        )
+        enforced_prefs = project.owner_notification_preferences if project.enforce_notification_settings else None
 
         # 4. Iterate and Send
         tasks = []

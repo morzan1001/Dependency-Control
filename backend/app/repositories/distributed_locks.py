@@ -18,9 +18,7 @@ class DistributedLocksRepository:
         self.db = db
         self.collection = db.distributed_locks
 
-    async def acquire_lock(
-        self, lock_name: str, holder_id: str, ttl_seconds: int = 30
-    ) -> bool:
+    async def acquire_lock(self, lock_name: str, holder_id: str, ttl_seconds: int = 30) -> bool:
         """
         Try to acquire a distributed lock atomically.
 
@@ -96,9 +94,7 @@ class DistributedLocksRepository:
             True if lock is held and not expired, False otherwise
         """
         now = datetime.now(timezone.utc)
-        lock = await self.collection.find_one(
-            {"_id": lock_name, "expires_at": {"$gt": now}}
-        )
+        lock = await self.collection.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
         return lock is not None
 
     async def cleanup_expired_locks(self) -> int:

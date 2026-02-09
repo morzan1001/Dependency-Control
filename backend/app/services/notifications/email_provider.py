@@ -22,9 +22,7 @@ except ImportError:
 try:
     import aiosmtplib
 except ImportError as e:
-    logger.error(
-        "aiosmtplib is required for async SMTP. " "Install with: poetry install"
-    )
+    logger.error("aiosmtplib is required for async SMTP. Install with: poetry install")
     raise ImportError("aiosmtplib is required") from e
 
 

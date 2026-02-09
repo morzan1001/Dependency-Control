@@ -15,10 +15,10 @@ def process_secrets(findings: List[ModelOrDict]) -> List[Recommendation]:
     for f in findings:
         details = get_attr(f, "details", {})
         detector = (
-            details.get("detector_type") if isinstance(details, dict) else None
-        ) or (
-            details.get("rule_id") if isinstance(details, dict) else None
-        ) or "generic"
+            (details.get("detector_type") if isinstance(details, dict) else None)
+            or (details.get("rule_id") if isinstance(details, dict) else None)
+            or "generic"
+        )
         secrets_by_type[detector].append(f)
 
     recommendations = []

@@ -37,9 +37,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["scans"].create_index("status")  # For worker queue
     await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
     # Compound index for efficient retrieval of project scans sorted by date
-    await database["scans"].create_index(
-        [("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)]
-    )
+    await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
 
     # Analysis Results
     await database["analysis_results"].create_index("scan_id")
@@ -50,9 +48,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Waivers
     await database["waivers"].create_index("project_id")
     await database["waivers"].create_index("expiration_date")
-    await database["waivers"].create_index(
-        [("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)]
-    )
+    await database["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
 
     # Dependencies (New Normalized Collection)
     await database["dependencies"].create_index("project_id")
@@ -75,16 +71,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         sparse=True,  # Allow null purl values
     )
     # Compound index for fast search within a project
-    await database["dependencies"].create_index(
-        [("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)]
-    )
+    await database["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     # Compound index for analytics queries
-    await database["dependencies"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)]
-    )
-    await database["dependencies"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)]
-    )
+    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
+    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
 
     # Findings (New Normalized Collection)
     await database["findings"].create_index("project_id")
@@ -93,9 +83,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["findings"].create_index("type")
     await database["findings"].create_index("finding_id")  # Logical ID (CVE)
     # Compound for fast retrieval of scan results
-    await database["findings"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("severity", pymongo.DESCENDING)]
-    )
+    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("severity", pymongo.DESCENDING)])
 
     # Finding Records - Analytics indexes
     await database["finding_records"].create_index(
@@ -117,7 +105,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["projects"].create_index(
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
         unique=True,
-        sparse=True  # Allow null values (projects without GitLab integration)
+        sparse=True,  # Allow null values (projects without GitLab integration)
     )
     await database["projects"].create_index("gitlab_instance_id")  # For instance-wide queries
     await database["projects"].create_index("latest_scan_id")
@@ -126,12 +114,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["projects"].create_index([("created_at", pymongo.DESCENDING)])
 
     # Scans - Additional compound indexes for common query patterns
-    await database["scans"].create_index(
-        [("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)]
-    )
-    await database["scans"].create_index(
-        [("project_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)]
-    )
+    await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
+    await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)])
     await database["scans"].create_index(
         [
             ("project_id", pymongo.ASCENDING),
@@ -146,9 +130,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("created_at", pymongo.DESCENDING),
         ]
     )
-    await database["scans"].create_index(
-        [("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)]
-    )
+    await database["scans"].create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
     await database["scans"].create_index("original_scan_id")
     await database["scans"].create_index("latest_rescan_id")  # For fast rescan history traversal
 
@@ -157,12 +139,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["findings"].create_index("component")
     await database["findings"].create_index("version")
     await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
-    await database["findings"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)]
-    )
-    await database["findings"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)]
-    )
+    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
+    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)])
     await database["findings"].create_index(
         [
             ("scan_id", pymongo.ASCENDING),
@@ -197,9 +175,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["webhooks"].create_index(
         [("is_active", pymongo.ASCENDING), ("circuit_breaker_until", pymongo.ASCENDING)]
     )
-    await database["webhooks"].create_index(
-        [("project_id", pymongo.ASCENDING), ("is_active", pymongo.ASCENDING)]
-    )
+    await database["webhooks"].create_index([("project_id", pymongo.ASCENDING), ("is_active", pymongo.ASCENDING)])
     await database["webhooks"].create_index("events")
 
     # Webhook Deliveries - Audit trail (NEW)
@@ -210,22 +186,16 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("success", pymongo.ASCENDING), ("webhook_id", pymongo.ASCENDING)]
     )
     # TTL Index: Auto-delete after 30 days
-    await database["webhook_deliveries"].create_index(
-        [("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000
-    )
+    await database["webhook_deliveries"].create_index([("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000)
 
     # Distributed Locks - Multi-pod coordination (NEW)
     # TTL Index: Auto-delete expired locks
-    await database["distributed_locks"].create_index(
-        [("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0
-    )
+    await database["distributed_locks"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
     # Token Blacklist - Logout invalidation (NEW)
     await database["token_blacklist"].create_index("jti", unique=True)
     # TTL Index: Auto-delete after token expiration
-    await database["token_blacklist"].create_index(
-        [("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0
-    )
+    await database["token_blacklist"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
     # GitLab Instances - Multi-Instance Support (NEW)
     await database["gitlab_instances"].create_index("url", unique=True)
@@ -239,14 +209,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
 
     # Dependencies - Source type filtering
-    await database["dependencies"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("source_type", pymongo.ASCENDING)]
-    )
+    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("source_type", pymongo.ASCENDING)])
 
     # Findings - Reachability analysis
-    await database["findings"].create_index(
-        [("scan_id", pymongo.ASCENDING), ("reachable", pymongo.ASCENDING)]
-    )
+    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("reachable", pymongo.ASCENDING)])
 
     # System Invitations
     await database["system_invitations"].create_index("token", unique=True)

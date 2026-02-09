@@ -121,10 +121,7 @@ async def check_project_access(
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     # Check for basic read permission
-    if (
-        "project:read" not in user.permissions
-        and "project:read_all" not in user.permissions
-    ):
+    if "project:read" not in user.permissions and "project:read_all" not in user.permissions:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     if required_role:

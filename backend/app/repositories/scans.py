@@ -89,9 +89,7 @@ class ScanRepository:
         )
         return await cursor.to_list(limit)
 
-    async def find_one(
-        self, query: Dict[str, Any], sort: Optional[List[tuple]] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def find_one(self, query: Dict[str, Any], sort: Optional[List[tuple]] = None) -> Optional[Dict[str, Any]]:
         """Find one scan matching query."""
         if sort:
             return await self.collection.find_one(query, sort=sort)
@@ -130,9 +128,7 @@ class ScanRepository:
         """Count scans matching query."""
         return await self.collection.count_documents(query or {})
 
-    async def get_latest_for_project(
-        self, project_id: str, status: Optional[str] = None
-    ) -> Optional[Scan]:
+    async def get_latest_for_project(self, project_id: str, status: Optional[str] = None) -> Optional[Scan]:
         """Get latest scan for a project."""
         query: Dict[str, Any] = {"project_id": project_id}
         if status:
@@ -145,16 +141,12 @@ class ScanRepository:
         cursor = self.collection.find({"status": "pending"})
         return await cursor.to_list(None)
 
-    async def iterate(
-        self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None
-    ):
+    async def iterate(self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None):
         """Iterate over scans matching query (async generator)."""
         async for doc in self.collection.find(query, projection):
             yield doc
 
-    async def claim_pending_scan(
-        self, scan_id: str, worker_id: str
-    ) -> Optional[Dict[str, Any]]:
+    async def claim_pending_scan(self, scan_id: str, worker_id: str) -> Optional[Dict[str, Any]]:
         """Atomically claim a pending scan for processing."""
         return await self.collection.find_one_and_update(
             {"_id": scan_id, "status": "pending"},
@@ -168,14 +160,10 @@ class ScanRepository:
             return_document=True,
         )
 
-    async def aggregate(
-        self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Run aggregation pipeline."""
         return await self.collection.aggregate(pipeline).to_list(limit)
 
-    async def distinct(
-        self, field: str, query: Optional[Dict[str, Any]] = None
-    ) -> List[Any]:
+    async def distinct(self, field: str, query: Optional[Dict[str, Any]] = None) -> List[Any]:
         """Get distinct values for a field."""
         return await self.collection.distinct(field, query or {})

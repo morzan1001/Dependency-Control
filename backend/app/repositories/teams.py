@@ -40,9 +40,7 @@ class TeamRepository:
         """Get raw team document by name."""
         return await self.collection.find_one({"name": name})
 
-    async def get_raw_by_gitlab_group(
-        self, gitlab_instance_id: str, gitlab_group_id: int
-    ) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_gitlab_group(self, gitlab_instance_id: str, gitlab_group_id: int) -> Optional[Dict[str, Any]]:
         """Get raw team document by GitLab instance + group ID."""
         return await self.collection.find_one(
             {"gitlab_instance_id": gitlab_instance_id, "gitlab_group_id": gitlab_group_id}
@@ -76,12 +74,7 @@ class TeamRepository:
         sort_order: int = 1,
     ) -> List[Team]:
         """Find multiple teams with pagination. Returns Pydantic models."""
-        cursor = (
-            self.collection.find(query)
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Team(**doc) for doc in docs]
 
@@ -97,15 +90,11 @@ class TeamRepository:
 
     async def add_member(self, team_id: str, member_data: Dict[str, Any]) -> None:
         """Add a member to team."""
-        await self.collection.update_one(
-            {"_id": team_id}, {"$push": {"members": member_data}}
-        )
+        await self.collection.update_one({"_id": team_id}, {"$push": {"members": member_data}})
 
     async def remove_member(self, team_id: str, user_id: str) -> None:
         """Remove a member from team."""
-        await self.collection.update_one(
-            {"_id": team_id}, {"$pull": {"members": {"user_id": user_id}}}
-        )
+        await self.collection.update_one({"_id": team_id}, {"$pull": {"members": {"user_id": user_id}}})
 
     async def update_member_role(self, team_id: str, user_id: str, role: str) -> None:
         """Update a member's role in team."""
@@ -114,23 +103,15 @@ class TeamRepository:
             {"$set": {"members.$.role": role}},
         )
 
-    async def set_members(
-        self, team_id: str, members: List[Dict[str, Any]], updated_at
-    ) -> None:
+    async def set_members(self, team_id: str, members: List[Dict[str, Any]], updated_at) -> None:
         """Replace all members in team."""
-        await self.collection.update_one(
-            {"_id": team_id}, {"$set": {"members": members, "updated_at": updated_at}}
-        )
+        await self.collection.update_one({"_id": team_id}, {"$set": {"members": members, "updated_at": updated_at}})
 
     async def is_member(self, team_id: str, user_id: str) -> bool:
         """Check if user is a member of team."""
-        result = await self.collection.find_one(
-            {"_id": team_id, "members.user_id": user_id}
-        )
+        result = await self.collection.find_one({"_id": team_id, "members.user_id": user_id})
         return result is not None
 
-    async def aggregate(
-        self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Run aggregation pipeline."""
         return await self.collection.aggregate(pipeline).to_list(limit)

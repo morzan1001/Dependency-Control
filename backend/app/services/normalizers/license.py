@@ -7,9 +7,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_license(
-    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
-):
+def normalize_license(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
     """Normalize license compliance findings."""
     for item in result.get("license_issues") or []:
         # Safely parse severity with fallback

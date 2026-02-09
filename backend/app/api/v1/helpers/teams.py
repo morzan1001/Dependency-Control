@@ -44,11 +44,7 @@ def build_team_enrichment_pipeline(
                 "from": "users",
                 "let": {"member_ids": "$members.user_id"},
                 "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}
-                        }
-                    },
+                    {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}}},
                     {"$project": {"_id": 1, "username": 1}},
                 ],
                 "as": "users_info",
@@ -74,9 +70,7 @@ def build_team_enrichment_pipeline(
                                                                 "input": "$users_info",
                                                                 "cond": {
                                                                     "$eq": [
-                                                                        {
-                                                                            "$toString": "$$this._id"
-                                                                        },
+                                                                        {"$toString": "$$this._id"},
                                                                         "$$m.user_id",
                                                                     ]
                                                                 },
@@ -152,21 +146,15 @@ async def check_team_access(
 
     if required_role:
         if member_role is None:
-            raise HTTPException(
-                status_code=403, detail="Not enough permissions in this team"
-            )
+            raise HTTPException(status_code=403, detail="Not enough permissions in this team")
         # Role hierarchy: owner > admin > member (TEAM_ROLES is ordered this way)
         if TEAM_ROLES.index(member_role) < TEAM_ROLES.index(required_role):
-            raise HTTPException(
-                status_code=403, detail="Not enough permissions in this team"
-            )
+            raise HTTPException(status_code=403, detail="Not enough permissions in this team")
 
     return team
 
 
-async def enrich_team_with_usernames(
-    team_data: Dict[str, Any], db: AsyncIOMotorDatabase
-) -> Dict[str, Any]:
+async def enrich_team_with_usernames(team_data: Dict[str, Any], db: AsyncIOMotorDatabase) -> Dict[str, Any]:
     """
     Enrich team data with member usernames.
 

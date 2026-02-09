@@ -33,9 +33,7 @@ async def read_system_invitations(
     List all pending system invitations. Requires 'user:create' permission.
     """
     invitation_repo = InvitationRepository(db)
-    invitations = await invitation_repo.find_active_system_invitations(
-        skip=skip, limit=limit
-    )
+    invitations = await invitation_repo.find_active_system_invitations(skip=skip, limit=limit)
     return invitations
 
 
@@ -54,9 +52,7 @@ async def create_system_invitation(
 
     # Check if user already exists
     if await user_repo.exists_by_email(email):
-        raise HTTPException(
-            status_code=400, detail="User with this email already exists"
-        )
+        raise HTTPException(status_code=400, detail="User with this email already exists")
 
     # Check if valid invitation already exists
     existing_invite = await invitation_repo.get_system_invitation_by_email(email)
@@ -98,9 +94,7 @@ async def create_system_invitation(
 
 
 @router.get("/system/{token}")
-async def validate_system_invitation(
-    token: str, db: AsyncIOMotorDatabase = Depends(get_database)
-):
+async def validate_system_invitation(token: str, db: AsyncIOMotorDatabase = Depends(get_database)):
     """
     Validate a system invitation token.
     """
@@ -108,16 +102,12 @@ async def validate_system_invitation(
     invitation = await invitation_repo.get_system_invitation_by_token(token)
 
     if not invitation:
-        raise HTTPException(
-            status_code=404, detail="Invalid or expired invitation token"
-        )
+        raise HTTPException(status_code=404, detail="Invalid or expired invitation token")
 
     return {"email": invitation["email"]}
 
 
-@router.post(
-    "/system/accept", response_model=UserSchema, status_code=status.HTTP_201_CREATED
-)
+@router.post("/system/accept", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
 async def accept_system_invitation(
     token: str = Body(...),
     username: str = Body(...),
@@ -133,9 +123,7 @@ async def accept_system_invitation(
     invitation = await invitation_repo.get_system_invitation_by_token(token)
 
     if not invitation:
-        raise HTTPException(
-            status_code=400, detail="Invalid or expired invitation token"
-        )
+        raise HTTPException(status_code=400, detail="Invalid or expired invitation token")
 
     # Check if username is taken
     if await user_repo.exists_by_username(username):

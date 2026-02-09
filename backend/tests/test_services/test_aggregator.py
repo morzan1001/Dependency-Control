@@ -137,20 +137,14 @@ class TestIsSameComponentName:
 
     def test_maven_group_artifact(self):
         """Maven-style 'org.postgresql:postgresql' should match 'postgresql'."""
-        assert self.agg._is_same_component_name(
-            "org.postgresql:postgresql", "postgresql"
-        ) is True
+        assert self.agg._is_same_component_name("org.postgresql:postgresql", "postgresql") is True
 
     def test_maven_reverse(self):
-        assert self.agg._is_same_component_name(
-            "postgresql", "org.postgresql:postgresql"
-        ) is True
+        assert self.agg._is_same_component_name("postgresql", "org.postgresql:postgresql") is True
 
     def test_maven_different_artifact(self):
         """'org.postgresql:driver' should NOT match 'postgresql'."""
-        assert self.agg._is_same_component_name(
-            "org.postgresql:driver", "postgresql"
-        ) is False
+        assert self.agg._is_same_component_name("org.postgresql:driver", "postgresql") is False
 
     def test_npm_scoped_package(self):
         """'@angular/core' vs 'core' - this matches due to / suffix check.
@@ -194,9 +188,7 @@ class TestCalculateAggregatedFixedVersion:
 
     def test_two_vulns_different_majors(self):
         """Two vulns with fixes in two major lines - return both."""
-        result = self.agg._calculate_aggregated_fixed_version(
-            ["1.2.5, 2.0.1", "1.2.6, 2.0.3"]
-        )
+        result = self.agg._calculate_aggregated_fixed_version(["1.2.5, 2.0.1", "1.2.6, 2.0.3"])
         # For major 1: max(1.2.5, 1.2.6) = 1.2.6
         # For major 2: max(2.0.1, 2.0.3) = 2.0.3
         assert "1.2.6" in result
@@ -216,9 +208,7 @@ class TestCalculateAggregatedFixedVersion:
         # Vuln 1: fixed in 1.x and 2.x
         # Vuln 2: fixed only in 2.x
         # -> Only major 2 covers both
-        result = self.agg._calculate_aggregated_fixed_version(
-            ["1.5.0, 2.0.1", "2.0.3"]
-        )
+        result = self.agg._calculate_aggregated_fixed_version(["1.5.0, 2.0.1", "2.0.3"])
         assert "2.0.3" in result
         # Major 1 should not be in result since it doesn't cover vuln 2
         assert "1.5.0" not in result
@@ -402,9 +392,7 @@ class TestAddVulnerabilityFinding:
     def test_severity_escalation(self):
         """Aggregate severity should be the max of all findings."""
         self.agg.add_finding(self._make_vuln("CVE-1", "pkg", "1.0", severity="LOW"))
-        self.agg.add_finding(
-            self._make_vuln("CVE-2", "pkg", "1.0", severity="CRITICAL")
-        )
+        self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0", severity="CRITICAL"))
         agg = list(self.agg.findings.values())[0]
         assert agg.severity == "CRITICAL"
 
@@ -429,12 +417,8 @@ class TestAddVulnerabilityFinding:
         assert "sbom.json" in agg.found_in
 
     def test_fixed_version_calculated(self):
-        self.agg.add_finding(
-            self._make_vuln("CVE-1", "pkg", "1.0", fixed_version="1.2.3")
-        )
-        self.agg.add_finding(
-            self._make_vuln("CVE-2", "pkg", "1.0", fixed_version="1.2.5")
-        )
+        self.agg.add_finding(self._make_vuln("CVE-1", "pkg", "1.0", fixed_version="1.2.3"))
+        self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0", fixed_version="1.2.5"))
         agg = list(self.agg.findings.values())[0]
         # Should calculate aggregated fix covering both vulns
         assert agg.details.get("fixed_version") is not None
@@ -506,11 +490,7 @@ class TestMergeFindingsData:
             version="1.0",
             description="",
             scanners=["trivy"],
-            details={
-                "vulnerabilities": [
-                    {"id": "CVE-1", "severity": "HIGH", "aliases": [], "scanners": ["trivy"]}
-                ]
-            },
+            details={"vulnerabilities": [{"id": "CVE-1", "severity": "HIGH", "aliases": [], "scanners": ["trivy"]}]},
         )
         source = Finding(
             id="pkg:1.0",
@@ -520,11 +500,7 @@ class TestMergeFindingsData:
             version="1.0",
             description="",
             scanners=["grype"],
-            details={
-                "vulnerabilities": [
-                    {"id": "CVE-2", "severity": "MEDIUM", "aliases": [], "scanners": ["grype"]}
-                ]
-            },
+            details={"vulnerabilities": [{"id": "CVE-2", "severity": "MEDIUM", "aliases": [], "scanners": ["grype"]}]},
         )
         self.agg._merge_findings_data(target, source)
         assert set(target.scanners) == {"trivy", "grype"}

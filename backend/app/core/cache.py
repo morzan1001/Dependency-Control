@@ -226,9 +226,7 @@ class CacheService:
             logger.warning(f"Cache get error for {key}: {e}")
             return None
 
-    async def set(
-        self, key: str, value: Any, ttl_seconds: Optional[int] = None
-    ) -> bool:
+    async def set(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> bool:
         """
         Set value in cache with TTL.
 
@@ -310,9 +308,7 @@ class CacheService:
             logger.warning(f"Cache mget error: {e}")
             return {k: None for k in keys}
 
-    async def mset(
-        self, mapping: Dict[str, Any], ttl_seconds: Optional[int] = None
-    ) -> bool:
+    async def mset(self, mapping: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
         """
         Batch set multiple key-value pairs with TTL.
 
@@ -526,9 +522,7 @@ class CacheService:
                 "total_keys": total_keys,
                 "keyspace_hits": stats.get("keyspace_hits", 0),
                 "keyspace_misses": stats.get("keyspace_misses", 0),
-                "hit_rate": self._calculate_hit_rate(
-                    stats.get("keyspace_hits", 0), stats.get("keyspace_misses", 0)
-                ),
+                "hit_rate": self._calculate_hit_rate(stats.get("keyspace_hits", 0), stats.get("keyspace_misses", 0)),
             }
         except Exception as e:
             return {
@@ -605,9 +599,7 @@ async def update_cache_stats() -> None:
 
         # Extract metrics from info sections
         # connected_clients is in the clients section for DragonflyDB
-        connected_clients_count = clients_info.get(
-            "connected_clients", stats.get("connected_clients", 0)
-        )
+        connected_clients_count = clients_info.get("connected_clients", stats.get("connected_clients", 0))
         # used_memory is in bytes
         used_memory = memory_info.get("used_memory", 0)
 
@@ -619,8 +611,7 @@ async def update_cache_stats() -> None:
             cache_size_bytes.set(used_memory)
 
         logger.debug(
-            f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}, "
-            f"memory={used_memory} bytes"
+            f"Updated cache stats: keys={total_keys}, clients={connected_clients_count}, memory={used_memory} bytes"
         )
     except Exception as e:
         logger.warning(f"Failed to update cache statistics metrics: {e}")

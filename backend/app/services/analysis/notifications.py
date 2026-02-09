@@ -20,9 +20,7 @@ logger = logging.getLogger(__name__)
 SEVERITY_ORDER: Dict[str, int] = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 
-def _extract_vulnerability_info(
-    vuln: Dict[str, Any], finding: Dict[str, Any]
-) -> Dict[str, Any]:
+def _extract_vulnerability_info(vuln: Dict[str, Any], finding: Dict[str, Any]) -> Dict[str, Any]:
     """Extract vulnerability info from a vulnerability dict and its parent finding."""
     return {
         "id": vuln.get("id", finding.get("id", "Unknown")),
@@ -97,13 +95,10 @@ def _build_vulnerability_message(
     message = f"Security scan detected critical vulnerabilities in {project_name}.\n\n"
 
     if kev_vulns:
-        message += (
-            f"[KEV] {len(kev_vulns)} Known Exploited Vulnerabilities (CISA KEV)\n"
-        )
+        message += f"[KEV] {len(kev_vulns)} Known Exploited Vulnerabilities (CISA KEV)\n"
     if high_epss_vulns:
         message += (
-            f"[HIGH RISK] {len(high_epss_vulns)} vulnerabilities with "
-            "high exploitation probability (EPSS > 10%)\n"
+            f"[HIGH RISK] {len(high_epss_vulns)} vulnerabilities with high exploitation probability (EPSS > 10%)\n"
         )
     message += f"\nTotal critical/high vulnerabilities: {len(critical_vulns)}\n"
 
@@ -118,7 +113,7 @@ def _build_vulnerability_message(
             if vuln.get("in_kev"):
                 vuln_line += " [KEV]"
             if vuln.get("epss_score"):
-                vuln_line += f" [EPSS: {vuln['epss_score']*100:.1f}%]"
+                vuln_line += f" [EPSS: {vuln['epss_score'] * 100:.1f}%]"
             message += vuln_line + "\n"
 
     message += f"\nView full report: {scan_id}"
@@ -181,17 +176,13 @@ async def send_scan_notifications(
     # Check for critical vulnerabilities and send vulnerability_found notification
     try:
         # Convert Finding objects to dicts for processing
-        vulnerability_findings = [
-            f.model_dump() for f in aggregated_findings if f.type == "vulnerability"
-        ]
+        vulnerability_findings = [f.model_dump() for f in aggregated_findings if f.type == "vulnerability"]
 
         if not vulnerability_findings:
             return
 
         # Categorize vulnerabilities
-        kev_vulns, high_epss_vulns, critical_vulns = _categorize_vulnerabilities(
-            vulnerability_findings
-        )
+        kev_vulns, high_epss_vulns, critical_vulns = _categorize_vulnerabilities(vulnerability_findings)
 
         # Send notification if there are significant vulnerabilities
         if kev_vulns or high_epss_vulns or critical_vulns:
@@ -235,12 +226,8 @@ async def send_scan_notifications(
                     scan_id=scan_id,
                     project_id=str(project.id),
                     project_name=project.name,
-                    critical_count=sum(
-                        1 for v in critical_vulns if v.get("severity") == "CRITICAL"
-                    ),
-                    high_count=sum(
-                        1 for v in critical_vulns if v.get("severity") == "HIGH"
-                    ),
+                    critical_count=sum(1 for v in critical_vulns if v.get("severity") == "CRITICAL"),
+                    high_count=sum(1 for v in critical_vulns if v.get("severity") == "HIGH"),
                     kev_count=len(kev_vulns),
                     high_epss_count=len(high_epss_vulns),
                     top_vulnerabilities=top_vulns,

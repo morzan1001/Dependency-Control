@@ -4,7 +4,7 @@ Analysis Result Repository
 Centralizes all database operations for analysis results.
 """
 
-from typing import Any, Dict, List
+from typing import List
 
 from app.models.project import AnalysisResult
 from app.repositories.base import BaseRepository

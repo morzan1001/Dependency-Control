@@ -98,9 +98,7 @@ def analyze_deep_dependency_chains(
         for dep in dependencies:
             key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
             if key in in_cycle:
-                cycle_packages.append(
-                    {"name": get_attr(dep, "name"), "version": get_attr(dep, "version")}
-                )
+                cycle_packages.append({"name": get_attr(dep, "name"), "version": get_attr(dep, "version")})
 
         if cycle_packages:
             recommendations.append(
@@ -119,9 +117,7 @@ def analyze_deep_dependency_chains(
                         "low": 0,
                         "total": len(cycle_packages),
                     },
-                    affected_components=[
-                        f"{p['name']}@{p['version']}" for p in cycle_packages[:10]
-                    ],
+                    affected_components=[f"{p['name']}@{p['version']}" for p in cycle_packages[:10]],
                     action={
                         "type": "resolve_circular_deps",
                         "suggestions": [
@@ -173,10 +169,7 @@ def analyze_deep_dependency_chains(
                     "low": len([d for d in deep_deps if d["depth"] <= 7]),
                     "total": len(deep_deps),
                 },
-                affected_components=[
-                    f"{d['name']}@{d['version']} (depth: {d['depth']})"
-                    for d in deep_deps[:10]
-                ],
+                affected_components=[f"{d['name']}@{d['version']} (depth: {d['depth']})" for d in deep_deps[:10]],
                 action={
                     "type": "reduce_chain_depth",
                     "suggestions": [
@@ -243,10 +236,7 @@ def analyze_duplicate_packages(
                     "low": len(duplicates_found),
                     "total": len(duplicates_found),
                 },
-                affected_components=[
-                    f"{d['category']}: {', '.join(d['found'])}"
-                    for d in duplicates_found
-                ],
+                affected_components=[f"{d['category']}: {', '.join(d['found'])}" for d in duplicates_found],
                 action={
                     "type": "consolidate_packages",
                     "duplicates": duplicates_found,

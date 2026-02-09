@@ -10,6 +10,7 @@ from app.models.project import Project, Scan
 
 class ProjectWithTeam(Project):
     """Project with team name enrichment for list views."""
+
     team_name: Optional[str] = None
 
     class Config:
@@ -26,6 +27,7 @@ class ProjectList(BaseModel):
 
 class ProjectListEnriched(BaseModel):
     """Project list with team names enriched."""
+
     items: List[ProjectWithTeam]
     total: int
     page: int
@@ -34,34 +36,22 @@ class ProjectListEnriched(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    name: str = Field(
-        ..., description="The name of the project", examples=["My Awesome App"]
-    )
-    team_id: Optional[str] = Field(
-        None, description="ID of the team this project belongs to"
-    )
+    name: str = Field(..., description="The name of the project", examples=["My Awesome App"])
+    team_id: Optional[str] = Field(None, description="ID of the team this project belongs to")
     active_analyzers: List[str] = Field(
         default=["trivy", "osv", "license_compliance", "end_of_life"],
         description="List of analyzers to run on this project",
         examples=[["end_of_life", "os_malware", "trivy"]],
     )
-    retention_days: Optional[int] = Field(
-        90, description="Number of days to keep scan history", ge=1
-    )
+    retention_days: Optional[int] = Field(90, description="Number of days to keep scan history", ge=1)
 
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = Field(None, description="New name for the project")
     team_id: Optional[str] = Field(None, description="Transfer project to a team")
-    active_analyzers: Optional[List[str]] = Field(
-        None, description="Updated list of active analyzers"
-    )
-    retention_days: Optional[int] = Field(
-        None, description="Number of days to keep scan history", ge=1
-    )
-    default_branch: Optional[str] = Field(
-        None, description="Default branch to show in dashboard"
-    )
+    active_analyzers: Optional[List[str]] = Field(None, description="Updated list of active analyzers")
+    retention_days: Optional[int] = Field(None, description="Number of days to keep scan history", ge=1)
+    default_branch: Optional[str] = Field(None, description="Default branch to show in dashboard")
     enforce_notification_settings: Optional[bool] = Field(
         None, description="Enforce owner notification settings for all members"
     )
@@ -141,23 +131,17 @@ class RiskyProject(BaseModel):
 class RecentScan(Scan):
     """Scan with additional project name for cross-project views."""
 
-    project_name: str = Field(
-        ..., description="Name of the project this scan belongs to"
-    )
+    project_name: str = Field(..., description="Name of the project this scan belongs to")
 
 
 class DashboardStats(BaseModel):
     """Dashboard statistics for project overview."""
 
     total_projects: int = Field(..., description="Total number of accessible projects")
-    total_critical: int = Field(
-        ..., description="Total critical findings across projects"
-    )
+    total_critical: int = Field(..., description="Total critical findings across projects")
     total_high: int = Field(..., description="Total high findings across projects")
     avg_risk_score: float = Field(..., description="Average risk score across projects")
-    top_risky_projects: List[RiskyProject] = Field(
-        ..., description="Top 5 projects by risk score"
-    )
+    top_risky_projects: List[RiskyProject] = Field(..., description="Top 5 projects by risk score")
 
 
 class ScanFindingItem(BaseModel):

@@ -74,11 +74,7 @@ class AnalysisWorkerManager:
             # Optimization: Only fetch _id, don't load full SBOMs
             # Limit recovery to prevent queue overload in case of many pending scans
             recovery_limit = 1000  # Configurable limit
-            cursor = (
-                db.scans.find({"status": "pending"}, {"_id": 1})
-                .sort("created_at", 1)
-                .limit(recovery_limit)
-            )
+            cursor = db.scans.find({"status": "pending"}, {"_id": 1}).sort("created_at", 1).limit(recovery_limit)
 
             count = 0
             async for scan in cursor:
@@ -149,16 +145,10 @@ class AnalysisWorkerManager:
 
         # 4. Wait for active scans to complete (with timeout)
         if self._active_scans:
-            logger.info(
-                f"Waiting for {len(self._active_scans)} active scan(s) to complete: "
-                f"{self._active_scans}"
-            )
+            logger.info(f"Waiting for {len(self._active_scans)} active scan(s) to complete: {self._active_scans}")
             try:
                 # Wait for workers to finish their current work
-                await asyncio.wait_for(
-                    self._wait_for_active_scans(),
-                    timeout=timeout
-                )
+                await asyncio.wait_for(self._wait_for_active_scans(), timeout=timeout)
                 logger.info("All active scans completed gracefully.")
             except asyncio.TimeoutError:
                 logger.warning(
@@ -244,9 +234,7 @@ class AnalysisWorkerManager:
                 # If shutting down, put the item back and exit
                 if self._shutting_down:
                     # Don't process new items during shutdown - let other pods handle them
-                    logger.info(
-                        f"Worker {worker_id} returning scan {scan_id} to queue - shutting down"
-                    )
+                    logger.info(f"Worker {worker_id} returning scan {scan_id} to queue - shutting down")
                     # Item stays in DB as 'pending', just mark as done
                     self.queue.task_done()
                     break
@@ -280,9 +268,7 @@ class AnalysisWorkerManager:
                     # If scan is None, it means either:
                     # 1. It doesn't exist (deleted)
                     # 2. It's already being processed by another worker (status != pending)
-                    logger.info(
-                        f"Scan {scan_id} already claimed or not found. Skipping."
-                    )
+                    logger.info(f"Scan {scan_id} already claimed or not found. Skipping.")
                     self.queue.task_done()
                     continue
 
@@ -338,9 +324,7 @@ class AnalysisWorkerManager:
                             f"Re-queueing (attempt {retry_count + 1}/{max_retries})."
                         )
                         # Increment retry counter
-                        await db.scans.update_one(
-                            {"_id": scan_id}, {"$inc": {"retry_count": 1}}
-                        )
+                        await db.scans.update_one({"_id": scan_id}, {"$inc": {"retry_count": 1}})
                         # Remove from active scans before re-queueing
                         self._active_scans.discard(scan_id)
                         await self.queue.put(scan_id)
@@ -367,9 +351,7 @@ class AnalysisWorkerManager:
 
                     # Trigger analysis_failed webhook
                     try:
-                        project = await db.projects.find_one(
-                            {"_id": scan.get("project_id")}
-                        )
+                        project = await db.projects.find_one({"_id": scan.get("project_id")})
                         if project:
                             await webhook_service.trigger_analysis_failed(
                                 db=db,
@@ -379,9 +361,7 @@ class AnalysisWorkerManager:
                                 error_message=str(e),
                             )
                     except Exception as webhook_err:
-                        logger.error(
-                            f"Failed to trigger analysis_failed webhook: {webhook_err}"
-                        )
+                        logger.error(f"Failed to trigger analysis_failed webhook: {webhook_err}")
 
                 # Remove from active scans tracking
                 self._active_scans.discard(scan_id)
@@ -393,9 +373,7 @@ class AnalysisWorkerManager:
                 break
             except Exception as e:
                 logger.error(f"Worker {worker_id} crashed: {e}")
-                await asyncio.sleep(
-                    1
-                )  # Prevent tight loop if something is really broken
+                await asyncio.sleep(1)  # Prevent tight loop if something is really broken
 
 
 # Type alias for external use

@@ -48,9 +48,7 @@ logger = logging.getLogger(__name__)
 @router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_in: UserCreate,
-    current_user: User = Depends(
-        deps.PermissionChecker(["user:create"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["user:create"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
@@ -92,9 +90,7 @@ async def read_users(
     search: Optional[str] = None,
     sort_by: str = "username",
     sort_order: str = "asc",
-    current_user: User = Depends(
-        deps.PermissionChecker(["user:read_all"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["user:read_all"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     query = {}
@@ -110,9 +106,7 @@ async def read_users(
     sort_direction = 1 if sort_order == "asc" else -1
 
     user_repo = UserRepository(db)
-    users = await user_repo.find_many(
-        query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction
-    )
+    users = await user_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
     return users
 
 
@@ -174,9 +168,7 @@ async def update_user(
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """Update user. Requires admin permission or self."""
-    has_admin_perm = check_admin_or_self(
-        current_user, user_id, ["user:update"]
-    )
+    has_admin_perm = check_admin_or_self(current_user, user_id, ["user:update"])
 
     existing_user = await get_user_or_404(user_id, db)
 
@@ -189,9 +181,7 @@ async def update_user(
             raise HTTPException(status_code=400, detail="Email already registered")
 
     # Check username uniqueness if being updated
-    if "username" in update_data and update_data["username"] != existing_user.get(
-        "username"
-    ):
+    if "username" in update_data and update_data["username"] != existing_user.get("username"):
         if await user_repo.exists_by_username(update_data["username"]):
             raise HTTPException(status_code=400, detail="Username already taken")
 
@@ -243,9 +233,7 @@ async def migrate_to_local(
 @router.post("/{user_id}/migrate", response_model=UserSchema)
 async def migrate_user_to_local(
     user_id: str,
-    current_user: User = Depends(
-        deps.PermissionChecker(["user:update"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["user:update"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
@@ -268,9 +256,7 @@ async def migrate_user_to_local(
 async def reset_user_password(
     user_id: str,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(
-        deps.PermissionChecker(["user:update"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["user:update"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
@@ -337,9 +323,7 @@ async def update_password_me(
             detail="SSO users cannot change password. Please migrate to local account first.",
         )
 
-    if not security.verify_password(
-        password_in.current_password, current_user.hashed_password
-    ):
+    if not security.verify_password(password_in.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Incorrect password")
 
     hashed_password = security.get_password_hash(password_in.new_password)
@@ -395,9 +379,7 @@ async def setup_2fa(
     await user_repo.update(current_user.id, {"totp_secret": secret})
 
     # Generate QR Code
-    totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(
-        name=current_user.email, issuer_name=settings.PROJECT_NAME
-    )
+    totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name=settings.PROJECT_NAME)
 
     img = qrcode.make(totp_uri)
     buffered = io.BytesIO()
@@ -478,17 +460,13 @@ async def disable_2fa(
     user = await get_user_or_404(current_user.id, db)
 
     if not user.get("totp_enabled"):
-        raise HTTPException(
-            status_code=400, detail="2FA is not enabled for your account"
-        )
+        raise HTTPException(status_code=400, detail="2FA is not enabled for your account")
 
     if not security.verify_password(disable_in.password, user["hashed_password"]):
         raise HTTPException(status_code=400, detail="Invalid password")
 
     user_repo = UserRepository(db)
-    await user_repo.update(
-        current_user.id, {"totp_enabled": False, "totp_secret": None}
-    )
+    await user_repo.update(current_user.id, {"totp_enabled": False, "totp_secret": None})
 
     # Send notification if SMTP is configured
     if settings.SMTP_HOST:
@@ -513,9 +491,7 @@ async def disable_2fa(
 async def admin_disable_2fa(
     user_id: str,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(
-        deps.PermissionChecker(["user:update"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["user:update"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
@@ -554,9 +530,7 @@ async def admin_disable_2fa(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: str,
-    current_user: User = Depends(
-        deps.PermissionChecker(["user:delete"])
-    ),
+    current_user: User = Depends(deps.PermissionChecker(["user:delete"])),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
