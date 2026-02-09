@@ -708,7 +708,7 @@ async def run_analysis(
 
             # GitLab Decoration
             await decorate_gitlab_mr(
-                scan_id, stats, scan_doc, project, system_settings, db
+                scan_id, stats, scan_doc, project, db
             )
 
             # Notifications

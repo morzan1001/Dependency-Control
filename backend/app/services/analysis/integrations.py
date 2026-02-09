@@ -9,7 +9,6 @@ from typing import List, Optional
 
 from app.models.project import Project, Scan
 from app.models.stats import Stats
-from app.models.system import SystemSettings
 from app.services.gitlab import GitLabService
 
 logger = logging.getLogger(__name__)
@@ -69,7 +68,6 @@ async def decorate_gitlab_mr(
     stats: Stats,
     scan_doc: Scan,
     project: Project,
-    system_settings: SystemSettings,
     db: "AsyncIOMotorDatabase",
 ) -> None:
     """
@@ -80,7 +78,6 @@ async def decorate_gitlab_mr(
         stats: The scan statistics
         scan_doc: The scan model
         project: The project model
-        system_settings: System settings model
         db: Database connection for fetching GitLab instance
     """
     # Check preconditions
@@ -140,17 +137,10 @@ async def decorate_gitlab_mr(
             return
 
         # Build scan URL
-        dashboard_url = system_settings.dashboard_url
-        if not dashboard_url:
-            logger.warning(
-                f"Dashboard URL not configured; MR comment will omit links "
-                f"for project {project.id}, scan {scan_id}"
-            )
-        scan_url = (
-            f"{dashboard_url}/projects/{project.id}/scans/{scan_id}"
-            if dashboard_url
-            else None
-        )
+        from app.core.config import settings
+
+        frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
+        scan_url = f"{frontend_url}/projects/{project.id}/scans/{scan_id}"
 
         # Build comment
         comment_body = _build_mr_comment(scan_id, stats, scan_url)

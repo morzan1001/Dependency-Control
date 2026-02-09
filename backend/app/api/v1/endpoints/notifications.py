@@ -11,6 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from packaging.version import parse as parse_version
 
 from app.api import deps
+from app.core.config import settings
 from app.db.mongodb import get_database
 from app.models.broadcast import Broadcast
 from app.models.project import Project
@@ -113,13 +114,7 @@ async def broadcast_message(
     project_count = 0
     unique_user_count = 0
 
-    # 0. Check settings for dashboard url
-    system_settings = await deps.get_system_settings(db)
-    dashboard_url = system_settings.dashboard_url
-    if not dashboard_url:
-        logger.warning(
-            "Dashboard URL not configured; notifications will omit dashboard links"
-        )
+    frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
 
     # Determine forced channels
     forced_channels = payload.channels if payload.channels else None
@@ -143,7 +138,7 @@ async def broadcast_message(
         if users_to_notify and not payload.dry_run:
             html_msg = get_announcement_template(
                 message=message_html_content,
-                link=dashboard_url,
+                link=frontend_url,
             )
             background_tasks.add_task(
                 notification_service.notify_users,
@@ -179,7 +174,7 @@ async def broadcast_message(
             if users_to_notify and not payload.dry_run:
                 html_msg = get_announcement_template(
                     message=message_html_content,
-                    link=dashboard_url,
+                    link=frontend_url,
                 )
                 background_tasks.add_task(
                     notification_service.notify_users,
@@ -339,15 +334,10 @@ async def broadcast_message(
                     # Escape HTML to prevent XSS
                     safe_name = html.escape(p["name"])
                     safe_findings = html.escape(", ".join(p["findings"]))
-                    if dashboard_url:
-                        p_link = f"{dashboard_url}/projects/{p['id']}"
-                        projects_html_parts.append(
-                            f"<li><strong><a href='{p_link}'>{safe_name}</a></strong>: {safe_findings}</li>"
-                        )
-                    else:
-                        projects_html_parts.append(
-                            f"<li><strong>{safe_name}</strong>: {safe_findings}</li>"
-                        )
+                    p_link = f"{frontend_url}/projects/{p['id']}"
+                    projects_html_parts.append(
+                        f"<li><strong><a href='{p_link}'>{safe_name}</a></strong>: {safe_findings}</li>"
+                    )
                     projects_text_parts.append(
                         f"- {p['name']}: {', '.join(p['findings'])}"
                     )
@@ -376,10 +366,8 @@ async def broadcast_message(
 
                 dashboard_button = (
                     f'<p style="margin-top: 20px;">'
-                    f'<a href="{dashboard_url}" style="{btn_style}">View Dashboard</a>'
+                    f'<a href="{frontend_url}" style="{btn_style}">View Dashboard</a>'
                     f"</p>"
-                    if dashboard_url
-                    else ""
                 )
 
                 final_html = f"""

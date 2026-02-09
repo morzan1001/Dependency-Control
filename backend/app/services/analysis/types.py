@@ -188,7 +188,6 @@ class SystemSettingsDict(TypedDict, total=False):
 
     # General
     instance_name: str
-    dashboard_url: Optional[str]
 
     # Limits
     project_limit_per_user: int

@@ -12,7 +12,6 @@ import pytest
 from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
 from app.models.stats import Stats
-from app.models.system import SystemSettings
 from app.services.gitlab import GitLabService
 from tests.mocks.gitlab import (
     make_gitlab_instance,
@@ -87,7 +86,7 @@ class TestMrDecorationEarlyReturns:
         )
         asyncio.run(decorate_gitlab_mr(
             scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-            project=project, system_settings=SystemSettings(), db=MagicMock(),
+            project=project, db=MagicMock(),
         ))
 
     def test_skips_when_no_gitlab_ids(self):
@@ -100,7 +99,7 @@ class TestMrDecorationEarlyReturns:
         )
         asyncio.run(decorate_gitlab_mr(
             scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-            project=project, system_settings=SystemSettings(), db=MagicMock(),
+            project=project, db=MagicMock(),
         ))
 
     def test_skips_when_no_commit_hash(self):
@@ -113,7 +112,7 @@ class TestMrDecorationEarlyReturns:
         )
         asyncio.run(decorate_gitlab_mr(
             scan_id="s1", stats=Stats(), scan_doc=_make_scan(),
-            project=project, system_settings=SystemSettings(), db=MagicMock(),
+            project=project, db=MagicMock(),
         ))
 
     def test_skips_when_instance_not_found(self):
@@ -129,7 +128,7 @@ class TestMrDecorationEarlyReturns:
 
         asyncio.run(decorate_gitlab_mr(
             scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-            project=project, system_settings=SystemSettings(), db=db,
+            project=project, db=db,
         ))
 
     def test_skips_when_instance_inactive(self):
@@ -149,7 +148,7 @@ class TestMrDecorationEarlyReturns:
 
         asyncio.run(decorate_gitlab_mr(
             scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-            project=project, system_settings=SystemSettings(), db=db,
+            project=project, db=db,
         ))
 
 
@@ -178,7 +177,7 @@ class TestMrDecorationInstanceRouting:
 
             asyncio.run(decorate_gitlab_mr(
                 scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc123"),
-                project=project, system_settings=SystemSettings(), db=db,
+                project=project, db=db,
             ))
 
             MockService.assert_called_once()
@@ -227,7 +226,7 @@ class TestMrDecorationInstanceRouting:
 
                 asyncio.run(decorate_gitlab_mr(
                     scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
-                    project=proj, system_settings=SystemSettings(), db=db,
+                    project=proj, db=db,
                 ))
 
                 created_instance = MockService.call_args[0][0]
@@ -267,7 +266,6 @@ class TestMrDecorationInstanceRouting:
             asyncio.run(decorate_gitlab_mr(
                 scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
                 project=project,
-                system_settings=SystemSettings(dashboard_url="https://app.example.com"),
                 db=db,
             ))
 
@@ -307,7 +305,6 @@ class TestMrDecorationInstanceRouting:
             asyncio.run(decorate_gitlab_mr(
                 scan_id="s1", stats=Stats(), scan_doc=_make_scan(commit_hash="abc"),
                 project=project,
-                system_settings=SystemSettings(dashboard_url="https://app.example.com"),
                 db=db,
             ))
 
@@ -354,7 +351,6 @@ class TestMrDecorationInstanceRouting:
             asyncio.run(decorate_gitlab_mr(
                 scan_id="s1", stats=stats, scan_doc=_make_scan(commit_hash="abc"),
                 project=project,
-                system_settings=SystemSettings(dashboard_url="https://app.example.com"),
                 db=db,
             ))
 

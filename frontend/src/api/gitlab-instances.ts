@@ -12,7 +12,7 @@ export const gitlabInstancesApi = {
    * List all GitLab instances
    */
   list: async (params?: { page?: number; size?: number; active_only?: boolean }) => {
-    const response = await api.get<GitLabInstanceList>('/gitlab-instances', { params });
+    const response = await api.get<GitLabInstanceList>('/gitlab-instances/', { params });
     return response.data;
   },
 
@@ -28,7 +28,7 @@ export const gitlabInstancesApi = {
    * Create a new GitLab instance
    */
   create: async (data: GitLabInstanceCreate) => {
-    const response = await api.post<GitLabInstance>('/gitlab-instances', data);
+    const response = await api.post<GitLabInstance>('/gitlab-instances/', data);
     return response.data;
   },
 

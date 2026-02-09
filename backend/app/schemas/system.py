@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 class SystemSettingsBase(BaseModel):
     instance_name: Optional[str] = "Dependency Control"
-    dashboard_url: Optional[str] = None
 
     # Limits
     project_limit_per_user: int = 0  # 0 means unlimited

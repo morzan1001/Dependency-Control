@@ -8,7 +8,6 @@ class SystemSettings(BaseModel):
 
     # General
     instance_name: str = "Dependency Control"
-    dashboard_url: Optional[str] = None
 
     # Limits
     project_limit_per_user: int = 0  # 0 means unlimited

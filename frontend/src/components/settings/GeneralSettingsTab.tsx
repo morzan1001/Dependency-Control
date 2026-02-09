@@ -38,18 +38,6 @@ export function GeneralSettingsTab({
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="dashboard-url">Dashboard URL</Label>
-            <Input
-              id="dashboard-url"
-              placeholder="https://dc.example.com"
-              value={formData.dashboard_url || ''}
-              onChange={(e) => handleInputChange('dashboard_url', e.target.value)}
-            />
-            <p className="text-sm text-muted-foreground">
-              Public URL of this instance. Used in email notifications and links.
-            </p>
-          </div>
-          <div className="grid gap-2">
             <Label htmlFor="project-limit">Project Limit per User</Label>
             <Input 
               id="project-limit" 
