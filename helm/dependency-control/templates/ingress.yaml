@@ -35,28 +35,6 @@ spec:
                   {{- else }}
                   number: {{ .Values.backend.service.port }}
                   {{- end }}
-          - path: /docs
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "dependency-control.fullname" . }}-backend
-                port:
-                  {{- if .Values.global.tls.enabled }}
-                  number: 8443
-                  {{- else }}
-                  number: {{ .Values.backend.service.port }}
-                  {{- end }}
-          - path: /openapi.json
-            pathType: Exact
-            backend:
-              service:
-                name: {{ include "dependency-control.fullname" . }}-backend
-                port:
-                  {{- if .Values.global.tls.enabled }}
-                  number: 8443
-                  {{- else }}
-                  number: {{ .Values.backend.service.port }}
-                  {{- end }}
           - path: /
             pathType: Prefix
             backend:
@@ -74,4 +52,52 @@ spec:
         - {{ .Values.ingress.hostname | quote }}
       secretName: {{ include "dependency-control.fullname" . }}-tls
   {{- end }}
+{{- range $name, $extra := .Values.ingress.extra }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "dependency-control.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "dependency-control.labels" $ | nindent 4 }}
+  {{- with $extra.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ $extra.className | default ($.Values.ingress.className | default "traefik") }}
+  rules:
+    - host: {{ $extra.hostname | default $.Values.ingress.hostname | quote }}
+      http:
+        paths:
+          {{- range $extra.paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                {{- if eq (.target | default "backend") "backend" }}
+                name: {{ include "dependency-control.fullname" $ }}-backend
+                port:
+                  {{- if $.Values.global.tls.enabled }}
+                  number: 8443
+                  {{- else }}
+                  number: {{ $.Values.backend.service.port }}
+                  {{- end }}
+                {{- else }}
+                name: {{ include "dependency-control.fullname" $ }}-frontend
+                port:
+                  {{- if $.Values.global.tls.enabled }}
+                  number: 443
+                  {{- else }}
+                  number: {{ $.Values.frontend.service.port }}
+                  {{- end }}
+                {{- end }}
+          {{- end }}
+  {{- if or $extra.tls $.Values.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ $extra.hostname | default $.Values.ingress.hostname | quote }}
+      secretName: {{ include "dependency-control.fullname" $ }}-{{ $name }}-tls
+  {{- end }}
+{{- end }}
 {{- end }}
