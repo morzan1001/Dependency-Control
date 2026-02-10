@@ -35,5 +35,8 @@ class BroadcastHistoryItem(BaseModel):
     target_type: str
     subject: str
     created_at: str
+    created_by: Optional[str] = None
     recipient_count: int
     project_count: int
+    unique_user_count: int = 0
+    teams: Optional[List[str]] = None

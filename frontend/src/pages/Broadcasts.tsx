@@ -20,6 +20,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Plus, Trash2, Megaphone, ShieldAlert, Users, Globe, Calculator, Send, History, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { formatDistanceToNow } from "date-fns"
@@ -27,7 +29,7 @@ import { formatDistanceToNow } from "date-fns"
 export default function Broadcasts() {
   const { mutateAsync: sendBroadcast, isPending } = useBroadcast()
   const { data: teams } = useTeams() // For team selection
-  const { data: history, refetch: refetchHistory } = useBroadcastHistory()
+  const { data: history, refetch: refetchHistory, isLoading: isLoadingHistory } = useBroadcastHistory()
   const { data: availableChannels } = useNotificationChannels()
 
   const [activeTab, setActiveTab] = useState<string>("announcement")
@@ -125,6 +127,10 @@ export default function Broadcasts() {
     toast.success("Broadcast queued", {
       description: `Sending notifications to ${result.recipient_count} users in the background.`
     })
+    setAnnouncementSubject("")
+    setAnnouncementMessage("")
+    setSelectedTeams([])
+    setAnnouncementTarget("global")
     refetchHistory()
   }
 
@@ -141,9 +147,13 @@ export default function Broadcasts() {
       dry_run: false
     })
     setImpactCount(null)
+    setImpactProjectCount(null)
     toast.success("Advisory queued", {
       description: `Sending to owners of ${result.project_count || 0} affected projects in the background.`
     })
+    setAdvisorySubject("")
+    setAdvisoryMessage("")
+    setPackages([{ name: "", version: "", type: "" }])
     refetchHistory()
   }
 
@@ -434,7 +444,17 @@ export default function Broadcasts() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                   {history?.map((item) => (
+                   {isLoadingHistory && Array.from({ length: 5 }).map((_, i) => (
+                      <TableRow key={`skeleton-${i}`}>
+                         <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                         <TableCell><Skeleton className="h-4 w-48" /></TableCell>
+                         <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                         <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                         <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                         <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                      </TableRow>
+                   ))}
+                   {!isLoadingHistory && history?.map((item) => (
                       <TableRow key={item.id}>
                          <TableCell className="whitespace-nowrap">
                             {formatDistanceToNow(new Date(item.created_at), { addSuffix: true })}
@@ -446,18 +466,38 @@ export default function Broadcasts() {
                             </Badge>
                          </TableCell>
                          <TableCell>
-                            <span className="capitalize text-muted-foreground">{item.target_type}</span>
+                            {item.target_type === 'teams' && item.teams && item.teams.length > 0 ? (
+                               <TooltipProvider>
+                                 <Tooltip>
+                                   <TooltipTrigger asChild>
+                                     <Badge variant="secondary" className="cursor-default">
+                                       <Users className="h-3 w-3 mr-1" />
+                                       {item.teams.length} {item.teams.length === 1 ? 'Team' : 'Teams'}
+                                     </Badge>
+                                   </TooltipTrigger>
+                                   <TooltipContent>
+                                     <div className="flex flex-col gap-1">
+                                       {item.teams.map((name, i) => (
+                                         <span key={i}>{name}</span>
+                                       ))}
+                                     </div>
+                                   </TooltipContent>
+                                 </Tooltip>
+                               </TooltipProvider>
+                            ) : (
+                               <Badge variant="outline" className="capitalize">{item.target_type === 'advisory' ? 'Advisory' : item.target_type}</Badge>
+                            )}
                          </TableCell>
                          <TableCell>
                             <div className="flex flex-col text-xs gap-1">
-                               <Badge variant="outline" className="w-fit">{item.unique_user_count || 0} Users</Badge>
+                               <Badge variant="outline" className="w-fit">{item.unique_user_count ?? item.recipient_count} Users</Badge>
                                {item.project_count > 0 && <span className="text-muted-foreground">{item.project_count} Projects</span>}
                             </div>
                          </TableCell>
-                         <TableCell className="text-muted-foreground text-xs">{item.created_by}</TableCell>
+                         <TableCell className="text-muted-foreground text-xs">{item.created_by || '—'}</TableCell>
                       </TableRow>
                    ))}
-                   {(!history || history.length === 0) && (
+                   {!isLoadingHistory && (!history || history.length === 0) && (
                       <TableRow>
                          <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                             No broadcast history found.

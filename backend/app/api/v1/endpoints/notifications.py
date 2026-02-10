@@ -44,7 +44,26 @@ async def get_broadcast_history(
     Get history of sent broadcasts
     """
     broadcast_repo = BroadcastRepository(db)
+    user_repo = UserRepository(db)
     history = await broadcast_repo.get_history(limit=50)
+
+    # Resolve creator user IDs to usernames
+    creator_ids = list({h.created_by for h in history if h.created_by})
+    creators_map: dict[str, str] = {}
+    if creator_ids:
+        creator_users = await user_repo.find_many({"_id": {"$in": creator_ids}}, limit=len(creator_ids))
+        creators_map = {str(u.id): u.username for u in creator_users}
+
+    # Resolve team IDs to team names
+    all_team_ids: list[str] = []
+    for h in history:
+        if h.teams:
+            all_team_ids.extend(h.teams)
+    teams_map: dict[str, str] = {}
+    if all_team_ids:
+        team_repo = TeamRepository(db)
+        found_teams = await team_repo.find_many({"_id": {"$in": list(set(all_team_ids))}}, limit=100)
+        teams_map = {str(t.id): t.name for t in found_teams}
 
     return [
         BroadcastHistoryItem(
@@ -53,8 +72,11 @@ async def get_broadcast_history(
             target_type=h.target_type,
             subject=h.subject,
             created_at=(h.created_at.isoformat() if isinstance(h.created_at, datetime) else str(h.created_at)),
+            created_by=creators_map.get(h.created_by, h.created_by),
             recipient_count=h.recipient_count,
             project_count=h.project_count,
+            unique_user_count=h.recipient_count,
+            teams=[teams_map.get(tid, tid) for tid in h.teams] if h.teams else None,
         )
         for h in history
     ]

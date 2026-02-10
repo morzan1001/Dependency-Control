@@ -31,8 +31,9 @@ export interface BroadcastHistoryItem {
   target_type: string;
   subject: string;
   created_at: string;
-  created_by: string;
+  created_by?: string;
   recipient_count: number;
   project_count: number;
   unique_user_count?: number;
+  teams?: string[];
 }
