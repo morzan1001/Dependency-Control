@@ -10,6 +10,7 @@ export interface SystemSettings {
   smtp_password?: string;
   smtp_encryption?: string;
   emails_from_email?: string;
+  emails_from_name?: string;
   oidc_enabled?: boolean;
   oidc_provider_name?: string;
   oidc_client_id?: string;

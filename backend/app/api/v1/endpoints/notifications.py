@@ -118,7 +118,9 @@ async def broadcast_message(
         )
 
     # Convert Markdown to HTML for the message body
-    message_html_content = markdown.markdown(payload.message)
+    # Escape raw HTML in the input first to prevent XSS via embedded tags
+    safe_message = html.escape(payload.message)
+    message_html_content = markdown.markdown(safe_message)
 
     if payload.target_type == "global":
         # All active users

@@ -24,8 +24,7 @@ from app.services.notifications.templates import (
 def get_logo_path() -> str:
     """Get the absolute path to the logo file for emails."""
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(current_dir, "../../../../.."))
-    return os.path.join(project_root, "assets", "logo.png")
+    return os.path.join(current_dir, "..", "..", "..", "static", "logo.png")
 
 
 async def send_verification_email(

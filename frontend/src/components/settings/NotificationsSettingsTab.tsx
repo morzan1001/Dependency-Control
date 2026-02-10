@@ -112,10 +112,19 @@ export function NotificationsSettingsTab({
             </Select>
           </div>
           <div className="grid gap-2">
+            <Label htmlFor="from-name">From Name</Label>
+            <Input
+              id="from-name"
+              placeholder="Dependency Control"
+              value={formData.emails_from_name || ''}
+              onChange={(e) => handleInputChange('emails_from_name', e.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
             <Label htmlFor="from-email">From Email</Label>
-            <Input 
-              id="from-email" 
-              placeholder="info@dependencycontrol.local" 
+            <Input
+              id="from-email"
+              placeholder="info@dependencycontrol.local"
               value={formData.emails_from_email || ''}
               onChange={(e) => handleInputChange('emails_from_email', e.target.value)}
             />

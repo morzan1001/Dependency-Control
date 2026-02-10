@@ -280,6 +280,7 @@ async def reset_user_password(
     if settings.SMTP_HOST:
         try:
             logo_path = get_logo_path()
+            system_settings = await deps.get_system_settings(db)
 
             html_content = get_password_reset_template(
                 username=user["username"], link=link, project_name=settings.PROJECT_NAME
@@ -293,6 +294,7 @@ async def reset_user_password(
                 message=f"Please reset your password by clicking this link: {link}",
                 html_message=html_content,
                 logo_path=logo_path,
+                system_settings=system_settings,
             )
             email_sent = True
         except Exception as e:
@@ -333,6 +335,7 @@ async def update_password_me(
 
     # Send notification if SMTP is configured
     if settings.SMTP_HOST:
+        system_settings = await deps.get_system_settings(db)
         background_tasks.add_task(
             notification_service.email_provider.send,
             destination=current_user.email,
@@ -347,6 +350,8 @@ async def update_password_me(
                 login_link=f"{settings.FRONTEND_BASE_URL}/login",
                 project_name=settings.PROJECT_NAME,
             ),
+            logo_path=get_logo_path(),
+            system_settings=system_settings,
         )
 
     return await fetch_updated_user(current_user.id, db)
@@ -430,6 +435,7 @@ async def enable_2fa(
 
     # Send notification if SMTP is configured
     if settings.SMTP_HOST:
+        system_settings = await deps.get_system_settings(db)
         background_tasks.add_task(
             notification_service.email_provider.send,
             destination=current_user.email,
@@ -442,6 +448,8 @@ async def enable_2fa(
             html_message=templates.get_2fa_enabled_template(
                 username=current_user.username, project_name=settings.PROJECT_NAME
             ),
+            logo_path=get_logo_path(),
+            system_settings=system_settings,
         )
 
     return await fetch_updated_user(current_user.id, db)
@@ -470,6 +478,7 @@ async def disable_2fa(
 
     # Send notification if SMTP is configured
     if settings.SMTP_HOST:
+        system_settings = await deps.get_system_settings(db)
         background_tasks.add_task(
             notification_service.email_provider.send,
             destination=current_user.email,
@@ -482,6 +491,8 @@ async def disable_2fa(
             html_message=templates.get_2fa_disabled_template(
                 username=current_user.username, project_name=settings.PROJECT_NAME
             ),
+            logo_path=get_logo_path(),
+            system_settings=system_settings,
         )
 
     return await fetch_updated_user(current_user.id, db)
@@ -508,6 +519,7 @@ async def admin_disable_2fa(
     # Send notification
     if settings.SMTP_HOST:
         try:
+            system_settings = await deps.get_system_settings(db)
             background_tasks.add_task(
                 notification_service.email_provider.send,
                 destination=user["email"],
@@ -520,6 +532,8 @@ async def admin_disable_2fa(
                 html_message=templates.get_2fa_disabled_template(
                     username=user["username"], project_name=settings.PROJECT_NAME
                 ),
+                logo_path=get_logo_path(),
+                system_settings=system_settings,
             )
         except Exception as e:
             logger.error(f"Failed to send 2FA disable email: {e}")

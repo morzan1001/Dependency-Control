@@ -22,6 +22,7 @@ class SystemSettingsBase(BaseModel):
     smtp_password: Optional[str] = None
     smtp_encryption: str = "starttls"
     emails_from_email: Optional[str] = "info@dependencycontrol.local"
+    emails_from_name: Optional[str] = "Dependency Control"
 
     open_source_malware_api_key: Optional[str] = None
     slack_bot_token: Optional[str] = None

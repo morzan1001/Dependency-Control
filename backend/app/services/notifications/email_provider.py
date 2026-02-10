@@ -3,6 +3,7 @@ import os
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr
 from typing import Optional
 
 from app.core.constants import SMTP_TIMEOUT_SECONDS
@@ -93,15 +94,22 @@ class EmailProvider(NotificationProvider):
         smtp_user = system_settings.smtp_user
         smtp_password = system_settings.smtp_password
         smtp_encryption = system_settings.smtp_encryption
-        emails_from = system_settings.emails_from_email
+        emails_from_email = system_settings.emails_from_email
+        emails_from_name = system_settings.emails_from_name
 
         if not smtp_host:
             logger.warning("SMTP_HOST not configured. Skipping email.")
             return False
 
-        if not emails_from:
+        if not emails_from_email:
             logger.warning("EMAILS_FROM not configured. Skipping email.")
             return False
+
+        if emails_from_name:
+            sanitized_name = emails_from_name.replace("\r", "").replace("\n", "")
+            emails_from = formataddr((sanitized_name, emails_from_email))
+        else:
+            emails_from = emails_from_email
 
         try:
             if logo_path and os.path.exists(logo_path):

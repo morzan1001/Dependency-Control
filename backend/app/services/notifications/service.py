@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import Dict, List, Optional
 
 from app.models.project import Project
@@ -11,6 +12,8 @@ from app.services.notifications.mattermost_provider import MattermostProvider
 from app.services.notifications.slack_provider import SlackProvider
 
 logger = logging.getLogger(__name__)
+
+_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "static", "logo.png")
 
 
 class NotificationService:
@@ -40,6 +43,7 @@ class NotificationService:
                     message,
                     system_settings=system_settings,
                     html_message=html_message,
+                    logo_path=_LOGO_PATH,
                 )
             )
 

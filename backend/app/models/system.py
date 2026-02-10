@@ -24,6 +24,7 @@ class SystemSettings(BaseModel):
     smtp_password: Optional[str] = None
     smtp_encryption: str = "starttls"  # starttls, ssl, none
     emails_from_email: str = "info@dependencycontrol.local"
+    emails_from_name: Optional[str] = "Dependency Control"
 
     # Integrations
     github_token: Optional[str] = Field(
