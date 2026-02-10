@@ -150,8 +150,8 @@ async def broadcast_message(
         user_ids: Set[str] = set()
 
         for t in teams:
-            for m in t.get("members", []):
-                user_ids.add(m["user_id"])
+            for m in t.members:
+                user_ids.add(m.user_id)
 
         if user_ids:
             users_to_notify = await user_repo.find_many(
@@ -183,7 +183,7 @@ async def broadcast_message(
         projects_list = await project_repo.find_many({"latest_scan_id": {"$exists": True}}, limit=10000)
 
         # Map scan_id -> Project Data
-        scan_map = {p["latest_scan_id"]: p for p in projects_list if p.get("latest_scan_id")}
+        scan_map = {p.latest_scan_id: p for p in projects_list if p.latest_scan_id}
 
         if not scan_map:
             return BroadcastResult(recipient_count=0)
@@ -251,11 +251,11 @@ async def broadcast_message(
                 is_affected = True
 
             if is_affected:
-                p_data = scan_map.get(dep["scan_id"])
+                p_data = scan_map.get(dep.scan_id)
                 if p_data:
-                    project_id = str(p_data["_id"])
+                    project_id = str(p_data.id)
                     if project_id not in affected_projects_map:
-                        affected_projects_map[project_id] = Project(**p_data)
+                        affected_projects_map[project_id] = p_data
 
                     if project_id not in project_findings:
                         project_findings[project_id] = []
