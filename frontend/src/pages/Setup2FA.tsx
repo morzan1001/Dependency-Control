@@ -68,7 +68,7 @@ export default function Setup2FA() {
         <CardHeader>
           <CardTitle>Setup Two-Factor Authentication</CardTitle>
           <CardDescription>
-            Your organization requires 2FA to be enabled for your account.
+            Your organization requires local accounts to enable 2FA.
           </CardDescription>
         </CardHeader>
         <CardContent>

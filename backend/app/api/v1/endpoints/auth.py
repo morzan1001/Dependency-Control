@@ -109,8 +109,13 @@ async def login_access_token(
 
     system_config = await deps.get_system_settings(db)
 
-    # Check Email Verification
-    if system_config.enforce_email_verification and not user.get("is_verified", False):
+    # Check Email Verification (skip for OIDC users — trust the provider)
+    auth_provider = user.get("auth_provider", "local")
+    if (
+        system_config.enforce_email_verification
+        and not user.get("is_verified", False)
+        and (not auth_provider or auth_provider == "local")
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email not verified",
@@ -146,8 +151,8 @@ async def login_access_token(
         if auth_2fa_verifications_total:
             auth_2fa_verifications_total.labels(result="success").inc()
         permissions = user.get("permissions", [])
-    elif system_config.enforce_2fa:
-        # User has no 2FA but it is enforced -> Issue limited token for setup
+    elif system_config.enforce_2fa and (not user.get("auth_provider") or user.get("auth_provider") == "local"):
+        # User has no 2FA but it is enforced -> Issue limited token for setup (local users only)
         permissions = ["auth:setup_2fa"]
     else:
         permissions = user.get("permissions", [])
@@ -694,10 +699,8 @@ async def login_oidc_callback(
                 detail="User account is inactive",
             )
 
-    # Check 2FA enforcement (same logic as login)
+    # OIDC users are exempt from 2FA enforcement — we trust the OIDC provider
     permissions = user.get("permissions", [])
-    if system_config.enforce_2fa and not user.get("totp_enabled", False):
-        permissions = ["auth:setup_2fa"]
 
     # Create tokens
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)

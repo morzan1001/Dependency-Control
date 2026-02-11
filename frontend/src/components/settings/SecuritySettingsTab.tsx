@@ -39,7 +39,7 @@ export function SecuritySettingsTab({
             <div className="space-y-0.5">
               <Label className="text-base">Enforce 2FA</Label>
               <p className="text-sm text-muted-foreground">
-                Require all users to set up Two-Factor Authentication.
+                Require local users to set up Two-Factor Authentication. OIDC/SSO users are exempt.
               </p>
             </div>
             <Switch 
@@ -52,7 +52,7 @@ export function SecuritySettingsTab({
             <div className="space-y-0.5">
               <Label className="text-base">Enforce Email Verification</Label>
               <p className="text-sm text-muted-foreground">
-                Require users to verify their email address before accessing the system.
+                Require local users to verify their email address before accessing the system. OIDC/SSO users are exempt.
               </p>
             </div>
             <Switch 
