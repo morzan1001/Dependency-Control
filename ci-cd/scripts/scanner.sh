@@ -114,7 +114,6 @@ get_auth_header() {
             log_error "Failed to obtain GitHub Actions OIDC token. Check workflow permissions (id-token: write)."
             exit 1
         fi
-        log_info "Using GitHub Actions OIDC token for authentication" >&2
         echo "Job-Token: $oidc_token"
     elif [ -n "${CI_JOB_JWT_V2:-}" ]; then
         # GitLab CI OIDC token (auto-detected)
