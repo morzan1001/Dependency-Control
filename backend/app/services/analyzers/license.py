@@ -693,6 +693,16 @@ class LicenseAnalyzer(Analyzer):
         if not lic_id:
             return ""
 
+        # Strip metadata suffixes like ;link="..." (common in NuGet/RPM SBOMs)
+        # e.g. 'Apache-2.0";link="https://..."' → 'Apache-2.0'
+        if ";" in lic_id:
+            lic_id = lic_id.split(";", 1)[0]
+        # Strip surrounding quotes
+        lic_id = lic_id.strip('" ')
+
+        if not lic_id:
+            return ""
+
         # Check aliases first (exact match)
         if lic_id in LICENSE_ALIASES:
             return LICENSE_ALIASES[lic_id]
