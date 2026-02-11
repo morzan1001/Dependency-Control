@@ -1,3 +1,11 @@
+# Release 1.4.46
+
+## 🐛 Fixes
+
+- fix: license normalizer (#0)
+
+
+
 # Release 1.4.45
 
 
