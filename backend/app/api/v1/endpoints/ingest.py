@@ -167,7 +167,7 @@ async def ingest_sbom(
     """
     Upload an SBOM for analysis.
 
-    Requires a valid **API Key** in the `X-API-Key` header or **GitLab OIDC Token**.
+    Requires a valid **API Key** in the `X-API-Key` header or **OIDC Token** (GitLab/GitHub Actions) in the `Job-Token` header.
     The analysis will be queued and processed by background workers.
     """
     manager = ScanManager(db, project)

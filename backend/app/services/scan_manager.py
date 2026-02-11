@@ -52,6 +52,8 @@ class ScanManager:
         if data.pipeline_url:
             return data.pipeline_url
         if data.project_url and data.pipeline_id:
+            if self.project.github_instance_id:
+                return f"{data.project_url}/actions/runs/{data.pipeline_id}"
             return f"{data.project_url}/-/pipelines/{data.pipeline_id}"
         return None
 

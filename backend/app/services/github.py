@@ -61,7 +61,7 @@ class GitHubService:
                     jwks_uri = config.get("jwks_uri")
                     if jwks_uri:
                         await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
-                    return jwks_uri
+                        return jwks_uri
             except Exception as e:
                 logger.warning(f"Error fetching GitHub OIDC discovery: {e}")
 
