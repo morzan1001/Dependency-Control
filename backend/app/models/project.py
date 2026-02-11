@@ -51,6 +51,16 @@ class Project(BaseModel):
     gitlab_mr_comments_enabled: bool = Field(
         False, description="Enable posting scan results as comments on merge requests"
     )
+    # GitHub Integration (Multi-Instance Support)
+    github_instance_id: Optional[str] = Field(
+        None, description="Reference to GitHubInstance._id. Required if github_repository_id is set."
+    )
+    github_repository_id: Optional[str] = Field(
+        None, description="GitHub repository numeric ID. Must be combined with github_instance_id."
+    )
+    github_repository_path: Optional[str] = Field(
+        None, description="GitHub repository path (owner/repo). For display purposes."
+    )
 
     # Periodic Scanning
     rescan_enabled: Optional[bool] = None  # If None, use system default

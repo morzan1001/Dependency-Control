@@ -74,6 +74,40 @@ class ProjectRepository:
         """Count projects for a specific GitLab instance."""
         return await self.collection.count_documents({"gitlab_instance_id": gitlab_instance_id})
 
+    # GitHub Integration (Multi-Instance Support)
+
+    async def get_by_github_composite_key(
+        self, github_instance_id: str, github_repository_id: str
+    ) -> Optional[Project]:
+        """
+        Get project by composite GitHub key (instance + repository ID).
+        This is the PRIMARY lookup method for GitHub-integrated projects.
+        """
+        data = await self.collection.find_one(
+            {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id}
+        )
+        if data:
+            return Project(**data)
+        return None
+
+    async def get_raw_by_github_composite_key(
+        self, github_instance_id: str, github_repository_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get raw project document by composite GitHub key."""
+        return await self.collection.find_one(
+            {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id}
+        )
+
+    async def list_by_github_instance(self, github_instance_id: str, skip: int = 0, limit: int = 100) -> List[Project]:
+        """Get all projects for a specific GitHub instance."""
+        cursor = self.collection.find({"github_instance_id": github_instance_id}).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [Project(**doc) for doc in docs]
+
+    async def count_by_github_instance(self, github_instance_id: str) -> int:
+        """Count projects for a specific GitHub instance."""
+        return await self.collection.count_documents({"github_instance_id": github_instance_id})
+
     async def create(self, project: Project) -> Project:
         """Create a new project."""
         await self.collection.insert_one(project.model_dump(by_alias=True))

@@ -14,6 +14,7 @@ from app.api.v1.endpoints import (
     analytics,
     auth,
     callgraph,
+    github_instances,
     gitlab_instances,
     ingest,
     integrations,
@@ -128,6 +129,11 @@ app.include_router(
     gitlab_instances.router,
     prefix=f"{settings.API_V1_STR}/gitlab-instances",
     tags=["gitlab-instances"],
+)
+app.include_router(
+    github_instances.router,
+    prefix=f"{settings.API_V1_STR}/github-instances",
+    tags=["github-instances"],
 )
 app.include_router(
     invitations.router,

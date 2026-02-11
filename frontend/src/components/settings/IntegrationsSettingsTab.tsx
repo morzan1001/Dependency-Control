@@ -3,7 +3,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { SettingsTabProps } from "@/types/system"
-import { GitLabInstancesManagement } from "@/components/gitlab/GitLabInstancesManagement"
+import { CICDInstancesManagement } from "@/components/settings/CICDInstancesManagement"
 
 export function IntegrationsSettingsTab({
   formData,
@@ -14,7 +14,7 @@ export function IntegrationsSettingsTab({
 }: SettingsTabProps) {
   return (
     <div className="space-y-4">
-      <GitLabInstancesManagement />
+      <CICDInstancesManagement />
 
       <Card>
         <CardHeader>

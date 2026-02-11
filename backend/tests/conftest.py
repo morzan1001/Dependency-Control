@@ -22,6 +22,7 @@ os.environ["DATABASE_NAME"] = "test_dependency_control"
 import pytest  # noqa: E402
 
 from tests.mocks.gitlab import make_gitlab_instance  # noqa: E402
+from tests.mocks.github import make_github_instance  # noqa: E402
 
 
 @pytest.fixture
@@ -45,6 +46,28 @@ def gitlab_instance_b():
         access_token="glpat-token-b",
         auto_create_projects=False,
         sync_teams=False,
+    )
+
+
+@pytest.fixture
+def github_instance_a():
+    """Standard GitHub instance A for testing."""
+    return make_github_instance(
+        id="gh-instance-a-id",
+        name="GitHub.com",
+        url="https://token.actions.githubusercontent.com",
+    )
+
+
+@pytest.fixture
+def github_instance_b():
+    """Standard GitHub instance B - GHES for testing."""
+    return make_github_instance(
+        id="gh-instance-b-id",
+        name="GitHub Enterprise",
+        url="https://github.corp.example.com/_services/token",
+        github_url="https://github.corp.example.com",
+        auto_create_projects=False,
     )
 
 

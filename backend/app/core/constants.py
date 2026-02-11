@@ -852,6 +852,10 @@ CVSS_SEVERITY_SCORES: Dict[str, float] = {
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
 
+# GitHub JWKS cache TTLs (in seconds)
+GITHUB_JWKS_CACHE_TTL = 3600  # 1 hour
+GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
+
 # Time (seconds) since last result to trigger aggregation for stale scans
 # This is tuned for typical CI pipeline timing - don't change unless you understand the implications
 HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS: int = 30

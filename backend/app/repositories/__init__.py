@@ -13,6 +13,7 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.findings import FindingRepository
+from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.invitations import InvitationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
@@ -33,6 +34,7 @@ __all__ = [
     "DependencyEnrichmentRepository",
     "DistributedLocksRepository",
     "FindingRepository",
+    "GitHubInstanceRepository",
     "InvitationRepository",
     "ProjectRepository",
     "ScanRepository",

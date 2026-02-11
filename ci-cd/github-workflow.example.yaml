@@ -4,16 +4,25 @@ on:
   push:
   pull_request:
 
+# OIDC authentication: GitHub Actions requests a short-lived token from the
+# GitHub OIDC provider. The scanner sends this token via the Job-Token header,
+# and Dependency Control validates it against the configured GitHub instance.
+# No long-lived API keys needed.
+permissions:
+  id-token: write   # Required for OIDC token request
+  contents: read    # Required for checkout
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   DEP_CONTROL_URL: ${{ secrets.DEP_CONTROL_URL }}
-  DEP_CONTROL_API_KEY: ${{ secrets.DEP_CONTROL_API_KEY }}
   SCANNER_VERSION: "1.0.0"
   # Required: Get hash from $DEP_CONTROL_URL/api/v1/scripts/scanner.sh/hash
   SCANNER_SHA256: ${{ vars.SCANNER_SHA256 }}
+  # Optional: Override the OIDC audience (default: "dependency-control")
+  # DEP_CONTROL_OIDC_AUDIENCE: "dependency-control"
 
 jobs:
   sbom-scan:

@@ -61,7 +61,7 @@ detect_ci_environment() {
         PIPELINE_URL="${PROJECT_URL}/actions/runs/${GITHUB_RUN_ID:-}"
         JOB_ID="${GITHUB_RUN_ID:-}"
         JOB_STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-        COMMIT_MESSAGE="${GITHUB_EVENT_HEAD_COMMIT_MESSAGE:-}"
+        COMMIT_MESSAGE="$(jq -r '.head_commit.message // empty' "$GITHUB_EVENT_PATH" 2>/dev/null || echo "")"
         COMMIT_TAG=""
         [ "${GITHUB_REF_TYPE:-}" = "tag" ] && COMMIT_TAG="${GITHUB_REF_NAME:-}"
     elif [ -n "${GITLAB_CI:-}" ]; then
@@ -102,8 +102,25 @@ get_auth_header() {
         echo "x-api-key: $DEP_CONTROL_API_KEY"
     elif [ -n "${DEP_CONTROL_TOKEN:-}" ]; then
         echo "Job-Token: $DEP_CONTROL_TOKEN"
+    elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+        # GitHub Actions OIDC: request a token from the GitHub OIDC provider
+        local audience="${DEP_CONTROL_OIDC_AUDIENCE:-dependency-control}"
+        local oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}"
+        local oidc_response
+        oidc_response=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$oidc_url" 2>/dev/null)
+        local oidc_token
+        oidc_token=$(echo "$oidc_response" | jq -r '.value // empty' 2>/dev/null)
+        if [ -z "$oidc_token" ]; then
+            log_error "Failed to obtain GitHub Actions OIDC token. Check workflow permissions (id-token: write)."
+            exit 1
+        fi
+        log_info "Using GitHub Actions OIDC token for authentication"
+        echo "Job-Token: $oidc_token"
+    elif [ -n "${CI_JOB_JWT_V2:-}" ]; then
+        # GitLab CI OIDC token (auto-detected)
+        echo "Job-Token: $CI_JOB_JWT_V2"
     else
-        log_error "No authentication configured. Set DEP_CONTROL_API_KEY or DEP_CONTROL_TOKEN."
+        log_error "No authentication configured. Set DEP_CONTROL_API_KEY, DEP_CONTROL_TOKEN, or enable OIDC (GitHub Actions: id-token: write, GitLab: CI_JOB_JWT_V2)."
         exit 1
     fi
 }
@@ -581,9 +598,16 @@ Commands:
   all         Run all enabled scans
 
 Environment Variables:
-  DEP_CONTROL_URL       URL of the Dependency Control instance (required)
-  DEP_CONTROL_API_KEY   API Key for authentication
-  DEP_CONTROL_TOKEN     GitLab OIDC Token (alternative to API Key)
+  DEP_CONTROL_URL            URL of the Dependency Control instance (required)
+  DEP_CONTROL_API_KEY        API Key for authentication
+  DEP_CONTROL_TOKEN          OIDC Token for authentication (GitLab/GitHub)
+  DEP_CONTROL_OIDC_AUDIENCE  OIDC audience claim (default: "dependency-control")
+
+Authentication (checked in order):
+  1. DEP_CONTROL_API_KEY          - Project API key (any CI provider)
+  2. DEP_CONTROL_TOKEN            - Explicit OIDC/Job token
+  3. GitHub Actions OIDC          - Auto-detected via ACTIONS_ID_TOKEN_REQUEST_URL
+  4. GitLab CI OIDC               - Auto-detected via CI_JOB_JWT_V2
 
 Examples:
   # Run SBOM scan

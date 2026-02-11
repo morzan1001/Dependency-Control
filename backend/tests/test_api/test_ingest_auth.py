@@ -1,7 +1,7 @@
 """Tests for the get_project_for_ingest authentication flow.
 
 Tests the OIDC token validation, instance routing, auto-create, and team sync
-integration for the ingest endpoint.
+integration for the ingest endpoint. Covers both GitLab and GitHub OIDC flows.
 """
 
 import asyncio
@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from app.models.system import SystemSettings
 from tests.mocks.gitlab import make_oidc_payload
+from tests.mocks.github import make_github_oidc_payload
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
@@ -122,21 +123,27 @@ class TestIngestOidcBasicValidation:
                 )
             )
         assert exc_info.value.status_code == 403
-        assert "Identity Tokens" in exc_info.value.detail
+        assert "JWT" in exc_info.value.detail
 
 
 class TestIngestOidcInstanceRouting:
-    """OIDC flow must extract issuer and route to the correct GitLab instance."""
+    """OIDC flow must extract issuer and route to the correct instance (GitLab or GitHub)."""
 
     def test_raises_403_when_no_matching_instance(self):
         from app.api.deps import get_project_for_ingest
 
         gitlab_instances_coll = create_mock_collection(find_one=None)
-        db = create_mock_db({"gitlab_instances": gitlab_instances_coll})
+        github_instances_coll = create_mock_collection(find_one=None)
+        db = create_mock_db(
+            {
+                "gitlab_instances": gitlab_instances_coll,
+                "github_instances": github_instances_coll,
+            }
+        )
         settings = _make_system_settings()
 
         with patch("jose.jwt.get_unverified_claims") as mock_claims:
-            mock_claims.return_value = {"iss": "https://unknown-gitlab.com"}
+            mock_claims.return_value = {"iss": "https://unknown-provider.com"}
 
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(
@@ -148,7 +155,7 @@ class TestIngestOidcInstanceRouting:
                     )
                 )
             assert exc_info.value.status_code == 403
-            assert "No GitLab instance" in exc_info.value.detail
+            assert "No CI/CD instance configured" in exc_info.value.detail
 
     def test_raises_403_when_instance_inactive(self):
         from app.api.deps import get_project_for_ingest
@@ -516,3 +523,311 @@ class TestIngestOidcProjectLookup:
         assert results[0].name == "Project on A"
         assert results[1].name == "Project on B"
         assert results[0].id != results[1].id
+
+
+# =============================================================================
+# GitHub OIDC Tests
+# =============================================================================
+
+
+class TestIngestGitHubOidcInstanceRouting:
+    """OIDC flow must route to GitHub instance when issuer matches."""
+
+    def test_raises_403_when_github_instance_inactive(self):
+        from app.api.deps import get_project_for_ingest
+
+        github_instance_doc = {
+            "_id": "gh-inst-1",
+            "name": "GitHub Inactive",
+            "url": "https://token.actions.githubusercontent.com",
+            "is_active": False,
+            "created_by": "admin",
+        }
+        gitlab_instances_coll = create_mock_collection(find_one=None)
+        github_instances_coll = create_mock_collection(find_one=github_instance_doc)
+        db = create_mock_db(
+            {
+                "gitlab_instances": gitlab_instances_coll,
+                "github_instances": github_instances_coll,
+            }
+        )
+        settings = _make_system_settings()
+
+        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
+
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(
+                    get_project_for_ingest(
+                        x_api_key=None,
+                        oidc_token="a.b.c",
+                        db=db,
+                        settings=settings,
+                    )
+                )
+            assert exc_info.value.status_code == 403
+            assert "not active" in exc_info.value.detail.lower()
+
+    def test_raises_403_when_github_oidc_validation_fails(self):
+        from app.api.deps import get_project_for_ingest
+
+        github_instance_doc = {
+            "_id": "gh-inst-1",
+            "name": "GitHub.com",
+            "url": "https://token.actions.githubusercontent.com",
+            "is_active": True,
+            "created_by": "admin",
+        }
+        gitlab_instances_coll = create_mock_collection(find_one=None)
+        github_instances_coll = create_mock_collection(find_one=github_instance_doc)
+        projects_coll = create_mock_collection(find_one=None)
+        db = create_mock_db(
+            {
+                "gitlab_instances": gitlab_instances_coll,
+                "github_instances": github_instances_coll,
+                "projects": projects_coll,
+            }
+        )
+        settings = _make_system_settings()
+
+        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
+
+            with patch("app.services.github.GitHubService") as MockService:
+                mock_svc = MagicMock()
+                mock_svc.validate_oidc_token = AsyncMock(return_value=None)
+                MockService.return_value = mock_svc
+
+                with pytest.raises(HTTPException) as exc_info:
+                    asyncio.run(
+                        get_project_for_ingest(
+                            x_api_key=None,
+                            oidc_token="a.b.c",
+                            db=db,
+                            settings=settings,
+                        )
+                    )
+                assert exc_info.value.status_code == 403
+                assert "GitHub" in exc_info.value.detail
+
+
+class TestIngestGitHubOidcProjectLookup:
+    """After GitHub OIDC validation, should find project via composite key."""
+
+    def _setup_github_mocks(self, github_instance_doc, project_doc, admin_doc=None):
+        """Helper to set up the common GitHub OIDC mocking chain."""
+        gitlab_instances_coll = create_mock_collection(find_one=None)
+        github_instances_coll = create_mock_collection(find_one=github_instance_doc)
+        projects_coll = create_mock_collection(find_one=project_doc)
+        users_coll = create_mock_collection(find_one=admin_doc)
+        db = create_mock_db(
+            {
+                "gitlab_instances": gitlab_instances_coll,
+                "github_instances": github_instances_coll,
+                "projects": projects_coll,
+                "users": users_coll,
+            }
+        )
+        return db, projects_coll
+
+    def test_returns_existing_project_via_composite_key(self):
+        from app.api.deps import get_project_for_ingest
+
+        github_instance_doc = {
+            "_id": "gh-inst-a",
+            "name": "GitHub.com",
+            "url": "https://token.actions.githubusercontent.com",
+            "is_active": True,
+            "created_by": "admin",
+        }
+        project_doc = {
+            "_id": "proj-gh-1",
+            "name": "owner/my-repo",
+            "owner_id": "user-1",
+            "github_instance_id": "gh-inst-a",
+            "github_repository_id": "123456",
+            "github_repository_path": "owner/my-repo",
+        }
+
+        db, _ = self._setup_github_mocks(github_instance_doc, project_doc)
+        settings = _make_system_settings()
+
+        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
+
+            with patch("app.services.github.GitHubService") as MockService:
+                mock_svc = MagicMock()
+                mock_svc.validate_oidc_token = AsyncMock(
+                    return_value=make_github_oidc_payload(
+                        repository_id="123456",
+                        repository="owner/my-repo",
+                        actor="developer",
+                    )
+                )
+                MockService.return_value = mock_svc
+
+                result = asyncio.run(
+                    get_project_for_ingest(
+                        x_api_key=None,
+                        oidc_token="a.b.c",
+                        db=db,
+                        settings=settings,
+                    )
+                )
+
+        assert result.name == "owner/my-repo"
+        assert result.id == "proj-gh-1"
+
+    def test_auto_creates_project_when_enabled(self):
+        from app.api.deps import get_project_for_ingest
+
+        github_instance_doc = {
+            "_id": "gh-inst-a",
+            "name": "GitHub.com",
+            "url": "https://token.actions.githubusercontent.com",
+            "is_active": True,
+            "created_by": "admin",
+            "auto_create_projects": True,
+        }
+        admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
+
+        # Project not found via composite key
+        gitlab_instances_coll = create_mock_collection(find_one=None)
+        github_instances_coll = create_mock_collection(find_one=github_instance_doc)
+        projects_coll = create_mock_collection(find_one=None)
+        projects_coll.insert_one = AsyncMock()
+        users_coll = create_mock_collection(find_one=admin_doc)
+        db = create_mock_db(
+            {
+                "gitlab_instances": gitlab_instances_coll,
+                "github_instances": github_instances_coll,
+                "projects": projects_coll,
+                "users": users_coll,
+            }
+        )
+        settings = _make_system_settings()
+
+        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
+
+            with patch("app.services.github.GitHubService") as MockService:
+                mock_svc = MagicMock()
+                mock_svc.validate_oidc_token = AsyncMock(
+                    return_value=make_github_oidc_payload(
+                        repository_id="789",
+                        repository="org/new-repo",
+                        actor="developer",
+                    )
+                )
+                MockService.return_value = mock_svc
+
+                result = asyncio.run(
+                    get_project_for_ingest(
+                        x_api_key=None,
+                        oidc_token="a.b.c",
+                        db=db,
+                        settings=settings,
+                    )
+                )
+
+        assert result.name == "org/new-repo"
+        assert result.github_instance_id == "gh-inst-a"
+        assert result.github_repository_id == "789"
+        assert result.github_repository_path == "org/new-repo"
+        projects_coll.insert_one.assert_called_once()
+
+    def test_raises_404_when_auto_create_disabled(self):
+        from app.api.deps import get_project_for_ingest
+
+        github_instance_doc = {
+            "_id": "gh-inst-b",
+            "name": "GitHub Enterprise",
+            "url": "https://github.corp.example.com/_services/token",
+            "is_active": True,
+            "created_by": "admin",
+            "auto_create_projects": False,
+        }
+
+        db, _ = self._setup_github_mocks(github_instance_doc, None)
+        settings = _make_system_settings()
+
+        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            mock_claims.return_value = {"iss": "https://github.corp.example.com/_services/token"}
+
+            with patch("app.services.github.GitHubService") as MockService:
+                mock_svc = MagicMock()
+                mock_svc.validate_oidc_token = AsyncMock(
+                    return_value=make_github_oidc_payload(
+                        repository_id="999",
+                        repository="org/repo",
+                    )
+                )
+                MockService.return_value = mock_svc
+
+                with pytest.raises(HTTPException) as exc_info:
+                    asyncio.run(
+                        get_project_for_ingest(
+                            x_api_key=None,
+                            oidc_token="a.b.c",
+                            db=db,
+                            settings=settings,
+                        )
+                    )
+                assert exc_info.value.status_code == 404
+                assert "auto-creation is disabled" in exc_info.value.detail
+
+    def test_gitlab_takes_priority_over_github(self):
+        """If a GitLab instance matches the issuer, GitHub should NOT be tried."""
+        from app.api.deps import get_project_for_ingest
+
+        gitlab_instance_doc = {
+            "_id": "gl-inst",
+            "name": "GitLab",
+            "url": "https://gitlab.com",
+            "access_token": "tok",
+            "is_active": True,
+            "created_by": "admin",
+            "sync_teams": False,
+        }
+        project_doc = {
+            "_id": "proj-gl",
+            "name": "GL Project",
+            "owner_id": "u1",
+            "gitlab_instance_id": "gl-inst",
+            "gitlab_project_id": 42,
+        }
+
+        gitlab_instances_coll = create_mock_collection(find_one=gitlab_instance_doc)
+        github_instances_coll = create_mock_collection(find_one=None)
+        projects_coll = create_mock_collection(find_one=project_doc)
+        db = create_mock_db(
+            {
+                "gitlab_instances": gitlab_instances_coll,
+                "github_instances": github_instances_coll,
+                "projects": projects_coll,
+            }
+        )
+        settings = _make_system_settings()
+
+        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            mock_claims.return_value = {"iss": "https://gitlab.com"}
+
+            with patch("app.api.deps.GitLabService") as MockGitLabService:
+                mock_svc = MagicMock()
+                mock_svc.validate_oidc_token = AsyncMock(
+                    return_value=make_oidc_payload(project_id="42", project_path="g/p")
+                )
+                MockGitLabService.return_value = mock_svc
+
+                result = asyncio.run(
+                    get_project_for_ingest(
+                        x_api_key=None,
+                        oidc_token="a.b.c",
+                        db=db,
+                        settings=settings,
+                    )
+                )
+
+        # GitLab was used, not GitHub
+        assert result.name == "GL Project"
+        assert result.id == "proj-gl"
