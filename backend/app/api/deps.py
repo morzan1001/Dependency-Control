@@ -289,7 +289,7 @@ async def get_project_for_ingest(
                         owner_id = str(user["_id"])
 
                 if not owner_id:
-                    admin = await user_repo.get_first_superuser()
+                    admin = await user_repo.get_first_admin()
                     if admin:
                         owner_id = str(admin["_id"])
 
@@ -383,7 +383,7 @@ async def get_project_for_ingest(
                         owner_id = str(user["_id"])
 
                 if not owner_id:
-                    admin = await user_repo.get_first_superuser()
+                    admin = await user_repo.get_first_admin()
                     if admin:
                         owner_id = str(admin["_id"])
 

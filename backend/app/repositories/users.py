@@ -51,9 +51,9 @@ class UserRepository:
         """Get raw user document by email."""
         return await self.collection.find_one({"email": email})
 
-    async def get_first_superuser(self) -> Optional[Dict[str, Any]]:
-        """Get the first superuser."""
-        return await self.collection.find_one({"is_superuser": True})
+    async def get_first_admin(self) -> Optional[Dict[str, Any]]:
+        """Get the first user with system:manage permission."""
+        return await self.collection.find_one({"permissions": "system:manage"})
 
     async def create(self, user: User) -> User:
         """Create a new user."""
