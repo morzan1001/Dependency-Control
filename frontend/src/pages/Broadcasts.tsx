@@ -444,8 +444,8 @@ export default function Broadcasts() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                   {isLoadingHistory && Array.from({ length: 5 }).map((_, i) => (
-                      <TableRow key={`skeleton-${i}`}>
+                   {isLoadingHistory && [1, 2, 3, 4, 5].map((n) => (
+                      <TableRow key={`skeleton-${n}`}>
                          <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                          <TableCell><Skeleton className="h-4 w-48" /></TableCell>
                          <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>

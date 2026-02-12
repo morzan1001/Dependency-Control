@@ -602,12 +602,12 @@ function InstanceForm({
   setFormData,
   isEdit = false,
   showTypeSelector = false,
-}: {
+}: Readonly<{
   formData: InstanceFormData;
   setFormData: React.Dispatch<React.SetStateAction<InstanceFormData>>;
   isEdit?: boolean;
   showTypeSelector?: boolean;
-}) {
+}>) {
   return (
     <div className="space-y-4">
       {/* Type selector (only on create) */}

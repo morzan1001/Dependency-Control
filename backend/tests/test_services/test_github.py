@@ -172,12 +172,12 @@ class TestGitHubServiceOIDC:
 
         call_count = 0
 
-        async def get_jwks_side_effect():
+        def get_jwks_side_effect():
             nonlocal call_count
             call_count += 1
             return jwks_old if call_count == 1 else jwks_new
 
-        with patch.object(service, "get_jwks", side_effect=get_jwks_side_effect):
+        with patch.object(service, "get_jwks", new_callable=AsyncMock, side_effect=get_jwks_side_effect):
             with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock) as mock_invalidate:
                 with patch("app.services.github.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "new-key"}

@@ -135,10 +135,6 @@ async def check_team_access(
             member_role = member.role
             break
 
-    # Check for global read permission
-    if required_role is None and Permissions.TEAM_READ_ALL in user.permissions:
-        return team
-
     if not is_member:
         raise HTTPException(status_code=403, detail="Not a member of this team")
 
@@ -156,31 +152,26 @@ async def check_team_access(
     return team
 
 
-async def enrich_team_with_usernames(team_data: Dict[str, Any], db: AsyncIOMotorDatabase) -> Dict[str, Any]:
+async def enrich_team_with_usernames(team_data: Dict[str, Any], db: AsyncIOMotorDatabase) -> None:
     """
-    Enrich team data with member usernames.
+    Enrich team data with member usernames (in-place mutation).
 
     Args:
-        team_data: Raw team document from database
+        team_data: Raw team document from database (modified in place)
         db: Database instance
-
-    Returns:
-        Team data with usernames added to each member
     """
     user_repo = UserRepository(db)
     members = team_data.get("members", [])
     user_ids = [m["user_id"] for m in members if "user_id" in m]
 
     if not user_ids:
-        return team_data
+        return
 
     users = await user_repo.find_by_ids(user_ids)
     user_map = {u["_id"]: u["username"] for u in users}
 
     for member in members:
         member["username"] = user_map.get(member["user_id"])
-
-    return team_data
 
 
 async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamResponse:

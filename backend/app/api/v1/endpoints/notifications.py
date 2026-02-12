@@ -87,7 +87,7 @@ async def get_broadcast_history(
 async def suggest_packages(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))],
-    q: str = Query(..., min_length=2, description="Search query for package name"),
+    q: Annotated[str, Query(min_length=2, description="Search query for package name")],
 ):
     """
     Suggest package names for advisories based on existing dependencies.

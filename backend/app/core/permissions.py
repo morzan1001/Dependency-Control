@@ -5,7 +5,7 @@ This module provides a centralized, fine-grained permission system.
 No wildcard ("*") permissions are used - admins have all individual permissions explicitly.
 """
 
-from typing import List, Union
+from typing import List
 
 
 class Permissions:
@@ -369,7 +369,7 @@ PERMISSION_GROUPS = [
 
 def has_permission(
     user_permissions: List[str],
-    required: Union[str, List[str]],
+    required: str | List[str],
     require_all: bool = False,
 ) -> bool:
     """
@@ -397,7 +397,7 @@ def has_permission(
 
 def get_missing_permissions(
     user_permissions: List[str],
-    required: Union[str, List[str]],
+    required: str | List[str],
 ) -> List[str]:
     """
     Get list of permissions the user is missing.

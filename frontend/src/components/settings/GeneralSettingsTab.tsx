@@ -24,7 +24,7 @@ export function GeneralSettingsTab({
   hasPermission,
   isPending,
 }: SettingsTabProps) {
-  const analyzers = (formData.default_active_analyzers as string[] | undefined) ?? DEFAULT_ANALYZERS;
+  const analyzers = formData.default_active_analyzers ?? DEFAULT_ANALYZERS;
 
   const toggleAnalyzer = (analyzerId: string) => {
     const updated = analyzers.includes(analyzerId)

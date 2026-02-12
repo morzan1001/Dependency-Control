@@ -5,6 +5,6 @@ __pycache__
 .ruff_cache
 .coverage
 .tox
-.claude
-.vscode
+.claude/
+.vscode/
 htmlcov/

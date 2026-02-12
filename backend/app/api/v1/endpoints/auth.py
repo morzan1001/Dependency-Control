@@ -78,7 +78,7 @@ _MSG_USER_INACTIVE = "User account is inactive"
 async def login_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: DatabaseDep,
-    otp: Optional[str] = Form(None),
+    otp: Annotated[Optional[str], Form()] = None,
 ) -> Any:
     """
     OAuth2 compatible token login, get an access token for future requests.

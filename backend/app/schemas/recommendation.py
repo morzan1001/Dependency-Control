@@ -118,7 +118,7 @@ class VulnerabilityInfo:
     epss_score: Optional[float] = None  # 0.0 to 1.0
     is_kev: bool = False  # In CISA KEV catalog
     kev_ransomware: bool = False  # Known ransomware use
-    is_reachable: Optional[bool] = None  # None = unknown, True = reachable, False = unreachable
+    is_reachable: Optional[bool] = None
     reachability_level: Optional[str] = None  # confirmed, likely, unknown, unreachable
     risk_score: Optional[float] = None  # Adjusted risk score (0-100)
 

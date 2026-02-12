@@ -27,8 +27,8 @@ const NOTIFICATION_CHANNELS = [
 ] as const;
 
 interface NotificationPreferencesCardProps {
-  user: User | undefined;
-  availableChannels: string[] | undefined;
+  readonly user: User | undefined;
+  readonly availableChannels: string[] | undefined;
 }
 
 export function NotificationPreferencesCard({ user, availableChannels }: NotificationPreferencesCardProps) {

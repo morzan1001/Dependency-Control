@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, List, Optional, Union
+from typing import Annotated, List, Optional
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -131,7 +131,7 @@ class PermissionChecker:
     No wildcard ("*") support - admins must have all permissions explicitly.
     """
 
-    def __init__(self, required_permissions: Union[str, List[str]]):
+    def __init__(self, required_permissions: str | List[str]):
         self.required_permissions = (
             required_permissions if isinstance(required_permissions, list) else [required_permissions]
         )

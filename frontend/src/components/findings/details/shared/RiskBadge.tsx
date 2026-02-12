@@ -1,11 +1,9 @@
 import { Badge } from "@/components/ui/badge"
 import { getSeverityBadgeVariant } from "@/lib/finding-utils"
 
-type RiskLevel = string
-
 interface RiskBadgeProps {
     /** The risk level value */
-    readonly level: RiskLevel
+    readonly level: string
     /** Show uppercase or as-is */
     readonly uppercase?: boolean
 }

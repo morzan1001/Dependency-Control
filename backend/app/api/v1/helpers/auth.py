@@ -137,7 +137,7 @@ async def send_system_invitation_email(
     )
 
 
-async def send_project_member_added_email(
+def send_project_member_added_email(
     background_tasks: BackgroundTasks,
     email: str,
     project_name: str,

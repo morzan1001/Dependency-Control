@@ -126,7 +126,7 @@ async def upload_callgraph(
         imports=imports,
         calls=calls,
         module_usage={k: v.model_dump() for k, v in module_usage.items()},
-        source_files_analyzed=request.source_files_count or len(set(i.file for i in imports)),
+        source_files_analyzed=request.source_files_count or len({i.file for i in imports}),
         total_imports=len(imports),
         total_calls=len(calls),
         analysis_duration_ms=request.analysis_duration_ms,

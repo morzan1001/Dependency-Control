@@ -512,7 +512,7 @@ export default function ScanDetails() {
             ) : (
                 <div className="space-y-8">
                     {/* Post-Processor Results (EPSS/KEV, Reachability) - RAW JSON */}
-                    {scanResults && scanResults.some(r => isPostProcessorResult(r.analyzer_name)) && (
+                    {scanResults?.some(r => isPostProcessorResult(r.analyzer_name)) && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Post-Processor Results</h3>
                             <div className="grid gap-6">
@@ -536,7 +536,7 @@ export default function ScanDetails() {
                     )}
 
                     {/* Analysis Results (non-post-processor) */}
-                    {scanResults && scanResults.some(r => !isPostProcessorResult(r.analyzer_name)) && (
+                    {scanResults?.some(r => !isPostProcessorResult(r.analyzer_name)) && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Scanner Results</h3>
                             <div className="grid gap-6">

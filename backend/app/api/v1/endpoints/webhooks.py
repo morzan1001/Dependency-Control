@@ -62,8 +62,8 @@ async def list_webhooks(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    skip: int = Query(0, ge=0, description="Number of items to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Number of items to return"),
+    skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
+    limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
 ):
     """
     List all webhooks for a project with pagination.
@@ -102,8 +102,8 @@ async def create_global_webhook(
 async def list_global_webhooks(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
-    skip: int = Query(0, ge=0, description="Number of items to skip"),
-    limit: int = Query(50, ge=1, le=100, description="Number of items to return"),
+    skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
+    limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
 ):
     """
     List global webhooks with pagination.

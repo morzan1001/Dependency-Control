@@ -187,7 +187,7 @@ async def create_project(
     project_in: ProjectCreate,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.PROJECT_CREATE))],
     db: DatabaseDep,
-    settings: SystemSettings = Depends(deps.get_system_settings),
+    settings: Annotated[SystemSettings, Depends(deps.get_system_settings)],
 ):
     """
     Create a new project and return the initial API Key.
@@ -853,7 +853,7 @@ async def invite_user(
     # Send notification email
     try:
         system_config = await deps.get_system_settings(db)
-        await send_project_member_added_email(
+        send_project_member_added_email(
             background_tasks=background_tasks,
             email=invite_in.email,
             project_name=project.name,
@@ -1222,7 +1222,7 @@ async def transfer_ownership(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    new_owner_id: str = Body(..., embed=True),
+    new_owner_id: Annotated[str, Body(embed=True)],
 ):
     """
     Transfer project ownership to another user.
