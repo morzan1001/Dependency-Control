@@ -1,7 +1,4 @@
-"""Tests for team API endpoints.
-
-Tests CRUD operations, member management, access control, and cascade behavior.
-"""
+"""Tests for team API endpoints."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -500,11 +497,6 @@ class TestRemoveTeamMember:
                         )
                     )
         assert exc_info.value.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# Permission-focused tests
-# ---------------------------------------------------------------------------
 
 
 class TestDeleteTeamPermissions:

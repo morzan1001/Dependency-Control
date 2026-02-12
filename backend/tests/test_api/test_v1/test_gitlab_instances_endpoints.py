@@ -1,8 +1,4 @@
-"""Tests for GitLab instance API endpoints.
-
-Tests model behavior and endpoint functions for CRUD operations,
-connection testing, and uniqueness validation.
-"""
+"""Tests for GitLab instance API endpoints."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,11 +8,6 @@ from fastapi import HTTPException
 
 from app.models.gitlab_instance import GitLabInstance
 from tests.mocks.gitlab import make_gitlab_instance
-
-
-# ---------------------------------------------------------------------------
-# Model tests (existing)
-# ---------------------------------------------------------------------------
 
 
 class TestGitLabInstanceModelDefaults:
@@ -70,10 +61,6 @@ class TestGitLabInstanceSerialization:
         assert instance.id == "from-alias"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 MODULE = "app.api.v1.endpoints.gitlab_instances"
 
 
@@ -119,11 +106,6 @@ def _make_gitlab_service_mock(response):
     mock_svc.api_url = "https://gitlab.test.com/api/v4"
     mock_svc._get_auth_headers.return_value = {"PRIVATE-TOKEN": "tok"}
     return mock_svc
-
-
-# ---------------------------------------------------------------------------
-# Endpoint tests
-# ---------------------------------------------------------------------------
 
 
 class TestListInstances:

@@ -4,3 +4,7 @@ __pycache__
 .pytest_cache
 .ruff_cache
 .coverage
+.tox
+.claude
+.vscode
+htmlcov/

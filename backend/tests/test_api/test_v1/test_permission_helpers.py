@@ -1,9 +1,4 @@
-"""Tests for permission helper functions.
-
-Thoroughly tests the shared access-control helpers: check_project_access,
-check_team_access, get_team_with_access, and webhook permission helpers.
-These are the core security gates used by all endpoints.
-"""
+"""Tests for permission helper functions."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,11 +21,6 @@ from app.models.webhook import Webhook
 HELPERS_TEAMS = "app.api.v1.helpers.teams"
 HELPERS_PROJECTS = "app.api.v1.helpers.projects"
 HELPERS_WEBHOOKS = "app.api.v1.helpers.webhooks"
-
-
-# ---------------------------------------------------------------------------
-# check_project_access
-# ---------------------------------------------------------------------------
 
 
 class TestCheckProjectAccess:
@@ -317,11 +307,6 @@ class TestCheckProjectAccess:
         assert exc_info.value.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# check_team_access
-# ---------------------------------------------------------------------------
-
-
 class TestCheckTeamAccess:
     """Tests for check_team_access — the primary team security gate."""
 
@@ -508,11 +493,6 @@ class TestCheckTeamAccess:
         assert exc_info.value.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# get_team_with_access
-# ---------------------------------------------------------------------------
-
-
 class TestGetTeamWithAccess:
     """Tests for get_team_with_access — bypass for global team:update permission."""
 
@@ -593,11 +573,6 @@ class TestGetTeamWithAccess:
                     )
                 )
         assert exc_info.value.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# Webhook permission helpers
-# ---------------------------------------------------------------------------
 
 
 class TestCheckWebhookPermission:

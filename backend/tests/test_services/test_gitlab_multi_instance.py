@@ -1,8 +1,4 @@
-"""Tests for GitLab multi-instance behavior.
-
-Verifies that API methods, MR decoration, and team sync correctly use
-instance-specific configuration rather than legacy global settings.
-"""
+"""Tests for GitLab multi-instance behavior."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,11 +22,6 @@ def _make_scan(**kwargs):
     defaults = {"project_id": "test-proj", "branch": "main"}
     defaults.update(kwargs)
     return Scan(**defaults)
-
-
-# ---------------------------------------------------------------------------
-# API method guard conditions (should use self.instance.access_token)
-# ---------------------------------------------------------------------------
 
 
 class TestApiMethodTokenGuards:
@@ -65,11 +56,6 @@ class TestApiMethodTokenGuards:
         service = GitLabService(make_gitlab_instance(access_token=None))
         result = asyncio.run(service.get_group_members(456))
         assert result is None
-
-
-# ---------------------------------------------------------------------------
-# MR decoration with multi-instance
-# ---------------------------------------------------------------------------
 
 
 class TestMrDecorationEarlyReturns:
@@ -452,11 +438,6 @@ class TestMrDecorationInstanceRouting:
             # Neither update nor create should be called
             mock_svc.update_merge_request_comment.assert_not_called()
             mock_svc.post_merge_request_comment.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Team sync with multi-instance
-# ---------------------------------------------------------------------------
 
 
 class TestTeamSyncNamespaceCheck:

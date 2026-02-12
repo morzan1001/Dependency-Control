@@ -1,7 +1,4 @@
-"""Tests for SAST normalizers (OpenGrep, Bearer).
-
-Tests verify correct normalization of SAST scanner output into findings.
-"""
+"""Tests for SAST normalizers (OpenGrep, Bearer)."""
 
 from app.services.aggregator import ResultAggregator
 

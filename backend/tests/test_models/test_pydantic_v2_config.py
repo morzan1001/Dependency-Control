@@ -1,23 +1,12 @@
-"""
-Tests for Pydantic v2 ConfigDict migration.
-
-Verifies that all models and schemas work correctly after migrating
-from `class Config:` to `model_config = ConfigDict(...)`.
-"""
+"""Tests for Pydantic v2 ConfigDict migration."""
 
 import pytest
 from datetime import datetime, timezone
 from pydantic import ValidationError
 
 
-# ---------------------------------------------------------------------------
-# Models: populate_by_name + _id alias round-trip
-# ---------------------------------------------------------------------------
-
-
 class TestModelIdAlias:
-    """All MongoDB-backed models must accept _id (validation_alias) and
-    serialize it back as _id (serialization_alias)."""
+    """All MongoDB-backed models must accept _id and serialize it back as _id."""
 
     @pytest.mark.parametrize(
         "model_cls,kwargs",
@@ -148,11 +137,6 @@ class TestModelIdAlias:
         assert instance.id == "custom-id"
 
 
-# ---------------------------------------------------------------------------
-# Models: use_enum_values
-# ---------------------------------------------------------------------------
-
-
 class TestUseEnumValues:
     """Finding and FindingRecord store enum values as plain strings."""
 
@@ -206,14 +190,8 @@ class TestUseEnumValues:
         assert finding.severity == "CRITICAL"
 
 
-# ---------------------------------------------------------------------------
-# Models: datetime serialization (json_encoders removed)
-# ---------------------------------------------------------------------------
-
-
 class TestDatetimeSerialization:
-    """After removing json_encoders, Pydantic v2 should still serialize
-    datetimes correctly in JSON mode."""
+    """After removing json_encoders, Pydantic v2 should still serialize datetimes correctly."""
 
     def test_broadcast_datetime_json(self):
         from app.models.broadcast import Broadcast
@@ -254,11 +232,6 @@ class TestDatetimeSerialization:
         datetime.fromisoformat(data["created_at"])
 
 
-# ---------------------------------------------------------------------------
-# Schemas: frozen (immutability)
-# ---------------------------------------------------------------------------
-
-
 class TestFrozenConfig:
     """ScanContext with frozen=True should be immutable."""
 
@@ -276,11 +249,6 @@ class TestFrozenConfig:
         assert ctx.scan_id == "s1"
         assert ctx.is_new is False
         assert ctx.pipeline_url is None
-
-
-# ---------------------------------------------------------------------------
-# Schemas: from_attributes
-# ---------------------------------------------------------------------------
 
 
 class TestFromAttributes:
@@ -364,11 +332,6 @@ class TestFromAttributes:
         assert resp.id == "gl-1"
 
 
-# ---------------------------------------------------------------------------
-# Schemas: projections with populate_by_name
-# ---------------------------------------------------------------------------
-
-
 class TestProjectionSchemas:
     """Projection schemas used for MongoDB performance queries."""
 
@@ -412,11 +375,6 @@ class TestProjectionSchemas:
         assert cg.language == "javascript"
 
 
-# ---------------------------------------------------------------------------
-# Schemas: ScanFindingItem use_enum_values
-# ---------------------------------------------------------------------------
-
-
 class TestScanFindingItemEnumValues:
     """ScanFindingItem should store enum values as strings."""
 
@@ -438,11 +396,6 @@ class TestScanFindingItemEnumValues:
         assert item.severity == "CRITICAL"
 
 
-# ---------------------------------------------------------------------------
-# Config: SettingsConfigDict
-# ---------------------------------------------------------------------------
-
-
 class TestSettingsConfig:
     """Settings class uses SettingsConfigDict correctly."""
 
@@ -459,11 +412,6 @@ class TestSettingsConfig:
 
         config = Settings.model_config
         assert config.get("case_sensitive") is True
-
-
-# ---------------------------------------------------------------------------
-# SystemSettings: populate_by_name
-# ---------------------------------------------------------------------------
 
 
 class TestSystemSettingsConfig:
@@ -491,7 +439,7 @@ class TestSystemSettingsConfig:
         assert s.enforce_2fa is True
 
     def test_custom_analyzers_roundtrip(self):
-        """Custom default_active_analyzers survives model_dump → reconstruct."""
+        """Custom default_active_analyzers survives model_dump -> reconstruct."""
         from app.models.system import SystemSettings
 
         custom = ["trivy", "osv"]
@@ -529,13 +477,8 @@ class TestSystemSettingsConfig:
         assert restored.default_active_analyzers == []
 
 
-# ---------------------------------------------------------------------------
-# Full round-trip: model_dump -> reconstruct (simulating MongoDB)
-# ---------------------------------------------------------------------------
-
-
 class TestMongoRoundTrip:
-    """Simulate MongoDB insert (model_dump by_alias) and read (reconstruct from dict)."""
+    """Simulate MongoDB insert and read round-trip."""
 
     def test_project_roundtrip(self):
         from app.models.project import Project, ProjectMember
@@ -624,17 +567,8 @@ class TestMongoRoundTrip:
         assert restored.headers == {"X-Token": "abc"}
 
 
-# ---------------------------------------------------------------------------
-# Bug fixes
-# ---------------------------------------------------------------------------
-
-
 class TestGitLabInstanceAccessTokenPersistence:
-    """Verify that access_token is properly handled for MongoDB storage.
-
-    access_token has exclude=True so it's omitted from API responses,
-    but the repository must explicitly include it when saving to MongoDB.
-    """
+    """Verify that access_token is properly handled for MongoDB storage."""
 
     def test_model_dump_excludes_access_token(self):
         """model_dump() should NOT include access_token (for API responses)."""
@@ -719,12 +653,7 @@ class TestGitLabInstanceAccessTokenPersistence:
 
 
 class TestProjectApiKeyHashExclusion:
-    """Project.api_key_hash has exclude=True — verify it behaves correctly.
-
-    api_key_hash is excluded from model_dump() so it never leaks into API
-    responses. Manual project creation uses create_raw() with explicit injection.
-    Auto-create never sets it (hash is added later via rotate-key endpoint).
-    """
+    """Verify that Project.api_key_hash with exclude=True behaves correctly."""
 
     def test_model_dump_excludes_api_key_hash(self):
         from app.models.project import Project
@@ -759,8 +688,7 @@ class TestProjectApiKeyHashExclusion:
 
 
 class TestAutoCreateUsesSystemAnalyzers:
-    """Verify that auto-created projects inherit default_active_analyzers
-    from SystemSettings, not from the hardcoded Project model default."""
+    """Verify that auto-created projects inherit default_active_analyzers from SystemSettings."""
 
     def test_gitlab_auto_create_uses_custom_analyzers(self):
         import asyncio

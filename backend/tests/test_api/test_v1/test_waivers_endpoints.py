@@ -1,7 +1,4 @@
-"""Tests for waiver API endpoints.
-
-Tests create/list/delete operations, permission checks, and background task triggering.
-"""
+"""Tests for waiver API endpoints."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -167,11 +164,6 @@ class TestDeleteWaiver:
                 )
 
         mock_repo.delete.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# Permission-focused tests
-# ---------------------------------------------------------------------------
 
 
 class TestCreateWaiverPermissions:

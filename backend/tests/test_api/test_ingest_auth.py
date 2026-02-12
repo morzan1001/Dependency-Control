@@ -1,8 +1,4 @@
-"""Tests for the get_project_for_ingest authentication flow.
-
-Tests the OIDC token validation, instance routing, auto-create, and team sync
-integration for the ingest endpoint. Covers both GitLab and GitHub OIDC flows.
-"""
+"""Tests for the get_project_for_ingest authentication flow."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -524,11 +520,6 @@ class TestIngestOidcProjectLookup:
         assert results[0].name == "Project on A"
         assert results[1].name == "Project on B"
         assert results[0].id != results[1].id
-
-
-# =============================================================================
-# GitHub OIDC Tests
-# =============================================================================
 
 
 class TestIngestGitHubOidcInstanceRouting:

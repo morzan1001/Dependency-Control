@@ -1,14 +1,7 @@
-"""Tests for the ResultAggregator - pure functions and merging logic.
-
-Tests are written to verify CORRECT behavior. If tests fail,
-the code should be investigated for bugs.
-"""
+"""Tests for the ResultAggregator."""
 
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregator import ResultAggregator
-
-
-# ── Pure helper functions ────────────────────────────────────────────
 
 
 class TestParseVersionKey:
@@ -168,11 +161,7 @@ class TestIsSameComponentName:
 
 
 class TestCalculateAggregatedFixedVersion:
-    """Tests for _calculate_aggregated_fixed_version.
-
-    Input: List of fixed version strings (one per vulnerability).
-    Output: Best fix version(s) that cover ALL vulnerabilities.
-    """
+    """Tests for _calculate_aggregated_fixed_version."""
 
     def setup_method(self):
         self.agg = ResultAggregator()
@@ -217,9 +206,6 @@ class TestCalculateAggregatedFixedVersion:
         """Version strings with v prefix should be parsed correctly."""
         result = self.agg._calculate_aggregated_fixed_version(["v1.2.3"])
         assert result is not None
-
-
-# ── Merging logic ────────────────────────────────────────────────────
 
 
 class TestMergeVulnerabilityIntoList:
