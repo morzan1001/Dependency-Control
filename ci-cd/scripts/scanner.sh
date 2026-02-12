@@ -7,7 +7,7 @@ SCRIPT_VERSION="1.0.0"
 TEMP_DIR="${TMPDIR:-/tmp}/dep-control-$$"
 
 # Colors for output (disabled if not a terminal)
-if [ -t 1 ]; then
+if [[ -t 1 ]]; then
     RED='\033[0;31m'
     GREEN='\033[0;32m'
     YELLOW='\033[1;33m'
@@ -19,13 +19,14 @@ fi
 
 
 # Utility Functions
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $*"; return 0; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $*"; return 0; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; return 0; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; return 0; }
 
 cleanup() {
     rm -rf "$TEMP_DIR" 2>/dev/null || true
+    return 0
 }
 trap cleanup EXIT
 
@@ -37,20 +38,21 @@ ensure_deps() {
         fi
     done
     
-    if [ ${#missing[@]} -gt 0 ]; then
+    if [[ ${#missing[@]} -gt 0 ]]; then
         log_info "Installing missing dependencies: ${missing[*]}"
-        
-        if [ -f /etc/alpine-release ]; then
+
+        if [[ -f /etc/alpine-release ]]; then
             apk add --no-cache "${missing[@]}" 2>/dev/null || true
         elif command -v apt-get &> /dev/null; then
             apt-get update -qq && apt-get install -y -qq "${missing[@]}" 2>/dev/null || true
         fi
     fi
+    return 0
 }
 
 # Environment Detection
 detect_ci_environment() {
-    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
         CI_PROVIDER="github"
         PROJECT_NAME="${GITHUB_REPOSITORY:-}"
         BRANCH="${GITHUB_REF_NAME:-}"
@@ -63,8 +65,8 @@ detect_ci_environment() {
         JOB_STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
         COMMIT_MESSAGE="$(jq -r '.head_commit.message // empty' "$GITHUB_EVENT_PATH" 2>/dev/null || echo "")"
         COMMIT_TAG=""
-        [ "${GITHUB_REF_TYPE:-}" = "tag" ] && COMMIT_TAG="${GITHUB_REF_NAME:-}"
-    elif [ -n "${GITLAB_CI:-}" ]; then
+        [[ "${GITHUB_REF_TYPE:-}" = "tag" ]] && COMMIT_TAG="${GITHUB_REF_NAME:-}"
+    elif [[ -n "${GITLAB_CI:-}" ]]; then
         CI_PROVIDER="gitlab"
         PROJECT_NAME="${CI_PROJECT_PATH:-}"
         BRANCH="${CI_COMMIT_REF_NAME:-}"
@@ -94,15 +96,16 @@ detect_ci_environment() {
     
     log_info "Detected CI provider: $CI_PROVIDER"
     log_info "Project: $PROJECT_NAME | Branch: $BRANCH"
+    return 0
 }
 
 # Authentication
 get_auth_header() {
-    if [ -n "${DEP_CONTROL_API_KEY:-}" ]; then
+    if [[ -n "${DEP_CONTROL_API_KEY:-}" ]]; then
         echo "x-api-key: $DEP_CONTROL_API_KEY"
-    elif [ -n "${DEP_CONTROL_TOKEN:-}" ]; then
+    elif [[ -n "${DEP_CONTROL_TOKEN:-}" ]]; then
         echo "Job-Token: $DEP_CONTROL_TOKEN"
-    elif [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+    elif [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]] && [[ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
         # GitHub Actions OIDC: request a token from the GitHub OIDC provider
         local audience="${DEP_CONTROL_OIDC_AUDIENCE:-dependency-control}"
         local oidc_url="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}"
@@ -110,18 +113,19 @@ get_auth_header() {
         oidc_response=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$oidc_url" 2>/dev/null)
         local oidc_token
         oidc_token=$(echo "$oidc_response" | jq -r '.value // empty' 2>/dev/null)
-        if [ -z "$oidc_token" ]; then
+        if [[ -z "$oidc_token" ]]; then
             log_error "Failed to obtain GitHub Actions OIDC token. Check workflow permissions (id-token: write)."
             exit 1
         fi
         echo "Job-Token: $oidc_token"
-    elif [ -n "${CI_JOB_JWT_V2:-}" ]; then
+    elif [[ -n "${CI_JOB_JWT_V2:-}" ]]; then
         # GitLab CI OIDC token (auto-detected)
         echo "Job-Token: $CI_JOB_JWT_V2"
     else
         log_error "No authentication configured. Set DEP_CONTROL_API_KEY, DEP_CONTROL_TOKEN, or enable OIDC (GitHub Actions: id-token: write, GitLab: CI_JOB_JWT_V2)."
         exit 1
     fi
+    return 0
 }
 
 # Configuration Check
@@ -178,9 +182,9 @@ build_base_payload() {
         commit_message: $commit_message,
         commit_tag: $commit_tag'
     
-    if [ -n "$findings_file" ] && [ -f "$findings_file" ]; then
+    if [[ -n "$findings_file" ]] && [[ -f "$findings_file" ]]; then
         jq_args+=(--slurpfile data "$findings_file")
-        if [ -n "$extra_jq" ]; then
+        if [[ -n "$extra_jq" ]]; then
             base_object="${base_object}, ${findings_key}: ${extra_jq}"
         else
             base_object="${base_object}, ${findings_key}: \$data"
@@ -190,6 +194,7 @@ build_base_payload() {
     base_object="${base_object}}"
     
     jq -n "${jq_args[@]}" "$base_object"
+    return 0
 }
 
 # Upload Function
@@ -218,7 +223,7 @@ upload_results() {
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     
-    if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+    if [[ "$http_code" -lt 200 ]] || [[ "$http_code" -ge 300 ]]; then
         log_error "Upload failed with HTTP $http_code: $body"
         return 1
     fi
@@ -227,10 +232,10 @@ upload_results() {
     echo "$body"
     
     # Check for pipeline failure status (e.g., unwaived secrets)
-    if [ "$fail_on_error" = "true" ]; then
+    if [[ "$fail_on_error" = "true" ]]; then
         local status
         status=$(echo "$body" | jq -r '.status // "success"' 2>/dev/null)
-        if [ "$status" = "failed" ]; then
+        if [[ "$status" = "failed" ]]; then
             log_error "Pipeline should fail based on scan results!"
             return 1
         fi
@@ -258,6 +263,7 @@ scan_sbom() {
     build_base_payload "$TEMP_DIR/sbom.json" "sboms" "\$data" > "$TEMP_DIR/payload.json"
     
     upload_results "/api/v1/ingest" "$TEMP_DIR/payload.json"
+    return 0
 }
 
 # Scanner: TruffleHog (Secrets)
@@ -275,7 +281,7 @@ scan_secrets() {
     fi
     
     # Ensure full git history for proper scanning
-    if [ -d .git ]; then
+    if [[ -d .git ]]; then
         git fetch --unshallow 2>/dev/null || true
     fi
     
@@ -401,15 +407,15 @@ scan_callgraph() {
     local lang=""
     local format=""
     
-    if [ -f "package.json" ]; then
-        if [ -f "tsconfig.json" ]; then
+    if [[ -f "package.json" ]]; then
+        if [[ -f "tsconfig.json" ]]; then
             lang="typescript"
         else
             lang="javascript"
         fi
-    elif [ -f "requirements.txt" ] || [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+    elif [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]]; then
         lang="python"
-    elif [ -f "go.mod" ]; then
+    elif [[ -f "go.mod" ]]; then
         lang="go"
     else
         log_warn "Could not detect project language. Skipping callgraph generation."
@@ -425,10 +431,10 @@ scan_callgraph() {
             fi
             
             local src_dir="."
-            [ -d "src" ] && src_dir="src"
-            [ -d "lib" ] && src_dir="lib"
-            
-            if [ "$lang" = "typescript" ]; then
+            [[ -d "src" ]] && src_dir="src"
+            [[ -d "lib" ]] && src_dir="lib"
+
+            if [[ "$lang" = "typescript" ]]; then
                 madge --json --ts-config tsconfig.json "$src_dir" > "$TEMP_DIR/callgraph.json" 2>/dev/null || \
                 madge --json "$src_dir" > "$TEMP_DIR/callgraph.json" 2>/dev/null || true
             else
@@ -442,7 +448,7 @@ scan_callgraph() {
             
             find . -name "*.py" -not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/node_modules/*" > "$TEMP_DIR/python_files.txt"
             
-            if [ -s "$TEMP_DIR/python_files.txt" ]; then
+            if [[ -s "$TEMP_DIR/python_files.txt" ]]; then
                 xargs pyan3 --dot --grouped < "$TEMP_DIR/python_files.txt" > "$TEMP_DIR/callgraph.dot" 2>/dev/null || true
                 
                 # Convert DOT to JSON
@@ -519,9 +525,13 @@ except Exception as e:
 PYTHON_EOF
             format="generic"
             ;;
+        *)
+            log_warn "Unsupported language for callgraph: $lang"
+            return 0
+            ;;
     esac
-    
-    if [ ! -f "$TEMP_DIR/callgraph.json" ] || [ ! -s "$TEMP_DIR/callgraph.json" ]; then
+
+    if [[ ! -f "$TEMP_DIR/callgraph.json" ]] || [[ ! -s "$TEMP_DIR/callgraph.json" ]]; then
         log_warn "No callgraph generated. Skipping upload."
         return 0
     fi
@@ -535,7 +545,7 @@ PYTHON_EOF
     project_info=$(curl -sS -H "$auth_header" "${DEP_CONTROL_URL}/api/v1/projects?name=${encoded_name}" 2>/dev/null)
     project_id=$(echo "$project_info" | jq -r '.[0]._id // empty')
     
-    if [ -z "$project_id" ]; then
+    if [[ -z "$project_id" ]]; then
         log_warn "Project not found in Dependency Control. Skipping callgraph upload."
         return 0
     fi
@@ -573,11 +583,12 @@ run_all() {
     scan_bearer || ((failed++))
     scan_callgraph || ((failed++))
     
-    if [ $failed -gt 0 ]; then
+    if [[ $failed -gt 0 ]]; then
         log_warn "$failed scan(s) had issues"
     fi
-    
+
     log_success "All scans completed!"
+    return 0
 }
 
 # Main Entry Point
@@ -618,14 +629,15 @@ Examples:
   # Pipe from backend (recommended)
   curl -sSL "\$DEP_CONTROL_URL/api/v1/scripts/scanner.sh" | bash -s -- all
 EOF
+    return 0
 }
 
 main() {
     local command="${1:-help}"
     
     # Validate required environment
-    if [ "$command" != "help" ] && [ "$command" != "--help" ] && [ "$command" != "-h" ]; then
-        if [ -z "${DEP_CONTROL_URL:-}" ]; then
+    if [[ "$command" != "help" ]] && [[ "$command" != "--help" ]] && [[ "$command" != "-h" ]]; then
+        if [[ -z "${DEP_CONTROL_URL:-}" ]]; then
             log_error "DEP_CONTROL_URL environment variable is required"
             exit 1
         fi
@@ -671,6 +683,7 @@ main() {
             exit 1
             ;;
     esac
+    return 0
 }
 
 # Export TEMP_DIR for Python scripts

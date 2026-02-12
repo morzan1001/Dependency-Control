@@ -9,7 +9,7 @@ import hashlib
 import logging
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import HTTPException, Query
 
@@ -119,7 +119,6 @@ def build_script_info(script_name: str) -> ScriptInfo:
 @router.get(
     "/scripts/{script_name}/hash",
     summary="Get Script Hash",
-    response_model=ScriptInfo,
     responses={
         200: {"description": "Script hash and version information"},
         404: {"description": "Script not found"},
@@ -166,7 +165,7 @@ async def get_script_hash(script_name: str) -> ScriptInfo:
 )
 async def get_script(
     script_name: str,
-    v: Optional[str] = Query(None, description="Expected version (for logging)"),
+    v: Annotated[Optional[str], Query(description="Expected version (for logging)")] = None,
 ) -> PlainTextResponse:
     """
     Download a CI/CD script for pipeline integration.
@@ -240,7 +239,6 @@ async def get_script(
 @router.get(
     "/scripts",
     summary="List Available Scripts with Hashes",
-    response_model=ScriptManifest,
 )
 async def list_scripts() -> ScriptManifest:
     """

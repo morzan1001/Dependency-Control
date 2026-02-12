@@ -1,6 +1,5 @@
 import { Badge } from "@/components/ui/badge"
-import { ExternalLink } from "lucide-react"
-import { LucideIcon } from "lucide-react"
+import { ExternalLink, LucideIcon } from "lucide-react"
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
 

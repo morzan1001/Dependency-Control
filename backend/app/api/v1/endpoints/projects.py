@@ -4,15 +4,15 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException, Response, status
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.v1.helpers import (
     aggregate_stats_by_category,
     apply_system_settings_enforcement,
@@ -28,9 +28,8 @@ from app.api.v1.helpers import (
     resolve_sbom_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
-from app.core.permissions import has_permission
+from app.core.permissions import Permissions, has_permission
 from app.core.worker import worker_manager
-from app.db.mongodb import get_database
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.system import SystemSettings
 from app.models.user import User
@@ -61,16 +60,21 @@ from app.schemas.project import (
     RiskyProject,
     ScanFindingsResponse,
 )
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404, RESP_AUTH_404, RESP_500
 from app.schemas.waiver import WaiverResponse
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
+_MSG_PROJECT_NOT_FOUND = "Project not found"
+_MSG_SCAN_NOT_FOUND = "Scan not found"
+_MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
-@router.get("/dashboard/stats", response_model=DashboardStats)
+
+@router.get("/dashboard/stats", response_model=DashboardStats, responses={**RESP_AUTH})
 async def get_dashboard_stats(
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.get_current_active_user),
+    db: DatabaseDep,
+    current_user: CurrentUserDep,
 ):
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -177,11 +181,12 @@ async def get_dashboard_stats(
     response_model=ProjectApiKeyResponse,
     summary="Create a new project",
     status_code=201,
+    responses={**RESP_AUTH},
 )
 async def create_project(
     project_in: ProjectCreate,
-    current_user: User = Depends(deps.PermissionChecker("project:create")),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.PROJECT_CREATE))],
+    db: DatabaseDep,
     settings: SystemSettings = Depends(deps.get_system_settings),
 ):
     """
@@ -195,7 +200,7 @@ async def create_project(
     # Check Project Limit
     if settings.project_limit_per_user > 0:
         # Users with system:manage permission are exempt from limits
-        if not has_permission(current_user.permissions, "system:manage"):
+        if not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
             # Count projects owned by the user
             current_count = await project_repo.count({"owner_id": str(current_user.id)})
             if current_count >= settings.project_limit_per_user:
@@ -238,11 +243,12 @@ async def create_project(
     "/{project_id}/rotate-key",
     response_model=ProjectApiKeyResponse,
     summary="Rotate Project API Key",
+    responses={**RESP_AUTH_404},
 )
 async def rotate_api_key(
     project_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Invalidate the old API Key and generate a new one.
@@ -251,10 +257,10 @@ async def rotate_api_key(
     """
     project_repo = ProjectRepository(db)
 
-    if has_permission(current_user.permissions, "project:update"):
+    if has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
         project = await project_repo.get_by_id(project_id)
         if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+            raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
     else:
         await check_project_access(project_id, current_user, db, required_role="admin")
 
@@ -266,15 +272,15 @@ async def rotate_api_key(
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
 
-@router.get("/", response_model=ProjectListEnriched, summary="List all projects")
+@router.get("/", response_model=ProjectListEnriched, summary="List all projects", responses={**RESP_AUTH})
 async def read_projects(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     search: Optional[str] = None,
     skip: int = 0,
     limit: int = 20,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Retrieve projects.
@@ -286,8 +292,8 @@ async def read_projects(
     team_repo = TeamRepository(db)
 
     # Check permission
-    if not has_permission(current_user.permissions, ["project:read", "project:read_all"]):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    if not has_permission(current_user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL]):
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     # Build search query
     search_query = {}
@@ -339,14 +345,15 @@ async def read_projects(
     "/scans",
     response_model=List[RecentScan],
     summary="List scans across all accessible projects",
+    responses={**RESP_AUTH},
 )
 async def read_all_scans(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     limit: int = 20,
     skip: int = 0,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Retrieve scans for all projects the user has access to.
@@ -357,8 +364,8 @@ async def read_all_scans(
     scan_repo = ScanRepository(db)
 
     # Check permission
-    if not has_permission(current_user.permissions, ["project:read", "project:read_all"]):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    if not has_permission(current_user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL]):
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     # 1. Get accessible project IDs
     permission_query = await build_user_project_query(current_user, team_repo)
@@ -399,11 +406,11 @@ async def read_all_scans(
     return scans
 
 
-@router.get("/{project_id}", response_model=Project, summary="Get project details")
+@router.get("/{project_id}", response_model=Project, summary="Get project details", responses={**RESP_AUTH_404})
 async def read_project(
     project_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get a specific project by ID.
@@ -451,7 +458,7 @@ async def read_project(
 
     result = await project_repo.aggregate(pipeline)
     if not result:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
     data = result[0]
 
@@ -489,27 +496,25 @@ async def read_project(
     project = Project(**data)
 
     # Verify Access (Logic from check_project_access but using loaded data)
-    if has_permission(current_user.permissions, "project:read_all"):
-        pass
-    else:
+    if not has_permission(current_user.permissions, Permissions.PROJECT_READ_ALL):
         is_owner = project.owner_id == str(current_user.id)
         is_member = any(m.user_id == str(current_user.id) for m in project.members)
 
         if not (is_owner or is_member):
-            raise HTTPException(status_code=403, detail="Not enough permissions")
+            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-        if "project:read" not in current_user.permissions:
-            raise HTTPException(status_code=403, detail="Not enough permissions")
+        if Permissions.PROJECT_READ not in current_user.permissions:
+            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     return project
 
 
-@router.put("/{project_id}", response_model=Project, summary="Update project details")
+@router.put("/{project_id}", response_model=Project, summary="Update project details", responses={**RESP_AUTH_404})
 async def update_project(
     project_id: str,
     project_in: ProjectUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Update project details (name, team, active analyzers).
@@ -518,10 +523,10 @@ async def update_project(
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    if has_permission(current_user.permissions, "project:update"):
+    if has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
         project = await project_repo.get_by_id(project_id)
         if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+            raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
     else:
         project = await check_project_access(project_id, current_user, db, required_role="admin")
 
@@ -529,7 +534,7 @@ async def update_project(
     if project_in.team_id and project_in.team_id != project.team_id:
         # Check if user is member of the new team
         # Exception: Users with project:update can transfer to any team
-        if not has_permission(current_user.permissions, "project:update"):
+        if not has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
             is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
             if not is_member:
                 raise HTTPException(status_code=403, detail="You are not a member of the target team")
@@ -550,14 +555,14 @@ async def update_project(
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
         return updated_project
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
-@router.get("/{project_id}/branches", response_model=List[str], summary="List project branches")
+@router.get("/{project_id}/branches", response_model=List[str], summary="List project branches", responses={**RESP_AUTH_404})
 async def read_project_branches(
     project_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get all unique branches for a project.
@@ -569,17 +574,17 @@ async def read_project_branches(
     return sorted(branches)
 
 
-@router.get("/{project_id}/scans", response_model=List[Scan], summary="List project scans")
+@router.get("/{project_id}/scans", response_model=List[Scan], summary="List project scans", responses={**RESP_AUTH_404})
 async def read_project_scans(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     skip: int = 0,
     limit: int = 20,
     branch: Optional[str] = None,
     exclude_rescans: bool = False,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Get scans for a project.
@@ -612,12 +617,13 @@ async def read_project_scans(
     "/{project_id}/scans/{scan_id}/rescan",
     response_model=Scan,
     summary="Trigger a manual re-scan",
+    responses={**RESP_AUTH_400_404, **RESP_500},
 )
 async def trigger_rescan(
     project_id: str,
     scan_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Manually trigger a re-scan for a specific scan.
@@ -631,7 +637,7 @@ async def trigger_rescan(
     # Find the scan
     scan = await scan_repo.find_one({"_id": scan_id, "project_id": project_id})
     if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     # Ensure scan has SBOMs
     if not scan.get("sbom_refs"):
@@ -694,12 +700,13 @@ async def trigger_rescan(
     "/{project_id}/scans/{scan_id}/history",
     response_model=List[Scan],
     summary="Get scan history",
+    responses={**RESP_AUTH_404},
 )
 async def read_scan_history(
     project_id: str,
     scan_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get the history of a scan (including re-scans).
@@ -712,7 +719,7 @@ async def read_scan_history(
     # 1. Get the requested scan to find the root
     scan = await scan_repo.find_one({"_id": scan_id, "project_id": project_id})
     if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     # Determine the root ID
     root_id = scan.get("original_scan_id") or scan_id
@@ -734,12 +741,13 @@ async def read_scan_history(
     "/{project_id}/notifications",
     response_model=Project,
     summary="Update notification settings",
+    responses={**RESP_AUTH_400_404},
 )
 async def update_notification_settings(
     project_id: str,
     settings: ProjectNotificationSettings,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Update notification preferences for the current user in this project.
@@ -747,7 +755,7 @@ async def update_notification_settings(
     project = await check_project_access(project_id, current_user, db)
 
     is_owner = project.owner_id == str(current_user.id)
-    has_update_perm = has_permission(current_user.permissions, "project:update")
+    has_update_perm = has_permission(current_user.permissions, Permissions.PROJECT_UPDATE)
 
     update_data = {}
 
@@ -803,19 +811,20 @@ async def update_notification_settings(
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
         return updated_project
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
 @router.post(
     "/{project_id}/invite",
     summary="Add a user to project by email",
+    responses={**RESP_AUTH_400_404},
 )
 async def invite_user(
     project_id: str,
     invite_in: ProjectMemberInvite,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Add an existing user to the project by their email address.
@@ -863,11 +872,12 @@ async def invite_user(
     "/scans/{scan_id}/results",
     response_model=List[AnalysisResult],
     summary="Get analysis results",
+    responses={**RESP_AUTH_404},
 )
 async def read_analysis_results(
     scan_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """Get the results of all analyzers for a specific scan."""
     scan_repo = ScanRepository(db)
@@ -875,18 +885,18 @@ async def read_analysis_results(
 
     scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     await check_project_access(scan.project_id, current_user, db)
 
     return await analysis_repo.find_by_scan(scan_id)
 
 
-@router.get("/scans/{scan_id}", response_model=Scan, summary="Get scan details")
+@router.get("/scans/{scan_id}", response_model=Scan, summary="Get scan details", responses={**RESP_AUTH_404})
 async def read_scan(
     scan_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get details of a specific scan.
@@ -897,7 +907,7 @@ async def read_scan(
 
     scan_data = await scan_repo.get_by_id(scan_id)
     if not scan_data:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     await check_project_access(scan_data.project_id, current_user, db)
 
@@ -908,11 +918,12 @@ async def read_scan(
     "/scans/{scan_id}/sboms",
     response_model=List[Dict[str, Any]],
     summary="Get raw SBOMs for a scan",
+    responses={**RESP_AUTH_404},
 )
 async def read_scan_sboms(
     scan_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get raw SBOM data for a specific scan.
@@ -923,7 +934,7 @@ async def read_scan_sboms(
 
     scan_data = await scan_repo.get_by_id(scan_id)
     if not scan_data:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     await check_project_access(scan_data.project_id, current_user, db)
 
@@ -940,9 +951,12 @@ async def read_scan_sboms(
     "/scans/{scan_id}/findings",
     response_model=ScanFindingsResponse,
     summary="Get scan findings with pagination",
+    responses={**RESP_AUTH_404},
 )
 async def read_scan_findings(
     scan_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     skip: int = 0,
     limit: int = 50,
     sort_by: str = "severity",  # severity, type, component
@@ -951,8 +965,6 @@ async def read_scan_findings(
     category: Optional[str] = None,  # security, secret, sast, compliance, quality
     severity: Optional[str] = None,
     search: Optional[str] = None,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Get paginated findings for a scan.
@@ -963,7 +975,7 @@ async def read_scan_findings(
     # Check access
     scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
 
     query = {"scan_id": scan_id}
@@ -1082,11 +1094,11 @@ async def read_scan_findings(
     return build_pagination_response(data, total, skip, limit)
 
 
-@router.get("/scans/{scan_id}/stats")
+@router.get("/scans/{scan_id}/stats", responses={**RESP_AUTH_404})
 async def get_scan_stats(
     scan_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get finding statistics by category for a scan.
@@ -1097,7 +1109,7 @@ async def get_scan_stats(
     # Check access
     scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
 
     pipeline: List[Dict[str, Any]] = [
@@ -1114,13 +1126,14 @@ async def get_scan_stats(
     "/{project_id}/members/{user_id}",
     response_model=Project,
     summary="Update project member role",
+    responses={**RESP_AUTH_400_404},
 )
 async def update_project_member(
     project_id: str,
     user_id: str,
     member_in: ProjectMemberUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Update the role of a project member.
@@ -1156,19 +1169,20 @@ async def update_project_member(
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
         return updated_project
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
 @router.delete(
     "/{project_id}/members/{user_id}",
     response_model=Project,
     summary="Remove user from project",
+    responses={**RESP_AUTH_400_404},
 )
 async def remove_project_member(
     project_id: str,
     user_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Remove a user from the project.
@@ -1195,19 +1209,20 @@ async def remove_project_member(
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
         return updated_project
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
 @router.post(
     "/{project_id}/transfer-ownership",
     response_model=Project,
     summary="Transfer project ownership",
+    responses={**RESP_AUTH_400},
 )
 async def transfer_ownership(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     new_owner_id: str = Body(..., embed=True),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Transfer project ownership to another user.
@@ -1218,7 +1233,7 @@ async def transfer_ownership(
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     is_owner = project.owner_id == str(current_user.id)
-    has_system_manage = has_permission(current_user.permissions, "system:manage")
+    has_system_manage = has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE)
 
     if not (is_owner or has_system_manage):
         raise HTTPException(status_code=403, detail="Only the project owner or a system admin can transfer ownership")
@@ -1244,14 +1259,14 @@ async def transfer_ownership(
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
         return updated_project
-    raise HTTPException(status_code=404, detail="Project not found")
+    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
-@router.get("/{project_id}/export/csv", summary="Export latest scan results as CSV")
+@router.get("/{project_id}/export/csv", summary="Export latest scan results as CSV", responses={**RESP_AUTH_404})
 async def export_project_csv(
     project_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
@@ -1304,11 +1319,11 @@ async def export_project_csv(
     )
 
 
-@router.get("/{project_id}/export/sbom", summary="Export latest SBOM")
+@router.get("/{project_id}/export/sbom", summary="Export latest SBOM", responses={**RESP_AUTH_404, **RESP_500})
 async def export_project_sbom(
     project_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
@@ -1342,11 +1357,11 @@ async def export_project_sbom(
     )
 
 
-@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT, responses={**RESP_AUTH_404})
 async def delete_project(
     project_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Delete a project and all associated data (scans, results).
@@ -1355,7 +1370,7 @@ async def delete_project(
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     # Additional check: Only global admin or project owner can delete
-    has_delete_perm = has_permission(current_user.permissions, "project:delete")
+    has_delete_perm = has_permission(current_user.permissions, Permissions.PROJECT_DELETE)
     is_owner = project.owner_id == str(current_user.id)
 
     if not (has_delete_perm or is_owner):
@@ -1410,11 +1425,11 @@ async def delete_project(
     await project_repo.delete(project_id)
 
 
-@router.get("/{project_id}/waivers", response_model=List[WaiverResponse])
+@router.get("/{project_id}/waivers", response_model=List[WaiverResponse], responses={**RESP_AUTH_404})
 async def get_project_waivers(
     project_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get all waivers for a specific project.

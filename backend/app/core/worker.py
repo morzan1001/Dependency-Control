@@ -370,7 +370,7 @@ class AnalysisWorkerManager:
 
             except asyncio.CancelledError:
                 logger.info(f"Worker {worker_id} cancelled during shutdown")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Worker {worker_id} crashed: {e}")
                 await asyncio.sleep(1)  # Prevent tight loop if something is really broken

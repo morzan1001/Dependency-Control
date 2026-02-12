@@ -11,6 +11,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.models.team import Team
 
 
+_MEMBERS_USER_ID = "members.user_id"
+
+
 class TeamRepository:
     """Repository for team database operations."""
 
@@ -84,7 +87,7 @@ class TeamRepository:
 
     async def find_by_member(self, user_id: str) -> List[Team]:
         """Find teams where user is a member. Returns Pydantic models."""
-        cursor = self.collection.find({"members.user_id": user_id})
+        cursor = self.collection.find({_MEMBERS_USER_ID: user_id})
         docs = await cursor.to_list(None)
         return [Team(**doc) for doc in docs]
 
@@ -99,7 +102,7 @@ class TeamRepository:
     async def update_member_role(self, team_id: str, user_id: str, role: str) -> None:
         """Update a member's role in team."""
         await self.collection.update_one(
-            {"_id": team_id, "members.user_id": user_id},
+            {"_id": team_id, _MEMBERS_USER_ID: user_id},
             {"$set": {"members.$.role": role}},
         )
 
@@ -109,7 +112,7 @@ class TeamRepository:
 
     async def is_member(self, team_id: str, user_id: str) -> bool:
         """Check if user is a member of team."""
-        result = await self.collection.find_one({"_id": team_id, "members.user_id": user_id})
+        result = await self.collection.find_one({"_id": team_id, _MEMBERS_USER_ID: user_id})
         return result is not None
 
     async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:

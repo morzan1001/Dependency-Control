@@ -50,7 +50,7 @@ export default function Dashboard() {
   // Virtual Scroll Setup
   const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
   
-  // eslint-disable-next-line
+  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: projectList.length,
     getScrollElement: () => scrollContainer,
@@ -102,7 +102,7 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {isLoadingStats ? (
-          Array(4).fill(0).map((_, i) => (
+          new Array(4).fill(0).map((_, i) => (
             <Skeleton key={i} className="h-32 rounded-xl" />
           ))
         ) : (

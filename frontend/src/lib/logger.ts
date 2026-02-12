@@ -1,7 +1,7 @@
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 class Logger {
-  private level: LogLevel = 'info';
+  private readonly level: LogLevel = 'info';
 
   constructor() {
     // In development, show debug logs

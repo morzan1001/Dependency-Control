@@ -283,7 +283,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                             type="number" 
                             min="1"
                             value={retentionDays} 
-                            onChange={(e) => setRetentionDays(parseInt(e.target.value) || 90)} 
+                            onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)} 
                         />
                     )}
                 </div>
@@ -321,7 +321,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                         type="number" 
                                         min="1"
                                         value={rescanInterval || 24} 
-                                        onChange={(e) => setRescanInterval(parseInt(e.target.value) || 24)} 
+                                        onChange={(e) => setRescanInterval(Number.parseInt(e.target.value) || 24)} 
                                     />
                                     <p className="text-xs text-muted-foreground">
                                         How often to re-scan the project.
@@ -368,7 +368,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                             type="number"
                                             placeholder="12345"
                                             value={gitlabProjectId || ''}
-                                            onChange={(e) => setGitlabProjectId(parseInt(e.target.value) || undefined)}
+                                            onChange={(e) => setGitlabProjectId(Number.parseInt(e.target.value) || undefined)}
                                         />
                                         <p className="text-xs text-muted-foreground">
                                             The numeric project ID from GitLab (found in project settings).
@@ -615,7 +615,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                 Transfer this project to another member. The new owner will have full control.
                             </div>
                         </div>
-                        <Button variant="destructive" onClick={() => setIsTransferDialogOpen(true)} disabled={project.members.length < 2}>
+                        <Button variant="destructive" onClick={() => setIsTransferDialogOpen(true)} disabled={(project.members?.length ?? 0) < 2}>
                             <ArrowRightLeft className="mr-2 h-4 w-4" />
                             Transfer
                         </Button>
@@ -717,7 +717,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         <SelectValue placeholder="Select a member" />
                     </SelectTrigger>
                     <SelectContent>
-                        {project.members
+                        {(project.members ?? [])
                             .filter(m => m.user_id !== project.owner_id)
                             .map(m => (
                                 <SelectItem key={m.user_id} value={m.user_id}>

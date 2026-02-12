@@ -79,7 +79,7 @@ export default function ProjectDetails() {
       document.body.appendChild(a)
       a.click()
       window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
+      a.remove()
     } catch {
       toast.error("Failed to export CSV")
     }
@@ -95,7 +95,7 @@ export default function ProjectDetails() {
       document.body.appendChild(a)
       a.click()
       window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
+      a.remove()
     } catch {
       toast.error("Failed to export SBOM")
     }

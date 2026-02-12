@@ -5,14 +5,14 @@ import { formatDate } from '@/lib/utils'
 
 export function AdditionalDetailsView({ details }: { details: FindingDetails }) {
   // Skip rendering for these redundant fields that are shown elsewhere
-  const skipFields = ['license', 'severity', 'type', 'message', 'id', 'component', 'version', 'fixed_version']
+  const skipFields = new Set(['license', 'severity', 'type', 'message', 'id', 'component', 'version', 'fixed_version'])
 
   // Fields that should be grouped together in a row (e.g., cycle and lts for EOL)
-  const rowGroupFields = ['cycle', 'lts']
+  const rowGroupFields = new Set(['cycle', 'lts'])
 
   // Filter out empty values and redundant fields
   const filteredEntries = Object.entries(details as Record<string, unknown>).filter(([key, value]) => {
-    if (skipFields.includes(key)) return false
+    if (skipFields.has(key)) return false
     if (value === null || value === undefined || value === '') return false
     if (Array.isArray(value) && value.length === 0) return false
     if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as object).length === 0) return false
@@ -20,8 +20,8 @@ export function AdditionalDetailsView({ details }: { details: FindingDetails }) 
   })
 
   // Separate grouped fields from regular fields
-  const groupedEntries = filteredEntries.filter(([key]) => rowGroupFields.includes(key))
-  const regularEntries = filteredEntries.filter(([key]) => !rowGroupFields.includes(key))
+  const groupedEntries = filteredEntries.filter(([key]) => rowGroupFields.has(key))
+  const regularEntries = filteredEntries.filter(([key]) => !rowGroupFields.has(key))
 
   if (filteredEntries.length === 0) {
     return null

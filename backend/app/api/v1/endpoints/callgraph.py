@@ -8,12 +8,12 @@ for reachability analysis.
 import logging
 from typing import Any, Dict
 
-from fastapi import Depends, HTTPException
+from fastapi import HTTPException
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
 
-from app.api import deps
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.v1.helpers.callgraph import (
     check_callgraph_access,
     detect_format,
@@ -21,9 +21,7 @@ from app.api.v1.helpers.callgraph import (
     parse_madge_format,
     parse_pyan_format,
 )
-from app.db.mongodb import get_database
 from app.models.callgraph import Callgraph
-from app.models.user import User
 from app.repositories import CallgraphRepository
 from app.schemas.callgraph import (
     CallgraphResponse,
@@ -38,12 +36,12 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/{project_id}/callgraph", response_model=CallgraphUploadResponse)
+@router.post("/{project_id}/callgraph", response_model=CallgraphUploadResponse, responses={**RESP_AUTH_400})
 async def upload_callgraph(
     project_id: str,
     request: CallgraphUploadRequest,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.get_current_active_user),
+    db: DatabaseDep,
+    current_user: CurrentUserDep,
 ):
     """
     Upload call graph data for a project.
@@ -189,11 +187,11 @@ async def upload_callgraph(
     )
 
 
-@router.get("/{project_id}/callgraph", response_model=CallgraphResponse)
+@router.get("/{project_id}/callgraph", responses={**RESP_AUTH_404})
 async def get_callgraph(
     project_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.get_current_active_user),
+    db: DatabaseDep,
+    current_user: CurrentUserDep,
 ) -> CallgraphResponse:
     """
     Get the current callgraph for a project.
@@ -211,11 +209,11 @@ async def get_callgraph(
     return CallgraphResponse(**callgraph)
 
 
-@router.get("/{project_id}/callgraph/modules", response_model=ModuleUsageResponse)
+@router.get("/{project_id}/callgraph/modules", responses={**RESP_AUTH_404})
 async def get_module_usage(
     project_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.get_current_active_user),
+    db: DatabaseDep,
+    current_user: CurrentUserDep,
 ) -> ModuleUsageResponse:
     """
     Get module usage summary from the callgraph.
@@ -246,11 +244,11 @@ async def get_module_usage(
     )
 
 
-@router.delete("/{project_id}/callgraph", response_model=DeleteCallgraphResponse)
+@router.delete("/{project_id}/callgraph", responses={**RESP_AUTH_404})
 async def delete_callgraph(
     project_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.get_current_active_user),
+    db: DatabaseDep,
+    current_user: CurrentUserDep,
 ) -> DeleteCallgraphResponse:
     """
     Delete the callgraph for a project.

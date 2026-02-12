@@ -86,8 +86,8 @@ export default function ScanDetails() {
 
   useEffect(() => {
     if (activeTab === 'raw' && sbomParam !== null && !isSbomsLoading && scanSboms && scanSboms.length > 0) {
-      const sbomIndex = parseInt(sbomParam, 10)
-      if (!isNaN(sbomIndex) && sbomIndex >= 0 && sbomIndex < scanSboms.length) {
+      const sbomIndex = Number.parseInt(sbomParam, 10)
+      if (!Number.isNaN(sbomIndex) && sbomIndex >= 0 && sbomIndex < scanSboms.length) {
         const timeoutId = setTimeout(() => scrollToSbom(sbomIndex), 100)
         return () => clearTimeout(timeoutId)
       }
@@ -512,7 +512,7 @@ export default function ScanDetails() {
             ) : (
                 <div className="space-y-8">
                     {/* Post-Processor Results (EPSS/KEV, Reachability) - RAW JSON */}
-                    {scanResults && scanResults.filter(r => isPostProcessorResult(r.analyzer_name)).length > 0 && (
+                    {scanResults && scanResults.some(r => isPostProcessorResult(r.analyzer_name)) && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Post-Processor Results</h3>
                             <div className="grid gap-6">
@@ -536,7 +536,7 @@ export default function ScanDetails() {
                     )}
 
                     {/* Analysis Results (non-post-processor) */}
-                    {scanResults && scanResults.filter(r => !isPostProcessorResult(r.analyzer_name)).length > 0 && (
+                    {scanResults && scanResults.some(r => !isPostProcessorResult(r.analyzer_name)) && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Scanner Results</h3>
                             <div className="grid gap-6">

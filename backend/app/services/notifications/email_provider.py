@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+from pathlib import Path
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -128,8 +130,7 @@ class EmailProvider(NotificationProvider):
                 if html_message:
                     msg_alternative.attach(MIMEText(html_message, "html"))
 
-                with open(logo_path, "rb") as f:
-                    img_data = f.read()
+                img_data = await asyncio.to_thread(Path(logo_path).read_bytes)
                 image = MIMEImage(img_data)
                 image.add_header("Content-ID", "<logo>")
                 image.add_header("Content-Disposition", "inline", filename="logo.png")

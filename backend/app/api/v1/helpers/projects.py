@@ -18,10 +18,12 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_OWNER,
 )
-from app.core.permissions import has_permission
+from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
+
+_MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
 
 async def build_user_project_query(
@@ -43,7 +45,7 @@ async def build_user_project_query(
     Returns:
         MongoDB query dict. Empty dict if user has read_all permission.
     """
-    if has_permission(user.permissions, "project:read_all"):
+    if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return {}
 
     # Find teams user is member of
@@ -89,7 +91,7 @@ async def check_project_access(
 
     # SECURITY: project:read_all grants access to ALL projects (superuser)
     # Note: project:update does NOT bypass membership checks - only grants write permission
-    if has_permission(user.permissions, "project:read_all"):
+    if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return project
 
     is_owner = project.owner_id == str(user.id)
@@ -118,11 +120,11 @@ async def check_project_access(
                     break
 
     if not (is_owner or is_member):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     # Check for basic read permission
-    if "project:read" not in user.permissions and "project:read_all" not in user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    if Permissions.PROJECT_READ not in user.permissions and Permissions.PROJECT_READ_ALL not in user.permissions:
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     if required_role:
         if is_owner:
@@ -132,7 +134,7 @@ async def check_project_access(
         # If member_role is None, default to viewer
         current_role = member_role or PROJECT_ROLE_VIEWER
         if roles.index(current_role) < roles.index(required_role):
-            raise HTTPException(status_code=403, detail="Not enough permissions")
+            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     return project
 

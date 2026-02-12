@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge"
 import { getSeverityBadgeVariant } from "@/lib/finding-utils"
 
-type RiskLevel = "HIGH" | "MEDIUM" | "LOW" | "CRITICAL" | "INFO" | "UNKNOWN" | string
+type RiskLevel = string
 
 interface RiskBadgeProps {
     /** The risk level value */

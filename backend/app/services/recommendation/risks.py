@@ -14,6 +14,15 @@ from app.core.constants import (
 from app.services.recommendation.common import get_attr, ModelOrDict
 
 
+def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
+    """Determine severity label for vulnerability risk factor."""
+    if critical > 0 or kev > 0:
+        return "CRITICAL"
+    if high > 0:
+        return "HIGH"
+    return "MEDIUM"
+
+
 def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
     """Generate specific remediation steps for a hotspot."""
     steps = []
@@ -64,8 +73,6 @@ def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
 def detect_critical_hotspots(
     findings: List[ModelOrDict],
     dependencies: List[ModelOrDict],
-    dep_by_purl: Dict[str, Dict],
-    dep_by_name_version: Dict[str, Dict],
 ) -> List[Recommendation]:
     """
     Detect critical hotspots - packages that accumulate multiple severe issues.
@@ -282,8 +289,6 @@ def detect_critical_hotspots(
 def detect_toxic_dependencies(
     findings: List[ModelOrDict],
     dependencies: List[ModelOrDict],
-    dep_by_purl: Dict[str, Dict],
-    dep_by_name_version: Dict[str, Dict],
 ) -> List[Recommendation]:
     """
     Detect "toxic" dependencies - packages with multiple independent risk factors.
@@ -384,7 +389,7 @@ def detect_toxic_dependencies(
             pkg["risk_factors"].append(
                 {
                     "type": "vulnerabilities",
-                    "severity": ("CRITICAL" if critical > 0 or kev > 0 else ("HIGH" if high > 0 else "MEDIUM")),
+                    "severity": _vuln_risk_severity(critical, high, kev),
                     "description": f"{vuln_count} vulnerabilities ({critical} critical, {high} high, {kev} KEV)",
                 }
             )

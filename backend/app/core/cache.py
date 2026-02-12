@@ -284,7 +284,7 @@ class CacheService:
             Dict mapping keys to their values (None for missing keys)
         """
         if not self._available or not keys:
-            return {k: None for k in keys}
+            return dict.fromkeys(keys)
 
         try:
             client = await self.get_client()
@@ -303,10 +303,10 @@ class CacheService:
             return result
         except redis.ConnectionError:
             self._available = False
-            return {k: None for k in keys}
+            return dict.fromkeys(keys)
         except Exception as e:
             logger.warning(f"Cache mget error: {e}")
-            return {k: None for k in keys}
+            return dict.fromkeys(keys)
 
     async def mset(self, mapping: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
         """

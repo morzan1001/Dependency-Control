@@ -13,11 +13,13 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLES,
 )
-from app.core.permissions import has_permission
+from app.core.permissions import Permissions, has_permission
 from app.models.team import Team
 from app.models.user import User
 from app.repositories import TeamRepository, UserRepository
 from app.schemas.team import TeamResponse
+
+_MSG_TEAM_NOT_FOUND = "Team not found"
 
 
 def build_team_enrichment_pipeline(
@@ -118,11 +120,11 @@ async def check_team_access(
     team_repo = TeamRepository(db)
     team = await team_repo.get_by_id(team_id)
     if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
+        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
     # SECURITY: team:read_all grants access to ALL teams (superuser)
     # Note: team:update does NOT bypass membership - only grants write permission
-    if has_permission(user.permissions, "team:read_all"):
+    if has_permission(user.permissions, Permissions.TEAM_READ_ALL):
         return team
 
     member_role = None
@@ -134,14 +136,14 @@ async def check_team_access(
             break
 
     # Check for global read permission
-    if required_role is None and "team:read_all" in user.permissions:
+    if required_role is None and Permissions.TEAM_READ_ALL in user.permissions:
         return team
 
     if not is_member:
         raise HTTPException(status_code=403, detail="Not a member of this team")
 
     # Check for basic read permission
-    if "team:read" not in user.permissions and "team:read_all" not in user.permissions:
+    if Permissions.TEAM_READ not in user.permissions and Permissions.TEAM_READ_ALL not in user.permissions:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     if required_role:
@@ -199,7 +201,7 @@ async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamR
     team_data = await team_repo.get_raw_by_id(team_id)
 
     if not team_data:
-        raise HTTPException(status_code=404, detail="Team not found")
+        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
     await enrich_team_with_usernames(team_data, db)
     return TeamResponse(**team_data)
@@ -268,7 +270,7 @@ async def get_team_with_access(
     if has_permission(user.permissions, "team:update"):
         team = await team_repo.get_by_id(team_id)
         if not team:
-            raise HTTPException(status_code=404, detail="Team not found")
+            raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
         return team
 
     return await check_team_access(team_id, user, db, required_role=required_role)

@@ -122,10 +122,7 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
             parts = rest.rsplit("/", 1)
             if len(parts) != 2:
                 return None  # Unexpected rsplit result
-            if purl_type == "maven":
-                namespace = parts[0]
-                name = parts[1]
-            elif purl_type in ("npm",) and rest.startswith("@"):
+            if purl_type in ("npm",) and rest.startswith("@"):
                 split_parts = rest.split("/", 1)
                 if len(split_parts) != 2:
                     return None

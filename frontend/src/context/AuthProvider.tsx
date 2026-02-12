@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jwtDecode } from 'jwt-decode'
 
@@ -90,17 +90,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [navigate])
 
+  const contextValue = useMemo(() => ({
+    isAuthenticated,
+    login,
+    logout,
+    isLoading,
+    permissions,
+    hasPermission,
+  }), [isAuthenticated, login, logout, isLoading, permissions, hasPermission])
+
   return (
-    <AuthContext.Provider
-      value={{
-        isAuthenticated,
-        login,
-        logout,
-        isLoading,
-        permissions,
-        hasPermission,
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   )

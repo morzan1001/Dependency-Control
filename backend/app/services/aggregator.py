@@ -240,7 +240,7 @@ class ResultAggregator:
             if f.type != FindingType.VULNERABILITY:
                 continue
 
-            vulns = set(v["id"] for v in f.details.get("vulnerabilities", []))
+            vulns = {v["id"] for v in f.details.get("vulnerabilities", [])}
             if not vulns:
                 continue
 
@@ -379,7 +379,7 @@ class ResultAggregator:
             component_map[key].append(f)
 
         # Process each component group
-        for _, component_findings in component_map.items():
+        for component_findings in component_map.values():
             if len(component_findings) <= 1:
                 continue  # Nothing to link
 
@@ -567,7 +567,7 @@ class ResultAggregator:
                         major_buckets[major][i] = []
 
                     major_buckets[major][i].append((parsed, cand))
-                except Exception:
+                except (ValueError, TypeError, IndexError):
                     continue
 
         # 2. Find valid major versions (must cover ALL vulnerabilities)
@@ -834,9 +834,8 @@ class ResultAggregator:
 
         # 4. Aliases
         target.aliases = list(set(target.aliases + source.aliases))
-        if source.id != target.id:
-            if source.id not in target.aliases:
-                target.aliases.append(source.id)
+        if source.id != target.id and source.id not in target.aliases:
+            target.aliases.append(source.id)
 
         # 5. Details (Vulnerabilities)
         # Merge vulnerabilities list, handling aliases to avoid duplicates

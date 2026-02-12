@@ -47,7 +47,7 @@ export function formatDate(
   if (!date) return 'N/A'
   try {
     const d = typeof date === 'string' ? new Date(date) : date
-    if (isNaN(d.getTime())) return String(date)
+    if (Number.isNaN(d.getTime())) return String(date)
     return d.toLocaleDateString(undefined, options)
   } catch {
     return String(date)

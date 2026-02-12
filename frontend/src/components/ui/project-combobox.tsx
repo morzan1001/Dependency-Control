@@ -133,7 +133,7 @@ export function ProjectCombobox({
           <div className="max-h-[300px] overflow-y-auto p-1">
             {isLoading ? (
               <div className="space-y-1 p-1">
-                {Array(5).fill(0).map((_, i) => (
+                {new Array(5).fill(0).map((_, i) => (
                   <Skeleton key={i} className="h-9 w-full" />
                 ))}
               </div>

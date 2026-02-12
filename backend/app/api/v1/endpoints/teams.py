@@ -1,14 +1,15 @@
 import logging
 import re
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import Depends, HTTPException, status
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
 
 from app.api import deps
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.v1.helpers import (
     build_team_enrichment_pipeline,
     check_team_access,
@@ -19,7 +20,6 @@ from app.api.v1.helpers import (
 )
 from app.core.constants import TEAM_ROLE_OWNER
 from app.core.permissions import has_permission
-from app.db.mongodb import get_database
 from app.models.team import Team, TeamMember
 from app.models.user import User
 from app.repositories import TeamRepository, UserRepository
@@ -36,11 +36,11 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-@router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH})
 async def create_team(
     team_in: TeamCreate,
-    current_user: User = Depends(deps.PermissionChecker("team:create")),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.PermissionChecker("team:create"))],
+    db: DatabaseDep,
 ):
     """
     Create a new team. The creator becomes the owner.
@@ -62,13 +62,13 @@ async def create_team(
     return team_dict
 
 
-@router.get("/", response_model=List[TeamResponse])
+@router.get("/", response_model=List[TeamResponse], responses={**RESP_AUTH})
 async def read_teams(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     search: Optional[str] = None,
     sort_by: str = "name",
     sort_order: str = "asc",
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     List teams.
@@ -98,11 +98,11 @@ async def read_teams(
     return teams
 
 
-@router.get("/{team_id}", response_model=TeamResponse)
+@router.get("/{team_id}", response_model=TeamResponse, responses={**RESP_AUTH_404})
 async def read_team(
     team_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get team details.
@@ -119,12 +119,12 @@ async def read_team(
     return result[0]
 
 
-@router.put("/{team_id}", response_model=TeamResponse)
+@router.put("/{team_id}", response_model=TeamResponse, responses={**RESP_AUTH_404})
 async def update_team(
     team_id: str,
     team_in: TeamUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Update team details. Requires 'admin' or 'owner' role.
@@ -141,11 +141,11 @@ async def update_team(
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT, responses={**RESP_AUTH_404})
 async def delete_team(
     team_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Delete a team. Requires 'owner' role.
@@ -171,12 +171,12 @@ async def delete_team(
     return None
 
 
-@router.post("/{team_id}/members", response_model=TeamResponse)
+@router.post("/{team_id}/members", response_model=TeamResponse, responses={**RESP_AUTH_400_404})
 async def add_team_member(
     team_id: str,
     member_in: TeamMemberAdd,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Add a member to the team. Requires 'admin' role.
@@ -209,13 +209,13 @@ async def add_team_member(
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.put("/{team_id}/members/{user_id}", response_model=TeamResponse)
+@router.put("/{team_id}/members/{user_id}", response_model=TeamResponse, responses={**RESP_AUTH_404})
 async def update_team_member(
     team_id: str,
     user_id: str,
     member_in: TeamMemberUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Update a member's role. Requires 'admin' role.
@@ -247,12 +247,12 @@ async def update_team_member(
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.delete("/{team_id}/members/{user_id}", response_model=TeamResponse)
+@router.delete("/{team_id}/members/{user_id}", response_model=TeamResponse, responses={**RESP_AUTH_400_404})
 async def remove_team_member(
     team_id: str,
     user_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Remove a member from the team. Requires 'admin' role.

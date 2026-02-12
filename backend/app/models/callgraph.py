@@ -7,7 +7,7 @@ whether vulnerable code paths are actually reachable in the project.
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 

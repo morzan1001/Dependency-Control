@@ -1,0 +1,6 @@
+{
+    "sonarlint.connectedMode.project": {
+        "connectionId": "SonarCloud",
+        "projectKey": "morzan1001_Dependency-Control"
+    }
+}

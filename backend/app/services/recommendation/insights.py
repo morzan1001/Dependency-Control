@@ -213,8 +213,8 @@ def analyze_cross_project_patterns(
         for pkg in proj.get("packages", []):
             name = pkg.get("name", "").lower()
             if name:
-                package_usage[name]["versions"].add(pkg.get("version", "unknown"))  # type: ignore
-                package_usage[name]["projects"].append(proj.get("project_name"))  # type: ignore
+                cast(set, package_usage[name]["versions"]).add(pkg.get("version", "unknown"))
+                cast(list, package_usage[name]["projects"]).append(proj.get("project_name"))
 
     # Packages with multiple versions across projects
     inconsistent_packages = [

@@ -102,7 +102,7 @@ async def startup_event():
             else:
                 logger.error("Could not connect to database after multiple attempts.")
                 raise e
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             logger.error(f"Unexpected error during startup: {e}")
             raise e
 

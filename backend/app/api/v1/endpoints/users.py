@@ -2,16 +2,16 @@ import base64
 import io
 import logging
 import re
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 import pyotp
 import qrcode
 from fastapi import BackgroundTasks, Depends, HTTPException, status
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api import deps
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.v1.helpers import (
     check_admin_or_self,
     fetch_updated_user,
@@ -22,7 +22,7 @@ from app.api.v1.helpers import (
 from app.core import security
 from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
-from app.db.mongodb import get_database
+from app.core.permissions import Permissions
 from app.models.user import User
 from app.repositories import InvitationRepository, UserRepository
 from app.schemas.user import User as UserSchema
@@ -36,6 +36,7 @@ from app.schemas.user import (
     UserUpdate,
     UserUpdateMe,
 )
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404, RESP_AUTH_404
 from app.services.notifications import templates
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.service import notification_service
@@ -45,11 +46,11 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH_400})
 async def create_user(
     user_in: UserCreate,
-    current_user: User = Depends(deps.PermissionChecker(["user:create"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_CREATE]))],
+    db: DatabaseDep,
 ):
     """
     Create a new user. Requires 'user:create' permission.
@@ -83,15 +84,15 @@ async def create_user(
     return new_user
 
 
-@router.get("/", response_model=List[UserSchema])
+@router.get("/", response_model=List[UserSchema], responses={**RESP_AUTH})
 async def read_users(
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_READ_ALL]))],
+    db: DatabaseDep,
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
     sort_by: str = "username",
     sort_order: str = "asc",
-    current_user: User = Depends(deps.PermissionChecker(["user:read_all"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     query = {}
     if search:
@@ -110,9 +111,9 @@ async def read_users(
     return users
 
 
-@router.get("/me", response_model=UserSchema)
+@router.get("/me", response_model=UserSchema, responses={**RESP_AUTH})
 async def read_user_me(
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: CurrentUserDep,
 ):
     """
     Get current user.
@@ -120,11 +121,11 @@ async def read_user_me(
     return current_user
 
 
-@router.patch("/me", response_model=UserSchema)
+@router.patch("/me", response_model=UserSchema, responses={**RESP_AUTH_400})
 async def update_user_me(
     user_in: UserUpdateMe,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Update own profile.
@@ -149,26 +150,26 @@ async def update_user_me(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.get("/{user_id}", response_model=UserSchema)
+@router.get("/{user_id}", response_model=UserSchema, responses={**RESP_AUTH_404})
 async def read_user_by_id(
     user_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """Get user by ID. Requires admin permission or self."""
-    check_admin_or_self(current_user, user_id, ["user:read"])
+    check_admin_or_self(current_user, user_id, [Permissions.USER_READ])
     return await get_user_or_404(user_id, db)
 
 
-@router.put("/{user_id}", response_model=UserSchema)
+@router.put("/{user_id}", response_model=UserSchema, responses={**RESP_AUTH_400_404})
 async def update_user(
     user_id: str,
     user_in: UserUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """Update user. Requires admin permission or self."""
-    has_admin_perm = check_admin_or_self(current_user, user_id, ["user:update"])
+    has_admin_perm = check_admin_or_self(current_user, user_id, [Permissions.USER_UPDATE])
 
     existing_user = await get_user_or_404(user_id, db)
 
@@ -206,12 +207,12 @@ async def update_user(
     return await fetch_updated_user(user_id, db)
 
 
-@router.post("/me/migrate", response_model=UserSchema)
+@router.post("/me/migrate", response_model=UserSchema, responses={**RESP_AUTH_400})
 async def migrate_to_local(
     *,
     password_in: UserMigrateToLocal,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Migrate SSO user to local account by setting a password.
@@ -230,11 +231,11 @@ async def migrate_to_local(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.post("/{user_id}/migrate", response_model=UserSchema)
+@router.post("/{user_id}/migrate", response_model=UserSchema, responses={**RESP_AUTH_400_404})
 async def migrate_user_to_local(
     user_id: str,
-    current_user: User = Depends(deps.PermissionChecker(["user:update"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
+    db: DatabaseDep,
 ):
     """
     Admin only: Migrate a user to local authentication.
@@ -252,12 +253,12 @@ async def migrate_user_to_local(
     return await fetch_updated_user(user_id, db)
 
 
-@router.post("/{user_id}/reset-password")
+@router.post("/{user_id}/reset-password", responses={**RESP_AUTH_400_404})
 async def reset_user_password(
     user_id: str,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(deps.PermissionChecker(["user:update"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
+    db: DatabaseDep,
 ):
     """
     Admin only: Trigger password reset for a user.
@@ -309,12 +310,12 @@ async def reset_user_password(
     return response
 
 
-@router.post("/me/password", response_model=UserSchema)
+@router.post("/me/password", response_model=UserSchema, responses={**RESP_AUTH_400})
 async def update_password_me(
     password_in: UserPasswordUpdate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Update current user password.
@@ -357,10 +358,10 @@ async def update_password_me(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.post("/me/2fa/setup", response_model=User2FASetup)
+@router.post("/me/2fa/setup", response_model=User2FASetup, responses={**RESP_AUTH_400})
 async def setup_2fa(
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Generate a new 2FA secret and QR code.
@@ -394,12 +395,12 @@ async def setup_2fa(
     return {"secret": secret, "qr_code": qr_code_base64}
 
 
-@router.post("/me/2fa/enable", response_model=UserSchema)
+@router.post("/me/2fa/enable", response_model=UserSchema, responses={**RESP_AUTH_400})
 async def enable_2fa(
     verify_in: User2FAVerify,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Verify OTP and enable 2FA.
@@ -455,12 +456,12 @@ async def enable_2fa(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.post("/me/2fa/disable", response_model=UserSchema)
+@router.post("/me/2fa/disable", response_model=UserSchema, responses={**RESP_AUTH_400})
 async def disable_2fa(
     disable_in: User2FADisable,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Disable 2FA.
@@ -498,12 +499,12 @@ async def disable_2fa(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.post("/{user_id}/2fa/disable", response_model=UserSchema)
+@router.post("/{user_id}/2fa/disable", response_model=UserSchema, responses={**RESP_AUTH_400_404})
 async def admin_disable_2fa(
     user_id: str,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(deps.PermissionChecker(["user:update"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
+    db: DatabaseDep,
 ):
     """
     Admin only: Disable 2FA for a user (e.g. lost device).
@@ -541,11 +542,11 @@ async def admin_disable_2fa(
     return await fetch_updated_user(user_id, db)
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, responses={**RESP_AUTH_400_404})
 async def delete_user(
     user_id: str,
-    current_user: User = Depends(deps.PermissionChecker(["user:delete"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_DELETE]))],
+    db: DatabaseDep,
 ):
     """
     Delete a user or revoke a pending invitation.

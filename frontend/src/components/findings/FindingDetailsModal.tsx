@@ -53,8 +53,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
     const handleSbomClick = (source: string) => {
         if (!scanId) return
         // Extract SBOM index from source name (e.g., "SBOM #1" -> 0)
-        const match = source.match(/SBOM #(\d+)/i)
-        const sbomIndex = match ? parseInt(match[1], 10) - 1 : 0
+        const match = /SBOM #(\d+)/i.exec(source)
+        const sbomIndex = match ? Number.parseInt(match[1], 10) - 1 : 0
         // Close this modal and notify parent to close as well
         onClose()
         onNavigate?.()  // Allow parent modals to close
@@ -128,7 +128,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                             <div className="flex flex-wrap gap-2 items-start">
                                             {finding.found_in.map((source) => {
                                                 // Check if this looks like an SBOM reference
-                                                const isSbomRef = source.match(/SBOM #\d+/i) || !source.includes('/')
+                                                const isSbomRef = /SBOM #\d+/i.test(source) || !source.includes('/')
                                                 return (
                                                     <Badge 
                                                         key={source} 

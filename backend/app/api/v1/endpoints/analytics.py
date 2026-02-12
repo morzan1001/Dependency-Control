@@ -1,13 +1,11 @@
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import HTTPException, Query
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
-from app.api import deps
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.services.recommendation.common import get_attr
 from app.api.v1.helpers.analytics import (
     build_findings_severity_map,
@@ -27,8 +25,6 @@ from app.api.v1.helpers.analytics import (
 )
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, get_severity_value
 from app.core.permissions import Permissions
-from app.db.mongodb import get_database
-from app.models.user import User
 from app.repositories import (
     DependencyEnrichmentRepository,
     DependencyRepository,
@@ -52,6 +48,7 @@ from app.schemas.analytics import (
     VulnerabilitySearchResponse,
     VulnerabilitySearchResult,
 )
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.services.enrichment import get_cve_enrichment
 from app.services.recommendations import recommendation_engine
 
@@ -60,11 +57,11 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-@router.get("/summary", response_model=AnalyticsSummary)
+@router.get("/summary", responses={**RESP_AUTH})
 async def get_analytics_summary(
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> AnalyticsSummary:
     """Get analytics summary across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SUMMARY)
 
@@ -133,13 +130,13 @@ async def get_analytics_summary(
     )
 
 
-@router.get("/dependencies/top", response_model=List[DependencyUsage])
+@router.get("/dependencies/top", responses={**RESP_AUTH})
 async def get_top_dependencies(
-    limit: int = Query(20, ge=1, le=100),
-    type: Optional[str] = Query(None, description="Filter by dependency type (npm, pypi, maven, etc.)"),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    type: Annotated[Optional[str], Query(description="Filter by dependency type (npm, pypi, maven, etc.)")] = None,
+) -> List[DependencyUsage]:
     """Get most frequently used dependencies across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_DEPENDENCIES)
 
@@ -210,13 +207,13 @@ async def get_top_dependencies(
     return enriched
 
 
-@router.get("/projects/{project_id}/dependency-tree", response_model=List[DependencyTreeNode])
+@router.get("/projects/{project_id}/dependency-tree", responses={**RESP_AUTH})
 async def get_dependency_tree(
     project_id: str,
-    scan_id: Optional[str] = Query(None, description="Specific scan ID, defaults to latest"),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    scan_id: Annotated[Optional[str], Query(description="Specific scan ID, defaults to latest")] = None,
+) -> List[DependencyTreeNode]:
     """Get dependency tree for a project showing direct and transitive dependencies."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_TREE)
 
@@ -291,12 +288,12 @@ async def get_dependency_tree(
     return direct_deps + transitive_deps
 
 
-@router.get("/impact", response_model=List[ImpactAnalysisResult])
+@router.get("/impact", responses={**RESP_AUTH})
 async def get_impact_analysis(
-    limit: int = Query(20, ge=1, le=100),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> List[ImpactAnalysisResult]:
     """Analyze which dependency fixes would have the highest impact across projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_IMPACT)
 
@@ -425,18 +422,18 @@ async def get_impact_analysis(
     return impact_results
 
 
-@router.get("/hotspots", response_model=List[VulnerabilityHotspot])
+@router.get("/hotspots", responses={**RESP_AUTH})
 async def get_vulnerability_hotspots(
-    skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(20, ge=1, le=100),
-    sort_by: str = Query(
-        "finding_count",
-        description="Sort field: finding_count, component, first_seen, epss, risk",
-    ),
-    sort_order: str = Query("desc", description="Sort order: asc, desc"),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    skip: Annotated[int, Query(ge=0, description="Number of records to skip")] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    sort_by: Annotated[
+        str,
+        Query(description="Sort field: finding_count, component, first_seen, epss, risk"),
+    ] = "finding_count",
+    sort_order: Annotated[str, Query(description="Sort order: asc, desc")] = "desc",
+) -> List[VulnerabilityHotspot]:
     """Get dependencies with the most vulnerabilities (hotspots)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_HOTSPOTS)
 
@@ -489,7 +486,7 @@ async def get_vulnerability_hotspots(
         results = results[skip : skip + limit]
 
     # Collect all CVE IDs for enrichment
-    all_cves = list(set(fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")))
+    all_cves = list({fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")})
 
     # Enrich with EPSS/KEV data
     enrichments = {}
@@ -500,7 +497,7 @@ async def get_vulnerability_hotspots(
             logger.warning(f"Failed to enrich CVEs: {e}")
 
     # Batch fetch dependency types to avoid N+1 queries
-    component_names = list(set(r["_id"]["component"] for r in results))
+    component_names = list({r["_id"]["component"] for r in results})
     # Use find_all() instead of find_many() when using projection
     # find_many() returns Pydantic models which don't work with partial projections
     deps_by_name = await dep_repo.find_all(
@@ -583,27 +580,27 @@ async def get_vulnerability_hotspots(
     return hotspots
 
 
-@router.get("/search", response_model=DependencySearchResponse)
+@router.get("/search", responses={**RESP_AUTH})
 async def search_dependencies_advanced(
-    q: str = Query(..., min_length=2, description="Search query for package name"),
-    version: Optional[str] = Query(None, description="Filter by specific version"),
-    type: Optional[str] = Query(None, description="Filter by package type"),
-    source_type: Optional[str] = Query(
-        None,
-        description="Filter by source type (image, file-system, directory, application)",
-    ),
-    has_vulnerabilities: Optional[bool] = Query(None, description="Filter by vulnerability status"),
-    project_ids: Optional[str] = Query(None, description="Comma-separated list of project IDs"),
-    sort_by: str = Query(
-        "name",
-        description="Sort field: name, version, type, project_name, license, direct",
-    ),
-    sort_order: str = Query("asc", description="Sort order: asc or desc"),
-    skip: int = Query(0, ge=0, description="Number of items to skip"),
-    limit: int = Query(50, ge=1, le=500),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    q: Annotated[str, Query(min_length=2, description="Search query for package name")],
+    version: Annotated[Optional[str], Query(description="Filter by specific version")] = None,
+    type: Annotated[Optional[str], Query(description="Filter by package type")] = None,
+    source_type: Annotated[
+        Optional[str],
+        Query(description="Filter by source type (image, file-system, directory, application)"),
+    ] = None,
+    has_vulnerabilities: Annotated[Optional[bool], Query(description="Filter by vulnerability status")] = None,
+    project_ids: Annotated[Optional[str], Query(description="Comma-separated list of project IDs")] = None,
+    sort_by: Annotated[
+        str,
+        Query(description="Sort field: name, version, type, project_name, license, direct"),
+    ] = "name",
+    sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "asc",
+    skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> DependencySearchResponse:
     """Advanced dependency search with multiple filters and pagination."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
@@ -660,8 +657,8 @@ async def search_dependencies_advanced(
     vuln_status_map: Dict[str, bool] = {}
     if has_vulnerabilities is not None and dependencies:
         # Build unique (project_id, component) pairs
-        dep_keys = list(set((get_attr(dep, "project_id"), get_attr(dep, "name")) for dep in dependencies))
-        component_names = list(set(get_attr(dep, "name") for dep in dependencies))
+        dep_keys = list({(get_attr(dep, "project_id"), get_attr(dep, "name")) for dep in dependencies})
+        component_names = list({get_attr(dep, "name") for dep in dependencies})
 
         # Single aggregation to get components with vulnerabilities
         vuln_pipeline: List[Dict[str, Any]] = [
@@ -729,31 +726,41 @@ async def search_dependencies_advanced(
     )
 
 
-@router.get("/vulnerability-search", response_model=VulnerabilitySearchResponse)
+def _get_description(vuln: dict, finding: object) -> str | None:
+    """Extract description from vulnerability or finding."""
+    if vuln.get("description"):
+        return vuln["description"][:200]
+    if getattr(finding, "description", None):
+        return finding.description[:200]
+    return None
+
+
+@router.get("/vulnerability-search", responses={**RESP_AUTH})
 async def search_vulnerabilities(
-    q: str = Query(
-        ...,
-        min_length=2,
-        description="Search query for CVE, GHSA, or other vulnerability identifiers",
-    ),
-    severity: Optional[str] = Query(None, description="Filter by severity: CRITICAL, HIGH, MEDIUM, LOW"),
-    in_kev: Optional[bool] = Query(None, description="Filter by CISA KEV inclusion"),
-    has_fix: Optional[bool] = Query(None, description="Filter by fix availability"),
-    finding_type: Optional[str] = Query(
-        None, description="Filter by finding type: vulnerability, license, secret, etc."
-    ),
-    project_ids: Optional[str] = Query(None, description="Comma-separated list of project IDs"),
-    include_waived: bool = Query(False, description="Include waived findings"),
-    sort_by: str = Query(
-        "severity",
-        description="Sort field: severity, cvss, epss, component, project_name",
-    ),
-    sort_order: str = Query("desc", description="Sort order: asc or desc"),
-    skip: int = Query(0, ge=0, description="Number of items to skip"),
-    limit: int = Query(50, ge=1, le=500),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    q: Annotated[
+        str,
+        Query(min_length=2, description="Search query for CVE, GHSA, or other vulnerability identifiers"),
+    ],
+    severity: Annotated[
+        Optional[str], Query(description="Filter by severity: CRITICAL, HIGH, MEDIUM, LOW")
+    ] = None,
+    in_kev: Annotated[Optional[bool], Query(description="Filter by CISA KEV inclusion")] = None,
+    has_fix: Annotated[Optional[bool], Query(description="Filter by fix availability")] = None,
+    finding_type: Annotated[
+        Optional[str], Query(description="Filter by finding type: vulnerability, license, secret, etc.")
+    ] = None,
+    project_ids: Annotated[Optional[str], Query(description="Comma-separated list of project IDs")] = None,
+    include_waived: Annotated[bool, Query(description="Include waived findings")] = False,
+    sort_by: Annotated[
+        str,
+        Query(description="Sort field: severity, cvss, epss, component, project_name"),
+    ] = "severity",
+    sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
+    skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> VulnerabilitySearchResponse:
     """
     Search for vulnerabilities, CVEs, and other security identifiers across all accessible projects.
 
@@ -936,11 +943,7 @@ async def search_vulnerabilities(
                         scan_id=finding.scan_id,
                         finding_id=finding.finding_id,
                         finding_type=finding.type or "vulnerability",
-                        description=(
-                            vuln.get("description", "")[:200]
-                            if vuln.get("description")
-                            else (finding.get("description", "")[:200] if finding.description else None)
-                        ),
+                        description=_get_description(vuln, finding),
                         fixed_version=(vuln.get("fixed_version") or details.get("fixed_version")),
                         waived=vuln.get("waived", False) or finding.waived if finding.waived is not None else False,
                         waiver_reason=(vuln.get("waiver_reason") or finding.waiver_reason),
@@ -962,12 +965,12 @@ async def search_vulnerabilities(
     )
 
 
-@router.get("/component-findings", response_model=List[Dict[str, Any]])
+@router.get("/component-findings", responses={**RESP_AUTH})
 async def get_component_findings(
-    component: str = Query(..., description="Component/package name"),
-    version: Optional[str] = Query(None, description="Specific version"),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    component: Annotated[str, Query(description="Component/package name")],
+    version: Annotated[Optional[str], Query(description="Specific version")] = None,
 ) -> List[Dict[str, Any]]:
     """Get all findings for a specific component across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
@@ -1000,13 +1003,13 @@ async def get_component_findings(
     return results
 
 
-@router.get("/dependency-metadata", response_model=Optional[DependencyMetadata])
+@router.get("/dependency-metadata", responses={**RESP_AUTH})
 async def get_dependency_metadata_endpoint(
-    component: str = Query(..., description="Component/package name"),
-    version: Optional[str] = Query(None, description="Specific version"),
-    type: Optional[str] = Query(None, description="Package type"),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    component: Annotated[str, Query(description="Component/package name")],
+    version: Annotated[Optional[str], Query(description="Specific version")] = None,
+    type: Annotated[Optional[str], Query(description="Package type")] = None,
 ) -> Optional[DependencyMetadata]:
     """
     Get aggregated metadata for a dependency across all accessible projects.
@@ -1131,10 +1134,10 @@ async def get_dependency_metadata_endpoint(
     )
 
 
-@router.get("/dependency-types", response_model=List[str])
+@router.get("/dependency-types", responses={**RESP_AUTH})
 async def get_dependency_types(
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> List[str]:
     """Get list of all dependency types used across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
@@ -1153,13 +1156,13 @@ async def get_dependency_types(
     return await dep_repo.get_distinct_types(scan_ids)
 
 
-@router.get("/projects/{project_id}/recommendations", response_model=RecommendationsResponse)
+@router.get("/projects/{project_id}/recommendations", responses={**RESP_AUTH_404})
 async def get_project_recommendations(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     scan_id: Optional[str] = None,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-):
+) -> RecommendationsResponse:
     """
     Get remediation recommendations for a project's security findings.
 

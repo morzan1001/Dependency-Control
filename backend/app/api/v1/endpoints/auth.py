@@ -1,7 +1,7 @@
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -18,11 +18,11 @@ from fastapi import (
     status,
 )
 
+from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
 from app.api import deps
@@ -35,7 +35,6 @@ from app.core.constants import (
     OIDC_STATE_TTL_SECONDS,
     TOTP_VALID_WINDOW,
 )
-from app.db.mongodb import get_database
 from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories import UserRepository
@@ -47,6 +46,7 @@ from app.schemas.auth import (
     VerificationEmailResponse,
 )
 from app.schemas.token import Token, TokenPayload
+from app.api.v1.helpers.responses import RESP_400, RESP_401, RESP_403, RESP_404, RESP_AUTH, RESP_AUTH_400, RESP_500, RESP_501
 from app.schemas.user import User as UserSchema
 from app.schemas.user import UserCreate, UserPasswordReset
 
@@ -70,11 +70,14 @@ except ImportError:
 
 router = CustomAPIRouter()
 
+_MSG_EMAIL_NOT_CONFIGURED = "Email server not configured"
+_MSG_USER_INACTIVE = "User account is inactive"
 
-@router.post("/login/access-token", response_model=Token, summary="Login to get access token")
+
+@router.post("/login/access-token", response_model=Token, summary="Login to get access token", responses={**RESP_400, **RESP_401, **RESP_500})
 async def login_access_token(
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    form_data: OAuth2PasswordRequestForm = Depends(),
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: DatabaseDep,
     otp: Optional[str] = Form(None),
 ) -> Any:
     """
@@ -175,10 +178,10 @@ async def login_access_token(
     }
 
 
-@router.post("/login/refresh-token", response_model=Token, summary="Refresh access token")
+@router.post("/login/refresh-token", response_model=Token, summary="Refresh access token", responses={**RESP_400, **RESP_403, **RESP_404})
 async def refresh_token(
-    refresh_token: str = Body(..., embed=True, description="The refresh token obtained during login"),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    refresh_token: Annotated[str, Body(embed=True, description="The refresh token obtained during login")],
+    db: DatabaseDep,
 ) -> Any:
     """
     Get a new access token using a valid refresh token.
@@ -241,11 +244,11 @@ async def refresh_token(
     }
 
 
-@router.post("/signup", response_model=UserSchema, summary="Register a new user")
+@router.post("/signup", response_model=UserSchema, summary="Register a new user", responses={**RESP_400, **RESP_403})
 async def create_user(
     background_tasks: BackgroundTasks,
     user_in: UserCreate,
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: DatabaseDep,
 ) -> Any:
     """
     Create a new user in the system.
@@ -296,11 +299,11 @@ async def create_user(
     return new_user
 
 
-@router.post("/logout", response_model=LogoutResponse, summary="Logout user")
+@router.post("/logout", summary="Logout user", responses={**RESP_AUTH})
 async def logout(
     request: Request,
-    current_user: User = Depends(deps.get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.get_current_user)],
+    db: DatabaseDep,
 ) -> LogoutResponse:
     """
     Logout the current user.
@@ -345,12 +348,12 @@ async def logout(
 
 @router.post(
     "/send-verification-email",
-    response_model=VerificationEmailResponse,
     summary="Send verification email",
+    responses={**RESP_AUTH_400, **RESP_501},
 )
 async def request_verification_email(
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(deps.get_current_active_user),
+    current_user: Annotated[User, Depends(deps.get_current_active_user)],
 ) -> VerificationEmailResponse:
     """
     Send a new verification email to the current user.
@@ -364,7 +367,7 @@ async def request_verification_email(
     if not settings.SMTP_HOST:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Email server not configured",
+            detail=_MSG_EMAIL_NOT_CONFIGURED,
         )
 
     await send_verification_email(background_tasks, current_user.email)
@@ -374,10 +377,10 @@ async def request_verification_email(
 
 @router.get(
     "/verify-email",
-    response_model=EmailVerifyResponse,
     summary="Verify email address",
+    responses={**RESP_400, **RESP_404},
 )
-async def verify_email(token: str, db: AsyncIOMotorDatabase = Depends(get_database)) -> EmailVerifyResponse:
+async def verify_email(token: str, db: DatabaseDep) -> EmailVerifyResponse:
     """
     Verify email address using the token sent via email.
     """
@@ -400,7 +403,7 @@ async def verify_email(token: str, db: AsyncIOMotorDatabase = Depends(get_databa
     if not user.get("is_active", True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User account is inactive",
+            detail=_MSG_USER_INACTIVE,
         )
 
     if user.get("is_verified"):
@@ -413,14 +416,14 @@ async def verify_email(token: str, db: AsyncIOMotorDatabase = Depends(get_databa
 
 @router.post(
     "/resend-verification",
-    response_model=VerificationEmailResponse,
     summary="Resend verification email (Public)",
+    responses={**RESP_501},
 )
 async def resend_verification_email_public(
     background_tasks: BackgroundTasks,
-    email: str = Body(..., embed=True),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    system_config: SystemSettings = Depends(deps.get_system_settings),
+    email: Annotated[str, Body(embed=True)],
+    db: DatabaseDep,
+    system_config: Annotated[SystemSettings, Depends(deps.get_system_settings)],
 ) -> VerificationEmailResponse:
     """
     Resend verification email to the user with the given email address.
@@ -434,7 +437,7 @@ async def resend_verification_email_public(
     if not settings.SMTP_HOST:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Email server not configured",
+            detail=_MSG_EMAIL_NOT_CONFIGURED,
         )
 
     user_repo = UserRepository(db)
@@ -452,8 +455,9 @@ async def resend_verification_email_public(
     "/login/oidc/authorize",
     summary="Initiate OIDC login",
     description="Redirects the user to the configured OIDC provider for authentication.",
+    responses={**RESP_400, **RESP_500},
 )
-async def login_oidc_authorize(request: Request, db: AsyncIOMotorDatabase = Depends(get_database)):
+async def login_oidc_authorize(request: Request, db: DatabaseDep):
     """
     Initiate OIDC login flow by redirecting to the identity provider.
     """
@@ -497,12 +501,13 @@ async def login_oidc_authorize(request: Request, db: AsyncIOMotorDatabase = Depe
     "/login/oidc/callback",
     summary="OIDC callback",
     description="Handles the callback from the OIDC provider after authentication.",
+    responses={**RESP_400, **RESP_500},
 )
 async def login_oidc_callback(
     request: Request,
     code: str,
+    db: DatabaseDep,
     state: Optional[str] = None,
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Handle OIDC callback after user authenticates with the identity provider.
@@ -696,7 +701,7 @@ async def login_oidc_callback(
                 auth_oidc_logins_total.labels(status="inactive_user").inc()
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User account is inactive",
+                detail=_MSG_USER_INACTIVE,
             )
 
     # OIDC users are exempt from 2FA enforcement — we trust the OIDC provider
@@ -721,13 +726,13 @@ async def login_oidc_callback(
 
 @router.post(
     "/forgot-password",
-    response_model=ForgotPasswordResponse,
     summary="Request password reset",
+    responses={**RESP_501},
 )
 async def forgot_password(
     background_tasks: BackgroundTasks,
-    email: str = Body(..., embed=True),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    email: Annotated[str, Body(embed=True)],
+    db: DatabaseDep,
 ) -> ForgotPasswordResponse:
     """
     Request a password reset email.
@@ -748,7 +753,7 @@ async def forgot_password(
     if not settings.SMTP_HOST:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Email server not configured",
+            detail=_MSG_EMAIL_NOT_CONFIGURED,
         )
 
     user_repo = UserRepository(db)
@@ -775,11 +780,11 @@ async def forgot_password(
 
 @router.post(
     "/reset-password",
-    response_model=PasswordResetResponse,
     summary="Reset password with token",
+    responses={**RESP_400, **RESP_404},
 )
 async def reset_password(
-    reset_in: UserPasswordReset, db: AsyncIOMotorDatabase = Depends(get_database)
+    reset_in: UserPasswordReset, db: DatabaseDep
 ) -> PasswordResetResponse:
     """
     Reset password using the token received via email.
@@ -816,7 +821,7 @@ async def reset_password(
     if not user.get("is_active", True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User account is inactive",
+            detail=_MSG_USER_INACTIVE,
         )
 
     # Check if user can reset password (local auth or has existing password)

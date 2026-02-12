@@ -131,9 +131,9 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
       project_url?: string
     }
 
-    const hasValidScore = ctx.overall_score !== undefined && ctx.overall_score !== null && !isNaN(ctx.overall_score)
-    const isLowScore = hasValidScore && ctx.overall_score! < 5.0
-    const isVeryLowScore = hasValidScore && ctx.overall_score! < 3.0
+    const hasValidScore = ctx.overall_score !== undefined && ctx.overall_score !== null && !Number.isNaN(ctx.overall_score)
+    const isLowScore = hasValidScore && ctx.overall_score! < 5
+    const isVeryLowScore = hasValidScore && ctx.overall_score! < 3
 
     if (hasValidScore || ctx.maintenance_risk || (ctx.critical_issues && ctx.critical_issues.length > 0)) {
       const variant = isVeryLowScore || ctx.maintenance_risk ? 'danger' : isLowScore ? 'warning' : 'info'

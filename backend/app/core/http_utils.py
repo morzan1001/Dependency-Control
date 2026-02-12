@@ -202,6 +202,7 @@ class InstrumentedAsyncClient:
         self._client: Optional[httpx.AsyncClient] = None
         self._timeout = timeout
         self._kwargs = kwargs
+        self._NOT_STARTED_MSG = "Client not started. Use 'async with' or call start()."
 
     async def start(self) -> None:
         """Start the underlying client (for long-lived usage)."""
@@ -236,7 +237,7 @@ class InstrumentedAsyncClient:
     async def get(self, url: str, **kwargs) -> httpx.Response:
         """Make a GET request with metrics."""
         if self._client is None:
-            raise RuntimeError("Client not started. Use 'async with' or call start().")
+            raise RuntimeError(self._NOT_STARTED_MSG)
 
         start_time = time.time()
         self._record_request()
@@ -251,7 +252,7 @@ class InstrumentedAsyncClient:
     async def post(self, url: str, **kwargs) -> httpx.Response:
         """Make a POST request with metrics."""
         if self._client is None:
-            raise RuntimeError("Client not started. Use 'async with' or call start().")
+            raise RuntimeError(self._NOT_STARTED_MSG)
 
         start_time = time.time()
         self._record_request()
@@ -266,7 +267,7 @@ class InstrumentedAsyncClient:
     async def put(self, url: str, **kwargs) -> httpx.Response:
         """Make a PUT request with metrics."""
         if self._client is None:
-            raise RuntimeError("Client not started. Use 'async with' or call start().")
+            raise RuntimeError(self._NOT_STARTED_MSG)
 
         start_time = time.time()
         self._record_request()
@@ -281,7 +282,7 @@ class InstrumentedAsyncClient:
     async def delete(self, url: str, **kwargs) -> httpx.Response:
         """Make a DELETE request with metrics."""
         if self._client is None:
-            raise RuntimeError("Client not started. Use 'async with' or call start().")
+            raise RuntimeError(self._NOT_STARTED_MSG)
 
         start_time = time.time()
         self._record_request()
@@ -296,7 +297,7 @@ class InstrumentedAsyncClient:
     async def request(self, method: str, url: str, **kwargs) -> httpx.Response:
         """Make an arbitrary HTTP request with metrics."""
         if self._client is None:
-            raise RuntimeError("Client not started. Use 'async with' or call start().")
+            raise RuntimeError(self._NOT_STARTED_MSG)
 
         start_time = time.time()
         self._record_request()

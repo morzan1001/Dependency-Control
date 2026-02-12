@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useProjectScans } from '@/hooks/queries/use-scans'
+import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts } from '@/types/scan'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -8,7 +8,6 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThreatIntelligenceDashboard } from '@/components/ThreatIntelligenceDashboard'
 import { PostProcessorResultCard } from '@/components/PostProcessorResults'
-import { useScanResults } from '@/hooks/queries/use-scans'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
@@ -77,7 +76,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       )[0];
 
-      if (latestScan && latestScan.stats) {
+      if (latestScan?.stats) {
           globalStats = { 
               critical: latestScan.stats.critical || 0,
               high: latestScan.stats.high || 0,

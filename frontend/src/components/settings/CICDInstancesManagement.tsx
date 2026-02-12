@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { AxiosError } from "axios";
 import { Plus, Trash2, Edit2, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { gitlabInstancesApi } from "@/api/gitlab-instances";
@@ -168,7 +169,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance created successfully");
       closeCreateDialog();
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<{ detail?: string }>) => {
       toast.error(error.response?.data?.detail || "Failed to create instance");
     },
   });
@@ -181,7 +182,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance updated successfully");
       closeEditDialog();
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<{ detail?: string }>) => {
       toast.error(error.response?.data?.detail || "Failed to update instance");
     },
   });
@@ -193,7 +194,7 @@ export function CICDInstancesManagement() {
       toast.success("GitLab instance deleted successfully");
       setDeleteInstance(null);
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<{ detail?: string }>) => {
       toast.error(error.response?.data?.detail || "Failed to delete instance");
     },
   });
@@ -226,7 +227,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance created successfully");
       closeCreateDialog();
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<{ detail?: string }>) => {
       toast.error(error.response?.data?.detail || "Failed to create instance");
     },
   });
@@ -239,7 +240,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance updated successfully");
       closeEditDialog();
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<{ detail?: string }>) => {
       toast.error(error.response?.data?.detail || "Failed to update instance");
     },
   });
@@ -251,7 +252,7 @@ export function CICDInstancesManagement() {
       toast.success("GitHub instance deleted successfully");
       setDeleteInstance(null);
     },
-    onError: (error: any) => {
+    onError: (error: AxiosError<{ detail?: string }>) => {
       toast.error(error.response?.data?.detail || "Failed to delete instance");
     },
   });

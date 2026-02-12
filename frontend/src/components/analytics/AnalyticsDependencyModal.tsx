@@ -599,7 +599,7 @@ export function AnalyticsDependencyModal({
 
             {isLoadingFindings ? (
               <div className="space-y-2">
-                {Array(3).fill(0).map((_, i) => (
+                {new Array(3).fill(0).map((_, i) => (
                   <Skeleton key={i} className="h-16 w-full" />
                 ))}
               </div>

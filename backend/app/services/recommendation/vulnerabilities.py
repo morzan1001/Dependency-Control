@@ -556,7 +556,7 @@ def _analyze_no_fix_vulns(vulns: List[VulnerabilityInfo]) -> List[Recommendation
                 "low": severity_counts.get("LOW", 0),
                 "total": len(vulns),
             },
-            affected_components=list(set(v.package_name for v in crit_high_vulns))[:20],
+            affected_components=list({v.package_name for v in crit_high_vulns})[:20],
             action={
                 "type": "consider_alternative",
                 "steps": [

@@ -3,6 +3,8 @@ from typing import Any, Dict, Optional
 
 from jinja2 import Environment, FileSystemLoader
 
+APP_NAME = "Dependency Control"
+
 # Setup Jinja2 environment
 current_dir = os.path.dirname(os.path.abspath(__file__))
 template_dir = os.path.join(current_dir, "../../templates/email")
@@ -14,7 +16,7 @@ def render_template(template_name: str, context: Dict[str, Any]) -> str:
     return template.render(**context)
 
 
-def get_verification_email_template(verification_link: str, project_name: str = "Dependency Control") -> str:
+def get_verification_email_template(verification_link: str, project_name: str = APP_NAME) -> str:
     return render_template("verification.html", {"link": verification_link, "project_name": project_name})
 
 
@@ -128,7 +130,7 @@ def get_advisory_template(
     )
 
 
-def get_announcement_template(message: str, link: str = "#", project_name: str = "Dependency Control") -> str:
+def get_announcement_template(message: str, link: str = "#", project_name: str = APP_NAME) -> str:
     return render_template(
         "announcement.html",
         {"message": message, "link": link, "project_name": project_name},
@@ -151,7 +153,7 @@ def get_2fa_disabled_template(username: str, project_name: str) -> str:
 
 
 def get_project_member_added_template(
-    target_project_name: str, inviter_name: str, role: str, link: str, project_name: str = "Dependency Control"
+    target_project_name: str, inviter_name: str, role: str, link: str, project_name: str = APP_NAME
 ) -> str:
     return render_template(
         "project_member_added.html",

@@ -81,7 +81,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const allResults = data ? data.pages.flatMap((d) => d.items) : []
   const totalCount = data?.pages[0]?.total ?? 0
 
-  // eslint-disable-next-line
+  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: hasNextPage ? allResults.length + 1 : allResults.length,
     getScrollElement: () => scrollContainer,
@@ -273,7 +273,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
           </div>
         ) : isLoading ? (
           <div className="space-y-2">
-            {Array(5).fill(0).map((_, i) => (
+            {new Array(5).fill(0).map((_, i) => (
               <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>

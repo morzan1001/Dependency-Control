@@ -1,10 +1,11 @@
 from typing import Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import HTTPException
 
+from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.responses import RESP_400
 from fastapi.responses import RedirectResponse
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.integrations import (
     SlackOAuthError,
@@ -12,17 +13,16 @@ from app.api.v1.helpers.integrations import (
     extract_slack_tokens,
 )
 from app.core.config import settings
-from app.db.mongodb import get_database
 from app.repositories.system_settings import SystemSettingsRepository
 
 router = CustomAPIRouter()
 
 
-@router.get("/slack/callback")
+@router.get("/slack/callback", responses={**RESP_400})
 async def slack_callback(
     code: str,
+    db: DatabaseDep,
     state: Optional[str] = None,
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Callback endpoint for Slack OAuth.

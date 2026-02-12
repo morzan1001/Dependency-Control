@@ -217,7 +217,7 @@ export function CreateProjectDialog({
                             type="number"
                             min="1"
                             value={retentionDays}
-                            onChange={(e) => setRetentionDays(parseInt(e.target.value) || 90)}
+                            onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)}
                             required
                         />
                         <p className="text-xs text-muted-foreground">

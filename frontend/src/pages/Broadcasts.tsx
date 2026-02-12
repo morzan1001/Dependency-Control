@@ -477,8 +477,8 @@ export default function Broadcasts() {
                                    </TooltipTrigger>
                                    <TooltipContent>
                                      <div className="flex flex-col gap-1">
-                                       {item.teams.map((name, i) => (
-                                         <span key={i}>{name}</span>
+                                       {item.teams.map((name) => (
+                                         <span key={name}>{name}</span>
                                        ))}
                                      </div>
                                    </TooltipContent>

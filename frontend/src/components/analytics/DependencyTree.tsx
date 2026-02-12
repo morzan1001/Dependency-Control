@@ -202,7 +202,7 @@ export function DependencyTree({ onSelectNode }: DependencyTreeProps) {
           </div>
         ) : isLoadingTree ? (
           <div className="space-y-2">
-            {Array(8).fill(0).map((_, i) => (
+            {new Array(8).fill(0).map((_, i) => (
               <Skeleton key={i} className="h-10 w-full" />
             ))}
           </div>

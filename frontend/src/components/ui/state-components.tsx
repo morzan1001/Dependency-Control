@@ -41,7 +41,7 @@ export function SkeletonGrid({ rows = 3, columns = 1, className = '' }: Skeleton
   
   return (
     <div className={`grid gap-4 ${gridCols} ${className}`}>
-      {Array(rows * columns).fill(0).map((_, i) => (
+      {new Array(rows * columns).fill(0).map((_, i) => (
         <Card key={i}>
           <CardContent className="p-6">
             <Skeleton className="h-4 w-3/4 mb-2" />
@@ -73,14 +73,14 @@ export function TableSkeleton({
     <div className={`space-y-3 ${className}`}>
       {showHeader && (
         <div className="flex gap-4 pb-2 border-b">
-          {Array(columns).fill(0).map((_, i) => (
+          {new Array(columns).fill(0).map((_, i) => (
             <Skeleton key={i} className="h-4 flex-1" />
           ))}
         </div>
       )}
-      {Array(rows).fill(0).map((_, rowIdx) => (
+      {new Array(rows).fill(0).map((_, rowIdx) => (
         <div key={rowIdx} className="flex gap-4 py-2">
-          {Array(columns).fill(0).map((_, colIdx) => (
+          {new Array(columns).fill(0).map((_, colIdx) => (
             <Skeleton key={colIdx} className="h-4 flex-1" />
           ))}
         </div>
@@ -104,7 +104,7 @@ export function CardSkeleton({ showHeader = true, lines = 3, className = '' }: C
       <CardContent className="p-6">
         {showHeader && <Skeleton className="h-6 w-1/3 mb-4" />}
         <div className="space-y-2">
-          {Array(lines).fill(0).map((_, i) => (
+          {new Array(lines).fill(0).map((_, i) => (
             <Skeleton 
               key={i} 
               className={`h-4 ${i === lines - 1 ? 'w-2/3' : 'w-full'}`} 

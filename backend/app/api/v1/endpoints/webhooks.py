@@ -5,14 +5,15 @@ Provides CRUD operations for project-specific and global webhooks,
 plus webhook testing functionality.
 """
 
-from typing import Any, Dict
+from typing import Annotated, Any, Dict
 
 from fastapi import Depends, HTTPException, Query
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
 
 from app.api import deps
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.v1.helpers import (
     build_pagination_response,
     check_webhook_create_permission,
@@ -21,7 +22,6 @@ from app.api.v1.helpers import (
     get_webhook_or_404,
 )
 from app.core.permissions import Permissions
-from app.db.mongodb import get_database
 from app.models.user import User
 from app.models.webhook import Webhook
 from app.repositories import WebhookRepository
@@ -37,12 +37,12 @@ from app.services.webhooks.webhook_service import webhook_service
 router = CustomAPIRouter()
 
 
-@router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201)
+@router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201, responses={**RESP_AUTH})
 async def create_webhook(
     project_id: str,
     webhook_in: WebhookCreate,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Create a webhook for a project.
@@ -57,13 +57,13 @@ async def create_webhook(
     return await webhook_repo.create(webhook)
 
 
-@router.get("/project/{project_id}", response_model=Dict[str, Any])
+@router.get("/project/{project_id}", response_model=Dict[str, Any], responses={**RESP_AUTH})
 async def list_webhooks(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(50, ge=1, le=100, description="Number of items to return"),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     List all webhooks for a project with pagination.
@@ -80,11 +80,11 @@ async def list_webhooks(
     return build_pagination_response(items, total, skip, limit)
 
 
-@router.post("/global/", response_model=WebhookResponse, status_code=201)
+@router.post("/global/", response_model=WebhookResponse, status_code=201, responses={**RESP_AUTH})
 async def create_global_webhook(
     webhook_in: WebhookCreate,
-    current_user: User = Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE)),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    db: DatabaseDep,
 ):
     """
     Create a global webhook.
@@ -98,12 +98,12 @@ async def create_global_webhook(
     return await webhook_repo.create(webhook)
 
 
-@router.get("/global/", response_model=Dict[str, Any])
+@router.get("/global/", response_model=Dict[str, Any], responses={**RESP_AUTH})
 async def list_global_webhooks(
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    db: DatabaseDep,
     skip: int = Query(0, ge=0, description="Number of items to skip"),
     limit: int = Query(50, ge=1, le=100, description="Number of items to return"),
-    current_user: User = Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE)),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     List global webhooks with pagination.
@@ -118,11 +118,11 @@ async def list_global_webhooks(
     return build_pagination_response(items, total, skip, limit)
 
 
-@router.get("/{webhook_id}", response_model=WebhookResponse)
+@router.get("/{webhook_id}", response_model=WebhookResponse, responses={**RESP_AUTH_404})
 async def get_webhook(
     webhook_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Get a specific webhook by ID.
@@ -136,12 +136,12 @@ async def get_webhook(
     return webhook
 
 
-@router.patch("/{webhook_id}", response_model=WebhookResponse)
+@router.patch("/{webhook_id}", response_model=WebhookResponse, responses={**RESP_AUTH_400_404})
 async def update_webhook(
     webhook_id: str,
     webhook_update: WebhookUpdate,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ):
     """
     Update a webhook configuration.
@@ -164,11 +164,11 @@ async def update_webhook(
     return updated_webhook
 
 
-@router.delete("/{webhook_id}", status_code=204)
+@router.delete("/{webhook_id}", status_code=204, responses={**RESP_AUTH_404})
 async def delete_webhook(
     webhook_id: str,
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> None:
     """
     Delete a webhook.
@@ -183,12 +183,12 @@ async def delete_webhook(
     await webhook_repo.delete(webhook_id)
 
 
-@router.post("/{webhook_id}/test", response_model=WebhookTestResponse)
+@router.post("/{webhook_id}/test", response_model=WebhookTestResponse, responses={**RESP_AUTH_404})
 async def test_webhook(
     webhook_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     test_request: WebhookTestRequest = WebhookTestRequest(),
-    current_user: User = Depends(deps.get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Send a test webhook to verify the configuration.

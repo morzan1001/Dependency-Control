@@ -6,9 +6,9 @@ EPSS/KEV enrichment and reachability analysis data.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
-from app.core.constants import sort_by_severity
+from app.core.constants import HIGH_RISK_SCORE_THRESHOLD, sort_by_severity
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
@@ -118,16 +118,17 @@ def build_epss_kev_summary(findings: List[FindingDict]) -> EPSSKEVSummary:
 
         # Exploit maturity
         maturity: str = details.get("exploit_maturity", "unknown")
-        if maturity in summary["exploit_maturity"]:
-            summary["exploit_maturity"][maturity] += 1  # type: ignore[literal-required]
+        exploit_maturity = cast(Dict[str, int], summary["exploit_maturity"])
+        if maturity in exploit_maturity:
+            exploit_maturity[maturity] += 1
 
         # Risk score
         risk_score = details.get("risk_score")
         if risk_score is not None:
             risk_scores.append(float(risk_score))
 
-            # Track high-risk CVEs (risk_score > 70)
-            if risk_score > 70:
+            # Track high-risk CVEs
+            if risk_score > HIGH_RISK_SCORE_THRESHOLD:
                 high_risk_cve: HighRiskCVE = {
                     "cve": finding.get("finding_id") or finding.get("id", ""),
                     "component": finding.get("component", ""),
@@ -209,8 +210,9 @@ def build_reachability_summary(
             "reachable_functions": finding.get("reachable_functions", [])[:5],
         }
 
-        if reachability_level in summary["reachability_levels"]:
-            summary["reachability_levels"][reachability_level] += 1  # type: ignore[literal-required]
+        reachability_counts = cast(Dict[str, int], summary["reachability_levels"])
+        if reachability_level in reachability_counts:
+            reachability_counts[reachability_level] += 1
 
         if reachable is True:
             summary["reachable_vulnerabilities"].append(vuln_info)

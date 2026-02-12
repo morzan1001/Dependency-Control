@@ -1,13 +1,13 @@
 import logging
 from datetime import datetime, timezone
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Response, status
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
 from app.api import deps
+from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import build_pagination_response
-from app.db.mongodb import get_database
+from app.core.permissions import Permissions
 from app.models.github_instance import GitHubInstance
 from app.models.user import User
 from app.repositories import ProjectRepository
@@ -19,6 +19,7 @@ from app.schemas.github_instance import (
     GitHubInstanceTestConnectionResponse,
     GitHubInstanceUpdate,
 )
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404, RESP_AUTH_404, RESP_500
 from app.services.github import GitHubService
 
 router = CustomAPIRouter()
@@ -42,13 +43,13 @@ def _to_response(instance: GitHubInstance) -> GitHubInstanceResponse:
     )
 
 
-@router.get("/", response_model=GitHubInstanceList)
+@router.get("/", response_model=GitHubInstanceList, responses={**RESP_AUTH})
 async def list_instances(
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     page: int = 1,
     size: int = 100,
     active_only: bool = False,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.PermissionChecker("system:manage")),
 ):
     """
     List all GitHub instances.
@@ -70,11 +71,11 @@ async def list_instances(
     return build_pagination_response(items, total, page, size)
 
 
-@router.get("/{instance_id}", response_model=GitHubInstanceResponse)
+@router.get("/{instance_id}", response_model=GitHubInstanceResponse, responses={**RESP_AUTH_404})
 async def get_instance(
     instance_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.PermissionChecker("system:manage")),
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ):
     """
     Get a specific GitHub instance by ID.
@@ -91,11 +92,11 @@ async def get_instance(
     return _to_response(instance)
 
 
-@router.post("/", response_model=GitHubInstanceResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=GitHubInstanceResponse, status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH_400})
 async def create_instance(
     instance_data: GitHubInstanceCreate,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.PermissionChecker("system:manage")),
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ):
     """
     Create a new GitHub instance.
@@ -159,12 +160,12 @@ async def create_instance(
     return _to_response(created_instance)
 
 
-@router.put("/{instance_id}", response_model=GitHubInstanceResponse)
+@router.put("/{instance_id}", response_model=GitHubInstanceResponse, responses={**RESP_AUTH_400_404, **RESP_500})
 async def update_instance(
     instance_id: str,
     update_data: GitHubInstanceUpdate,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.PermissionChecker("system:manage")),
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ):
     """
     Update a GitHub instance.
@@ -219,12 +220,12 @@ async def update_instance(
     return _to_response(updated_instance)
 
 
-@router.delete("/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{instance_id}", status_code=status.HTTP_204_NO_CONTENT, responses={**RESP_AUTH_400_404, **RESP_500})
 async def delete_instance(
     instance_id: str,
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     force: bool = False,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.PermissionChecker("system:manage")),
 ):
     """
     Delete a GitHub instance.
@@ -270,11 +271,11 @@ async def delete_instance(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/{instance_id}/test-connection", response_model=GitHubInstanceTestConnectionResponse)
+@router.post("/{instance_id}/test-connection", response_model=GitHubInstanceTestConnectionResponse, responses={**RESP_AUTH_404})
 async def test_connection(
     instance_id: str,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    current_user: User = Depends(deps.PermissionChecker("system:manage")),
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ):
     """
     Test OIDC endpoint connectivity for a GitHub instance.

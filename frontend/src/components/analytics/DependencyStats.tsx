@@ -50,7 +50,7 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={limit.toString()} onValueChange={(v) => setLimit(parseInt(v))}>
+            <Select value={limit.toString()} onValueChange={(v) => setLimit(Number.parseInt(v))}>
               <SelectTrigger className="w-[100px]">
                 <SelectValue />
               </SelectTrigger>
@@ -67,7 +67,7 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
       <CardContent>
         {isLoading ? (
           <div className="space-y-2">
-            {Array(5).fill(0).map((_, i) => (
+            {new Array(5).fill(0).map((_, i) => (
               <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>

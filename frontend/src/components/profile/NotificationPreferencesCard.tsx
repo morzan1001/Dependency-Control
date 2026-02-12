@@ -4,7 +4,6 @@ import { User } from '@/types/user';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 import {

@@ -70,7 +70,7 @@ export function NotificationsSettingsTab({
                 max="65535"
                 value={formData.smtp_port || 587}
                 onChange={(e) => {
-                  const port = parseInt(e.target.value) || 587;
+                  const port = Number.parseInt(e.target.value) || 587;
                   handleInputChange('smtp_port', Math.min(65535, Math.max(1, port)));
                 }}
               />

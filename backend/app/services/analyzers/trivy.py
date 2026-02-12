@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.models.finding import Severity
@@ -60,9 +61,8 @@ class TrivyAnalyzer(CLIAnalyzer):
         stdout, stderr = await convert_process.communicate()
 
         if convert_process.returncode == 0:
-            # Write the converted output to file
-            with open(converted_sbom_path, "wb") as f:
-                f.write(stdout)
+            # Write the converted output to file (async to avoid blocking)
+            await asyncio.to_thread(Path(converted_sbom_path).write_bytes, stdout)
             logger.info("Successfully converted SBOM to CycloneDX for Trivy.")
             return converted_sbom_path, [converted_sbom_path]
 

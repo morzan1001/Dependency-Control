@@ -82,7 +82,7 @@ async def migrate_to_multi_instance(dry_run: bool = False, cleanup_settings: boo
         # Test connection
         await client.admin.command('ping')
         logger.info(f"✓ Connected to MongoDB: {settings.MONGODB_DB_NAME}")
-    except Exception as e:
+    except (pymongo.errors.ServerSelectionTimeoutError, pymongo.errors.ConnectionFailure) as e:
         logger.error(f"✗ Failed to connect to MongoDB: {e}")
         return False
 
@@ -199,7 +199,7 @@ async def migrate_to_multi_instance(dry_run: bool = False, cleanup_settings: boo
         try:
             await create_gitlab_indexes(db)
             logger.info("✓ Indexes created successfully")
-        except Exception as e:
+        except pymongo.errors.OperationFailure as e:
             logger.warning(f"⚠ Error creating indexes (may already exist): {e}")
     else:
         logger.info("[DRY RUN] Would create database indexes")

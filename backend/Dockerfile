@@ -9,25 +9,21 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-# Install system dependencies and Trivy
+# Install system dependencies, Trivy, and poetry
 RUN apt-get update && apt-get install -y curl \
     && curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin \
     && curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin \
     && curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install poetry
-RUN pip install poetry
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install poetry
 
 # Copy poetry files
 COPY backend/pyproject.toml backend/poetry.lock* ./
 
-# Configure poetry to not create a virtual environment
-RUN poetry config virtualenvs.create false
-
-# Install dependencies
-RUN poetry install --no-interaction --no-ansi --no-root
+# Configure poetry and install dependencies
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --no-root
 
 # Copy application code
 COPY backend/app ./app

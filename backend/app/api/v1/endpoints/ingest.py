@@ -13,15 +13,17 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Annotated
 
 from fastapi import Depends, HTTPException
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_500
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.api import deps
+from app.api.deps import DatabaseDep
 from app.api.v1.helpers.ingest import process_findings_ingest
-from app.db.mongodb import get_database
 from app.models.dependency import Dependency
 from app.models.project import Project
 from app.repositories import DependencyRepository
@@ -39,6 +41,8 @@ from app.schemas.trufflehog import TruffleHogIngest
 from app.services.sbom_parser import parse_sbom
 from app.services.scan_manager import ScanManager
 
+ProjectIngestDep = Annotated[Project, Depends(deps.get_project_for_ingest)]
+
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
@@ -47,13 +51,13 @@ router = CustomAPIRouter()
 @router.post(
     "/ingest/trufflehog",
     summary="Ingest TruffleHog Results",
-    response_model=SecretScanResponse,
     status_code=200,
+    responses={**RESP_AUTH},
 )
 async def ingest_trufflehog(
     data: TruffleHogIngest,
-    project: Project = Depends(deps.get_project_for_ingest),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    project: ProjectIngestDep,
+    db: DatabaseDep,
 ) -> SecretScanResponse:
     """
     Ingest TruffleHog secret scan results.
@@ -83,13 +87,13 @@ async def ingest_trufflehog(
 @router.post(
     "/ingest/opengrep",
     summary="Ingest OpenGrep Results",
-    response_model=FindingsIngestResponse,
     status_code=200,
+    responses={**RESP_AUTH},
 )
 async def ingest_opengrep(
     data: OpenGrepIngest,
-    project: Project = Depends(deps.get_project_for_ingest),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    project: ProjectIngestDep,
+    db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """
     Ingest OpenGrep SAST scan results.
@@ -108,13 +112,13 @@ async def ingest_opengrep(
 @router.post(
     "/ingest/kics",
     summary="Ingest KICS Results",
-    response_model=FindingsIngestResponse,
     status_code=200,
+    responses={**RESP_AUTH},
 )
 async def ingest_kics(
     data: KicsIngest,
-    project: Project = Depends(deps.get_project_for_ingest),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    project: ProjectIngestDep,
+    db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """
     Ingest KICS IaC scan results.
@@ -132,13 +136,13 @@ async def ingest_kics(
 @router.post(
     "/ingest/bearer",
     summary="Ingest Bearer Results",
-    response_model=FindingsIngestResponse,
     status_code=200,
+    responses={**RESP_AUTH},
 )
 async def ingest_bearer(
     data: BearerIngest,
-    project: Project = Depends(deps.get_project_for_ingest),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    project: ProjectIngestDep,
+    db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """
     Ingest Bearer SAST/Data Security scan results.
@@ -156,13 +160,13 @@ async def ingest_bearer(
 @router.post(
     "/ingest",
     summary="Ingest SBOM",
-    response_model=SBOMIngestResponse,
     status_code=202,
+    responses={**RESP_AUTH_400, **RESP_500},
 )
 async def ingest_sbom(
     data: SBOMIngest,
-    project: Project = Depends(deps.get_project_for_ingest),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    project: ProjectIngestDep,
+    db: DatabaseDep,
 ) -> SBOMIngestResponse:
     """
     Upload an SBOM for analysis.
@@ -381,11 +385,11 @@ async def ingest_sbom(
 @router.get(
     "/ingest/config",
     summary="Get Project Configuration",
-    response_model=ProjectConfigResponse,
     status_code=200,
+    responses={**RESP_AUTH},
 )
 async def get_project_config(
-    project: Project = Depends(deps.get_project_for_ingest),
+    project: ProjectIngestDep,
 ) -> ProjectConfigResponse:
     """
     Get project configuration for CI/CD pipelines.

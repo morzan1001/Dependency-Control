@@ -1,18 +1,19 @@
 import html
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Set
+from typing import Annotated, Any, Dict, List, Set
 
 import markdown
 from fastapi import BackgroundTasks, Depends, HTTPException, Query
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from packaging.version import parse as parse_version
 
 from app.api import deps
+from app.api.deps import DatabaseDep
 from app.core.config import settings
-from app.db.mongodb import get_database
+from app.core.permissions import Permissions
 from app.models.broadcast import Broadcast
 from app.models.project import Project
 from app.models.user import User
@@ -35,10 +36,10 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/history", response_model=List[BroadcastHistoryItem])
+@router.get("/history", response_model=List[BroadcastHistoryItem], responses={**RESP_AUTH})
 async def get_broadcast_history(
-    current_user: User = Depends(deps.PermissionChecker(["notifications:broadcast", "system:manage"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))],
 ):
     """
     Get history of sent broadcasts
@@ -82,11 +83,11 @@ async def get_broadcast_history(
     ]
 
 
-@router.get("/packages/suggest", response_model=List[str])
+@router.get("/packages/suggest", response_model=List[str], responses={**RESP_AUTH})
 async def suggest_packages(
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))],
     q: str = Query(..., min_length=2, description="Search query for package name"),
-    current_user: User = Depends(deps.PermissionChecker(["notifications:broadcast", "system:manage"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Suggest package names for advisories based on existing dependencies.
@@ -105,12 +106,12 @@ async def suggest_packages(
     return [r["name"] for r in results]
 
 
-@router.post("/broadcast", response_model=BroadcastResult)
+@router.post("/broadcast", response_model=BroadcastResult, responses={**RESP_AUTH_400})
 async def broadcast_message(
     payload: BroadcastRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(deps.PermissionChecker(["notifications:broadcast", "system:manage"])),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))],
 ):
     """
     Send a broadcast message to all users, specific teams, or owners of projects affecting a specific dependency.
@@ -228,7 +229,7 @@ async def broadcast_message(
         }
 
         # Add type filter if all packages have the same type
-        unique_types = set(pkg.type for pkg in payload.packages if pkg.type)
+        unique_types = {pkg.type for pkg in payload.packages if pkg.type}
         if len(unique_types) == 1:
             match_query["type"] = list(unique_types)[0]
 

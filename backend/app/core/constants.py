@@ -749,6 +749,9 @@ SCAN_VALID_STATUSES = [
     SCAN_STATUS_FAILED,
 ]
 
+# SPDX originator/supplier prefix for organization entities
+SPDX_ORGANIZATION_PREFIX = "Organization:"
+
 SOURCE_TYPE_IMAGE = "image"
 SOURCE_TYPE_APPLICATION = "application"
 SOURCE_TYPE_FILE = "file"
@@ -855,6 +858,9 @@ GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
 # GitHub JWKS cache TTLs (in seconds)
 GITHUB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
+
+# Threshold for classifying a CVE as high-risk based on its composite risk score
+HIGH_RISK_SCORE_THRESHOLD: float = 70.0
 
 # Time (seconds) since last result to trigger aggregation for stale scans
 # This is tuned for typical CI pipeline timing - don't change unless you understand the implications

@@ -22,6 +22,14 @@ from app.models.license import LicenseCategory, LicenseInfo
 
 from .base import Analyzer
 
+# String constants to avoid duplication (SonarQube S1192)
+INCLUDE_COPYRIGHT_NOTICE = "Include copyright notice"
+INCLUDE_LICENSE_TEXT = "Include license text"
+SHARE_SOURCE_OF_MODIFICATIONS = "Share source of library modifications"
+USE_GPL_FOR_DERIVATIVE_WORK = "Use GPL for derivative work"
+SHARE_COMPLETE_SOURCE_CODE = "Share complete source code"
+NETWORK_USE_TRIGGERS_DISCLOSURE = "Network use triggers source disclosure"
+
 _SPDX_EXPR_SPLIT = re.compile(r"\s+(?:AND|OR|WITH)\s+")
 
 
@@ -48,7 +56,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.PERMISSIVE,
             name="MIT License",
             description="Very permissive license allowing almost any use with attribution.",
-            obligations=["Include copyright notice", "Include license text"],
+            obligations=[INCLUDE_COPYRIGHT_NOTICE, INCLUDE_LICENSE_TEXT],
             compatible_with_proprietary=True,
         ),
         "Apache-2.0": LicenseInfo(
@@ -57,8 +65,8 @@ class LicenseAnalyzer(Analyzer):
             name="Apache License 2.0",
             description="Permissive license with patent grant protection.",
             obligations=[
-                "Include copyright notice",
-                "Include license text",
+                INCLUDE_COPYRIGHT_NOTICE,
+                INCLUDE_LICENSE_TEXT,
                 "State changes",
                 "Include NOTICE file if present",
             ],
@@ -69,7 +77,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.PERMISSIVE,
             name="BSD 2-Clause License",
             description="Simple permissive license with minimal requirements.",
-            obligations=["Include copyright notice", "Include license text"],
+            obligations=[INCLUDE_COPYRIGHT_NOTICE, INCLUDE_LICENSE_TEXT],
             compatible_with_proprietary=True,
         ),
         "BSD-3-Clause": LicenseInfo(
@@ -78,8 +86,8 @@ class LicenseAnalyzer(Analyzer):
             name="BSD 3-Clause License",
             description="Permissive license with non-endorsement clause.",
             obligations=[
-                "Include copyright notice",
-                "Include license text",
+                INCLUDE_COPYRIGHT_NOTICE,
+                INCLUDE_LICENSE_TEXT,
                 "No endorsement without permission",
             ],
             compatible_with_proprietary=True,
@@ -89,7 +97,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.PERMISSIVE,
             name="ISC License",
             description="Simplified permissive license similar to MIT.",
-            obligations=["Include copyright notice"],
+            obligations=[INCLUDE_COPYRIGHT_NOTICE],
             compatible_with_proprietary=True,
         ),
         "Unlicense": LicenseInfo(
@@ -132,9 +140,9 @@ class LicenseAnalyzer(Analyzer):
             name="GNU Lesser General Public License v2.1",
             description="Allows linking in proprietary software, but library changes must be shared.",
             obligations=[
-                "Share source of library modifications",
+                SHARE_SOURCE_OF_MODIFICATIONS,
                 "Allow relinking (for dynamic linking)",
-                "Include license text",
+                INCLUDE_LICENSE_TEXT,
             ],
             risks=["Static linking may trigger full GPL terms"],
             compatible_with_proprietary=True,
@@ -145,7 +153,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.WEAK_COPYLEFT,
             name="GNU Lesser General Public License v2.1 only",
             description="LGPL 2.1 without the 'or later' option.",
-            obligations=["Share source of library modifications", "Allow relinking"],
+            obligations=[SHARE_SOURCE_OF_MODIFICATIONS, "Allow relinking"],
             risks=["Static linking may trigger full GPL terms"],
             compatible_with_proprietary=True,
             requires_source_disclosure=True,
@@ -155,7 +163,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.WEAK_COPYLEFT,
             name="GNU Lesser General Public License v2.1 or later",
             description="LGPL 2.1 with option to use later versions.",
-            obligations=["Share source of library modifications", "Allow relinking"],
+            obligations=[SHARE_SOURCE_OF_MODIFICATIONS, "Allow relinking"],
             compatible_with_proprietary=True,
             requires_source_disclosure=True,
         ),
@@ -165,9 +173,9 @@ class LicenseAnalyzer(Analyzer):
             name="GNU Lesser General Public License v3.0",
             description="Modern LGPL with better patent protection.",
             obligations=[
-                "Share source of library modifications",
+                SHARE_SOURCE_OF_MODIFICATIONS,
                 "Provide installation information",
-                "Include license text",
+                INCLUDE_LICENSE_TEXT,
             ],
             risks=["Must allow user to replace library version"],
             compatible_with_proprietary=True,
@@ -178,7 +186,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.WEAK_COPYLEFT,
             name="GNU Lesser General Public License v3.0 only",
             description="LGPL 3.0 without the 'or later' option.",
-            obligations=["Share source of library modifications"],
+            obligations=[SHARE_SOURCE_OF_MODIFICATIONS],
             risks=[],
             compatible_with_proprietary=True,
             requires_attribution=True,
@@ -191,7 +199,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.WEAK_COPYLEFT,
             name="GNU Lesser General Public License v3.0 or later",
             description="LGPL 3.0 with option to use later versions.",
-            obligations=["Share source of library modifications"],
+            obligations=[SHARE_SOURCE_OF_MODIFICATIONS],
             risks=[],
             compatible_with_proprietary=True,
             requires_attribution=True,
@@ -206,7 +214,7 @@ class LicenseAnalyzer(Analyzer):
             description="File-level copyleft - only modified files must be shared.",
             obligations=[
                 "Share source of modified files",
-                "Include license text",
+                INCLUDE_LICENSE_TEXT,
                 "Preserve copyright notices",
             ],
             risks=[],
@@ -262,8 +270,8 @@ class LicenseAnalyzer(Analyzer):
             description="Strong copyleft - entire derivative work must use GPL when distributed.",
             obligations=[
                 "Share complete source code of derivative work",
-                "Use GPL for derivative work",
-                "Include license text",
+                USE_GPL_FOR_DERIVATIVE_WORK,
+                INCLUDE_LICENSE_TEXT,
                 "Include installation instructions",
             ],
             risks=[
@@ -281,7 +289,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.STRONG_COPYLEFT,
             name="GNU General Public License v2.0 only",
             description="GPL 2.0 without the 'or later' upgrade option.",
-            obligations=["Share complete source code", "Use GPL for derivative work"],
+            obligations=[SHARE_COMPLETE_SOURCE_CODE, USE_GPL_FOR_DERIVATIVE_WORK],
             risks=["Cannot use GPL-3.0-only code"],
             compatible_with_proprietary=False,
             requires_attribution=True,
@@ -294,7 +302,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.STRONG_COPYLEFT,
             name="GNU General Public License v2.0 or later",
             description="GPL 2.0 with option to use later versions.",
-            obligations=["Share complete source code", "Use GPL for derivative work"],
+            obligations=[SHARE_COMPLETE_SOURCE_CODE, USE_GPL_FOR_DERIVATIVE_WORK],
             risks=[],
             compatible_with_proprietary=False,
             requires_attribution=True,
@@ -308,8 +316,8 @@ class LicenseAnalyzer(Analyzer):
             name="GNU General Public License v3.0",
             description="Modern GPL with patent protection and anti-tivoization.",
             obligations=[
-                "Share complete source code",
-                "Use GPL for derivative work",
+                SHARE_COMPLETE_SOURCE_CODE,
+                USE_GPL_FOR_DERIVATIVE_WORK,
                 "Provide installation information",
                 "No additional restrictions (DRM, etc.)",
             ],
@@ -328,7 +336,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.STRONG_COPYLEFT,
             name="GNU General Public License v3.0 only",
             description="GPL 3.0 without the 'or later' option.",
-            obligations=["Share complete source code", "Use GPL for derivative work"],
+            obligations=[SHARE_COMPLETE_SOURCE_CODE, USE_GPL_FOR_DERIVATIVE_WORK],
             risks=["Incompatible with GPL-2.0-only"],
             compatible_with_proprietary=False,
             requires_attribution=True,
@@ -341,7 +349,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.STRONG_COPYLEFT,
             name="GNU General Public License v3.0 or later",
             description="GPL 3.0 with option to use later versions.",
-            obligations=["Share complete source code", "Use GPL for derivative work"],
+            obligations=[SHARE_COMPLETE_SOURCE_CODE, USE_GPL_FOR_DERIVATIVE_WORK],
             risks=[],
             compatible_with_proprietary=False,
             requires_attribution=True,
@@ -355,12 +363,12 @@ class LicenseAnalyzer(Analyzer):
             name="GNU Affero General Public License v3.0",
             description="GPL-3.0 extended to network services - must share source if users interact over network.",
             obligations=[
-                "Share complete source code",
+                SHARE_COMPLETE_SOURCE_CODE,
                 "Provide source access to network users",
                 "Use AGPL for derivative work",
             ],
             risks=[
-                "Network use triggers source disclosure",
+                NETWORK_USE_TRIGGERS_DISCLOSURE,
                 "SaaS and web services must provide source",
                 "Very restrictive for commercial use",
             ],
@@ -376,7 +384,7 @@ class LicenseAnalyzer(Analyzer):
             name="GNU Affero General Public License v3.0 only",
             description="AGPL 3.0 without the 'or later' option.",
             obligations=["Share source to network users"],
-            risks=["Network use triggers source disclosure"],
+            risks=[NETWORK_USE_TRIGGERS_DISCLOSURE],
             compatible_with_proprietary=False,
             requires_attribution=True,
             requires_source_disclosure=True,
@@ -389,7 +397,7 @@ class LicenseAnalyzer(Analyzer):
             name="GNU Affero General Public License v3.0 or later",
             description="AGPL 3.0 with option to use later versions.",
             obligations=["Share source to network users"],
-            risks=["Network use triggers source disclosure"],
+            risks=[NETWORK_USE_TRIGGERS_DISCLOSURE],
             compatible_with_proprietary=False,
             requires_attribution=True,
             requires_source_disclosure=True,
@@ -502,7 +510,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.PERMISSIVE,
             name="Python Software Foundation License 2.0",
             description="Python's permissive license.",
-            obligations=["Include copyright notice"],
+            obligations=[INCLUDE_COPYRIGHT_NOTICE],
             risks=[],
             compatible_with_proprietary=True,
             requires_attribution=True,
@@ -515,7 +523,7 @@ class LicenseAnalyzer(Analyzer):
             category=LicenseCategory.PERMISSIVE,
             name="PostgreSQL License",
             description="BSD-style permissive license.",
-            obligations=["Include copyright notice"],
+            obligations=[INCLUDE_COPYRIGHT_NOTICE],
             risks=[],
             compatible_with_proprietary=True,
             requires_attribution=True,

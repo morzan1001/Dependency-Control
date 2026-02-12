@@ -164,7 +164,7 @@ def _analyze_reachability(
     usage = module_usage.get(normalized) or module_usage.get(component)
 
     # Also check import_map for package presence
-    package_in_imports = _check_package_in_imports(normalized, import_map, language)
+    package_in_imports = _check_package_in_imports(normalized, import_map)
 
     if not usage and not package_in_imports:
         # Package not found in imports - not reachable
@@ -267,7 +267,7 @@ def _normalize_component(component: str, language: str) -> str:
     return component.lower()
 
 
-def _check_package_in_imports(package: str, import_map: Dict[str, List[str]], language: str) -> List[str]:
+def _check_package_in_imports(package: str, import_map: Dict[str, List[str]]) -> List[str]:
     """
     Check if a package appears anywhere in the import map.
     Returns list of files that import it.

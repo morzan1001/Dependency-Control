@@ -57,7 +57,7 @@ export function GeneralSettingsTab({
               type="number"
               min="0"
               value={formData.project_limit_per_user ?? 0} 
-              onChange={(e) => handleInputChange('project_limit_per_user', parseInt(e.target.value) || 0)}
+              onChange={(e) => handleInputChange('project_limit_per_user', Number.parseInt(e.target.value) || 0)}
             />
             <p className="text-sm text-muted-foreground">
               Maximum number of projects a user can create. Set to 0 for unlimited.
@@ -104,7 +104,7 @@ export function GeneralSettingsTab({
                 type="number"
                 min="0"
                 value={formData.global_retention_days ?? 90} 
-                onChange={(e) => handleInputChange('global_retention_days', parseInt(e.target.value) || 0)}
+                onChange={(e) => handleInputChange('global_retention_days', Number.parseInt(e.target.value) || 0)}
               />
               <p className="text-sm text-muted-foreground">
                 Set to 0 to disable deletion (keep data forever).
@@ -168,7 +168,7 @@ export function GeneralSettingsTab({
                     type="number"
                     min="1"
                     value={formData.global_rescan_interval ?? 24} 
-                    onChange={(e) => handleInputChange('global_rescan_interval', parseInt(e.target.value) || 1)}
+                    onChange={(e) => handleInputChange('global_rescan_interval', Number.parseInt(e.target.value) || 1)}
                   />
                 </div>
               )}

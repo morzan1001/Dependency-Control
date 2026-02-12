@@ -111,7 +111,7 @@ api.interceptors.request.use((config) => {
   return config;
 }, (error) => {
   logger.error('Request Error:', error);
-  return Promise.reject(error);
+  throw error;
 });
 
 api.interceptors.response.use(
@@ -144,6 +144,6 @@ api.interceptors.response.use(
         logoutCallback();
       }
     }
-    return Promise.reject(error);
+    throw error;
   }
 );

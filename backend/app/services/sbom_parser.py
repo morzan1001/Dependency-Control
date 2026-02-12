@@ -23,6 +23,7 @@ from app.core.constants import (
     SOURCE_TYPE_FILE,
     SOURCE_TYPE_FILE_SYSTEM,
     SOURCE_TYPE_IMAGE,
+    SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 
@@ -464,12 +465,12 @@ class SBOMParser:
         has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
 
         if has_dependency_graph and direct_refs is not None and all_transitive_refs is not None:
-            # Use bom-ref or purl to check
-            if check_ref in direct_refs:
-                direct = True
-            elif check_ref not in all_transitive_refs and direct_refs:
-                # Not in anyone's dependsOn and we have explicit direct refs
-                # This component might be isolated or a root-level dependency
+            # Use bom-ref or purl to check:
+            # A component is direct if it's explicitly listed in direct_refs,
+            # or if it's not in anyone's dependsOn (isolated/root-level dependency)
+            if check_ref in direct_refs or (
+                check_ref not in all_transitive_refs and direct_refs
+            ):
                 direct = True
         else:
             # No dependency graph - mark as inferred
@@ -1051,13 +1052,13 @@ class SBOMParser:
         for pkg in packages:
             pkg_spdx_id = pkg.get("SPDXID", "")
 
-            # Determine if direct
-            is_direct = False
-            if pkg_spdx_id in direct_package_ids:
-                is_direct = True
-            elif pkg_spdx_id in packages_with_deps and pkg_spdx_id not in all_dependency_targets:
-                # Has dependencies but no one depends on it - likely a root package
-                is_direct = True
+            # Determine if direct:
+            # A package is direct if it's in the direct set, or if it has
+            # dependencies but nothing depends on it (i.e. a root package)
+            is_direct = pkg_spdx_id in direct_package_ids or (
+                pkg_spdx_id in packages_with_deps
+                and pkg_spdx_id not in all_dependency_targets
+            )
 
             # If no dependency graph, assume all are direct (inferred)
             if inferred:
@@ -1100,9 +1101,8 @@ class SBOMParser:
 
             if ref_type == "purl" and not purl:
                 purl = locator
-            elif ref_type == "cpe22Type" or ref_type == "cpe23Type":
-                if locator:
-                    cpes.append(locator)
+            elif ref_type in ("cpe22Type", "cpe23Type") and locator:
+                cpes.append(locator)
 
         # If no PURL, construct one from available metadata
         if not purl:
@@ -1189,8 +1189,8 @@ class SBOMParser:
 
         originator = pkg.get("originator")
         if originator and originator != "NOASSERTION":
-            if originator.startswith("Organization:"):
-                publisher = originator.replace("Organization:", "").strip()
+            if originator.startswith(SPDX_ORGANIZATION_PREFIX):
+                publisher = originator.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
             elif originator.startswith("Person:"):
                 author = originator.replace("Person:", "").strip()
             else:
@@ -1198,8 +1198,8 @@ class SBOMParser:
 
         supplier = pkg.get("supplier")
         if supplier and supplier != "NOASSERTION" and not publisher:
-            if supplier.startswith("Organization:"):
-                publisher = supplier.replace("Organization:", "").strip()
+            if supplier.startswith(SPDX_ORGANIZATION_PREFIX):
+                publisher = supplier.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
 
         # Store additional SPDX-specific info as properties
         properties = {}

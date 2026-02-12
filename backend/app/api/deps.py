@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional, Union
+from typing import Annotated, List, Optional, Union
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -21,6 +21,8 @@ from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
 logger = logging.getLogger(__name__)
+
+_MSG_INVALID_API_KEY = "Invalid API Key"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 
@@ -162,16 +164,16 @@ async def get_project_by_api_key(
     project_repo = ProjectRepository(db)
     project_data = await project_repo.get_raw_by_id(project_id)
     if not project_data:
-        raise HTTPException(status_code=403, detail="Invalid API Key")
+        raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
 
     stored_hash = project_data.get("api_key_hash")
     if not stored_hash:
         raise HTTPException(status_code=403, detail="Project has no API key set")
 
     if not security.verify_password(secret, stored_hash):
-        raise HTTPException(status_code=403, detail="Invalid API Key")
+        raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
 
-    from app.models.project import Project, ProjectMember
+    from app.models.project import Project
 
     return Project(**project_data)
 
@@ -194,9 +196,9 @@ async def get_project_for_ingest(
         project_id, secret = x_api_key.split(".", 1)
         project_data = await project_repo.get_raw_by_id(project_id)
         if not project_data or not project_data.get("api_key_hash"):
-            raise HTTPException(status_code=403, detail="Invalid API Key")
+            raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
         if not security.verify_password(secret, project_data["api_key_hash"]):
-            raise HTTPException(status_code=403, detail="Invalid API Key")
+            raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
         return Project(**project_data)
 
     # 2. Try OIDC Token (GitLab or GitHub)
@@ -425,3 +427,8 @@ async def get_project_for_ingest(
         )
 
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
+
+
+# Annotated type aliases for FastAPI dependency injection
+DatabaseDep = Annotated[AsyncIOMotorDatabase, Depends(get_database)]
+CurrentUserDep = Annotated[User, Depends(get_current_active_user)]

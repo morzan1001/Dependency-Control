@@ -14,7 +14,7 @@ def process_malware(malware_findings: List[ModelOrDict]) -> List[Recommendation]
     if not malware_findings:
         return []
 
-    affected_packages = list(set(get_attr(f, "component", "") for f in malware_findings))
+    affected_packages = list({get_attr(f, "component", "") for f in malware_findings})
 
     return [
         Recommendation(
@@ -130,8 +130,8 @@ def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendati
             high_epss_vulns.append(f)
 
     if ransomware_vulns:
-        affected_packages = list(set(get_attr(f, "component", "") for f in ransomware_vulns))
-        cves = list(set(cve for f in ransomware_vulns if (cve := extract_cve_id(f))))
+        affected_packages = list({get_attr(f, "component", "") for f in ransomware_vulns})
+        cves = list({cve for f in ransomware_vulns if (cve := extract_cve_id(f))})
 
         recommendations.append(
             Recommendation(
@@ -172,8 +172,8 @@ def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendati
         )
 
     if kev_vulns:
-        affected_packages = list(set(get_attr(f, "component", "") for f in kev_vulns))
-        cves = list(set(cve for f in kev_vulns if (cve := extract_cve_id(f))))
+        affected_packages = list({get_attr(f, "component", "") for f in kev_vulns})
+        cves = list({cve for f in kev_vulns if (cve := extract_cve_id(f))})
 
         recommendations.append(
             Recommendation(
@@ -211,8 +211,8 @@ def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendati
         )
 
     if high_epss_vulns:
-        affected_packages = list(set(get_attr(f, "component", "") for f in high_epss_vulns))
-        cves = list(set(cve for f in high_epss_vulns if (cve := extract_cve_id(f))))
+        affected_packages = list({get_attr(f, "component", "") for f in high_epss_vulns})
+        cves = list({cve for f in high_epss_vulns if (cve := extract_cve_id(f))})
 
         max_epss = max(
             (get_attr(f, "details", {}).get("epss_score", 0) if isinstance(get_attr(f, "details", {}), dict) else 0)

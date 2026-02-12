@@ -70,7 +70,7 @@ def analyze_regressions(
                     "total": len(new_vulns),
                 },
                 affected_components=list(
-                    set(get_attr(f, "component", "unknown") for f in (new_critical + new_high)[:15])
+                    {get_attr(f, "component", "unknown") for f in (new_critical + new_high)[:15]}
                 ),
                 action={
                     "type": "investigate_regression",

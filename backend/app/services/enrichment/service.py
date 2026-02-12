@@ -87,7 +87,7 @@ class VulnerabilityEnrichmentService:
             return {}
 
         # Deduplicate and filter valid CVE IDs
-        unique_cves = list(set(cve for cve in cves if cve and cve.startswith("CVE-")))
+        unique_cves = list({cve for cve in cves if cve and cve.startswith("CVE-")})
 
         if not unique_cves:
             return {}

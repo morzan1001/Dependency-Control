@@ -65,7 +65,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
 
     const allRows = data ? data.pages.flatMap((d) => d.items) : []
 
-    // eslint-disable-next-line
+    // eslint-disable-next-line react-hooks/incompatible-library
     const rowVirtualizer = useVirtualizer({
         count: hasNextPage ? allRows.length + 1 : allRows.length,
         getScrollElement: () => scrollContainer,

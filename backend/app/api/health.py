@@ -86,12 +86,6 @@ async def readiness():
     if active_workers:
         components["workers"] = f"operational ({len(active_workers)}/{worker_manager.num_workers} active)"
     else:
-        components["workers"] = "no_active_workers"
-        # The service is considered degraded but not necessarily down if workers are missing,
-        # as the API can still serve read requests.
-        # However, for strict readiness, returning 503 might be appropriate.
-        # Currently, this is just reported.
-        # If workers are dead, ingestion won't work.
         components["workers"] = "stopped"
         # Failing readiness might not be desired just because workers are down if read-only API access is allowed.
         # Usually for a monolithic pod, if part is broken, it is restarted or traffic is not sent.

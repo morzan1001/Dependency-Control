@@ -142,7 +142,7 @@ def analyze_version_fragmentation(
     # Find packages with multiple versions
     fragmented = []
     for name, versions in deps_by_name.items():
-        unique_versions = set(v["version"] for v in versions)
+        unique_versions = {v["version"] for v in versions}
         if len(unique_versions) > 1:
             fragmented.append(
                 {

@@ -80,6 +80,19 @@ except ImportError:
     ) = [None] * 17
 
 
+def _get_waiver_type(waiver: dict) -> str:
+    """Determine the type of a waiver based on its fields."""
+    if waiver.get("finding_id"):
+        return "finding_id"
+    if waiver.get("package_name"):
+        return "package"
+    if waiver.get("finding_type"):
+        return "type"
+    if waiver.get("vulnerability_id"):
+        return "vulnerability_id"
+    return "other"
+
+
 async def _carry_over_external_results(scan_id: str, scan_doc: Optional[ScanDict], db: Database) -> None:
     """
     Copies analysis results from the original scan to the re-scan for analyzers
@@ -224,9 +237,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": internal_analyzers}})
 
     # Check if this is a re-scan and carry over external results
-    if scan_doc.is_rescan:
-        if analysis_rescan_operations_total:
-            analysis_rescan_operations_total.inc()
+    if scan_doc.is_rescan and analysis_rescan_operations_total:
+        analysis_rescan_operations_total.inc()
 
     await _carry_over_external_results(scan_id, scan_doc, db)
 
@@ -527,19 +539,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         # Count by waiver type
         waiver_types = {}
         for waiver in active_waivers:
-            waiver_type = (
-                "finding_id"
-                if waiver.get("finding_id")
-                else (
-                    "package"
-                    if waiver.get("package_name")
-                    else (
-                        "type"
-                        if waiver.get("finding_type")
-                        else ("vulnerability_id" if waiver.get("vulnerability_id") else "other")
-                    )
-                )
-            )
+            waiver_type = _get_waiver_type(waiver)
             waiver_types[waiver_type] = waiver_types.get(waiver_type, 0) + 1
 
         for waiver_type, count in waiver_types.items():

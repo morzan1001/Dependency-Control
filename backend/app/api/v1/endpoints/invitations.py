@@ -1,18 +1,18 @@
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import List
+from typing import Annotated, List
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException, status
 
 from app.api.router import CustomAPIRouter
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.api.v1.helpers.responses import RESP_400, RESP_AUTH, RESP_AUTH_400, RESP_404
 
 from app.api import deps
+from app.api.deps import DatabaseDep
 from app.api.v1.helpers.auth import send_system_invitation_email
 from app.core import security
 from app.core.config import settings
-from app.db.mongodb import get_database
 from app.models.invitation import SystemInvitation
 from app.models.user import User
 from app.repositories import InvitationRepository, UserRepository
@@ -22,12 +22,12 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/system", response_model=List[SystemInvitation])
+@router.get("/system", response_model=List[SystemInvitation], responses={**RESP_AUTH})
 async def read_system_invitations(
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(deps.PermissionChecker("user:create")),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     List all pending system invitations. Requires 'user:create' permission.
@@ -37,12 +37,12 @@ async def read_system_invitations(
     return invitations
 
 
-@router.post("/system", status_code=status.HTTP_201_CREATED)
+@router.post("/system", status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH_400})
 async def create_system_invitation(
     background_tasks: BackgroundTasks,
-    email: str = Body(..., embed=True),
-    current_user: User = Depends(deps.PermissionChecker("user:create")),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
+    email: Annotated[str, Body(..., embed=True)],
 ):
     """
     Create a system invitation for a new user. Requires 'user:create' permission.
@@ -93,8 +93,8 @@ async def create_system_invitation(
     return response
 
 
-@router.get("/system/{token}")
-async def validate_system_invitation(token: str, db: AsyncIOMotorDatabase = Depends(get_database)):
+@router.get("/system/{token}", responses={**RESP_404})
+async def validate_system_invitation(token: str, db: DatabaseDep):
     """
     Validate a system invitation token.
     """
@@ -107,12 +107,12 @@ async def validate_system_invitation(token: str, db: AsyncIOMotorDatabase = Depe
     return {"email": invitation["email"]}
 
 
-@router.post("/system/accept", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
+@router.post("/system/accept", response_model=UserSchema, status_code=status.HTTP_201_CREATED, responses={**RESP_400})
 async def accept_system_invitation(
-    token: str = Body(...),
-    username: str = Body(...),
-    password: str = Body(...),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    db: DatabaseDep,
+    token: Annotated[str, Body(...)],
+    username: Annotated[str, Body(...)],
+    password: Annotated[str, Body(...)],
 ):
     """
     Accept a system invitation and create a user account.

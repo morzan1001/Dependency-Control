@@ -56,7 +56,7 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
   const recommendation = details.recommendation as string
   const checksSummary = details.checks_summary as Record<string, number>
 
-  const hasValidScore = overallScore !== undefined && overallScore !== null && !isNaN(overallScore)
+  const hasValidScore = overallScore !== undefined && overallScore !== null && !Number.isNaN(overallScore)
 
   return (
     <div className="space-y-4">
