@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from app.models.finding import Finding
 from app.models.types import PyObjectId
@@ -26,5 +26,4 @@ class FindingRecord(Finding):
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)

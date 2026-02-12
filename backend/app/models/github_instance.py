@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.types import PyObjectId
 
@@ -46,6 +46,4 @@ class GitHubInstance(BaseModel):
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: Optional[datetime] = None
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

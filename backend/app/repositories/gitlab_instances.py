@@ -69,7 +69,11 @@ class GitLabInstanceRepository:
 
     async def create(self, instance: GitLabInstance) -> GitLabInstance:
         """Create a new instance."""
-        await self.collection.insert_one(instance.model_dump(by_alias=True))
+        doc = instance.model_dump(by_alias=True)
+        # access_token has exclude=True (for API responses), but must be stored in MongoDB
+        if instance.access_token is not None:
+            doc["access_token"] = instance.access_token
+        await self.collection.insert_one(doc)
         return instance
 
     async def update(self, instance_id: str, update_data: Dict[str, Any]) -> bool:

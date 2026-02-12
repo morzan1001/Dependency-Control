@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.types import PyObjectId
 
@@ -29,6 +29,4 @@ class Broadcast(BaseModel):
     channels: Optional[List[str]] = None
     teams: Optional[List[str]] = None
 
-    class Config:
-        populate_by_name = True
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    model_config = ConfigDict(populate_by_name=True)

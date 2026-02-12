@@ -390,6 +390,7 @@ class TestIngestOidcProjectLookup:
         assert result.name == "group/new-project"
         assert result.gitlab_instance_id == "inst-a"
         assert result.gitlab_project_id == 99
+        assert result.active_analyzers == settings.default_active_analyzers
         projects_coll.insert_one.assert_called_once()
 
     def test_raises_404_when_auto_create_disabled(self):
@@ -734,6 +735,7 @@ class TestIngestGitHubOidcProjectLookup:
         assert result.github_instance_id == "gh-inst-a"
         assert result.github_repository_id == "789"
         assert result.github_repository_path == "org/new-repo"
+        assert result.active_analyzers == settings.default_active_analyzers
         projects_coll.insert_one.assert_called_once()
 
     def test_raises_404_when_auto_create_disabled(self):

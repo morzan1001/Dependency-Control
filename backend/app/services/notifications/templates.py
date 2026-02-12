@@ -84,7 +84,13 @@ def get_analysis_completed_template(
     analysis_link: str,
     project_name: str,
     project_name_scanned: str,
-    stats: Dict[str, Any],
+    total_findings: int,
+    severity_critical: int = 0,
+    severity_high: int = 0,
+    severity_medium: int = 0,
+    severity_low: int = 0,
+    analyzer_count: int = 0,
+    results_summary: Optional[list] = None,
 ) -> str:
     return render_template(
         "analysis_completed.html",
@@ -92,7 +98,13 @@ def get_analysis_completed_template(
             "link": analysis_link,
             "project_name": project_name,
             "project_name_scanned": project_name_scanned,
-            "stats": stats,
+            "total_findings": total_findings,
+            "severity_critical": severity_critical,
+            "severity_high": severity_high,
+            "severity_medium": severity_medium,
+            "severity_low": severity_low,
+            "analyzer_count": analyzer_count,
+            "results_summary": results_summary or [],
         },
     )
 
@@ -136,3 +148,18 @@ def get_2fa_enabled_template(username: str, project_name: str) -> str:
 
 def get_2fa_disabled_template(username: str, project_name: str) -> str:
     return render_template("2fa_disabled.html", {"username": username, "project_name": project_name})
+
+
+def get_project_member_added_template(
+    target_project_name: str, inviter_name: str, role: str, link: str, project_name: str = "Dependency Control"
+) -> str:
+    return render_template(
+        "project_member_added.html",
+        {
+            "target_project_name": target_project_name,
+            "inviter_name": inviter_name,
+            "role": role,
+            "link": link,
+            "project_name": project_name,
+        },
+    )

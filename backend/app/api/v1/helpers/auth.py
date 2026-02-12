@@ -16,6 +16,7 @@ from app.models.system import SystemSettings
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.templates import (
     get_password_reset_template,
+    get_project_member_added_template,
     get_system_invitation_template,
     get_verification_email_template,
 )
@@ -130,6 +131,40 @@ async def send_system_invitation_email(
         destination=email,
         subject=f"Invitation to join {settings.PROJECT_NAME}",
         message=f"You have been invited to join {settings.PROJECT_NAME}. Click here to accept: {invitation_link}",
+        html_message=html_content,
+        logo_path=get_logo_path(),
+        system_settings=system_settings,
+    )
+
+
+async def send_project_member_added_email(
+    background_tasks: BackgroundTasks,
+    email: str,
+    project_name: str,
+    project_id: str,
+    inviter_name: str,
+    role: str,
+    system_settings: Optional[SystemSettings] = None,
+) -> None:
+    """Send a notification email when a user is added to a project."""
+    if not settings.SMTP_HOST:
+        return
+
+    link = f"{settings.FRONTEND_BASE_URL}/projects/{project_id}"
+    html_content = get_project_member_added_template(
+        target_project_name=project_name,
+        inviter_name=inviter_name,
+        role=role,
+        link=link,
+        project_name=settings.PROJECT_NAME,
+    )
+
+    email_provider = EmailProvider()
+    background_tasks.add_task(
+        email_provider.send,
+        destination=email,
+        subject=f"You've been added to project '{project_name}'",
+        message=f"You have been added to the project '{project_name}' with the role '{role}'.",
         html_message=html_content,
         logo_path=get_logo_path(),
         system_settings=system_settings,

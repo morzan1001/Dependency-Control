@@ -7,9 +7,14 @@ Sends notifications and triggers webhooks when scans complete.
 import logging
 from typing import Any, Dict, List
 
+from app.core.config import settings
 from app.models.finding import Finding
 from app.models.project import Project
 from app.services.notifications import notification_service
+from app.services.notifications.templates import (
+    get_analysis_completed_template,
+    get_vulnerability_found_template,
+)
 from app.services.webhooks import webhook_service
 from app.services.analysis.types import Database
 
@@ -143,6 +148,27 @@ async def send_scan_notifications(
     """
     # Send analysis_completed notification
     try:
+        # Count severities for template
+        severity_counts: Dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        for f in aggregated_findings:
+            sev = f.severity if hasattr(f, "severity") else "UNKNOWN"
+            if sev in severity_counts:
+                severity_counts[sev] += 1
+
+        scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
+        html_content = get_analysis_completed_template(
+            analysis_link=scan_link,
+            project_name=settings.PROJECT_NAME,
+            project_name_scanned=project.name,
+            total_findings=len(aggregated_findings),
+            severity_critical=severity_counts["CRITICAL"],
+            severity_high=severity_counts["HIGH"],
+            severity_medium=severity_counts["MEDIUM"],
+            severity_low=severity_counts["LOW"],
+            analyzer_count=len(results_summary),
+            results_summary=results_summary,
+        )
+
         await notification_service.notify_project_members(
             project=project,
             event_type="analysis_completed",
@@ -153,6 +179,7 @@ async def send_scan_notifications(
                 f"Results:\n" + "\n".join(results_summary)
             ),
             db=db,
+            html_message=html_content,
         )
     except Exception as e:
         logger.error(f"Failed to send analysis_completed notification: {e}")
@@ -205,12 +232,26 @@ async def send_scan_notifications(
                 scan_id,
             )
 
+            scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
+            vuln_html = get_vulnerability_found_template(
+                report_link=scan_link,
+                project_name=settings.PROJECT_NAME,
+                project_name_scanned=project.name,
+                vulnerabilities=top_vulns,
+                has_kev=bool(kev_vulns),
+                kev_count=len(kev_vulns),
+                kev_vulnerabilities=kev_vulns,
+                has_high_epss=bool(high_epss_vulns),
+                high_epss_count=len(high_epss_vulns),
+            )
+
             await notification_service.notify_project_members(
                 project=project,
                 event_type="vulnerability_found",
                 subject=subject,
                 message=message,
                 db=db,
+                html_message=vuln_html,
             )
 
             logger.info(

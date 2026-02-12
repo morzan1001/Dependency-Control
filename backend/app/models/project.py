@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.constants import PROJECT_ROLE_VIEWER
 from app.models.finding import Finding
@@ -66,9 +66,7 @@ class Project(BaseModel):
     rescan_enabled: Optional[bool] = None  # If None, use system default
     rescan_interval: Optional[int] = None  # Hours. If None, use system default
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 
 class Scan(BaseModel):
@@ -121,9 +119,7 @@ class Scan(BaseModel):
     last_result_at: Optional[datetime] = None  # When the last scanner result was received
     received_results: List[str] = []  # List of analyzer names that have submitted results
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 
 class AnalysisResult(BaseModel):
@@ -137,6 +133,4 @@ class AnalysisResult(BaseModel):
     result: Dict[str, Any]
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

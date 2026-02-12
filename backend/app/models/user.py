@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.types import PyObjectId
 
@@ -33,10 +33,7 @@ class User(BaseModel):
     slack_username: Optional[str] = None
     mattermost_username: Optional[str] = None
     notification_preferences: Optional[dict[str, list[str]]] = Field(
-        default_factory=lambda: {
-            "analysis_completed": ["email"],
-            "vulnerability_found": ["email", "slack"],
-        }
+        default_factory=dict
     )
 
     @field_validator("notification_preferences")
@@ -46,10 +43,7 @@ class User(BaseModel):
         Validate notification preferences to prevent typos and invalid configurations.
         """
         if v is None:
-            return {
-                "analysis_completed": ["email"],
-                "vulnerability_found": ["email", "slack"],
-            }
+            return {}
 
         # Valid event types
         valid_events = {"analysis_completed", "vulnerability_found"}
@@ -59,11 +53,8 @@ class User(BaseModel):
 
         # Validate structure
         if not isinstance(v, dict):
-            logger.warning(f"Invalid notification_preferences type: {type(v)}. Using defaults.")
-            return {
-                "analysis_completed": ["email"],
-                "vulnerability_found": ["email", "slack"],
-            }
+            logger.warning(f"Invalid notification_preferences type: {type(v)}. Using empty dict.")
+            return {}
 
         validated = {}
         for event, channels in v.items():
@@ -85,14 +76,6 @@ class User(BaseModel):
             if valid_event_channels:
                 validated[event] = valid_event_channels
 
-        # Ensure at least default events exist
-        if "analysis_completed" not in validated:
-            validated["analysis_completed"] = ["email"]
-        if "vulnerability_found" not in validated:
-            validated["vulnerability_found"] = ["email"]
-
         return validated
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

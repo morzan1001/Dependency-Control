@@ -34,6 +34,7 @@ export interface UserUpdateMe {
   username?: string;
   slack_username?: string;
   mattermost_username?: string;
+  notification_preferences?: Record<string, string[]>;
 }
 
 export interface SystemInvitation {

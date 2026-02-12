@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SystemSettings(BaseModel):
@@ -75,9 +75,11 @@ class SystemSettings(BaseModel):
     global_rescan_enabled: bool = False
     global_rescan_interval: int = 24  # Hours
 
+    # Default Analyzers for auto-created projects
+    default_active_analyzers: List[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
+
     # Retention
     retention_mode: str = "project"  # "project" or "global"
     global_retention_days: int = 90  # 0 means keep forever
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)

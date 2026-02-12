@@ -148,7 +148,13 @@ async def upload_callgraph(
         match_context = "project-level (no pipeline context)"
         warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
 
-    await callgraph_repo.upsert(upsert_filter, callgraph.model_dump())
+    callgraph_data = callgraph.model_dump(by_alias=True)
+    callgraph_id = callgraph_data.pop("_id")
+    await callgraph_repo.collection.update_one(
+        upsert_filter,
+        {"$set": callgraph_data, "$setOnInsert": {"_id": callgraph_id}},
+        upsert=True,
+    )
 
     logger.info(
         f"Uploaded callgraph for project {project_id} ({match_context}): "

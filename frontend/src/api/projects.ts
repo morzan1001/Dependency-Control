@@ -78,5 +78,10 @@ export const projectApi = {
   removeMember: async (projectId: string, userId: string): Promise<{ message: string }> => {
     const response = await api.delete<{ message: string }>(`/projects/${projectId}/members/${userId}`);
     return response.data;
+  },
+
+  transferOwnership: async (projectId: string, newOwnerId: string): Promise<Project> => {
+    const response = await api.post<Project>(`/projects/${projectId}/transfer-ownership`, { new_owner_id: newOwnerId });
+    return response.data;
   }
 };

@@ -425,7 +425,7 @@ class TestMrDecorationInstanceRouting:
         db = create_mock_db({"gitlab_instances": collection})
 
         stats = Stats()
-        scan_url = "https://app.example.com/projects/fixed-proj-id/scans/s1"
+        scan_url = "http://localhost:3000/projects/fixed-proj-id/scans/s1"
         expected_body = _build_mr_comment("s1", stats, scan_url)
 
         mrs = [make_merge_request(iid=10, state="opened")]

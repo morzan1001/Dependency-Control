@@ -135,3 +135,14 @@ export const useRemoveProjectMember = () => {
         }
     })
 }
+
+export const useTransferOwnership = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ id, newOwnerId }: { id: string, newOwnerId: string }) => projectApi.transferOwnership(id, newOwnerId),
+        onSuccess: (_, { id }) => {
+            queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
+            queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+        }
+    })
+}

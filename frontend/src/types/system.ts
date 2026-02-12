@@ -34,6 +34,7 @@ export interface SystemSettings {
   mattermost_bot_token?: string;
   github_token?: string;
   open_source_malware_api_key?: string;
+  default_active_analyzers?: string[];
 }
 
 export interface PublicConfig {
@@ -62,7 +63,7 @@ export interface AppConfig {
 
 export interface SettingsTabProps {
   formData: Partial<SystemSettings>;
-  handleInputChange: (field: keyof SystemSettings, value: string | number | boolean) => void;
+  handleInputChange: (field: keyof SystemSettings, value: string | number | boolean | string[]) => void;
   handleSave: () => void;
   hasPermission: (permission: string) => boolean;
   isPending: boolean;

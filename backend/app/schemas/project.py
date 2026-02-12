@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import PROJECT_ROLES, PROJECT_ROLE_VIEWER
 from app.models.finding import FindingType, Severity
@@ -13,8 +13,7 @@ class ProjectWithTeam(Project):
 
     team_name: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectList(BaseModel):
@@ -184,8 +183,7 @@ class ScanFindingItem(BaseModel):
     # Computed fields
     severity_rank: int = Field(default=0, description="Numeric severity rank for sorting")
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class ScanFindingsResponse(BaseModel):

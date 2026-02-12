@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.types import PyObjectId
 
@@ -20,9 +20,7 @@ class ProjectInvitation(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 
 class SystemInvitation(BaseModel):
@@ -38,6 +36,4 @@ class SystemInvitation(BaseModel):
     expires_at: datetime
     is_used: bool = False
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

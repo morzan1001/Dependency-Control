@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Added to project - {{ project_name }}{% endblock %}
+
+{% block content %}
+<h2>You've been added to a project</h2>
+<p><strong>{{ inviter_name }}</strong> has added you to the project <strong>{{ target_project_name }}</strong> with the role <strong>{{ role }}</strong>.</p>
+<p>Click the button below to view the project:</p>
+<div style="text-align: center;">
+    <a href="{{ link }}" class="button">View Project</a>
+</div>
+{% endblock %}

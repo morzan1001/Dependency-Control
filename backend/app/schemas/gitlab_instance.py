@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GitLabInstanceBase(BaseModel):
@@ -50,8 +50,7 @@ class GitLabInstanceResponse(GitLabInstanceBase):
         False, description="Whether an access token is configured (without exposing the token)"
     )
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class GitLabInstanceList(BaseModel):

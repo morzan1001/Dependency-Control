@@ -48,6 +48,7 @@ export {
   useInviteProjectMember,
   useUpdateProjectMember,
   useRemoveProjectMember,
+  useTransferOwnership,
 } from './use-projects'
 
 export {

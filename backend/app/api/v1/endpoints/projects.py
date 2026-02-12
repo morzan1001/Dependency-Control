@@ -3,12 +3,11 @@ import io
 import json
 import logging
 import re
-import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, HTTPException, Response, status
+from fastapi import BackgroundTasks, Body, Depends, HTTPException, Response, status
 
 from app.api.router import CustomAPIRouter
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -28,10 +27,10 @@ from app.api.v1.helpers import (
     parse_sort_direction,
     resolve_sbom_refs,
 )
+from app.api.v1.helpers.auth import send_project_member_added_email
 from app.core.permissions import has_permission
 from app.core.worker import worker_manager
 from app.db.mongodb import get_database
-from app.models.invitation import ProjectInvitation
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.system import SystemSettings
 from app.models.user import User
@@ -809,61 +808,55 @@ async def update_notification_settings(
 
 @router.post(
     "/{project_id}/invite",
-    response_model=ProjectInvitation,
-    summary="Invite a user to project",
+    summary="Add a user to project by email",
 )
 async def invite_user(
     project_id: str,
     invite_in: ProjectMemberInvite,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(deps.get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
-    Invite a user to the project.
+    Add an existing user to the project by their email address.
 
-    If the user already exists, they are added immediately.
-    Otherwise, an invitation record is created (email sending to be implemented).
+    The user must already have an account. If the user does not exist,
+    a 404 error is returned — use system invitations to create new accounts.
     """
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     user_repo = UserRepository(db)
     project_repo = ProjectRepository(db)
-    invitation_repo = InvitationRepository(db)
 
-    # Check if user already exists
-    existing_user = await user_repo.get_raw_by_email(invite_in.email)
-    if existing_user:
-        # If user exists, add directly to project
-        member = ProjectMember(user_id=str(existing_user["_id"]), role=invite_in.role)
+    user_to_add = await user_repo.get_raw_by_email(invite_in.email)
+    if not user_to_add:
+        raise HTTPException(status_code=404, detail="User with this email not found")
 
-        # Check if already member
-        for m in project.members:
-            if m.user_id == member.user_id:
-                raise HTTPException(status_code=400, detail="User already a member")
+    member = ProjectMember(user_id=str(user_to_add["_id"]), role=invite_in.role)
 
-        await project_repo.add_member(project_id, member.model_dump())
-        return ProjectInvitation(
-            project_id=project_id,
+    # Check if already member
+    for m in project.members:
+        if m.user_id == member.user_id:
+            raise HTTPException(status_code=400, detail="User already a member")
+
+    await project_repo.add_member(project_id, member.model_dump())
+
+    # Send notification email
+    try:
+        system_config = await deps.get_system_settings(db)
+        await send_project_member_added_email(
+            background_tasks=background_tasks,
             email=invite_in.email,
-            role=invite_in.role,
-            token="auto-added",
-            invited_by=str(current_user.id),
-            expires_at=datetime.now(timezone.utc),
-        )
-    else:
-        # Create invitation record
-        token = secrets.token_urlsafe(32)
-        invitation = ProjectInvitation(
+            project_name=project.name,
             project_id=project_id,
-            email=invite_in.email,
+            inviter_name=current_user.username,
             role=invite_in.role,
-            token=token,
-            invited_by=str(current_user.id),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+            system_settings=system_config,
         )
-        await invitation_repo.create_project_invitation(invitation)
-        # In a real app, send email here
-        return invitation
+    except Exception as e:
+        logger.error(f"Failed to send project member notification email: {e}")
+
+    return {"message": f"User added to project as {invite_in.role}"}
 
 
 @router.get(
@@ -1198,6 +1191,55 @@ async def remove_project_member(
 
     project_repo = ProjectRepository(db)
     await project_repo.remove_member(project_id, user_id)
+
+    updated_project = await project_repo.get_by_id(project_id)
+    if updated_project:
+        return updated_project
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
+@router.post(
+    "/{project_id}/transfer-ownership",
+    response_model=Project,
+    summary="Transfer project ownership",
+)
+async def transfer_ownership(
+    project_id: str,
+    new_owner_id: str = Body(..., embed=True),
+    current_user: User = Depends(deps.get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    Transfer project ownership to another user.
+
+    Only the current owner or a user with 'system:manage' permission can transfer ownership.
+    The new owner must be an existing member of the project.
+    """
+    project = await check_project_access(project_id, current_user, db, required_role="admin")
+
+    is_owner = project.owner_id == str(current_user.id)
+    has_system_manage = has_permission(current_user.permissions, "system:manage")
+
+    if not (is_owner or has_system_manage):
+        raise HTTPException(status_code=403, detail="Only the project owner or a system admin can transfer ownership")
+
+    if project.owner_id == new_owner_id:
+        raise HTTPException(status_code=400, detail="User is already the project owner")
+
+    # Verify new owner is a member
+    is_member = any(m.user_id == new_owner_id for m in project.members)
+    if not is_member:
+        raise HTTPException(status_code=400, detail="New owner must be a member of the project")
+
+    project_repo = ProjectRepository(db)
+
+    # Ensure new owner has admin role in members list
+    for i, m in enumerate(project.members):
+        if m.user_id == new_owner_id and m.role != "admin":
+            await project_repo.update_member(project_id, new_owner_id, {f"members.{i}.role": "admin"})
+            break
+
+    await project_repo.update(project_id, {"owner_id": new_owner_id})
 
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:

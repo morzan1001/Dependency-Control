@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BaseIngest(BaseModel):
@@ -30,8 +30,7 @@ class ScanContext(BaseModel):
     is_new: bool = Field(..., description="Whether this is a newly created scan")
     pipeline_url: Optional[str] = Field(None, description="URL to the pipeline")
 
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
 
 class SBOMIngest(BaseIngest):

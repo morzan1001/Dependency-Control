@@ -5,7 +5,7 @@ Webhook API schemas for request/response validation.
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.core.constants import WEBHOOK_EVENT_SCAN_COMPLETED
 from app.services.webhooks.validation import (
@@ -73,8 +73,7 @@ class WebhookResponse(BaseModel):
     last_triggered_at: Optional[datetime] = None
     last_failure_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class WebhookTestRequest(BaseModel):

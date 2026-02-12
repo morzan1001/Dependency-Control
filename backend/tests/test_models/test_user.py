@@ -50,14 +50,13 @@ class TestNotificationPreferencesValidator:
         )
         assert user.notification_preferences["analysis_completed"] == ["email", "slack"]
 
-    def test_none_replaced_with_defaults(self):
+    def test_none_replaced_with_empty_dict(self):
         user = User(
             username="test",
             email="test@example.com",
             notification_preferences=None,
         )
-        assert "analysis_completed" in user.notification_preferences
-        assert "vulnerability_found" in user.notification_preferences
+        assert user.notification_preferences == {}
 
     def test_invalid_event_stripped(self):
         user = User(
@@ -81,15 +80,13 @@ class TestNotificationPreferencesValidator:
         )
         assert user.notification_preferences["analysis_completed"] == ["email"]
 
-    def test_missing_events_get_defaults(self):
+    def test_empty_dict_stays_empty(self):
         user = User(
             username="test",
             email="test@example.com",
             notification_preferences={},
         )
-        # Both default events should be restored
-        assert "analysis_completed" in user.notification_preferences
-        assert "vulnerability_found" in user.notification_preferences
+        assert user.notification_preferences == {}
 
     def test_channels_not_list_rejected_by_pydantic(self):
         # Pydantic validates type before field_validator runs,
@@ -103,13 +100,11 @@ class TestNotificationPreferencesValidator:
                 },
             )
 
-    def test_default_preferences_structure(self):
+    def test_default_preferences_empty(self):
         user = User(username="test", email="test@example.com")
         prefs = user.notification_preferences
         assert prefs is not None
-        assert "analysis_completed" in prefs
-        assert "vulnerability_found" in prefs
-        assert "email" in prefs["analysis_completed"]
+        assert prefs == {}
 
     def test_mattermost_channel_valid(self):
         user = User(
@@ -122,7 +117,7 @@ class TestNotificationPreferencesValidator:
         )
         assert user.notification_preferences["analysis_completed"] == ["mattermost"]
 
-    def test_all_invalid_channels_restores_defaults(self):
+    def test_all_invalid_channels_results_in_empty(self):
         user = User(
             username="test",
             email="test@example.com",
@@ -131,6 +126,6 @@ class TestNotificationPreferencesValidator:
                 "vulnerability_found": ["telegram"],  # all invalid
             },
         )
-        # Events with no valid channels are skipped, then defaults are restored
-        assert "analysis_completed" in user.notification_preferences
-        assert "vulnerability_found" in user.notification_preferences
+        # Events with no valid channels are skipped
+        assert "analysis_completed" not in user.notification_preferences
+        assert "vulnerability_found" not in user.notification_preferences

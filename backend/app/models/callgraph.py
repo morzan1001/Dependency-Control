@@ -5,10 +5,13 @@ Stores call graph data uploaded from CI/CD pipelines for analyzing
 whether vulnerable code paths are actually reachable in the project.
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.models.types import PyObjectId
 
 
 class ImportEntry(BaseModel):
@@ -45,6 +48,11 @@ class ModuleUsage(BaseModel):
 class Callgraph(BaseModel):
     """Complete call graph data for a project."""
 
+    id: PyObjectId = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        validation_alias="_id",
+        serialization_alias="_id",
+    )
     project_id: str
 
     # Pipeline context - crucial for matching callgraph to correct scans
@@ -78,8 +86,7 @@ class Callgraph(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ReachabilityResult(BaseModel):
@@ -100,16 +107,3 @@ class ReachabilityResult(BaseModel):
 
     # Additional context
     message: str = ""  # Human-readable explanation
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "status": self.status,
-            "confidence": self.confidence,
-            "analysis_type": self.analysis_type,
-            "import_paths": self.import_paths,
-            "call_paths": self.call_paths,
-            "used_symbols": self.used_symbols,
-            "vulnerable_symbols": self.vulnerable_symbols,
-            "vulnerable_symbols_used": self.vulnerable_symbols_used,
-            "message": self.message,
-        }

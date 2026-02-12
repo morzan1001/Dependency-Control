@@ -171,7 +171,7 @@ async def get_project_by_api_key(
     if not security.verify_password(secret, stored_hash):
         raise HTTPException(status_code=403, detail="Invalid API Key")
 
-    from app.models.project import Project
+    from app.models.project import Project, ProjectMember
 
     return Project(**project_data)
 
@@ -182,7 +182,7 @@ async def get_project_for_ingest(
     db: AsyncIOMotorDatabase = Depends(get_database),
     settings: SystemSettings = Depends(get_system_settings),
 ):
-    from app.models.project import Project
+    from app.models.project import Project, ProjectMember
 
     project_repo = ProjectRepository(db)
     user_repo = UserRepository(db)
@@ -302,10 +302,12 @@ async def get_project_for_ingest(
                 new_project = Project(
                     name=gitlab_project_path,
                     owner_id=owner_id,
+                    members=[ProjectMember(user_id=owner_id, role="admin")],
                     gitlab_instance_id=str(gitlab_instance.id),
                     gitlab_project_id=gitlab_project_id,
                     gitlab_project_path=gitlab_project_path,
                     default_branch=None,
+                    active_analyzers=settings.default_active_analyzers,
                 )
 
                 if gitlab_instance.sync_teams:
@@ -396,10 +398,12 @@ async def get_project_for_ingest(
                 new_project = Project(
                     name=github_repository_path,
                     owner_id=owner_id,
+                    members=[ProjectMember(user_id=owner_id, role="admin")],
                     github_instance_id=str(github_instance.id),
                     github_repository_id=github_repository_id,
                     github_repository_path=github_repository_path,
                     default_branch=None,
+                    active_analyzers=settings.default_active_analyzers,
                 )
 
                 await project_repo.create(new_project)

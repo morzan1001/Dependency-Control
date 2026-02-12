@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.types import PyObjectId
 from app.services.webhooks.validation import (
@@ -65,6 +65,4 @@ class Webhook(BaseModel):
         """Validate that URL is HTTPS (except for localhost in development)."""
         return validate_webhook_url(v)
 
-    class Config:
-        populate_by_name = True
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

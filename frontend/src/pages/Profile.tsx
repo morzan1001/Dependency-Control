@@ -4,6 +4,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { UserDetailsCard } from '@/components/profile/UserDetailsCard';
 import { PasswordUpdateCard } from '@/components/profile/PasswordUpdateCard';
 import { TwoFactorAuthCard } from '@/components/profile/TwoFactorAuthCard';
+import { NotificationPreferencesCard } from '@/components/profile/NotificationPreferencesCard';
 
 export default function ProfilePage() {
   const { data: user, isLoading } = useCurrentUser();
@@ -34,6 +35,8 @@ export default function ProfilePage() {
           <TwoFactorAuthCard user={user} />
         </div>
       </div>
+
+      <NotificationPreferencesCard key={`notif-${user?.id}`} user={user} availableChannels={notificationChannels} />
     </div>
   );
 }

@@ -1,24 +1,79 @@
 {% extends "base.html" %}
 
-{% block title %}Analysis Completed{% endblock %}
+{% block title %}Analysis Completed - {{ project_name }}{% endblock %}
 
 {% block content %}
-<div class="alert alert-success">
-    <strong>Success:</strong> Analysis completed for {{ project_name_scanned }}
-</div>
+<h2>Analysis Completed</h2>
 
 <p>The dependency analysis for project <strong>{{ project_name_scanned }}</strong> has finished successfully.</p>
 
-<p><strong>Summary:</strong></p>
-<ul>
-    <li>Total Dependencies: {{ stats.total_dependencies }}</li>
-    <li>Vulnerabilities: {{ stats.vulnerabilities }}</li>
-    <li>Policy Violations: {{ stats.policy_violations }}</li>
+<div style="background-color: #d4edda; color: #155724; padding: 15px; border-radius: 4px; border: 1px solid #c3e6cb; margin-bottom: 20px;">
+    <strong>Scan completed</strong> — All {{ analyzer_count }} analyzers ran successfully.
+</div>
+
+<table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+    <thead>
+        <tr style="background-color: #f3f4f6;">
+            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb;">Metric</th>
+            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb;">Count</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr style="border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 12px;">Total Findings</td>
+            <td style="padding: 12px; text-align: right; font-weight: bold;">{{ total_findings }}</td>
+        </tr>
+        {% if severity_critical > 0 %}
+        <tr style="border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 12px;">
+                <span style="background-color: #dc2626; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px;">CRITICAL</span>
+            </td>
+            <td style="padding: 12px; text-align: right; font-weight: bold; color: #dc2626;">{{ severity_critical }}</td>
+        </tr>
+        {% endif %}
+        {% if severity_high > 0 %}
+        <tr style="border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 12px;">
+                <span style="background-color: #ea580c; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px;">HIGH</span>
+            </td>
+            <td style="padding: 12px; text-align: right; font-weight: bold; color: #ea580c;">{{ severity_high }}</td>
+        </tr>
+        {% endif %}
+        {% if severity_medium > 0 %}
+        <tr style="border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 12px;">
+                <span style="background-color: #ca8a04; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px;">MEDIUM</span>
+            </td>
+            <td style="padding: 12px; text-align: right; font-weight: bold; color: #ca8a04;">{{ severity_medium }}</td>
+        </tr>
+        {% endif %}
+        {% if severity_low > 0 %}
+        <tr style="border-bottom: 1px solid #e5e7eb;">
+            <td style="padding: 12px;">
+                <span style="background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px;">LOW</span>
+            </td>
+            <td style="padding: 12px; text-align: right; font-weight: bold; color: #3b82f6;">{{ severity_low }}</td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+{% if results_summary %}
+<h3 style="margin-top: 24px;">Analyzer Results</h3>
+<ul style="margin: 8px 0; padding-left: 20px;">
+    {% for result in results_summary %}
+    <li style="margin: 4px 0;">{{ result }}</li>
+    {% endfor %}
 </ul>
+{% endif %}
 
 {% if link %}
-<div style="text-align: center;">
-    <a href="{{ link }}" class="button">View Analysis</a>
+<div style="text-align: center; margin-top: 30px;">
+    <a href="{{ link }}" class="button">View Scan Results</a>
 </div>
 {% endif %}
+
+<p style="margin-top: 30px; font-size: 14px; color: #666;">
+    You receive this notification because of your notification preferences. You can change them in your profile settings.
+</p>
 {% endblock %}

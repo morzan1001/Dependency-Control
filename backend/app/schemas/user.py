@@ -1,7 +1,7 @@
 import re
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.types import PyObjectId
 
@@ -88,9 +88,7 @@ class UserInDBBase(UserBase):
     totp_enabled: bool = False
     is_verified: bool = False
 
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class User(UserInDBBase):

@@ -43,7 +43,7 @@ function SystemSettingsForm({ settings }: { settings: SystemSettingsType }) {
     }
   }, [searchParams, setSearchParams, queryClient])
 
-  const handleInputChange = (field: keyof SystemSettingsType, value: string | number | boolean) => {
+  const handleInputChange = (field: keyof SystemSettingsType, value: string | number | boolean | string[]) => {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 

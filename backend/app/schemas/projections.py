@@ -7,7 +7,7 @@ that only need specific fields.
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.stats import Stats
 from app.models.types import PyObjectId
@@ -25,8 +25,7 @@ class ProjectMinimal(BaseModel):
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     name: str
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ProjectWithScanId(BaseModel):
@@ -36,8 +35,7 @@ class ProjectWithScanId(BaseModel):
     name: str
     latest_scan_id: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ScanWithStats(BaseModel):
@@ -46,8 +44,7 @@ class ScanWithStats(BaseModel):
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     stats: Optional[Stats] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ScanMinimal(BaseModel):
@@ -61,8 +58,7 @@ class ScanMinimal(BaseModel):
     reachability_pending: Optional[bool] = None
     project_id: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class CallgraphMinimal(BaseModel):
@@ -73,5 +69,4 @@ class CallgraphMinimal(BaseModel):
     import_map: Optional[dict] = None
     language: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = ConfigDict(populate_by_name=True)
