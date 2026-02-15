@@ -105,7 +105,7 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
       {criticalIssues.length > 0 && (
         <DetailSection
           label="Critical Issues"
-          icon={<AlertTriangle className="h-4 w-4 text-red-500" />}
+          icon={AlertTriangle}
         >
           <div className="flex flex-wrap gap-2">
             {criticalIssues.map((issue, idx) => (
