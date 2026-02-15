@@ -298,12 +298,20 @@ class CacheService:
     async def delete(self, key: str) -> bool:
         """Delete a key from cache."""
         if not self._available:
-            return False
+            if self._should_retry_connection() and await self._try_reconnect():
+                pass  # Reconnected, continue with delete
+            else:
+                return False
 
         try:
             client = await self.get_client()
             await client.delete(self._make_key(key))
             return True
+        except redis.ConnectionError:
+            logger.warning("Redis connection lost, disabling cache temporarily")
+            self._available = False
+            self._unavailable_since = asyncio.get_event_loop().time()
+            return False
         except Exception as e:
             logger.warning(f"Cache delete error for {key}: {e}")
             return False
