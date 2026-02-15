@@ -483,7 +483,12 @@ async def login_oidc_authorize(request: Request, db: DatabaseDep):
     state = secrets.token_urlsafe(32)
 
     # Store state in cache for validation in callback
-    await cache_service.set(f"oidc_state:{state}", {"valid": True}, OIDC_STATE_TTL_SECONDS)
+    stored = await cache_service.set(f"oidc_state:{state}", {"valid": True}, OIDC_STATE_TTL_SECONDS)
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable. Please try again.",
+        )
 
     params = {
         "client_id": system_config.oidc_client_id,

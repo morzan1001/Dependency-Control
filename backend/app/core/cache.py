@@ -141,11 +141,15 @@ class CacheService:
     dramatically reducing duplicate API calls to external services.
     """
 
+    # Retry connecting after this many seconds when Redis was unavailable
+    RECONNECT_INTERVAL_SECONDS = 30
+
     def __init__(self):
         self._pool: Optional[ConnectionPool] = None
         self._client: Optional[redis.Redis] = None
         self._available: bool = True
         self._lock: asyncio.Lock = asyncio.Lock()
+        self._unavailable_since: float = 0
 
     async def get_client(self) -> redis.Redis:
         """Get or create Redis client with connection pooling.
@@ -172,12 +176,35 @@ class CacheService:
                 # Test connection
                 await self._client.ping()
                 self._available = True
+                self._unavailable_since = 0
                 logger.info("Redis cache connection established")
             except Exception as e:
                 logger.warning(f"Redis connection failed: {e}. Cache will be disabled.")
                 self._available = False
+                self._unavailable_since = asyncio.get_event_loop().time()
                 raise
         return self._client
+
+    def _should_retry_connection(self) -> bool:
+        """Check if enough time has passed to retry connecting to Redis."""
+        if self._available:
+            return False
+        if self._unavailable_since == 0:
+            return True
+        elapsed = asyncio.get_event_loop().time() - self._unavailable_since
+        return elapsed >= self.RECONNECT_INTERVAL_SECONDS
+
+    async def _try_reconnect(self) -> bool:
+        """Attempt to reconnect to Redis. Returns True if successful."""
+        try:
+            # Reset client so get_client() creates a new connection
+            self._client = None
+            self._pool = None
+            await self.get_client()
+            logger.info("Redis cache reconnected successfully")
+            return True
+        except Exception:
+            return False
 
     async def close(self) -> None:
         """Close Redis connection pool."""
@@ -203,7 +230,10 @@ class CacheService:
             Cached value or None if not found/expired
         """
         if not self._available:
-            return None
+            if self._should_retry_connection() and await self._try_reconnect():
+                pass  # Reconnected, continue with get
+            else:
+                return None
 
         try:
             client = await self.get_client()
@@ -218,6 +248,7 @@ class CacheService:
         except redis.ConnectionError:
             logger.warning("Redis connection lost, disabling cache temporarily")
             self._available = False
+            self._unavailable_since = asyncio.get_event_loop().time()
             return None
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to decode cached value for {key}: {e}")
@@ -239,7 +270,10 @@ class CacheService:
             True if cached successfully, False otherwise
         """
         if not self._available:
-            return False
+            if self._should_retry_connection() and await self._try_reconnect():
+                pass  # Reconnected, continue with set
+            else:
+                return False
 
         if ttl_seconds is None:
             ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
@@ -252,6 +286,7 @@ class CacheService:
         except redis.ConnectionError:
             logger.warning("Redis connection lost, disabling cache temporarily")
             self._available = False
+            self._unavailable_since = asyncio.get_event_loop().time()
             return False
         except (TypeError, ValueError) as e:
             logger.warning(f"Failed to serialize value for {key}: {e}")
