@@ -721,7 +721,7 @@ async def search_dependencies_advanced(
     return DependencySearchResponse(
         items=results,
         total=total_count,
-        page=skip // limit,
+        page=(skip // limit) + 1 if limit > 0 else 1,
         size=limit,
     )
 
@@ -960,7 +960,7 @@ async def search_vulnerabilities(
     return VulnerabilitySearchResponse(
         items=results,
         total=total_count,
-        page=skip // limit if limit > 0 else 0,
+        page=(skip // limit) + 1 if limit > 0 else 1,
         size=limit,
     )
 

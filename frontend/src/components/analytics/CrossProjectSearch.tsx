@@ -71,7 +71,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
     },
     initialPageParam: 0,
     getNextPageParam: (lastPage) => {
-      const nextSkip = (lastPage.page + 1) * lastPage.size
+      const nextSkip = lastPage.page * lastPage.size
       return nextSkip < lastPage.total ? nextSkip : undefined
     },
     placeholderData: keepPreviousData,

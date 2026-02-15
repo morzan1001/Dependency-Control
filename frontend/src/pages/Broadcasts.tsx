@@ -114,47 +114,55 @@ export default function Broadcasts() {
   }
 
   const handleSendAnnouncement = async () => {
-    const result = await sendBroadcast({
-      type: "general",
-      target_type: announcementTarget,
-      target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
-      subject: announcementSubject,
-      message: announcementMessage,
-      channels: channels.length > 0 ? channels : undefined,
-      dry_run: false
-    })
-    setImpactCount(null)
-    toast.success("Broadcast queued", {
-      description: `Sending notifications to ${result.recipient_count} users in the background.`
-    })
-    setAnnouncementSubject("")
-    setAnnouncementMessage("")
-    setSelectedTeams([])
-    setAnnouncementTarget("global")
-    refetchHistory()
+    try {
+      const result = await sendBroadcast({
+        type: "general",
+        target_type: announcementTarget,
+        target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
+        subject: announcementSubject,
+        message: announcementMessage,
+        channels: channels.length > 0 ? channels : undefined,
+        dry_run: false
+      })
+      setImpactCount(null)
+      toast.success("Broadcast queued", {
+        description: `Sending notifications to ${result.recipient_count} users in the background.`
+      })
+      setAnnouncementSubject("")
+      setAnnouncementMessage("")
+      setSelectedTeams([])
+      setAnnouncementTarget("global")
+      refetchHistory()
+    } catch {
+      toast.error("Failed to send announcement")
+    }
   }
 
   const handleSendAdvisory = async () => {
-    const validPackages = packages.filter(p => p.name.trim() !== "")
+    try {
+      const validPackages = packages.filter(p => p.name.trim() !== "")
 
-    const result = await sendBroadcast({
-      type: "advisory",
-      target_type: "advisory",
-      packages: validPackages,
-      subject: advisorySubject,
-      message: advisoryMessage,
-      channels: channels.length > 0 ? channels : undefined,
-      dry_run: false
-    })
-    setImpactCount(null)
-    setImpactProjectCount(null)
-    toast.success("Advisory queued", {
-      description: `Sending to owners of ${result.project_count || 0} affected projects in the background.`
-    })
-    setAdvisorySubject("")
-    setAdvisoryMessage("")
-    setPackages([{ name: "", version: "", type: "" }])
-    refetchHistory()
+      const result = await sendBroadcast({
+        type: "advisory",
+        target_type: "advisory",
+        packages: validPackages,
+        subject: advisorySubject,
+        message: advisoryMessage,
+        channels: channels.length > 0 ? channels : undefined,
+        dry_run: false
+      })
+      setImpactCount(null)
+      setImpactProjectCount(null)
+      toast.success("Advisory queued", {
+        description: `Sending to owners of ${result.project_count || 0} affected projects in the background.`
+      })
+      setAdvisorySubject("")
+      setAdvisoryMessage("")
+      setPackages([{ name: "", version: "", type: "" }])
+      refetchHistory()
+    } catch {
+      toast.error("Failed to send advisory")
+    }
   }
 
   return (

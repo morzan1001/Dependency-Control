@@ -62,27 +62,27 @@ export default function Dashboard() {
   const stats = [
     {
       title: "Total Projects",
-      value: dashboardStats?.total_projects.toString() || "0",
+      value: String(dashboardStats?.total_projects ?? 0),
       icon: FolderGit2,
       description: "Active projects"
     },
     {
       title: "Critical Vulnerabilities",
-      value: dashboardStats?.total_critical.toString() || "0",
+      value: String(dashboardStats?.total_critical ?? 0),
       icon: ShieldAlert,
       description: "Across all projects",
       className: "text-destructive"
     },
     {
       title: "High Vulnerabilities",
-      value: dashboardStats?.total_high.toString() || "0",
+      value: String(dashboardStats?.total_high ?? 0),
       icon: Activity,
       description: "Across all projects",
       className: "text-severity-high"
     },
     {
       title: "Avg Risk Score",
-      value: dashboardStats?.avg_risk_score.toString() || "0.0",
+      value: String(dashboardStats?.avg_risk_score ?? "0.0"),
       icon: ShieldCheck,
       description: "Average risk per project",
       tooltip: "Calculated as the average sum of CVSS scores per project. If CVSS is missing, weighted severity is used: Critical=10, High=7.5, Medium=4, Low=1."

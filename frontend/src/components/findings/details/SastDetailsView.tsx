@@ -11,7 +11,7 @@ import {
     RiskBadge, 
     FileLocation 
 } from "./shared"
-import { getSeverityBgColor } from '@/lib/finding-utils'
+import { getSeverityBadgeVariant } from '@/lib/finding-utils'
 
 // Markdown component overrides - defined outside component to avoid re-creation
 const markdownComponents: Partial<Components> = {
@@ -349,7 +349,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                                         
                                         <div className="flex flex-col gap-1 min-w-0">
                                             <div className="flex items-center gap-2">
-                                                 <Badge variant={getSeverityBgColor(issue.severity) as "default" | "secondary" | "destructive" | "outline"} className="flex-shrink-0">
+                                                 <Badge variant={getSeverityBadgeVariant(issue.severity)} className="flex-shrink-0">
                                                     {issue.severity}
                                                 </Badge>
                                                 <span className="font-medium truncate text-sm">{issue.title}</span>
