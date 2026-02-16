@@ -8,3 +8,4 @@ __pycache__
 .claude/
 .vscode/
 htmlcov/
+values-cluster.yaml

@@ -62,6 +62,10 @@ class Project(BaseModel):
         None, description="GitHub repository path (owner/repo). For display purposes."
     )
 
+    # Branch Lifecycle
+    deleted_branches: List[str] = Field(default_factory=list)
+    branches_checked_at: Optional[datetime] = None
+
     # Periodic Scanning
     rescan_enabled: Optional[bool] = None  # If None, use system default
     rescan_interval: Optional[int] = None  # Hours. If None, use system default

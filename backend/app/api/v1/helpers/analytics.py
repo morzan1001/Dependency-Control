@@ -507,18 +507,17 @@ async def gather_cross_project_data(
 
     # Build cross-project data from batch results
     for scan_id, proj_id in scan_id_to_project.items():
-        proj_info = project_info_map.get(proj_id, {})
-        stats = scan_stats_map.get(scan_id, {})
-        severity_counts = stats.get("severity_counts", {})
+        proj_info = project_info_map.get(proj_id)
+        stats = scan_stats_map.get(scan_id)
 
         cross_project_data["projects"].append(
             {
                 "project_id": proj_id,
-                "project_name": proj_info.get("name", "Unknown"),
+                "project_name": proj_info.name if proj_info else "Unknown",
                 "cves": scan_cves_map.get(scan_id, []),
                 "packages": scan_pkgs_map.get(scan_id, []),
-                "total_critical": severity_counts.get("CRITICAL", 0),
-                "total_high": severity_counts.get("HIGH", 0),
+                "total_critical": stats.critical if stats else 0,
+                "total_high": stats.high if stats else 0,
             }
         )
 

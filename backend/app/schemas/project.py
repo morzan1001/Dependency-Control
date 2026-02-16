@@ -8,6 +8,12 @@ from app.models.finding import FindingType, Severity
 from app.models.project import Project, Scan
 
 
+class BranchInfo(BaseModel):
+    name: str
+    is_active: bool
+    last_scan_at: Optional[datetime] = None
+
+
 class ProjectWithTeam(Project):
     """Project with team name enrichment for list views."""
 

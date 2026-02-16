@@ -33,8 +33,9 @@ export function IntegrationsSettingsTab({
                 onChange={(e) => handleInputChange('github_token', e.target.value)}
               />
               <p className="text-sm text-muted-foreground">
-                Used for GitHub Security Advisories (GHSA) lookups and maintainer health checks. 
+                Used for GitHub Security Advisories (GHSA) lookups and maintainer health checks.
                 Without a token, API requests are rate-limited to 60/hour. With a token, the limit increases to 5,000/hour.
+                If left empty, the access token from a configured GitHub instance will be used automatically.
               </p>
               <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground space-y-2 mt-1">
                 <span className="font-medium text-foreground">Required Scopes:</span>

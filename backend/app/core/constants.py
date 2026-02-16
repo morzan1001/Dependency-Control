@@ -877,3 +877,6 @@ HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS: int = 300  # 5 minutes
 
 # Fixed interval for retention cleanup checks (hours)
 HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS: int = 24
+
+# Interval (hours) for branch status sync against VCS providers
+HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -795,8 +796,8 @@ async def reset_password(
     Reset password using the token received via email.
     Token is one-time use to prevent replay attacks.
     """
-    token_hash = security.get_password_hash(reset_in.token)  # Hash token for storage
-    token_key = f"used_reset_token:{token_hash[:32]}"  # Use first 32 chars of hash
+    token_hash = hashlib.sha256(reset_in.token.encode()).hexdigest()
+    token_key = f"used_reset_token:{token_hash}"
 
     if await cache_service.get(token_key):
         raise HTTPException(

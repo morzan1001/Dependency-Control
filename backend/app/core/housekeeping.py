@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional
 
 from app.core.config import settings
 from app.core.constants import (
+    HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
     HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS,
@@ -402,6 +403,89 @@ async def recover_stuck_scans(
         logger.error(f"Stuck scan recovery failed: {e}")
 
 
+async def sync_project_branches(project_data: dict, db) -> None:
+    """Sync branch status for a single project against its VCS provider."""
+    project_id = project_data["_id"]
+    project_name = project_data.get("name", project_id)
+
+    # Determine VCS provider
+    gitlab_instance_id = project_data.get("gitlab_instance_id")
+    gitlab_project_id = project_data.get("gitlab_project_id")
+    github_instance_id = project_data.get("github_instance_id")
+    github_repo_path = project_data.get("github_repository_path")
+
+    vcs_branches: Optional[list] = None
+
+    try:
+        if gitlab_instance_id and gitlab_project_id:
+            from app.repositories.gitlab_instances import GitLabInstanceRepository
+            from app.services.gitlab import GitLabService
+
+            instance_repo = GitLabInstanceRepository(db)
+            instance = await instance_repo.get_by_id(gitlab_instance_id)
+            if instance and instance.access_token:
+                service = GitLabService(instance)
+                vcs_branches = await service.list_branches(gitlab_project_id)
+
+        elif github_instance_id and github_repo_path:
+            from app.repositories.github_instances import GitHubInstanceRepository
+            from app.services.github import GitHubService
+
+            instance_repo = GitHubInstanceRepository(db)
+            instance = await instance_repo.get_by_id(github_instance_id)
+            if instance and instance.access_token:
+                service = GitHubService(instance)
+                parts = github_repo_path.split("/", 1)
+                if len(parts) == 2:
+                    vcs_branches = await service.list_branches(parts[0], parts[1])
+
+        if vcs_branches is None:
+            return
+
+        # Get branches we know from scans
+        our_branches = await db.scans.distinct("branch", {"project_id": project_id})
+        vcs_set = set(vcs_branches)
+
+        deleted = sorted(b for b in our_branches if b not in vcs_set)
+
+        await db.projects.update_one(
+            {"_id": project_id},
+            {"$set": {
+                "deleted_branches": deleted,
+                "branches_checked_at": datetime.now(timezone.utc),
+            }},
+        )
+
+        if deleted:
+            logger.info(f"Project {project_name}: {len(deleted)} deleted branch(es) detected")
+
+    except Exception as e:
+        logger.error(f"Branch sync failed for project {project_name}: {e}")
+
+
+async def sync_branch_status() -> None:
+    """Sync branch status for all projects with VCS connections."""
+    logger.info("Starting branch status sync...")
+    try:
+        db = await get_database()
+
+        cursor = db.projects.find(
+            {"$or": [
+                {"gitlab_instance_id": {"$exists": True, "$ne": None}},
+                {"github_instance_id": {"$exists": True, "$ne": None}},
+            ]},
+        )
+
+        count = 0
+        async for project_data in cursor:
+            await sync_project_branches(project_data, db)
+            count += 1
+
+        logger.info(f"Branch status sync completed for {count} project(s)")
+    except Exception as e:
+        logger.error(f"Branch status sync failed: {e}")
+
+
 async def stale_scan_loop(
     worker_manager: Optional["WorkerManager"] = None,
 ) -> None:
@@ -428,11 +512,13 @@ async def housekeeping_loop(
     - Database stats update: On each loop iteration
     - Cache stats update: On each loop iteration
     - Data retention cleanup: Every 24 hours
+    - Branch status sync: Every 6 hours
 
     Note: Stale pending scan aggregation runs in a separate faster loop.
     """
     # Use timezone-aware datetime for consistent comparison
     last_retention_run = datetime.min.replace(tzinfo=timezone.utc)
+    last_branch_sync = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
         # Run stuck scan recovery
@@ -460,5 +546,12 @@ async def housekeeping_loop(
         ):
             await run_housekeeping()
             last_retention_run = datetime.now(timezone.utc)
+
+        # Run branch status sync if interval has passed
+        if (datetime.now(timezone.utc) - last_branch_sync) > timedelta(
+            hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS
+        ):
+            await sync_branch_status()
+            last_branch_sync = datetime.now(timezone.utc)
 
         await asyncio.sleep(HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS)

@@ -19,7 +19,7 @@ class GitHubInstanceBase(BaseModel):
 class GitHubInstanceCreate(GitHubInstanceBase):
     """Schema for creating a new GitHub instance."""
 
-    pass
+    access_token: Optional[str] = Field(None, description="Personal Access Token for GitHub API operations")
 
 
 class GitHubInstanceUpdate(BaseModel):
@@ -32,12 +32,14 @@ class GitHubInstanceUpdate(BaseModel):
     is_active: Optional[bool] = Field(None, description="Whether this instance is active")
     oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens")
     auto_create_projects: Optional[bool] = Field(None, description="Automatically create projects from OIDC tokens")
+    access_token: Optional[str] = Field(None, description="Personal Access Token for GitHub API operations")
 
 
 class GitHubInstanceResponse(GitHubInstanceBase):
     """Schema for GitHub instance response."""
 
     id: str = Field(..., description="Unique identifier")
+    has_access_token: bool = Field(False, description="Whether an API access token is configured")
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="User ID who created this instance")
     last_modified_at: Optional[datetime] = Field(None, description="Last modification timestamp")

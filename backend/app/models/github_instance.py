@@ -35,6 +35,11 @@ class GitHubInstance(BaseModel):
 
     # Authentication
     oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
+    access_token: Optional[str] = Field(
+        None,
+        exclude=True,
+        description="Personal Access Token with 'repo' scope for GitHub API operations",
+    )
 
     # Features
     auto_create_projects: bool = Field(

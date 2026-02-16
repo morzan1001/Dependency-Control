@@ -23,7 +23,6 @@ export default function LoginCallback() {
 
     if (accessToken && refreshToken) {
       processedRef.current = true
-      // Clear tokens from URL hash before proceeding
       window.history.replaceState(null, '', window.location.pathname)
       login(accessToken, refreshToken, true)
     } else {

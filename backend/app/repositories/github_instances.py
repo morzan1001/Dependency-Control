@@ -62,7 +62,10 @@ class GitHubInstanceRepository:
 
     async def create(self, instance: GitHubInstance) -> GitHubInstance:
         """Create a new instance."""
-        await self.collection.insert_one(instance.model_dump(by_alias=True))
+        doc = instance.model_dump(by_alias=True)
+        if instance.access_token is not None:
+            doc["access_token"] = instance.access_token
+        await self.collection.insert_one(doc)
         return instance
 
     async def update(self, instance_id: str, update_data: Dict[str, Any]) -> bool:

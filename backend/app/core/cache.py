@@ -141,7 +141,6 @@ class CacheService:
     dramatically reducing duplicate API calls to external services.
     """
 
-    # Retry connecting after this many seconds when Redis was unavailable
     RECONNECT_INTERVAL_SECONDS = 30
 
     def __init__(self):
@@ -231,7 +230,7 @@ class CacheService:
         """
         if not self._available:
             if self._should_retry_connection() and await self._try_reconnect():
-                pass  # Reconnected, continue with get
+                pass
             else:
                 return None
 
@@ -271,7 +270,7 @@ class CacheService:
         """
         if not self._available:
             if self._should_retry_connection() and await self._try_reconnect():
-                pass  # Reconnected, continue with set
+                pass
             else:
                 return False
 
@@ -299,7 +298,7 @@ class CacheService:
         """Delete a key from cache."""
         if not self._available:
             if self._should_retry_connection() and await self._try_reconnect():
-                pass  # Reconnected, continue with delete
+                pass
             else:
                 return False
 

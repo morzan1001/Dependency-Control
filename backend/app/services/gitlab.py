@@ -347,6 +347,11 @@ class GitLabService:
             logger.error(f"OIDC Token validation error: {e}")
             return None
 
+    async def list_branches(self, project_id: int) -> List[str]:
+        """Fetches all branch names from a GitLab project."""
+        branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches")
+        return [b["name"] for b in branches]
+
     async def get_project_details(self, project_id: int) -> Optional[GitLabProjectDetails]:
         """Fetches project details using the system token."""
         response = await self._api_get(f"/projects/{project_id}")

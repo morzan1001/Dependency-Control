@@ -5,7 +5,7 @@ import { analyticsApi } from '@/api/analytics'
 import { AdvancedSearchResult } from '@/types/analytics'
 import { projectApi } from '@/api/projects'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
@@ -290,7 +290,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                 </div>
               )}
             </div>
-            <div ref={parentRef}>
+            <div ref={parentRef} className="border rounded-lg overflow-hidden">
               <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
@@ -302,54 +302,74 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {virtualItems.map((virtualRow) => {
-                    const isLoaderRow = virtualRow.index >= allResults.length
-                    if (isLoaderRow) {
-                      return (
-                        <TableRow key="loader">
-                          <TableCell colSpan={5} className="text-center py-4">
-                            <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Loading more packages...
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )
-                    }
-                    const result = allResults[virtualRow.index]
-                    return (
-                      <TableRow 
-                        key={`${result.project_id}-${result.package}-${result.version}-${virtualRow.index}`}
-                        className="cursor-pointer hover:bg-muted"
-                        onClick={() => onSelectResult?.(result)}
+                  <tr>
+                    <td colSpan={5} className="p-0">
+                      <div
+                        style={{
+                          height: `${rowVirtualizer.getTotalSize()}px`,
+                          position: 'relative',
+                        }}
                       >
-                        <TableCell className="truncate">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                            <span className="font-medium truncate">{result.package}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="truncate">
-                          <Badge variant="outline" className="truncate max-w-full">{result.version}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary" className="truncate">{result.type}</Badge>
-                        </TableCell>
-                        <TableCell className="truncate">
-                          <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
-                        </TableCell>
-                        <TableCell className="truncate">
-                          <Link 
-                            to={`/projects/${result.project_id}`}
-                            className="hover:underline text-primary truncate block"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {result.project_name}
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
+                        {virtualItems.map((virtualRow) => {
+                          const isLoaderRow = virtualRow.index >= allResults.length
+                          if (isLoaderRow) {
+                            return (
+                              <div
+                                key="loader"
+                                className="absolute left-0 right-0 flex items-center justify-center py-4"
+                                style={{
+                                  top: `${virtualRow.start}px`,
+                                  height: `${virtualRow.size}px`,
+                                }}
+                              >
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                              </div>
+                            )
+                          }
+                          const result = allResults[virtualRow.index]
+                          return (
+                            <div
+                              key={`${result.project_id}-${result.package}-${result.version}-${virtualRow.index}`}
+                              className="flex items-center border-b cursor-pointer hover:bg-muted transition-colors"
+                              style={{
+                                position: 'absolute',
+                                top: `${virtualRow.start}px`,
+                                left: 0,
+                                right: 0,
+                                height: `${virtualRow.size}px`,
+                              }}
+                              onClick={() => onSelectResult?.(result)}
+                            >
+                              <div className="w-[250px] px-4 py-2 truncate">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                                  <span className="font-medium truncate">{result.package}</span>
+                                </div>
+                              </div>
+                              <div className="w-[120px] px-4 py-2 truncate">
+                                <Badge variant="outline" className="truncate max-w-full">{result.version}</Badge>
+                              </div>
+                              <div className="w-[100px] px-4 py-2">
+                                <Badge variant="secondary" className="truncate">{result.type}</Badge>
+                              </div>
+                              <div className="w-[150px] px-4 py-2 truncate">
+                                <span className="truncate block">{result.license || <span className="text-muted-foreground">-</span>}</span>
+                              </div>
+                              <div className="w-[200px] px-4 py-2 truncate">
+                                <Link
+                                  to={`/projects/${result.project_id}`}
+                                  className="hover:underline text-primary truncate block"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {result.project_name}
+                                </Link>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </td>
+                  </tr>
                 </TableBody>
               </Table>
             </div>

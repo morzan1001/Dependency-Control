@@ -93,12 +93,8 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
 
         observer.observe(parentRef.current)
 
-        if (scrollContainer) {
-            observer.observe(scrollContainer)
-        }
-
         return () => observer.disconnect()
-    }, [parentRef, scrollContainer, rowVirtualizer])
+    }, [parentRef, rowVirtualizer])
 
     useEffect(() => {
         if (lastItemIndex === -1) {

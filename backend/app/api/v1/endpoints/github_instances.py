@@ -37,6 +37,7 @@ def _to_response(instance: GitHubInstance) -> GitHubInstanceResponse:
         is_active=instance.is_active,
         oidc_audience=instance.oidc_audience,
         auto_create_projects=instance.auto_create_projects,
+        has_access_token=bool(instance.access_token),
         created_at=instance.created_at,
         created_by=instance.created_by,
         last_modified_at=instance.last_modified_at,
@@ -130,6 +131,7 @@ async def create_instance(
         is_active=instance_data.is_active,
         oidc_audience=instance_data.oidc_audience,
         auto_create_projects=instance_data.auto_create_projects,
+        access_token=instance_data.access_token,
         created_by=str(current_user.id),
         created_at=datetime.now(timezone.utc),
     )

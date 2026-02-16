@@ -93,6 +93,15 @@ def _get_waiver_type(waiver: dict) -> str:
     return "other"
 
 
+async def _get_github_instance_token(db: Database) -> Optional[str]:
+    """Fallback: Use access_token from first active GitHub instance."""
+    doc = await db.github_instances.find_one(
+        {"is_active": True, "access_token": {"$exists": True, "$ne": None}},
+        {"access_token": 1},
+    )
+    return doc.get("access_token") if doc else None
+
+
 async def _carry_over_external_results(scan_id: str, scan_doc: Optional[ScanDict], db: Database) -> None:
     """
     Copies analysis results from the original scan to the re-scan for analyzers
@@ -403,6 +412,10 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     vulnerability_findings = [f for f in findings_to_insert if f.get("type") == "vulnerability"]
 
     github_token = system_settings.github_token
+    if not github_token:
+        github_token = await _get_github_instance_token(db)
+        if github_token and system_settings:
+            system_settings.github_token = github_token
 
     # EPSS/KEV Enrichment
     if "epss_kev" in active_analyzers and vulnerability_findings:

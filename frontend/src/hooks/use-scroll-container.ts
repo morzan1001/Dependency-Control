@@ -45,16 +45,11 @@ export function useScrollContainer(): ScrollContainerResult {
     }
 
     updateOffset()
-    
-    // Update offset on resize
+
     window.addEventListener('resize', updateOffset)
-    
-    // Also update on scroll to handle dynamic content
-    container.addEventListener('scroll', updateOffset, { passive: true })
-    
+
     return () => {
       window.removeEventListener('resize', updateOffset)
-      container.removeEventListener('scroll', updateOffset)
     }
   }, [])
 

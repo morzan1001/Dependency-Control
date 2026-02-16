@@ -47,6 +47,7 @@ from app.repositories import (
     WaiverRepository,
 )
 from app.schemas.project import (
+    BranchInfo,
     DashboardStats,
     ProjectApiKeyResponse,
     ProjectCreate,
@@ -558,20 +559,65 @@ async def update_project(
     raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
-@router.get("/{project_id}/branches", response_model=List[str], summary="List project branches", responses={**RESP_AUTH_404})
+@router.get("/{project_id}/branches", response_model=List[BranchInfo], summary="List project branches", responses={**RESP_AUTH_404})
 async def read_project_branches(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ):
-    """
-    Get all unique branches for a project.
-    """
+    """Get all unique branches for a project with their active/deleted status."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
+    project_repo = ProjectRepository(db)
+
     branches = await scan_repo.distinct("branch", {"project_id": project_id})
-    return sorted(branches)
+    project = await project_repo.get_by_id(project_id)
+    deleted_set = set(project.deleted_branches) if project else set()
+
+    # Get last scan date per branch
+    pipeline = [
+        {"$match": {"project_id": project_id}},
+        {"$group": {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
+    ]
+    last_scans = {}
+    async for doc in db.scans.aggregate(pipeline):
+        last_scans[doc["_id"]] = doc["last_scan_at"]
+
+    result = [
+        BranchInfo(
+            name=b,
+            is_active=b not in deleted_set,
+            last_scan_at=last_scans.get(b),
+        )
+        for b in sorted(branches)
+    ]
+    return result
+
+
+@router.post("/{project_id}/sync-branches", response_model=List[BranchInfo], summary="Sync branch status from VCS", responses={**RESP_AUTH_404})
+async def sync_project_branches_endpoint(
+    project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+):
+    """Trigger branch status sync against the VCS provider for a project."""
+    await check_project_access(project_id, current_user, db, required_role="editor")
+
+    project_repo = ProjectRepository(db)
+    project = await project_repo.get_by_id(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+
+    if not project.gitlab_instance_id and not project.github_instance_id:
+        raise HTTPException(status_code=400, detail="Project has no VCS connection configured")
+
+    from app.core.housekeeping import sync_project_branches
+    project_data = await project_repo.get_raw_by_id(project_id)
+    if project_data:
+        await sync_project_branches(project_data, db)
+
+    return await read_project_branches(project_id, current_user, db)
 
 
 @router.get("/{project_id}/scans", response_model=List[Scan], summary="List project scans", responses={**RESP_AUTH_404})

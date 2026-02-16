@@ -1,6 +1,9 @@
 import logging
-from typing import Optional
+import re
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Dict, List, Optional
 
+import httpx
 from jose import jwt
 
 from app.core.http_utils import InstrumentedAsyncClient
@@ -18,12 +21,14 @@ logger = logging.getLogger(__name__)
 _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/jwks"
 
 
+_GITHUB_API_TIMEOUT = 10.0
+
+
 class GitHubService:
     """
-    GitHub service for OIDC token validation.
+    GitHub service for OIDC token validation and API operations.
 
     Supports both github.com and GitHub Enterprise Server instances.
-    Unlike GitLabService, this only handles OIDC validation — no API operations.
     """
 
     def __init__(self, github_instance: GitHubInstance):
@@ -31,9 +36,93 @@ class GitHubService:
         self.base_url = github_instance.url.rstrip("/")
         self._cache_key_prefix = f"gh_instance:{github_instance.id}"
 
+        # Derive API URL from github_url
+        github_url = (github_instance.github_url or "").rstrip("/")
+        if not github_url or "github.com" in github_url:
+            self.api_url = "https://api.github.com"
+        else:
+            # GHES: https://{host}/api/v3
+            self.api_url = f"{github_url}/api/v3"
+
     def _get_cache_key(self, suffix: str) -> str:
         """Generate cache key for this specific instance."""
         return f"github:{self._cache_key_prefix}:{suffix}"
+
+    def _get_auth_headers(self) -> Dict[str, str]:
+        if not self.instance.access_token:
+            raise ValueError(f"No access token configured for GitHub instance '{self.instance.name}'")
+        return {"Authorization": f"Bearer {self.instance.access_token}", "Accept": "application/vnd.github+json"}
+
+    @asynccontextmanager
+    async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:
+        async with InstrumentedAsyncClient("GitHub API", timeout=_GITHUB_API_TIMEOUT) as client:
+            yield client
+
+    async def _api_get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
+        if not self.instance.access_token:
+            return None
+
+        try:
+            async with self._api_client() as client:
+                return await client.get(
+                    f"{self.api_url}{endpoint}",
+                    headers=self._get_auth_headers(),
+                    params=params,
+                )
+        except Exception as e:
+            logger.error(f"GitHub API GET {endpoint} failed: {e}")
+            return None
+
+    async def _api_get_paginated(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        max_pages: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Paginated GET using GitHub's Link header pagination."""
+        if not self.instance.access_token:
+            return []
+
+        all_items: List[Dict[str, Any]] = []
+        page = 1
+        per_page = 100
+
+        try:
+            async with self._api_client() as client:
+                while page <= max_pages:
+                    request_params = {**(params or {}), "page": page, "per_page": per_page}
+                    response = await client.get(
+                        f"{self.api_url}{endpoint}",
+                        headers=self._get_auth_headers(),
+                        params=request_params,
+                    )
+
+                    if response.status_code != 200:
+                        logger.error(f"GitHub API GET {endpoint} page {page} failed: {response.status_code}")
+                        break
+
+                    items = response.json()
+                    if not items:
+                        break
+
+                    all_items.extend(items)
+
+                    # Check Link header for next page
+                    link_header = response.headers.get("link", "")
+                    if 'rel="next"' not in link_header:
+                        break
+
+                    page += 1
+
+        except Exception as e:
+            logger.error(f"GitHub API paginated GET {endpoint} failed: {e}")
+
+        return all_items
+
+    async def list_branches(self, owner: str, repo: str) -> List[str]:
+        """Fetches all branch names from a GitHub repository."""
+        branches = await self._api_get_paginated(f"/repos/{owner}/{repo}/branches")
+        return [b["name"] for b in branches]
 
     async def _get_jwks_uri(self) -> Optional[str]:
         """

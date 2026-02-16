@@ -945,7 +945,7 @@ async def search_vulnerabilities(
                         finding_type=finding.type or "vulnerability",
                         description=_get_description(vuln, finding),
                         fixed_version=(vuln.get("fixed_version") or details.get("fixed_version")),
-                        waived=vuln.get("waived", False) or finding.waived if finding.waived is not None else False,
+                        waived=vuln.get("waived", False) or (finding.waived if finding.waived is not None else False),
                         waiver_reason=(vuln.get("waiver_reason") or finding.waiver_reason),
                     )
                 )
