@@ -66,6 +66,12 @@ export interface ProjectApiKeyResponse {
   note: string;
 }
 
+export interface BranchInfo {
+  name: string;
+  is_active: boolean;
+  last_scan_at: string | null;
+}
+
 export type ProjectsResponse = PaginatedResponse<Project>;
 
 export interface ProjectNotificationSettings {

@@ -43,6 +43,7 @@ export {
   useUpdateProject,
   useDeleteProject,
   useProjectBranches,
+  useProjectsDropdown,
   useRotateProjectApiKey,
   useUpdateProjectNotifications,
   useInviteProjectMember,
@@ -115,3 +116,18 @@ export {
   useCreateProjectWebhook,
   useDeleteWebhook,
 } from './use-webhooks'
+
+export {
+  gitlabInstanceKeys,
+  githubInstanceKeys,
+  useGitLabInstances,
+  useGitHubInstances,
+  useCreateGitLabInstance,
+  useUpdateGitLabInstance,
+  useDeleteGitLabInstance,
+  useTestGitLabConnection,
+  useCreateGitHubInstance,
+  useUpdateGitHubInstance,
+  useDeleteGitHubInstance,
+  useTestGitHubConnection,
+} from './use-instances'

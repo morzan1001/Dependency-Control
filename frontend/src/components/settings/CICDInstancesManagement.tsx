@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react";
 import { AxiosError } from "axios";
 import { Plus, Trash2, Edit2, CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { gitlabInstancesApi } from "@/api/gitlab-instances";
 import { githubInstancesApi } from "@/api/github-instances";
 import { GitLabInstance, GitLabInstanceCreate, GitLabInstanceUpdate } from "@/types/gitlab";
 import { GitHubInstance, GitHubInstanceCreate, GitHubInstanceUpdate } from "@/types/github";
+import { useGitLabInstances, useGitHubInstances, gitlabInstanceKeys, githubInstanceKeys } from "@/hooks/queries/use-instances";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -143,16 +144,8 @@ export function CICDInstancesManagement() {
 
   const queryClient = useQueryClient();
 
-  // Fetch both instance types
-  const { data: gitlabData, isLoading: gitlabLoading } = useQuery({
-    queryKey: ["gitlab-instances"],
-    queryFn: () => gitlabInstancesApi.list(),
-  });
-
-  const { data: githubData, isLoading: githubLoading } = useQuery({
-    queryKey: ["github-instances"],
-    queryFn: () => githubInstancesApi.list(),
-  });
+  const { data: gitlabData, isLoading: gitlabLoading } = useGitLabInstances();
+  const { data: githubData, isLoading: githubLoading } = useGitHubInstances();
 
   const isLoading = gitlabLoading || githubLoading;
 
@@ -165,7 +158,7 @@ export function CICDInstancesManagement() {
   const createGitLabMutation = useMutation({
     mutationFn: (data: GitLabInstanceCreate) => gitlabInstancesApi.create(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["gitlab-instances"] });
+      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
       toast.success("GitLab instance created successfully");
       closeCreateDialog();
     },
@@ -178,7 +171,7 @@ export function CICDInstancesManagement() {
     mutationFn: ({ id, data }: { id: string; data: GitLabInstanceUpdate }) =>
       gitlabInstancesApi.update(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["gitlab-instances"] });
+      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
       toast.success("GitLab instance updated successfully");
       closeEditDialog();
     },
@@ -190,7 +183,7 @@ export function CICDInstancesManagement() {
   const deleteGitLabMutation = useMutation({
     mutationFn: (id: string) => gitlabInstancesApi.delete(id, false),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["gitlab-instances"] });
+      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
       toast.success("GitLab instance deleted successfully");
       setDeleteInstance(null);
     },
@@ -223,7 +216,7 @@ export function CICDInstancesManagement() {
   const createGitHubMutation = useMutation({
     mutationFn: (data: GitHubInstanceCreate) => githubInstancesApi.create(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["github-instances"] });
+      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
       toast.success("GitHub instance created successfully");
       closeCreateDialog();
     },
@@ -236,7 +229,7 @@ export function CICDInstancesManagement() {
     mutationFn: ({ id, data }: { id: string; data: GitHubInstanceUpdate }) =>
       githubInstancesApi.update(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["github-instances"] });
+      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
       toast.success("GitHub instance updated successfully");
       closeEditDialog();
     },
@@ -248,7 +241,7 @@ export function CICDInstancesManagement() {
   const deleteGitHubMutation = useMutation({
     mutationFn: (id: string) => githubInstancesApi.delete(id, false),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["github-instances"] });
+      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
       toast.success("GitHub instance deleted successfully");
       setDeleteInstance(null);
     },

@@ -1,15 +1,25 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { scanApi, ScanFindingsParams } from '@/api/scans';
+import { scanApi } from '@/api/scans';
+import { ScanFindingsParams } from '@/types/scan';
+
+interface ScanListFilters {
+    page: number;
+    limit: number;
+    branch?: string;
+    sortBy: string;
+    sortOrder: 'asc' | 'desc';
+    excludeRescans: boolean;
+}
 
 export const scanKeys = {
     all: ['scans'] as const,
     recent: () => [...scanKeys.all, 'recent'] as const,
     project: (projectId: string) => [...scanKeys.all, 'project', projectId] as const,
-    list: (projectId: string, filters: unknown) => [...scanKeys.project(projectId), 'list', filters] as const,
+    list: (projectId: string, filters: ScanListFilters) => [...scanKeys.project(projectId), 'list', filters] as const,
     details: () => [...scanKeys.all, 'detail'] as const,
     detail: (scanId: string) => [...scanKeys.details(), scanId] as const,
     history: (projectId: string, scanId: string) => [...scanKeys.project(projectId), 'history', scanId] as const,
-    findings: (scanId: string, filters: unknown) => [...scanKeys.detail(scanId), 'findings', filters] as const,
+    findings: (scanId: string, filters: ScanFindingsParams) => [...scanKeys.detail(scanId), 'findings', filters] as const,
     results: (scanId: string) => [...scanKeys.detail(scanId), 'results'] as const,
     stats: (scanId: string) => [...scanKeys.detail(scanId), 'stats'] as const,
     sboms: (scanId: string) => [...scanKeys.detail(scanId), 'sboms'] as const,

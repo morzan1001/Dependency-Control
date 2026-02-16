@@ -8,51 +8,33 @@ import {
 } from '@/types/github';
 
 export const githubInstancesApi = {
-  /**
-   * List all GitHub instances
-   */
-  list: async (params?: { page?: number; size?: number; active_only?: boolean }) => {
+  list: async (params?: { page?: number; size?: number; active_only?: boolean }): Promise<GitHubInstanceList> => {
     const response = await api.get<GitHubInstanceList>('/github-instances/', { params });
     return response.data;
   },
 
-  /**
-   * Get a specific GitHub instance by ID
-   */
-  get: async (instanceId: string) => {
+  get: async (instanceId: string): Promise<GitHubInstance> => {
     const response = await api.get<GitHubInstance>(`/github-instances/${instanceId}`);
     return response.data;
   },
 
-  /**
-   * Create a new GitHub instance
-   */
-  create: async (data: GitHubInstanceCreate) => {
+  create: async (data: GitHubInstanceCreate): Promise<GitHubInstance> => {
     const response = await api.post<GitHubInstance>('/github-instances/', data);
     return response.data;
   },
 
-  /**
-   * Update an existing GitHub instance
-   */
-  update: async (instanceId: string, data: GitHubInstanceUpdate) => {
+  update: async (instanceId: string, data: GitHubInstanceUpdate): Promise<GitHubInstance> => {
     const response = await api.put<GitHubInstance>(`/github-instances/${instanceId}`, data);
     return response.data;
   },
 
-  /**
-   * Delete a GitHub instance
-   */
-  delete: async (instanceId: string, force = false) => {
+  delete: async (instanceId: string, force = false): Promise<void> => {
     await api.delete(`/github-instances/${instanceId}`, {
       params: { force },
     });
   },
 
-  /**
-   * Test connection to a GitHub instance (JWKS endpoint reachability)
-   */
-  testConnection: async (instanceId: string) => {
+  testConnection: async (instanceId: string): Promise<GitHubInstanceTestConnectionResponse> => {
     const response = await api.post<GitHubInstanceTestConnectionResponse>(
       `/github-instances/${instanceId}/test-connection`
     );

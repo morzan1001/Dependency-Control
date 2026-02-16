@@ -10,7 +10,7 @@ import { Plus, FolderGit2, AlertTriangle, AlertCircle, Info, ArrowUp, ArrowDown 
 import { Link } from 'react-router-dom';
 import { Project } from '@/types/project';
 import { Skeleton } from '@/components/ui/skeleton';
-import { AVAILABLE_ANALYZERS } from '@/lib/constants';
+import { AVAILABLE_ANALYZERS, PROJECT_GRID_PAGE_SIZE } from '@/lib/constants';
 import { formatDate } from '@/lib/utils';
 import { CreateProjectDialog } from '@/components/project/CreateProjectDialog';
 import {
@@ -28,7 +28,7 @@ export default function ProjectsPage() {
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const limit = 12;
+  const limit = PROJECT_GRID_PAGE_SIZE;
 
   const debouncedSearch = useDebounce(search, 300);
 

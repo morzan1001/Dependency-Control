@@ -8,51 +8,33 @@ import {
 } from '@/types/gitlab';
 
 export const gitlabInstancesApi = {
-  /**
-   * List all GitLab instances
-   */
-  list: async (params?: { page?: number; size?: number; active_only?: boolean }) => {
+  list: async (params?: { page?: number; size?: number; active_only?: boolean }): Promise<GitLabInstanceList> => {
     const response = await api.get<GitLabInstanceList>('/gitlab-instances/', { params });
     return response.data;
   },
 
-  /**
-   * Get a specific GitLab instance by ID
-   */
-  get: async (instanceId: string) => {
+  get: async (instanceId: string): Promise<GitLabInstance> => {
     const response = await api.get<GitLabInstance>(`/gitlab-instances/${instanceId}`);
     return response.data;
   },
 
-  /**
-   * Create a new GitLab instance
-   */
-  create: async (data: GitLabInstanceCreate) => {
+  create: async (data: GitLabInstanceCreate): Promise<GitLabInstance> => {
     const response = await api.post<GitLabInstance>('/gitlab-instances/', data);
     return response.data;
   },
 
-  /**
-   * Update an existing GitLab instance
-   */
-  update: async (instanceId: string, data: GitLabInstanceUpdate) => {
+  update: async (instanceId: string, data: GitLabInstanceUpdate): Promise<GitLabInstance> => {
     const response = await api.put<GitLabInstance>(`/gitlab-instances/${instanceId}`, data);
     return response.data;
   },
 
-  /**
-   * Delete a GitLab instance
-   */
-  delete: async (instanceId: string, force = false) => {
+  delete: async (instanceId: string, force = false): Promise<void> => {
     await api.delete(`/gitlab-instances/${instanceId}`, {
       params: { force },
     });
   },
 
-  /**
-   * Test connection to a GitLab instance
-   */
-  testConnection: async (instanceId: string) => {
+  testConnection: async (instanceId: string): Promise<GitLabInstanceTestConnectionResponse> => {
     const response = await api.post<GitLabInstanceTestConnectionResponse>(
       `/gitlab-instances/${instanceId}/test-connection`
     );

@@ -1,7 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { analyticsApi } from '@/api/analytics'
-import { analyticsKeys } from '@/hooks/queries/use-analytics'
+import { useDependencyMetadata, useComponentFindings } from '@/hooks/queries/use-analytics'
 import { DependencyMetadata, ComponentFinding } from '@/types/analytics'
 import { FindingDetailsModal } from '@/components/findings/FindingDetailsModal'
 import {
@@ -511,19 +509,9 @@ export function AnalyticsDependencyModal({
   const [selectedFinding, setSelectedFinding] = useState<ComponentFinding | null>(null)
   const [findingModalOpen, setFindingModalOpen] = useState(false)
 
-  // Fetch dependency metadata
-  const { data: metadata, isLoading: isLoadingMetadata } = useQuery({
-    queryKey: analyticsKeys.dependencyMetadata(component, version, type),
-    queryFn: () => analyticsApi.getDependencyMetadata(component, version, type),
-    enabled: open && !!component,
-  })
-
-  // Fetch findings
-  const { data: findings, isLoading: isLoadingFindings } = useQuery({
-    queryKey: analyticsKeys.componentFindings(component, version),
-    queryFn: () => analyticsApi.getComponentFindings(component, version),
-    enabled: open && !!component,
-  })
+  const enabledComponent = open ? component : ''
+  const { data: metadata, isLoading: isLoadingMetadata } = useDependencyMetadata(enabledComponent, version, type)
+  const { data: findings, isLoading: isLoadingFindings } = useComponentFindings(enabledComponent, version)
 
   const sortedFindings = useMemo(() => {
     if (!findings) return []

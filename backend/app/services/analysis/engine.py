@@ -339,10 +339,16 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     # Load external results via repository
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
+    external_analyzer_names = set()
     for res in external_results:
         name = res.analyzer_name
         if name not in analyzers:
             aggregator.aggregate(name, res.result)
+            external_analyzer_names.add(name)
+
+    # Add external analyzers to results_summary so notifications reflect them
+    for ext_name in sorted(external_analyzer_names):
+        results_summary.append(f"{ext_name}: Success")
 
     # Save aggregated findings to the scan document
     aggregated_findings = aggregator.get_findings()
@@ -432,6 +438,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                     "created_at": datetime.now(timezone.utc),
                 }
             )
+            results_summary.append(f"epss_kev: Success ({len(vulnerability_findings)} enriched)")
             logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
             # Track EPSS/KEV metrics
@@ -452,6 +459,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                     analysis_kev_vulnerabilities_total.inc()
 
         except Exception as e:
+            results_summary.append(f"epss_kev: Failed")
             logger.warning(f"[epss_kev] Failed to enrich findings: {e}")
 
     # Reachability Analysis
@@ -484,6 +492,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                         "created_at": datetime.now(timezone.utc),
                     }
                 )
+                results_summary.append(f"reachability: Success ({enriched_count} enriched)")
                 logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
 
                 # Track reachability metrics
@@ -499,6 +508,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                             level = reachability.get("level", "unknown")
                             analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
             except Exception as e:
+                results_summary.append(f"reachability: Failed")
                 logger.warning(f"[reachability] Failed to enrich findings: {e}")
         else:
             await scan_repo.update_raw(

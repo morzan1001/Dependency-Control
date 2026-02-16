@@ -1,6 +1,6 @@
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useEffect, useRef, useCallback } from 'react'
-import { SbomResponse, SbomTool, SbomToolComponent } from '@/api/scans'
+import { SbomResponse, SbomTool, SbomToolComponent } from '@/types/scan'
 import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
 import { FindingsTable } from '@/components/findings/FindingsTable'

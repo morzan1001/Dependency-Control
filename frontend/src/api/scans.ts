@@ -1,104 +1,35 @@
 import { api } from '@/api/client';
-import { Scan, Finding, ScanAnalysisResult } from '@/types/scan';
-
-export interface SbomToolComponent {
-  name: string;
-}
-
-export interface SbomTool {
-  name?: string;
-  vendor?: string;
-}
-
-export interface SbomMetadata {
-  component?: {
-    name?: string;
-  };
-  tools?: SbomTool[] | {
-    components?: SbomToolComponent[];
-  };
-}
-
-export interface SbomData {
-  metadata?: SbomMetadata;
-  serialNumber?: string;
-  [key: string]: unknown;
-}
-
-export interface SbomResponse {
-  index: number;
-  filename: string | null;
-  storage: 'gridfs' | 'inline';
-  sbom: SbomData | null;
-  error?: string;
-}
-
-export interface ScanFindingsParams {
-  skip?: number;
-  limit?: number;
-  sort_by?: string;
-  sort_order?: string;
-  type?: string;
-  category?: string;
-  severity?: string;
-  search?: string;
-}
-
-export interface ScanFindingsResponse {
-  items: Finding[];
-  total: number;
-  page: number;
-  size: number;
-  pages: number;
-}
-
-export interface ScanStats {
-  total?: number;
-  critical?: number;
-  high?: number;
-  medium?: number;
-  low?: number;
-  info?: number;
-  unknown?: number;
-  security?: number;
-  secret?: number;
-  sast?: number;
-  compliance?: number;
-  quality?: number;
-  other?: number;
-  by_type?: Record<string, number>;
-  [key: string]: number | Record<string, number> | undefined;
-}
+import { Scan, ScanAnalysisResult, SbomResponse, ScanFindingsParams, ScanFindingsResponse, ScanStats } from '@/types/scan';
 
 export const scanApi = {
-    getRecent: async () => {
+    getRecent: async (): Promise<Scan[]> => {
         const response = await api.get<Scan[]>('/projects/scans', { params: { limit: 5, sort_by: 'created_at', sort_order: 'desc' } });
         return response.data;
     },
 
-    getProjectScans: async (id: string, skip: number = 0, limit: number = 20, branch?: string, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc', excludeRescans: boolean = false) => {
+    getProjectScans: async (id: string, skip: number = 0, limit: number = 20, branch?: string, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc', excludeRescans: boolean = false): Promise<Scan[]> => {
         const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
           params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans }
         });
         return response.data;
     },
-      
-    getHistory: async (projectId: string, scanId: string) => {
+
+    getHistory: async (projectId: string, scanId: string): Promise<Scan[]> => {
         const response = await api.get<Scan[]>(`/projects/${projectId}/scans/${scanId}/history`);
         return response.data;
     },
-      
-    triggerRescan: async (projectId: string, scanId: string) => {
+
+    triggerRescan: async (projectId: string, scanId: string): Promise<Scan> => {
         const response = await api.post<Scan>(`/projects/${projectId}/scans/${scanId}/rescan`);
         return response.data;
     },
 
-    getOne: async (scanId: string) => {
+    getOne: async (scanId: string): Promise<Scan> => {
         const response = await api.get<Scan>(`/projects/scans/${scanId}`);
         return response.data;
     },
 
-    getResults: async (scanId: string) => {
+    getResults: async (scanId: string): Promise<ScanAnalysisResult[]> => {
         const response = await api.get<ScanAnalysisResult[]>(`/projects/scans/${scanId}/results`);
         return response.data;
     },
@@ -108,11 +39,11 @@ export const scanApi = {
         return response.data;
     },
 
-    getFindings: async (scanId: string, params: ScanFindingsParams = {}) => {
+    getFindings: async (scanId: string, params: ScanFindingsParams = {}): Promise<ScanFindingsResponse> => {
         const response = await api.get<ScanFindingsResponse>(`/projects/scans/${scanId}/findings`, { params });
         return response.data;
     },
-      
+
     getStats: async (scanId: string): Promise<ScanStats> => {
         const response = await api.get<ScanStats>(`/projects/scans/${scanId}/stats`);
         return response.data;

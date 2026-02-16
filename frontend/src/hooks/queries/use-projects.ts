@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import { projectApi } from '@/api/projects';
 import { ProjectCreate, ProjectUpdate, ProjectNotificationSettings } from '@/types/project';
 import type { ApiError } from '@/api/client';
+import { DROPDOWN_PAGE_SIZE } from '@/lib/constants';
 
 // Project list filter interface
 interface ProjectListFilters {
@@ -17,6 +18,7 @@ export const projectKeys = {
   all: ['projects'] as const,
   lists: () => [...projectKeys.all, 'list'] as const,
   list: (filters: ProjectListFilters) => [...projectKeys.lists(), filters] as const,
+  dropdown: () => [...projectKeys.all, 'dropdown'] as const,
   details: () => [...projectKeys.all, 'detail'] as const,
   detail: (id: string) => [...projectKeys.details(), id] as const,
   branches: (id: string) => [...projectKeys.detail(id), 'branches'] as const,
@@ -84,6 +86,14 @@ export const useProjectBranches = (id: string) => {
     queryKey: projectKeys.branches(id),
     queryFn: () => projectApi.getBranches(id),
     enabled: !!id,
+  });
+};
+
+export const useProjectsDropdown = () => {
+  return useQuery({
+    queryKey: projectKeys.dropdown(),
+    queryFn: () => projectApi.getAll(undefined, 0, DROPDOWN_PAGE_SIZE),
+    staleTime: 5 * 60 * 1000,
   });
 };
 

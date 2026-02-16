@@ -169,6 +169,7 @@ async def send_scan_notifications(
             results_summary=results_summary,
         )
 
+        results_text = "\n".join(results_summary) if results_summary else "No analyzer details available."
         await notification_service.notify_project_members(
             project=project,
             event_type="analysis_completed",
@@ -176,7 +177,7 @@ async def send_scan_notifications(
             message=(
                 f"Scan {scan_id} completed.\n"
                 f"Found {len(aggregated_findings)} issues.\n"
-                f"Results:\n" + "\n".join(results_summary)
+                f"Results:\n{results_text}"
             ),
             db=db,
             html_message=html_content,

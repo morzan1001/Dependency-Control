@@ -1,6 +1,6 @@
 import { api } from '@/api/client';
-import { 
-    DashboardStats, 
+import {
+    DashboardStats,
     SearchResult,
     AnalyticsSummary,
     DependencyUsage,
@@ -18,48 +18,48 @@ import {
 } from '@/types/analytics';
 
 export const analyticsApi = {
-    getDashboardStats: async () => {
+    getDashboardStats: async (): Promise<DashboardStats> => {
         const response = await api.get<DashboardStats>('/projects/dashboard/stats');
         return response.data;
     },
 
-    searchDependencies: async (query: string, version?: string) => {
+    searchDependencies: async (query: string, version?: string): Promise<SearchResult[]> => {
         const params = new URLSearchParams();
         params.append('q', query);
         if (version) params.append('version', version);
-        
+
         const response = await api.get<SearchResult[]>('/analytics/search', { params });
         return response.data;
     },
 
-    getSummary: async () => {
+    getSummary: async (): Promise<AnalyticsSummary> => {
         const response = await api.get<AnalyticsSummary>('/analytics/summary');
         return response.data;
     },
-      
-    getTopDependencies: async (limit = 20, type?: string) => {
+
+    getTopDependencies: async (limit = 20, type?: string): Promise<DependencyUsage[]> => {
         const params = new URLSearchParams();
         params.append('limit', limit.toString());
         if (type) params.append('type', type);
         const response = await api.get<DependencyUsage[]>('/analytics/dependencies/top', { params });
         return response.data;
     },
-      
-    getDependencyTree: async (projectId: string, scanId?: string) => {
+
+    getDependencyTree: async (projectId: string, scanId?: string): Promise<DependencyTreeNode[]> => {
         const params = new URLSearchParams();
         if (scanId) params.append('scan_id', scanId);
         const response = await api.get<DependencyTreeNode[]>(`/analytics/projects/${projectId}/dependency-tree`, { params });
         return response.data;
     },
-      
-    getImpactAnalysis: async (limit = 20) => {
+
+    getImpactAnalysis: async (limit = 20): Promise<ImpactAnalysisResult[]> => {
         const params = new URLSearchParams();
         params.append('limit', limit.toString());
         const response = await api.get<ImpactAnalysisResult[]>('/analytics/impact', { params });
         return response.data;
     },
-      
-    getVulnerabilityHotspots: async (params: HotspotsQueryParams = {}) => {
+
+    getVulnerabilityHotspots: async (params: HotspotsQueryParams = {}): Promise<VulnerabilityHotspot[]> => {
         const urlParams = new URLSearchParams();
         if (params.skip !== undefined) urlParams.append('skip', params.skip.toString());
         urlParams.append('limit', (params.limit ?? 20).toString());
@@ -68,9 +68,9 @@ export const analyticsApi = {
         const response = await api.get<VulnerabilityHotspot[]>('/analytics/hotspots', { params: urlParams });
         return response.data;
     },
-      
+
     searchDependenciesAdvanced: async (
-        query: string, 
+        query: string,
         options?: AdvancedSearchOptions
     ): Promise<AdvancedSearchResponse> => {
         const params = new URLSearchParams();
@@ -91,7 +91,7 @@ export const analyticsApi = {
         const response = await api.get<AdvancedSearchResponse>('/analytics/search', { params });
         return response.data;
     },
-    
+
     searchVulnerabilities: async (
         query: string,
         options?: VulnerabilitySearchOptions
@@ -116,7 +116,7 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getComponentFindings: async (component: string, version?: string) => {
+    getComponentFindings: async (component: string, version?: string): Promise<ComponentFinding[]> => {
         const params = new URLSearchParams();
         params.append('component', component);
         if (version) params.append('version', version);
@@ -125,8 +125,8 @@ export const analyticsApi = {
     },
 
     getDependencyMetadata: async (
-        component: string, 
-        version?: string, 
+        component: string,
+        version?: string,
         type?: string
       ): Promise<DependencyMetadata | null> => {
         const params = new URLSearchParams();
@@ -136,13 +136,13 @@ export const analyticsApi = {
         const response = await api.get<DependencyMetadata | null>('/analytics/dependency-metadata', { params });
         return response.data;
     },
-      
-    getDependencyTypes: async () => {
+
+    getDependencyTypes: async (): Promise<string[]> => {
         const response = await api.get<string[]>('/analytics/dependency-types');
         return response.data;
     },
-    
-    getProjectRecommendations: async (projectId: string, scanId?: string) => {
+
+    getProjectRecommendations: async (projectId: string, scanId?: string): Promise<RecommendationsResponse> => {
         const params = new URLSearchParams();
         if (scanId) params.append('scan_id', scanId);
         const response = await api.get<RecommendationsResponse>(

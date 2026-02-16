@@ -50,6 +50,8 @@ export const TEAM_ROLES = [
 
 export const DEFAULT_PAGE_SIZE = 50;
 export const SMALL_PAGE_SIZE = 20;
+export const PROJECT_GRID_PAGE_SIZE = 12;
+export const DROPDOWN_PAGE_SIZE = 100;
 export const MAX_SCANS_FOR_CHARTS = 100;
 export const VIRTUAL_SCROLL_OVERSCAN = 20;
 

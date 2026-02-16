@@ -11,13 +11,14 @@ import { Button } from '@/components/ui/button'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
 import { formatDate } from '@/lib/utils'
+import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const [page, setPage] = useState(1)
   const [sortBy, setSortBy] = useState('created_at')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-  const limit = 50 // Optimized for virtual scrolling
+  const limit = DEFAULT_PAGE_SIZE
   const { data: recentScans, isLoading: isLoadingScans } = useRecentScans()
   const { data: dashboardStats, isLoading: isLoadingStats } = useDashboardStats()
 

@@ -38,34 +38,34 @@ export default function ProjectDetails() {
 
   const { data: user } = useCurrentUser()
 
-  const allBranches = branches || []
+  const allBranchNames = branches?.map(b => b.name) || []
 
   // Initialize selected branches with default branch or all branches
   useEffect(() => {
-    if (allBranches.length > 0 && selectedBranches.length === 0) {
-      if (project?.default_branch && allBranches.includes(project.default_branch)) {
+    if (allBranchNames.length > 0 && selectedBranches.length === 0) {
+      if (project?.default_branch && allBranchNames.includes(project.default_branch)) {
         setSelectedBranches([project.default_branch])
       } else {
-        setSelectedBranches(allBranches)
+        setSelectedBranches(allBranchNames)
       }
     }
     // Only run when branches data changes, not when selectedBranches changes (to avoid infinite loop)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allBranches, project])
+  }, [allBranchNames, project])
 
   const toggleBranch = (branch: string) => {
-      setSelectedBranches(prev => 
-          prev.includes(branch) 
+      setSelectedBranches(prev =>
+          prev.includes(branch)
               ? prev.filter(b => b !== branch)
               : [...prev, branch]
       )
   }
 
   const toggleAllBranches = () => {
-      if (selectedBranches.length === allBranches.length) {
+      if (selectedBranches.length === allBranchNames.length) {
           setSelectedBranches([])
       } else {
-          setSelectedBranches(allBranches)
+          setSelectedBranches(allBranchNames)
       }
   }
 
@@ -169,7 +169,7 @@ export default function ProjectDetails() {
                   <Button variant="outline" size="sm" className="gap-2">
                       <Filter className="h-4 w-4" />
                       Filter Branches
-                      {selectedBranches.length < allBranches.length && (
+                      {selectedBranches.length < allBranchNames.length && (
                           <span className="bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
                               {selectedBranches.length}
                           </span>
@@ -187,15 +187,15 @@ export default function ProjectDetails() {
                       <div className="flex items-center space-x-2 border-b pb-2">
                           <Checkbox 
                               id="select-all" 
-                              checked={selectedBranches.length === allBranches.length && allBranches.length > 0}
+                              checked={selectedBranches.length === allBranchNames.length && allBranchNames.length > 0}
                               onCheckedChange={toggleAllBranches}
                           />
                           <Label htmlFor="select-all" className="font-bold cursor-pointer">Select All</Label>
                       </div>
                       <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
-                          {allBranches.map(branch => (
+                          {allBranchNames.map(branch => (
                               <div key={branch} className="flex items-center space-x-2">
-                                  <Checkbox 
+                                  <Checkbox
                                       id={`branch-${branch}`}
                                       checked={selectedBranches.includes(branch)}
                                       onCheckedChange={() => toggleBranch(branch)}
@@ -203,7 +203,7 @@ export default function ProjectDetails() {
                                   <Label htmlFor={`branch-${branch}`} className="cursor-pointer font-normal">{branch}</Label>
                               </div>
                           ))}
-                          {allBranches.length === 0 && (
+                          {allBranchNames.length === 0 && (
                               <p className="text-sm text-muted-foreground">No branches found.</p>
                           )}
                       </div>

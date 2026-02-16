@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useInfiniteQuery, useQuery, keepPreviousData } from '@tanstack/react-query'
+import { useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { analyticsApi } from '@/api/analytics'
 import { AdvancedSearchResult } from '@/types/analytics'
-import { projectApi } from '@/api/projects'
+import { useDependencyTypes } from '@/hooks/queries/use-analytics'
+import { useProjectsDropdown } from '@/hooks/queries/use-projects'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
@@ -40,15 +41,8 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
   const debouncedQuery = useDebounce(query, 300)
 
-  const { data: types } = useQuery({
-    queryKey: ['dependency-types'],
-    queryFn: analyticsApi.getDependencyTypes,
-  })
-
-  const { data: projectsData } = useQuery({
-    queryKey: ['projects-list'],
-    queryFn: () => projectApi.getAll(undefined, 0, 100),
-  })
+  const { data: types } = useDependencyTypes()
+  const { data: projectsData } = useProjectsDropdown()
 
   const {
     data,
@@ -92,12 +86,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
 
   const virtualItems = rowVirtualizer.getVirtualItems()
   const lastItemIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1]?.index : -1
-
-  // Trigger measurement when scroll container becomes available
-  useEffect(() => {
-    if (!scrollContainer) return
-    rowVirtualizer.measure()
-  }, [scrollContainer, allResults.length, rowVirtualizer])
 
   useEffect(() => {
     if (lastItemIndex === -1) return
@@ -266,32 +254,33 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
         )}
 
         {/* Results */}
-        {query.length < 2 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <Search className="h-12 w-12 mb-4" />
-            <p>Enter at least 2 characters to search</p>
-          </div>
-        ) : isLoading ? (
-          <div className="space-y-2">
-            {new Array(5).fill(0).map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
-          </div>
-        ) : allResults.length > 0 ? (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                Showing {allResults.length} of {totalCount} result{totalCount !== 1 ? 's' : ''}
-              </p>
-              {isFetchingNextPage && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading more...
-                </div>
-              )}
+        <div ref={parentRef}>
+          {query.length < 2 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Search className="h-12 w-12 mb-4" />
+              <p>Enter at least 2 characters to search</p>
             </div>
-            <div ref={parentRef} className="border rounded-lg overflow-hidden">
-              <Table className="table-fixed">
+          ) : isLoading ? (
+            <div className="space-y-2">
+              {new Array(5).fill(0).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
+          ) : allResults.length > 0 ? (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  Showing {allResults.length} of {totalCount} result{totalCount !== 1 ? 's' : ''}
+                </p>
+                {isFetchingNextPage && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading more...
+                  </div>
+                )}
+              </div>
+              <div className="border rounded-lg overflow-hidden">
+                <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[250px]">Package</TableHead>
@@ -385,6 +374,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
             )}
           </div>
         )}
+        </div>
       </CardContent>
     </Card>
   )

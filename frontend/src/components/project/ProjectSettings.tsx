@@ -1,11 +1,11 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
-import { gitlabInstancesApi } from '@/api/gitlab-instances'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { useProjectBranches, useUpdateProjectNotifications, useTransferOwnership } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
+import { useGitLabInstances } from '@/hooks/queries/use-instances'
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { User } from '@/types/user'
@@ -110,11 +110,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const { data: appConfig } = useAppConfig();
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
 
-  // Fetch GitLab instances
-  const { data: gitlabInstances } = useQuery({
-    queryKey: ['gitlab-instances'],
-    queryFn: () => gitlabInstancesApi.list({ active_only: true }),
-  });
+  const { data: gitlabInstances } = useGitLabInstances({ active_only: true });
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),
@@ -258,7 +254,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         <SelectContent>
                             <SelectItem value="none">None (Show All)</SelectItem>
                             {branches?.map((branch) => (
-                                <SelectItem key={branch} value={branch}>{branch}</SelectItem>
+                                <SelectItem key={branch.name} value={branch.name}>{branch.name}</SelectItem>
                             ))}
                         </SelectContent>
                     </Select>

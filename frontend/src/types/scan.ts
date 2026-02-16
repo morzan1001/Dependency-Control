@@ -367,6 +367,79 @@ export interface SbomData {
   [key: string]: string | number | boolean | null | undefined | Array<{ name: string; version?: string; type?: string; purl?: string }>;
 }
 
+// --- SBOM Document types (raw CycloneDX/SPDX documents from API) ---
+
+export interface SbomToolComponent {
+  name: string;
+}
+
+export interface SbomTool {
+  name?: string;
+  vendor?: string;
+}
+
+export interface SbomMetadata {
+  component?: {
+    name?: string;
+  };
+  tools?: SbomTool[] | {
+    components?: SbomToolComponent[];
+  };
+}
+
+export interface SbomDocument {
+  metadata?: SbomMetadata;
+  serialNumber?: string;
+  [key: string]: unknown;
+}
+
+export interface SbomResponse {
+  index: number;
+  filename: string | null;
+  storage: 'gridfs' | 'inline';
+  sbom: SbomDocument | null;
+  error?: string;
+}
+
+// --- Scan query/response types ---
+
+export interface ScanFindingsParams {
+  skip?: number;
+  limit?: number;
+  sort_by?: string;
+  sort_order?: string;
+  type?: string;
+  category?: string;
+  severity?: string;
+  search?: string;
+}
+
+export interface ScanFindingsResponse {
+  items: Finding[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
+
+export interface ScanStats {
+  total?: number;
+  critical?: number;
+  high?: number;
+  medium?: number;
+  low?: number;
+  info?: number;
+  unknown?: number;
+  security?: number;
+  secret?: number;
+  sast?: number;
+  compliance?: number;
+  quality?: number;
+  other?: number;
+  by_type?: Record<string, number>;
+  [key: string]: number | Record<string, number> | undefined;
+}
+
 export interface EnhancedStats {
   critical?: number;
   high?: number;

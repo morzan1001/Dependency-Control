@@ -1,9 +1,8 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { scanApi } from '@/api/scans'
-import { projectApi } from '@/api/projects'
 import { Scan } from '@/types/scan'
+import { useProjectBranches } from '@/hooks/queries/use-projects'
+import { useProjectScans } from '@/hooks/queries/use-scans'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -30,23 +29,18 @@ const getEffectiveScanData = (scan: Scan) => {
 };
 
 export function ProjectScans({ projectId }: ProjectScansProps) {
-  const [page, setPage] = useState(0)
+  const [page, setPage] = useState(1)
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
   const [sortBy, setSortBy] = useState("created_at")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
   const limit = DEFAULT_PAGE_SIZE
   const navigate = useNavigate()
 
-  const { data: branches } = useQuery({
-    queryKey: ['project-branches', projectId],
-    queryFn: () => projectApi.getBranches(projectId),
-  })
+  const { data: branches } = useProjectBranches(projectId)
 
-  const { data: scans, isLoading, isPlaceholderData } = useQuery({
-    queryKey: ['project-scans', projectId, page, selectedBranch, sortBy, sortOrder],
-    queryFn: () => scanApi.getProjectScans(projectId, page * limit, limit, selectedBranch, sortBy, sortOrder, true),
-    placeholderData: (previousData) => previousData,
-  })
+  const { data: scans, isLoading, isPlaceholderData } = useProjectScans(
+    projectId, page, limit, selectedBranch, sortBy, sortOrder, true
+  )
 
   const renderSortIcon = (column: string) => {
     if (sortBy === column) {
@@ -82,7 +76,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                 size="icon" 
                 onClick={() => {
                   setSelectedBranch(undefined)
-                  setPage(0)
+                  setPage(1)
                 }}
               >
                 <X className="h-4 w-4" />
@@ -92,7 +86,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
               value={selectedBranch || "all"} 
               onValueChange={(value) => {
                 setSelectedBranch(value === "all" ? undefined : value)
-                setPage(0)
+                setPage(1)
               }}
             >
               <SelectTrigger className="w-[180px]">
@@ -101,8 +95,8 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
               <SelectContent>
                 <SelectItem value="all">All Branches</SelectItem>
                 {branches?.map((branch) => (
-                  <SelectItem key={branch} value={branch}>
-                    {branch}
+                  <SelectItem key={branch.name} value={branch.name}>
+                    {branch.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -314,13 +308,13 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
           </Table>
         </div>
         
-        {!(page === 0 && !hasMore) && (
+        {!(page === 1 && !hasMore) && (
           <div className="flex items-center justify-end space-x-2 py-4">
-            {page > 0 && (
+            {page > 1 && (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setPage(old => Math.max(old - 1, 0))}
+                onClick={() => setPage(old => Math.max(old - 1, 1))}
               >
                 <ChevronLeft className="h-4 w-4" />
                 Previous
