@@ -448,13 +448,45 @@ async def sync_project_branches(project_data: dict, db) -> None:
 
         deleted = sorted(b for b in our_branches if b not in vcs_set)
 
-        await db.projects.update_one(
-            {"_id": project_id},
-            {"$set": {
-                "deleted_branches": deleted,
-                "branches_checked_at": datetime.now(timezone.utc),
-            }},
-        )
+        update_fields: dict = {
+            "deleted_branches": deleted,
+            "branches_checked_at": datetime.now(timezone.utc),
+        }
+
+        # If deleted branches changed, check if latest_scan_id is on a deleted branch
+        if deleted:
+            current_scan_id = project_data.get("latest_scan_id")
+            if current_scan_id:
+                scan_doc = await db.scans.find_one(
+                    {"_id": current_scan_id}, {"branch": 1}
+                )
+                if scan_doc and scan_doc.get("branch") in deleted:
+                    # Find latest completed scan on an active branch
+                    active_scan = await db.scans.find_one(
+                        {
+                            "project_id": project_id,
+                            "branch": {"$nin": deleted},
+                            "status": "completed",
+                        },
+                        sort=[("created_at", -1)],
+                    )
+                    if active_scan:
+                        update_fields["latest_scan_id"] = active_scan["_id"]
+                        update_fields["last_scan_at"] = active_scan.get("created_at")
+                        # Update project stats from the active scan
+                        if active_scan.get("stats"):
+                            update_fields["stats"] = active_scan["stats"]
+                        logger.info(
+                            f"Project {project_name}: updated latest_scan_id to "
+                            f"active branch '{active_scan.get('branch')}'"
+                        )
+                    else:
+                        # No active scans at all — clear stats
+                        update_fields["latest_scan_id"] = None
+                        update_fields["stats"] = None
+                        logger.info(f"Project {project_name}: no active branch scans, cleared stats")
+
+        await db.projects.update_one({"_id": project_id}, {"$set": update_fields})
 
         if deleted:
             logger.info(f"Project {project_name}: {len(deleted)} deleted branch(es) detected")

@@ -8,8 +8,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Loader2 } from 'lucide-react'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Loader2, Trash2 } from 'lucide-react'
+import { useMemo } from 'react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -38,8 +39,11 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
 
   const { data: branches } = useProjectBranches(projectId)
 
+  const activeBranches = useMemo(() => branches?.filter(b => b.is_active) || [], [branches])
+  const deletedBranches = useMemo(() => branches?.filter(b => !b.is_active) || [], [branches])
+
   const { data: scans, isLoading, isPlaceholderData } = useProjectScans(
-    projectId, page, limit, selectedBranch, sortBy, sortOrder, true
+    projectId, { page, limit, branch: selectedBranch, sortBy, sortOrder, excludeRescans: true, excludeDeletedBranches: !selectedBranch }
   )
 
   const renderSortIcon = (column: string) => {
@@ -82,23 +86,40 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                 <X className="h-4 w-4" />
               </Button>
             )}
-            <Select 
-              value={selectedBranch || "all"} 
+            <Select
+              value={selectedBranch || "__all__"}
               onValueChange={(value) => {
-                setSelectedBranch(value === "all" ? undefined : value)
+                setSelectedBranch(value === "__all__" ? undefined : value)
                 setPage(1)
               }}
             >
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-[200px]">
                 <SelectValue placeholder="Filter by branch" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Branches</SelectItem>
-                {branches?.map((branch) => (
-                  <SelectItem key={branch.name} value={branch.name}>
-                    {branch.name}
-                  </SelectItem>
-                ))}
+                <SelectItem value="__all__">All Active Branches</SelectItem>
+                {activeBranches.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Active</SelectLabel>
+                    {activeBranches.map((branch) => (
+                      <SelectItem key={branch.name} value={branch.name}>
+                        {branch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {deletedBranches.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel className="flex items-center gap-1">
+                      <Trash2 className="h-3 w-3" /> Deleted
+                    </SelectLabel>
+                    {deletedBranches.map((branch) => (
+                      <SelectItem key={branch.name} value={branch.name}>
+                        <span className="text-muted-foreground">{branch.name}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
               </SelectContent>
             </Select>
           </div>

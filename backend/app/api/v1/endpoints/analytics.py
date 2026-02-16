@@ -226,10 +226,21 @@ async def get_dependency_tree(
     if project_id not in project_ids:
         raise HTTPException(status_code=403, detail="Access denied to this project")
 
-    # Get scan ID
+    # Get scan ID (prefer latest scan from active branch)
     if not scan_id:
-        project = await project_repo.get_raw_by_id(project_id)
-        scan_id = project.get("latest_scan_id") if project else None
+        project = await project_repo.get_by_id(project_id)
+        if project:
+            deleted = project.deleted_branches or []
+            if deleted:
+                # Find latest scan not on a deleted branch
+                scan_doc = await db.scans.find_one(
+                    {"project_id": project_id, "branch": {"$nin": deleted}, "status": "completed"},
+                    sort=[("created_at", -1)],
+                    projection={"_id": 1},
+                )
+                scan_id = scan_doc["_id"] if scan_doc else None
+            else:
+                scan_id = project.latest_scan_id
 
     if not scan_id:
         return []

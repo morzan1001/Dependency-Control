@@ -57,6 +57,7 @@ type UnifiedInstance = {
   token_configured?: boolean;
   // GitHub-specific
   github_url?: string;
+  has_access_token?: boolean;
 };
 
 interface InstanceFormData {
@@ -127,6 +128,7 @@ function mergeInstances(
         auto_create_projects: gh.auto_create_projects,
         created_at: gh.created_at,
         github_url: gh.github_url,
+        has_access_token: gh.has_access_token,
       });
     }
   }
@@ -304,6 +306,7 @@ export function CICDInstancesManagement() {
         oidc_audience: formData.oidc_audience || undefined,
         auto_create_projects: formData.auto_create_projects,
         is_active: formData.is_active,
+        access_token: formData.access_token || undefined,
       };
       createGitHubMutation.mutate(data);
     }
@@ -334,6 +337,7 @@ export function CICDInstancesManagement() {
         oidc_audience: formData.oidc_audience || undefined,
         auto_create_projects: formData.auto_create_projects,
         is_active: formData.is_active,
+        access_token: formData.access_token || undefined,
       };
       updateGitHubMutation.mutate({ id: editingInstance.id, data });
     }
@@ -470,6 +474,11 @@ export function CICDInstancesManagement() {
                       {instance._type === "gitlab" && !instance.token_configured && (
                         <Badge variant="destructive" className="text-xs">
                           No Token
+                        </Badge>
+                      )}
+                      {instance._type === "github" && instance.has_access_token === false && (
+                        <Badge variant="secondary" className="text-xs">
+                          No PAT
                         </Badge>
                       )}
                     </div>
@@ -690,24 +699,24 @@ function InstanceForm({
         />
       </div>
 
-      {/* GitLab-specific: Access Token */}
-      {formData.type === "gitlab" && (
-        <div className="grid gap-2">
-          <Label htmlFor="ci-access-token">
-            Access Token {isEdit ? "(leave empty to keep current)" : "*"}
-          </Label>
-          <Input
-            id="ci-access-token"
-            type="password"
-            placeholder="glpat-..."
-            value={formData.access_token}
-            onChange={(e) => setFormData((prev) => ({ ...prev, access_token: e.target.value }))}
-          />
-          <p className="text-sm text-muted-foreground">
-            Personal or Group Access Token with 'api' scope for MR comments and team sync.
-          </p>
-        </div>
-      )}
+      {/* Access Token */}
+      <div className="grid gap-2">
+        <Label htmlFor="ci-access-token">
+          Access Token {isEdit ? "(leave empty to keep current)" : formData.type === "gitlab" ? "*" : ""}
+        </Label>
+        <Input
+          id="ci-access-token"
+          type="password"
+          placeholder={formData.type === "gitlab" ? "glpat-..." : "ghp_..."}
+          value={formData.access_token}
+          onChange={(e) => setFormData((prev) => ({ ...prev, access_token: e.target.value }))}
+        />
+        <p className="text-sm text-muted-foreground">
+          {formData.type === "gitlab"
+            ? "Personal or Group Access Token with 'api' scope for MR comments and team sync."
+            : "Personal Access Token with 'repo' scope for branch tracking and API operations. Also used as fallback for GHSA lookups if no global GitHub token is configured."}
+        </p>
+      </div>
 
       <div className="grid gap-2">
         <Label htmlFor="ci-oidc-audience">OIDC Audience</Label>

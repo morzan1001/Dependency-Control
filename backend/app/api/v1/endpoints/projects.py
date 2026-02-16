@@ -628,6 +628,7 @@ async def read_project_scans(
     skip: int = 0,
     limit: int = 20,
     branch: Optional[str] = None,
+    exclude_deleted_branches: bool = False,
     exclude_rescans: bool = False,
     sort_by: str = "created_at",
     sort_order: str = "desc",
@@ -638,10 +639,15 @@ async def read_project_scans(
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
+    project_repo = ProjectRepository(db)
 
     query: Dict[str, Any] = {"project_id": project_id}
     if branch:
         query["branch"] = branch
+    elif exclude_deleted_branches:
+        project = await project_repo.get_by_id(project_id)
+        if project and project.deleted_branches:
+            query["branch"] = {"$nin": project.deleted_branches}
 
     if exclude_rescans:
         query["is_rescan"] = {"$ne": True}

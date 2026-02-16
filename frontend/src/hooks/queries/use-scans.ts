@@ -9,6 +9,7 @@ interface ScanListFilters {
     sortBy: string;
     sortOrder: 'asc' | 'desc';
     excludeRescans: boolean;
+    excludeDeletedBranches: boolean;
 }
 
 export const scanKeys = {
@@ -34,17 +35,16 @@ export const useRecentScans = () => {
 }
 
 export const useProjectScans = (
-    projectId: string, 
-    page: number = 1, 
-    limit: number = 20, 
-    branch?: string, 
-    sortBy: string = 'created_at', 
-    sortOrder: 'asc' | 'desc' = 'desc',
-    excludeRescans: boolean = false
+    projectId: string,
+    filters: Partial<ScanListFilters> = {}
 ) => {
+    const { page = 1, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false } = filters;
+    const resolvedFilters: ScanListFilters = { page, limit, branch, sortBy, sortOrder, excludeRescans, excludeDeletedBranches };
     return useQuery({
-        queryKey: scanKeys.list(projectId, { page, limit, branch, sortBy, sortOrder, excludeRescans }),
-        queryFn: () => scanApi.getProjectScans(projectId, (page - 1) * limit, limit, branch, sortBy, sortOrder, excludeRescans),
+        queryKey: scanKeys.list(projectId, resolvedFilters),
+        queryFn: () => scanApi.getProjectScans(projectId, {
+            skip: (page - 1) * limit, limit, branch, sortBy, sortOrder, excludeRescans, excludeDeletedBranches
+        }),
         enabled: !!projectId,
         placeholderData: keepPreviousData
     });

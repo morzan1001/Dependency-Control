@@ -207,8 +207,33 @@ async def broadcast_message(
         # 1. Get all projects with latest_scan_id
         projects_list = await project_repo.find_many({"latest_scan_id": {"$exists": True}}, limit=10000)
 
-        # Map scan_id -> Project Data
-        scan_map = {p.latest_scan_id: p for p in projects_list if p.latest_scan_id}
+        # Map scan_id -> Project Data (excluding scans from deleted branches)
+        scan_map: Dict[str, Project] = {}
+        projects_needing_lookup: list = []
+        for p in projects_list:
+            if not p.latest_scan_id:
+                continue
+            if p.deleted_branches:
+                projects_needing_lookup.append(p)
+            else:
+                scan_map[p.latest_scan_id] = p
+
+        # Resolve active branch scans for projects with deleted branches
+        if projects_needing_lookup:
+            or_conditions = [
+                {"project_id": p.id, "branch": {"$nin": p.deleted_branches}, "status": "completed"}
+                for p in projects_needing_lookup
+            ]
+            pipeline = [
+                {"$match": {"$or": or_conditions}},
+                {"$sort": {"created_at": -1}},
+                {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
+            ]
+            proj_map = {p.id: p for p in projects_needing_lookup}
+            async for doc in db.scans.aggregate(pipeline):
+                proj = proj_map.get(doc["_id"])
+                if proj:
+                    scan_map[doc["scan_id"]] = proj
 
         if not scan_map:
             return BroadcastResult(recipient_count=0)

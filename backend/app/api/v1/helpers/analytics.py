@@ -80,20 +80,73 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str
     return [p.id for p in projects]
 
 
+async def _resolve_active_scan_ids(
+    projects: List[Any],
+    db: AsyncIOMotorDatabase,
+) -> Dict[str, str]:
+    """
+    Resolve latest scan IDs for projects, excluding scans from deleted branches.
+
+    For projects without deleted branches, uses latest_scan_id directly.
+    For projects with deleted branches, queries for the latest completed scan
+    on an active branch.
+
+    Returns:
+        Dict mapping project_id -> resolved scan_id
+    """
+    result: Dict[str, str] = {}
+    projects_needing_lookup = []
+
+    for p in projects:
+        if not p.latest_scan_id:
+            continue
+        if p.deleted_branches:
+            projects_needing_lookup.append(p)
+        else:
+            result[p.id] = p.latest_scan_id
+
+    if not projects_needing_lookup:
+        return result
+
+    # For projects with deleted branches, find latest completed scan on active branch
+    or_conditions = [
+        {
+            "project_id": p.id,
+            "branch": {"$nin": p.deleted_branches},
+            "status": "completed",
+        }
+        for p in projects_needing_lookup
+    ]
+
+    pipeline = [
+        {"$match": {"$or": or_conditions}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
+    ]
+
+    cursor = db.scans.aggregate(pipeline)
+    async for doc in cursor:
+        result[doc["_id"]] = doc["scan_id"]
+
+    return result
+
+
 async def get_latest_scan_ids(project_ids: List[str], db: AsyncIOMotorDatabase) -> List[str]:
-    """Get latest scan IDs for given projects."""
+    """Get latest scan IDs for given projects, excluding scans from deleted branches."""
     project_repo = ProjectRepository(db)
     projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": project_ids}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
     )
 
-    return [p.latest_scan_id for p in projects if p.latest_scan_id]
+    resolved = await _resolve_active_scan_ids(projects, db)
+    return list(resolved.values())
 
 
 async def get_projects_with_scans(project_ids: List[str], db: AsyncIOMotorDatabase) -> Tuple[Dict[str, str], List[str]]:
     """
     Get project name mapping and scan IDs for given projects.
+    Excludes scans from deleted branches.
 
     Returns:
         Tuple of (project_name_map, scan_ids)
@@ -105,9 +158,9 @@ async def get_projects_with_scans(project_ids: List[str], db: AsyncIOMotorDataba
     )
 
     project_name_map = {p.id: p.name for p in projects}
-    scan_ids = [p.latest_scan_id for p in projects if p.latest_scan_id]
+    resolved = await _resolve_active_scan_ids(projects, db)
 
-    return project_name_map, scan_ids
+    return project_name_map, list(resolved.values())
 
 
 def calculate_days_until_due(kev_due_date: Optional[str]) -> Optional[int]:
@@ -455,11 +508,12 @@ async def gather_cross_project_data(
     )
     project_info_map = {p.id: p for p in other_projects}
 
-    # Collect scan IDs from projects
+    # Resolve scan IDs excluding deleted branches
+    resolved_scans = await _resolve_active_scan_ids(other_projects, db)
+
     scan_id_to_project: Dict[str, str] = {}
-    for project in other_projects:
-        if project.latest_scan_id:
-            scan_id_to_project[project.latest_scan_id] = project.id
+    for proj_id, scan_id in resolved_scans.items():
+        scan_id_to_project[scan_id] = proj_id
 
     other_scan_ids = list(scan_id_to_project.keys())
 

@@ -18,7 +18,7 @@ interface ProjectOverviewProps {
 }
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
-  const { data: scans, isLoading } = useProjectScans(projectId, 1, MAX_SCANS_FOR_CHARTS)
+  const { data: scans, isLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
 
   const { data: waivers } = useProjectWaivers(projectId)
 

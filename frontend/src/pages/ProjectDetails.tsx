@@ -4,7 +4,7 @@ import { useProject, useProjectBranches } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Download, Filter } from 'lucide-react'
+import { ArrowLeft, Download, Filter, Trash2 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from "sonner"
 import { ProjectOverview } from '@/components/project/ProjectOverview'
@@ -12,7 +12,7 @@ import { ProjectScans } from '@/components/project/ProjectScans'
 import { ProjectWaivers } from '@/components/project/ProjectWaivers'
 import { ProjectMembers } from '@/components/project/ProjectMembers'
 import { ProjectSettings } from '@/components/project/ProjectSettings'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
@@ -39,19 +39,21 @@ export default function ProjectDetails() {
   const { data: user } = useCurrentUser()
 
   const allBranchNames = branches?.map(b => b.name) || []
+  const activeBranchNames = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
+  const deletedBranchNames = useMemo(() => branches?.filter(b => !b.is_active).map(b => b.name) || [], [branches])
 
-  // Initialize selected branches with default branch or all branches
+  // Initialize selected branches with default branch or all active branches
   useEffect(() => {
-    if (allBranchNames.length > 0 && selectedBranches.length === 0) {
-      if (project?.default_branch && allBranchNames.includes(project.default_branch)) {
+    if (activeBranchNames.length > 0 && selectedBranches.length === 0) {
+      if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {
         setSelectedBranches([project.default_branch])
       } else {
-        setSelectedBranches(allBranchNames)
+        setSelectedBranches(activeBranchNames)
       }
     }
     // Only run when branches data changes, not when selectedBranches changes (to avoid infinite loop)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allBranchNames, project])
+  }, [activeBranchNames, project])
 
   const toggleBranch = (branch: string) => {
       setSelectedBranches(prev =>
@@ -62,10 +64,10 @@ export default function ProjectDetails() {
   }
 
   const toggleAllBranches = () => {
-      if (selectedBranches.length === allBranchNames.length) {
+      if (selectedBranches.length === activeBranchNames.length) {
           setSelectedBranches([])
       } else {
-          setSelectedBranches(allBranchNames)
+          setSelectedBranches(activeBranchNames)
       }
   }
 
@@ -169,7 +171,7 @@ export default function ProjectDetails() {
                   <Button variant="outline" size="sm" className="gap-2">
                       <Filter className="h-4 w-4" />
                       Filter Branches
-                      {selectedBranches.length < allBranchNames.length && (
+                      {selectedBranches.length < activeBranchNames.length && (
                           <span className="bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center">
                               {selectedBranches.length}
                           </span>
@@ -185,24 +187,46 @@ export default function ProjectDetails() {
                   </DialogHeader>
                   <div className="py-4 space-y-4">
                       <div className="flex items-center space-x-2 border-b pb-2">
-                          <Checkbox 
-                              id="select-all" 
-                              checked={selectedBranches.length === allBranchNames.length && allBranchNames.length > 0}
+                          <Checkbox
+                              id="select-all"
+                              checked={selectedBranches.length === activeBranchNames.length && activeBranchNames.length > 0}
                               onCheckedChange={toggleAllBranches}
                           />
-                          <Label htmlFor="select-all" className="font-bold cursor-pointer">Select All</Label>
+                          <Label htmlFor="select-all" className="font-bold cursor-pointer">Select All Active</Label>
                       </div>
                       <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
-                          {allBranchNames.map(branch => (
-                              <div key={branch} className="flex items-center space-x-2">
-                                  <Checkbox
-                                      id={`branch-${branch}`}
-                                      checked={selectedBranches.includes(branch)}
-                                      onCheckedChange={() => toggleBranch(branch)}
-                                  />
-                                  <Label htmlFor={`branch-${branch}`} className="cursor-pointer font-normal">{branch}</Label>
-                              </div>
-                          ))}
+                          {activeBranchNames.length > 0 && (
+                            <>
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider pt-1">Active</p>
+                              {activeBranchNames.map(branch => (
+                                  <div key={branch} className="flex items-center space-x-2">
+                                      <Checkbox
+                                          id={`branch-${branch}`}
+                                          checked={selectedBranches.includes(branch)}
+                                          onCheckedChange={() => toggleBranch(branch)}
+                                      />
+                                      <Label htmlFor={`branch-${branch}`} className="cursor-pointer font-normal">{branch}</Label>
+                                  </div>
+                              ))}
+                            </>
+                          )}
+                          {deletedBranchNames.length > 0 && (
+                            <>
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider pt-3 flex items-center gap-1">
+                                <Trash2 className="h-3 w-3" /> Deleted
+                              </p>
+                              {deletedBranchNames.map(branch => (
+                                  <div key={branch} className="flex items-center space-x-2">
+                                      <Checkbox
+                                          id={`branch-${branch}`}
+                                          checked={selectedBranches.includes(branch)}
+                                          onCheckedChange={() => toggleBranch(branch)}
+                                      />
+                                      <Label htmlFor={`branch-${branch}`} className="cursor-pointer font-normal text-muted-foreground">{branch}</Label>
+                                  </div>
+                              ))}
+                            </>
+                          )}
                           {allBranchNames.length === 0 && (
                               <p className="text-sm text-muted-foreground">No branches found.</p>
                           )}

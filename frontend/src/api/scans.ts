@@ -7,9 +7,13 @@ export const scanApi = {
         return response.data;
     },
 
-    getProjectScans: async (id: string, skip: number = 0, limit: number = 20, branch?: string, sortBy: string = 'created_at', sortOrder: 'asc' | 'desc' = 'desc', excludeRescans: boolean = false): Promise<Scan[]> => {
+    getProjectScans: async (id: string, params: {
+        skip?: number; limit?: number; branch?: string; sortBy?: string;
+        sortOrder?: 'asc' | 'desc'; excludeRescans?: boolean; excludeDeletedBranches?: boolean;
+    } = {}): Promise<Scan[]> => {
+        const { skip = 0, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false } = params;
         const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
-          params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans }
+          params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans, exclude_deleted_branches: excludeDeletedBranches }
         });
         return response.data;
     },

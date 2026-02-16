@@ -44,6 +44,19 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
 
     scan_id = project.latest_scan_id
 
+    # If project has deleted branches, verify scan is on an active branch
+    if project.deleted_branches:
+        scan_doc = await db.scans.find_one({"_id": scan_id}, {"branch": 1})
+        if scan_doc and scan_doc.get("branch") in project.deleted_branches:
+            active_scan = await db.scans.find_one(
+                {"project_id": project_id, "branch": {"$nin": project.deleted_branches}, "status": "completed"},
+                sort=[("created_at", -1)],
+                projection={"_id": 1},
+            )
+            if not active_scan:
+                return None
+            scan_id = active_scan["_id"]
+
     # Acquire distributed lock to prevent race conditions
     lock_name = f"stats_recalc:{project_id}"
     holder_id = f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
