@@ -6,7 +6,7 @@ import { useProjects} from '@/hooks/queries/use-projects'
 import { useNavigate } from 'react-router-dom'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
@@ -51,13 +51,18 @@ export default function Dashboard() {
   // Virtual Scroll Setup
   const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
   
+  const scrollObserver = useMemo(
+    () => createScrollObserver(scrollContainer, tableOffset),
+    [scrollContainer, tableOffset]
+  )
+
   // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: projectList.length,
     getScrollElement: () => scrollContainer,
     estimateSize: () => 73, // Approximate row height
     overscan: 5,
-    observeElementOffset: createScrollObserver(scrollContainer, tableOffset),
+    observeElementOffset: scrollObserver,
   })
 
   const stats = [

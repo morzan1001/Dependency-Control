@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { analyticsApi } from '@/api/analytics'
@@ -75,13 +75,18 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const allResults = data ? data.pages.flatMap((d) => d.items) : []
   const totalCount = data?.pages[0]?.total ?? 0
 
+  const scrollObserver = useMemo(
+    () => createScrollObserver(scrollContainer, tableOffset),
+    [scrollContainer, tableOffset]
+  )
+
   // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: hasNextPage ? allResults.length + 1 : allResults.length,
     getScrollElement: () => scrollContainer,
     estimateSize: () => 52,
     overscan: VIRTUAL_SCROLL_OVERSCAN,
-    observeElementOffset: createScrollObserver(scrollContainer, tableOffset),
+    observeElementOffset: scrollObserver,
   })
 
   const virtualItems = rowVirtualizer.getVirtualItems()

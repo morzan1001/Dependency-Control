@@ -58,7 +58,8 @@ export function useScrollContainer(): ScrollContainerResult {
 
 /**
  * Creates a virtual scroll observer function for use with @tanstack/react-virtual.
- * Handles the scroll offset calculation relative to the table position.
+ * Handles the scroll offset calculation relative to the table position
+ * and properly tracks isScrolling state for the virtualizer.
  */
 export function createScrollObserver(
   scrollContainer: HTMLElement | null,
@@ -67,16 +68,25 @@ export function createScrollObserver(
   return (_instance: unknown, cb: (offset: number, isScrolling: boolean) => void) => {
     if (!scrollContainer) return undefined
 
-    const onScroll = () => {
+    let scrollEndTimer: ReturnType<typeof setTimeout> | null = null
+
+    const reportOffset = (isScrolling: boolean) => {
       const offset = scrollContainer.scrollTop - tableOffset
-      cb(Math.max(0, offset), false)
+      cb(Math.max(0, offset), isScrolling)
+    }
+
+    const onScroll = () => {
+      reportOffset(true)
+      if (scrollEndTimer) clearTimeout(scrollEndTimer)
+      scrollEndTimer = setTimeout(() => reportOffset(false), 150)
     }
 
     scrollContainer.addEventListener('scroll', onScroll, { passive: true })
-    onScroll()
-    
+    reportOffset(false) // Initial position, not scrolling
+
     return () => {
       scrollContainer.removeEventListener('scroll', onScroll)
+      if (scrollEndTimer) clearTimeout(scrollEndTimer)
     }
   }
 }

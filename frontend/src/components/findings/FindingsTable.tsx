@@ -1,6 +1,6 @@
 import { useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { scanApi } from '@/api/scans'
 import { Finding } from '@/types/scan'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -65,13 +65,20 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
 
     const allRows = data ? data.pages.flatMap((d) => d.items) : []
 
+    // Memoize the scroll observer so TanStack Virtual doesn't re-subscribe on every render.
+    // Re-subscribing tears down and recreates the scroll listener, which can desync scroll position.
+    const scrollObserver = useMemo(
+        () => createScrollObserver(scrollContainer, tableOffset),
+        [scrollContainer, tableOffset]
+    )
+
     // eslint-disable-next-line react-hooks/incompatible-library
     const rowVirtualizer = useVirtualizer({
         count: hasNextPage ? allRows.length + 1 : allRows.length,
         getScrollElement: () => scrollContainer,
         estimateSize: () => 60,
         overscan: VIRTUAL_SCROLL_OVERSCAN,
-        observeElementOffset: createScrollObserver(scrollContainer, tableOffset),
+        observeElementOffset: scrollObserver,
     })
 
     const virtualItems = rowVirtualizer.getVirtualItems()
@@ -83,18 +90,6 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
         // The virtualizer handles dynamic content via measureElement ref
         rowVirtualizer.measure()
     }, [scrollContainer, rowVirtualizer])
-
-    useEffect(() => {
-        if (!parentRef.current || typeof ResizeObserver === 'undefined') return
-
-        const observer = new ResizeObserver(() => {
-            rowVirtualizer.measure()
-        })
-
-        observer.observe(parentRef.current)
-
-        return () => observer.disconnect()
-    }, [parentRef, rowVirtualizer])
 
     useEffect(() => {
         if (lastItemIndex === -1) {
