@@ -119,6 +119,39 @@ spec:
     serverHost: monitoring-service
   {{- end }}
 
+  {{- if .Values.database.percona.backup.enabled }}
+  backup:
+    enabled: true
+    image: "{{ .Values.database.percona.backup.image.repository }}:{{ .Values.database.percona.backup.image.tag }}"
+    storages:
+      {{- range $name, $storage := .Values.database.percona.backup.storages }}
+      {{ $name }}:
+        type: {{ $storage.type }}
+        s3:
+          bucket: {{ $storage.bucket }}
+          region: {{ $storage.region | default "auto" }}
+          endpointUrl: {{ $storage.endpointUrl | default "https://storage.googleapis.com" }}
+          credentialsSecret: {{ $storage.credentialsSecret }}
+          {{- if $storage.prefix }}
+          prefix: {{ $storage.prefix }}
+          {{- end }}
+      {{- end }}
+    tasks:
+      {{- range .Values.database.percona.backup.tasks }}
+      - name: {{ .name }}
+        enabled: {{ .enabled }}
+        schedule: {{ .schedule | quote }}
+        keep: {{ .keep }}
+        storageName: {{ .storageName }}
+        {{- if .compressionType }}
+        compressionType: {{ .compressionType }}
+        {{- end }}
+        {{- if .type }}
+        type: {{ .type }}
+        {{- end }}
+      {{- end }}
+  {{- end }}
+
   users:
     - name: {{ .Values.database.auth.username }}
       db: {{ .Values.database.auth.database }}
