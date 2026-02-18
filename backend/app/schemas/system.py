@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -51,6 +51,9 @@ class SystemSettingsBase(BaseModel):
     gitlab_auto_create_projects: bool = False
     gitlab_sync_teams: bool = False
     gitlab_oidc_audience: Optional[str] = None
+
+    # Default Analyzers for auto-created projects
+    default_active_analyzers: List[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
 
     # Retention
     retention_mode: str = "project"
