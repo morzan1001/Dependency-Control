@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
+import { projectKeys } from '@/hooks/queries/use-projects'
 import { getErrorMessage } from '@/lib/utils'
 import { Project } from '@/types/project'
 import { useAuth } from '@/context/useAuth'
@@ -50,7 +51,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
   const inviteMemberMutation = useMutation({
     mutationFn: (data: { email: string, role: string }) => projectApi.inviteMember(projectId, data.email, data.role),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project', projectId] })
+      queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
       setIsInviteMemberOpen(false)
       setInviteEmail("")
       setInviteRole("viewer")
@@ -66,7 +67,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
   const updateMemberMutation = useMutation({
     mutationFn: (data: { userId: string, role: string }) => projectApi.updateMember(projectId, data.userId, data.role),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project', projectId] })
+      queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
       toast.success("Member role updated")
     },
     onError: (error) => {
@@ -79,7 +80,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
   const removeMemberMutation = useMutation({
     mutationFn: (userId: string) => projectApi.removeMember(projectId, userId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project', projectId] })
+      queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
       toast.success("Member removed")
     },
     onError: (error) => {
