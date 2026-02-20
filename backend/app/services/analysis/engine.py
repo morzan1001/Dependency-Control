@@ -10,6 +10,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateOne
 
+from app.core import ensure_utc
 from app.models.project import Project
 from app.repositories import (
     AnalysisResultRepository,
@@ -399,7 +400,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     # Filter active waivers
     active_waivers = [
-        w for w in waivers if not (w.get("expiration_date") and w["expiration_date"] < datetime.now(timezone.utc))
+        w for w in waivers if not (w.get("expiration_date") and ensure_utc(w["expiration_date"]) < datetime.now(timezone.utc))
     ]
 
     # Save Findings to 'findings' collection

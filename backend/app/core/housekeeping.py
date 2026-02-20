@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Optional
 
+from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import (
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
@@ -22,20 +23,6 @@ if TYPE_CHECKING:
     from app.core.worker import WorkerManager
 
 logger = logging.getLogger(__name__)
-
-
-def _ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
-    """Ensure a datetime is timezone-aware (UTC).
-
-    MongoDB returns naive datetimes (always UTC but without tzinfo).
-    This adds UTC tzinfo if missing, enabling safe comparison with
-    timezone-aware datetimes like datetime.now(timezone.utc).
-    """
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 async def _get_referenced_scan_ids(db) -> list[str]:
@@ -105,7 +92,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                     continue
 
                 # Check if time to scan
-                last_scan_aware = _ensure_utc(project.last_scan_at)
+                last_scan_aware = ensure_utc(project.last_scan_at)
                 next_scan_due = last_scan_aware + timedelta(hours=interval_hours)
                 if datetime.now(timezone.utc) < next_scan_due:
                     continue
@@ -487,7 +474,7 @@ async def sync_project_branches(project_data: dict, db) -> None:
                     )
                     if active_scan:
                         update_fields["latest_scan_id"] = active_scan["_id"]
-                        update_fields["last_scan_at"] = _ensure_utc(active_scan.get("created_at"))
+                        update_fields["last_scan_at"] = ensure_utc(active_scan.get("created_at"))
                         # Update project stats from the active scan
                         if active_scan.get("stats"):
                             update_fields["stats"] = active_scan["stats"]
