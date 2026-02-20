@@ -324,11 +324,14 @@ async def get_project_for_ingest(
                     if team_id:
                         new_project.team_id = team_id
 
-                await project_repo.create(new_project)
-                logger.info(
-                    f"Auto-created project '{gitlab_project_path}' from GitLab instance '{gitlab_instance.name}'"
+                project, created = await project_repo.find_or_create_by_gitlab_key(
+                    str(gitlab_instance.id), gitlab_project_id, new_project
                 )
-                return new_project
+                if created:
+                    logger.info(
+                        f"Auto-created project '{gitlab_project_path}' from GitLab instance '{gitlab_instance.name}'"
+                    )
+                return project
 
             raise HTTPException(
                 status_code=404,
@@ -408,11 +411,14 @@ async def get_project_for_ingest(
                     active_analyzers=settings.default_active_analyzers,
                 )
 
-                await project_repo.create(new_project)
-                logger.info(
-                    f"Auto-created project '{github_repository_path}' from GitHub instance '{github_instance.name}'"
+                project, created = await project_repo.find_or_create_by_github_key(
+                    str(github_instance.id), github_repository_id, new_project
                 )
-                return new_project
+                if created:
+                    logger.info(
+                        f"Auto-created project '{github_repository_path}' from GitHub instance '{github_instance.name}'"
+                    )
+                return project
 
             raise HTTPException(
                 status_code=404,

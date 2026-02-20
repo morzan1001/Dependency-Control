@@ -345,11 +345,11 @@ class TestIngestOidcProjectLookup:
             "sync_teams": False,
         }
 
-        # Project not found via composite key
+        # Project not found via composite key lookup, but find_or_create succeeds
+        admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
+
         gitlab_instances_coll = create_mock_collection(find_one=instance_doc)
         projects_coll = create_mock_collection(find_one=None)
-        projects_coll.insert_one = AsyncMock()
-        admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
         users_coll = create_mock_collection(find_one=admin_doc)
         db = create_mock_db(
             {
@@ -359,6 +359,12 @@ class TestIngestOidcProjectLookup:
             }
         )
         settings = _make_system_settings()
+
+        # find_one_and_update returns the newly created document (simulates upsert insert)
+        def fake_find_or_create(filter_query, update, **kwargs):
+            return update.get("$setOnInsert", {})
+
+        projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
         with patch("jose.jwt.get_unverified_claims") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab-a.com"}
@@ -387,7 +393,7 @@ class TestIngestOidcProjectLookup:
         assert result.gitlab_instance_id == "inst-a"
         assert result.gitlab_project_id == 99
         assert result.active_analyzers == settings.default_active_analyzers
-        projects_coll.insert_one.assert_called_once()
+        projects_coll.find_one_and_update.assert_called_once()
 
     def test_raises_404_when_auto_create_disabled(self):
         from app.api.deps import get_project_for_ingest
@@ -683,11 +689,10 @@ class TestIngestGitHubOidcProjectLookup:
         }
         admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
 
-        # Project not found via composite key
+        # Project not found via composite key lookup, but find_or_create succeeds
         gitlab_instances_coll = create_mock_collection(find_one=None)
         github_instances_coll = create_mock_collection(find_one=github_instance_doc)
         projects_coll = create_mock_collection(find_one=None)
-        projects_coll.insert_one = AsyncMock()
         users_coll = create_mock_collection(find_one=admin_doc)
         db = create_mock_db(
             {
@@ -698,6 +703,12 @@ class TestIngestGitHubOidcProjectLookup:
             }
         )
         settings = _make_system_settings()
+
+        # find_one_and_update returns the newly created document (simulates upsert insert)
+        def fake_find_or_create(filter_query, update, **kwargs):
+            return update.get("$setOnInsert", {})
+
+        projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
         with patch("jose.jwt.get_unverified_claims") as mock_claims:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
@@ -727,7 +738,7 @@ class TestIngestGitHubOidcProjectLookup:
         assert result.github_repository_id == "789"
         assert result.github_repository_path == "org/new-repo"
         assert result.active_analyzers == settings.default_active_analyzers
-        projects_coll.insert_one.assert_called_once()
+        projects_coll.find_one_and_update.assert_called_once()
 
     def test_raises_404_when_auto_create_disabled(self):
         from app.api.deps import get_project_for_ingest

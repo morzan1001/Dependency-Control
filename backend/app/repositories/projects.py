@@ -4,9 +4,10 @@ Project Repository
 Centralizes all database operations for projects.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument
 
 from app.models.project import Project
 from app.schemas.projections import ProjectIdOnly, ProjectMinimal, ProjectWithScanId
@@ -107,6 +108,40 @@ class ProjectRepository:
     async def count_by_github_instance(self, github_instance_id: str) -> int:
         """Count projects for a specific GitHub instance."""
         return await self.collection.count_documents({"github_instance_id": github_instance_id})
+
+    async def find_or_create_by_gitlab_key(
+        self, gitlab_instance_id: str, gitlab_project_id: int, project: Project
+    ) -> Tuple[Project, bool]:
+        """Atomically find or create a project by GitLab composite key.
+
+        Uses $setOnInsert so existing projects are never modified.
+        Returns (project, created) tuple.
+        """
+        result = await self.collection.find_one_and_update(
+            {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id},
+            {"$setOnInsert": project.model_dump(by_alias=True)},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        created = result["_id"] == project.id
+        return Project(**result), created
+
+    async def find_or_create_by_github_key(
+        self, github_instance_id: str, github_repository_id: str, project: Project
+    ) -> Tuple[Project, bool]:
+        """Atomically find or create a project by GitHub composite key.
+
+        Uses $setOnInsert so existing projects are never modified.
+        Returns (project, created) tuple.
+        """
+        result = await self.collection.find_one_and_update(
+            {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id},
+            {"$setOnInsert": project.model_dump(by_alias=True)},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        created = result["_id"] == project.id
+        return Project(**result), created
 
     async def create(self, project: Project) -> Project:
         """Create a new project."""

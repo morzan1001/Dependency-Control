@@ -714,7 +714,6 @@ class TestAutoCreateUsesSystemAnalyzers:
 
         gitlab_instances_coll = create_mock_collection(find_one=instance_doc)
         projects_coll = create_mock_collection(find_one=None)
-        projects_coll.insert_one = AsyncMock()
         users_coll = create_mock_collection(find_one=admin_doc)
         db = create_mock_db(
             {
@@ -723,6 +722,12 @@ class TestAutoCreateUsesSystemAnalyzers:
                 "users": users_coll,
             }
         )
+
+        # Mock find_one_and_update to return the $setOnInsert document (simulates upsert insert)
+        def fake_find_or_create(filter_query, update, **kwargs):
+            return update.get("$setOnInsert", {})
+
+        projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
         custom_analyzers = ["trivy", "osv"]
         settings = SystemSettings(
@@ -778,7 +783,6 @@ class TestAutoCreateUsesSystemAnalyzers:
         gitlab_instances_coll = create_mock_collection(find_one=None)
         github_instances_coll = create_mock_collection(find_one=github_instance_doc)
         projects_coll = create_mock_collection(find_one=None)
-        projects_coll.insert_one = AsyncMock()
         users_coll = create_mock_collection(find_one=admin_doc)
         db = create_mock_db(
             {
@@ -788,6 +792,12 @@ class TestAutoCreateUsesSystemAnalyzers:
                 "users": users_coll,
             }
         )
+
+        # Mock find_one_and_update to return the $setOnInsert document (simulates upsert insert)
+        def fake_find_or_create(filter_query, update, **kwargs):
+            return update.get("$setOnInsert", {})
+
+        projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
         custom_analyzers = ["end_of_life"]
         settings = SystemSettings(

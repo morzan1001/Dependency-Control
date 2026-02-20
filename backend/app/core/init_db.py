@@ -14,9 +14,37 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 
 
+async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
+    """
+    Migrate project indexes from sparse to partialFilterExpression.
+
+    MongoDB's sparse compound indexes don't skip documents with explicit null values
+    (only documents where the fields are completely absent). Since Pydantic serializes
+    None as null, this caused DuplicateKeyError when creating projects without
+    GitLab/GitHub integration. partialFilterExpression correctly handles this.
+    """
+    projects_collection = database["projects"]
+    existing_indexes = await projects_collection.index_information()
+
+    for idx_name, idx_info in existing_indexes.items():
+        key = idx_info.get("key", [])
+        is_sparse = idx_info.get("sparse", False)
+
+        if key == [("gitlab_instance_id", 1), ("gitlab_project_id", 1)] and is_sparse:
+            logger.info(f"Dropping old sparse GitLab index: {idx_name}")
+            await projects_collection.drop_index(idx_name)
+
+        if key == [("github_instance_id", 1), ("github_repository_id", 1)] and is_sparse:
+            logger.info(f"Dropping old sparse GitHub index: {idx_name}")
+            await projects_collection.drop_index(idx_name)
+
+
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     """Creates indexes for all collections to ensure performance."""
     logger.info("Creating database indexes...")
+
+    # Migrate old sparse indexes to partialFilterExpression (one-time migration)
+    await _migrate_project_indexes(database)
 
     # Users
     await database["users"].create_index("username", unique=True)
@@ -105,7 +133,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["projects"].create_index(
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
         unique=True,
-        sparse=True,  # Allow null values (projects without GitLab integration)
+        partialFilterExpression={
+            "gitlab_instance_id": {"$type": "string"},
+            "gitlab_project_id": {"$type": "int"},
+        },
     )
     await database["projects"].create_index("gitlab_instance_id")  # For instance-wide queries
     await database["projects"].create_index("latest_scan_id")
@@ -212,7 +243,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["projects"].create_index(
         [("github_instance_id", pymongo.ASCENDING), ("github_repository_id", pymongo.ASCENDING)],
         unique=True,
-        sparse=True,
+        partialFilterExpression={
+            "github_instance_id": {"$type": "string"},
+            "github_repository_id": {"$type": "string"},
+        },
     )
 
     # Scans - Additional index for reachability pending
