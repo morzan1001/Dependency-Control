@@ -1,28 +1,15 @@
-name: Build and Publish Backend
+name: Publish Backend Image
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
     tags: [ 'v*.*.*' ]
-    paths:
-      - 'backend/**'
-      - 'ci-cd/scripts/**'
-      - '.github/workflows/publish-backend.yml'
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - 'backend/**'
-      - 'ci-cd/scripts/**'
 
 env:
   REGISTRY: ghcr.io
-  # github.repository as <account>/<repo>
-  IMAGE_NAME: ${{ github.repository }}-backend
-  REPO_NAME: ${{ github.repository }}
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -45,7 +32,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log into registry ${{ env.REGISTRY }}
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -60,25 +46,16 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.REPO_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=sha,format=short
 
-      - name: Run tests
-        run: |
-          pip install poetry
-          cd backend
-          poetry install --no-interaction
-          poetry run pytest --tb=short -q
-
       - name: Build and push Docker image
-        id: build-and-push
         uses: docker/build-push-action@v6
         with:
           context: "."
           file: "./backend/Dockerfile"
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
             ${{ steps.meta.outputs.labels }}

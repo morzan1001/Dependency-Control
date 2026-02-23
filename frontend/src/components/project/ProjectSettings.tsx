@@ -497,7 +497,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
 
             {!enforceNotificationSettings && (() => {
                 const userId = user.id;
-                let hasProjectPrefs = false;
+                let hasProjectPrefs: boolean;
                 if (project.owner_id === userId) {
                     hasProjectPrefs = !!(project.owner_notification_preferences && Object.keys(project.owner_notification_preferences).length > 0);
                 } else {
