@@ -112,7 +112,7 @@ class GitLabInstanceRepository:
         Optionally exclude a specific instance ID (for updates).
         """
         normalized_url = url.rstrip("/")
-        query = {"url": normalized_url}
+        query: Dict[str, Any] = {"url": normalized_url}
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
 
@@ -124,7 +124,7 @@ class GitLabInstanceRepository:
         Check if an instance with this name already exists.
         Optionally exclude a specific instance ID (for updates).
         """
-        query = {"name": name}
+        query: Dict[str, Any] = {"name": name}
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
 

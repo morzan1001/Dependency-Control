@@ -11,7 +11,7 @@
 | **Security Analysis** | Vulnerability scanning (Trivy, Grype, OSV), Secret detection, SAST, Malware & Typosquatting detection |
 | **Compliance** | License compliance checking, End-of-Life monitoring, Policy enforcement with waivers |
 | **Management** | Project & Team management, Role-based access control, 2FA authentication |
-| **Integrations** | GitLab CI/CD (OIDC), GitHub Actions, Webhooks, Email/Slack/Mattermost notifications |
+| **Integrations** | GitLab CI/CD (OIDC), GitHub Actions (OIDC), Webhooks, Email/Slack/Mattermost notifications |
 | **Visibility** | Risk scoring, Trend analysis, SBOM inventory, Centralized dashboard |
 
 <p align="center">
@@ -67,7 +67,7 @@ docker compose up -d --build
 
 Dependency Control is designed to sit in your CI/CD pipeline.
 
-### GitLab CI (Recommended)
+### GitLab CI (OIDC)
 Enable **GitLab Integration** in the System Settings, then use the `CI_JOB_TOKEN` to authenticate. No manual API Key management required!
 
 ```yaml
@@ -80,8 +80,27 @@ dependency-scan:
         -d @payload.json
 ```
 
-### Other CI
-For other systems (GitHub Actions, Jenkins), generate a Project API Key in the dashboard and use the `X-API-Key` header.
+### GitHub Actions (OIDC)
+Enable **GitHub Integration** in the System Settings, then use the `ACTIONS_ID_TOKEN_REQUEST_TOKEN` to authenticate. No manual API Key management required!
+
+```yaml
+- name: Dependency Scan
+  env:
+    ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+  run: |
+    OIDC_TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+      "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=dependency-control" | jq -r '.value')
+    curl -X POST "https://api.dependencycontrol.local/api/v1/ingest" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $OIDC_TOKEN" \
+      -d @payload.json
+```
+
+> **Note:** The GitHub Actions workflow must have `id-token: write` permission.
+
+### API Key (Other CI Systems)
+For other systems (Jenkins, etc.), generate a Project API Key in the dashboard and use the `X-API-Key` header.
 
 ```bash
 curl -X POST "https://api.dependencycontrol.local/api/v1/ingest" \

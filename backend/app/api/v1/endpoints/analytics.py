@@ -152,7 +152,7 @@ async def get_top_dependencies(
         return []
 
     # Aggregate dependencies
-    match_stage = {"scan_id": {"$in": scan_ids}}
+    match_stage: Dict[str, Any] = {"scan_id": {"$in": scan_ids}}
     if type:
         match_stage["type"] = type
 
@@ -375,8 +375,8 @@ async def get_impact_analysis(
 
         # Calculate days known and days until due
         days_known = calculate_days_known(r.get("first_seen"))
-        days_until_due = calculate_days_until_due(enrichment_data["kev_due_date"])
-        enrichment_data["days_until_due"] = days_until_due
+        days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
+        enrichment_data.days_until_due = days_until_due
 
         # Calculate impact score using helper function
         base_impact = calculate_impact_score(
@@ -412,15 +412,15 @@ async def get_impact_analysis(
                     project_name_map.get(pid, "Unknown")
                     for pid in accessible_impact_project_ids[:5]  # Only accessible projects!
                 ],
-                max_epss_score=enrichment_data["max_epss"],
-                epss_percentile=enrichment_data["max_percentile"],
-                has_kev=enrichment_data["has_kev"],
-                kev_count=enrichment_data["kev_count"],
-                kev_ransomware_use=enrichment_data["kev_ransomware_use"],
-                kev_due_date=enrichment_data["kev_due_date"],
+                max_epss_score=enrichment_data.max_epss,
+                epss_percentile=enrichment_data.max_percentile,
+                has_kev=enrichment_data.has_kev,
+                kev_count=enrichment_data.kev_count,
+                kev_ransomware_use=enrichment_data.kev_ransomware_use,
+                kev_due_date=enrichment_data.kev_due_date,
                 days_until_due=days_until_due,
-                exploit_maturity=enrichment_data["exploit_maturity"],
-                max_risk_score=enrichment_data["max_risk"],
+                exploit_maturity=enrichment_data.exploit_maturity,
+                max_risk_score=enrichment_data.max_risk,
                 days_known=days_known,
                 has_fix=has_fix,
                 fix_versions=list(fix_versions)[:3],
@@ -543,7 +543,7 @@ async def get_vulnerability_hotspots(
 
         cve_finding_ids = [fid for fid in finding_ids if fid and fid.startswith("CVE-")]
         enrichment_data = process_cve_enrichments(cve_finding_ids, enrichments)
-        days_until_due = calculate_days_until_due(enrichment_data["kev_due_date"])
+        days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
 
         # Build priority reasons using helper
         priority_reasons = build_hotspot_priority_reasons(enrichment_data, severity_counts, has_fix, days_until_due)
@@ -564,15 +564,15 @@ async def get_vulnerability_hotspots(
                     for pid in accessible_affected_projects[:10]  # Only accessible projects!
                 ],
                 first_seen=first_seen_str,
-                max_epss_score=enrichment_data["max_epss"],
-                epss_percentile=enrichment_data["max_percentile"],
-                has_kev=enrichment_data["has_kev"],
-                kev_count=enrichment_data["kev_count"],
-                kev_ransomware_use=enrichment_data["kev_ransomware_use"],
-                kev_due_date=enrichment_data["kev_due_date"],
+                max_epss_score=enrichment_data.max_epss,
+                epss_percentile=enrichment_data.max_percentile,
+                has_kev=enrichment_data.has_kev,
+                kev_count=enrichment_data.kev_count,
+                kev_ransomware_use=enrichment_data.kev_ransomware_use,
+                kev_due_date=enrichment_data.kev_due_date,
                 days_until_due=days_until_due,
-                exploit_maturity=enrichment_data["exploit_maturity"],
-                max_risk_score=enrichment_data["max_risk"],
+                exploit_maturity=enrichment_data.exploit_maturity,
+                max_risk_score=enrichment_data.max_risk,
                 days_known=days_known,
                 has_fix=has_fix,
                 fix_versions=list(fix_versions)[:3],
@@ -738,12 +738,13 @@ async def search_dependencies_advanced(
     )
 
 
-def _get_description(vuln: dict, finding: object) -> str | None:
+def _get_description(vuln: dict, finding: Any) -> str | None:
     """Extract description from vulnerability or finding."""
     if vuln.get("description"):
         return vuln["description"][:200]
-    if getattr(finding, "description", None):
-        return finding.description[:200]
+    desc = getattr(finding, "description", None)
+    if desc:
+        return str(desc)[:200]
     return None
 
 
@@ -924,7 +925,7 @@ async def search_vulnerabilities(
                     scan_id=finding.scan_id,
                     finding_id=finding.finding_id,
                     finding_type=finding.type or "vulnerability",
-                    description=(finding.get("description", "")[:200] if finding.description else None),
+                    description=(finding.description[:200] if finding.description else None),
                     fixed_version=details.get("fixed_version"),
                     waived=finding.waived if finding.waived is not None else False,
                     waiver_reason=finding.waiver_reason,
@@ -1265,7 +1266,7 @@ async def get_project_recommendations(
     )
 
     if recent_scans:
-        scan_history = recent_scans
+        scan_history = [s.model_dump() for s in recent_scans]
 
     # Gather cross-project data using helper
     cross_project_data = await gather_cross_project_data(user_project_ids, project_id, db)

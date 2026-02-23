@@ -2,6 +2,7 @@ from collections import defaultdict
 from typing import Any, Dict, List
 
 from app.schemas.recommendation import (
+    PackageHotspot,
     Priority,
     Recommendation,
     RecommendationType,
@@ -23,11 +24,11 @@ def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
     return "MEDIUM"
 
 
-def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
+def get_hotspot_remediation_steps(hotspot: PackageHotspot) -> List[str]:
     """Generate specific remediation steps for a hotspot."""
     steps = []
 
-    if hotspot["has_malware"]:
+    if hotspot.has_malware:
         steps.extend(
             [
                 "URGENT: This package contains known malware",
@@ -37,7 +38,7 @@ def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
                 "4. Find a legitimate alternative package",
             ]
         )
-    elif hotspot["kev_count"] > 0:
+    elif hotspot.kev_count > 0:
         steps.extend(
             [
                 "URGENT: This vulnerability is being actively exploited in the wild",
@@ -47,10 +48,10 @@ def get_hotspot_remediation_steps(hotspot: Dict[str, Any]) -> List[str]:
                 "4. Consider WAF rules or network segmentation as temporary mitigation",
             ]
         )
-    elif hotspot["fixed_versions"]:
+    elif hotspot.fixed_versions:
         steps.extend(
             [
-                f"1. Update {hotspot['package']} to version {hotspot['fixed_versions'][0]} or later",
+                f"1. Update {hotspot.package} to version {hotspot.fixed_versions[0]} or later",
                 "2. Run tests to ensure compatibility",
                 "3. Deploy the updated dependency",
                 "4. Verify the vulnerabilities are resolved in your next scan",
@@ -126,12 +127,10 @@ def detect_critical_hotspots(
                 pkg_data["high_count"] += 1
             if isinstance(details, dict) and details.get("is_kev"):
                 pkg_data["kev_count"] += 1
-            if (
-                isinstance(details, dict)
-                and details.get("epss_score")
-                and details.get("epss_score") >= EPSS_HIGH_THRESHOLD
-            ):
-                pkg_data["high_epss_count"] += 1
+            if isinstance(details, dict):
+                epss = details.get("epss_score")
+                if epss is not None and epss >= EPSS_HIGH_THRESHOLD:
+                    pkg_data["high_epss_count"] += 1
             if get_attr(f, "reachable") is True:
                 pkg_data["reachable_count"] += 1
             risk_score = details.get("risk_score", 0) if isinstance(details, dict) else 0
@@ -204,30 +203,30 @@ def detect_critical_hotspots(
                     fixed_versions.append(v_details.get("fixed_version"))
 
             hotspots.append(
-                {
-                    "package": pkg_name,
-                    "version": version,
-                    "vuln_count": vuln_count,
-                    "critical_count": pkg_data["critical_count"],
-                    "high_count": pkg_data["high_count"],
-                    "kev_count": pkg_data["kev_count"],
-                    "high_epss_count": pkg_data["high_epss_count"],
-                    "reachable_count": pkg_data["reachable_count"],
-                    "risk_score": pkg_data["total_risk_score"],
-                    "reasons": hotspot_reasons,
-                    "fixed_versions": list(set(fixed_versions)),
-                    "has_malware": bool(pkg_data["malware"]),
-                    "is_eol": bool(pkg_data["eol"]),
-                }
+                PackageHotspot(
+                    package=pkg_name,
+                    version=version,
+                    vuln_count=vuln_count,
+                    critical_count=pkg_data["critical_count"],
+                    high_count=pkg_data["high_count"],
+                    kev_count=pkg_data["kev_count"],
+                    high_epss_count=pkg_data["high_epss_count"],
+                    reachable_count=pkg_data["reachable_count"],
+                    risk_score=pkg_data["total_risk_score"],
+                    reasons=hotspot_reasons,
+                    fixed_versions=list(set(fixed_versions)),
+                    has_malware=bool(pkg_data["malware"]),
+                    is_eol=bool(pkg_data["eol"]),
+                )
             )
 
     # Sort hotspots by severity (malware > KEV > risk_score)
     hotspots.sort(
         key=lambda h: (
-            h["has_malware"] * 10000,
-            h["kev_count"] * 1000,
-            h["high_epss_count"] * 100,
-            h["risk_score"],
+            h.has_malware * 10000,
+            h.kev_count * 1000,
+            h.high_epss_count * 100,
+            h.risk_score,
         ),
         reverse=True,
     )
@@ -236,50 +235,50 @@ def detect_critical_hotspots(
     for hotspot in hotspots[:10]:  # Top 10 hotspots
         priority = (
             Priority.CRITICAL
-            if (hotspot["has_malware"] or hotspot["kev_count"] > 0 or hotspot["critical_count"] > 0)
+            if (hotspot.has_malware or hotspot.kev_count > 0 or hotspot.critical_count > 0)
             else Priority.HIGH
         )
 
         desc_parts = [
             (
-                f"**{hotspot['package']}@{hotspot['version']}** is a critical security "
+                f"**{hotspot.package}@{hotspot.version}** is a critical security "
                 "hotspot that requires immediate attention."
             )
         ]
-        desc_parts.extend(hotspot["reasons"])
+        desc_parts.extend(hotspot.reasons)
 
-        if hotspot["fixed_versions"]:
-            desc_parts.append(f"Available fix: Update to {hotspot['fixed_versions'][0]}")
+        if hotspot.fixed_versions:
+            desc_parts.append(f"Available fix: Update to {hotspot.fixed_versions[0]}")
 
         recommendations.append(
             Recommendation(
                 type=RecommendationType.CRITICAL_HOTSPOT,
                 priority=priority,
-                title=f"Critical Hotspot: {hotspot['package']}",
+                title=f"Critical Hotspot: {hotspot.package}",
                 description=" | ".join(desc_parts),
                 impact={
-                    "critical": hotspot["critical_count"],
-                    "high": hotspot["high_count"],
+                    "critical": hotspot.critical_count,
+                    "high": hotspot.high_count,
                     "medium": 0,
                     "low": 0,
-                    "total": hotspot["vuln_count"],
-                    "kev_count": hotspot["kev_count"],
-                    "high_epss_count": hotspot["high_epss_count"],
-                    "reachable_count": hotspot["reachable_count"],
-                    "risk_score": hotspot["risk_score"],
+                    "total": hotspot.vuln_count,
+                    "kev_count": hotspot.kev_count,
+                    "high_epss_count": hotspot.high_epss_count,
+                    "reachable_count": hotspot.reachable_count,
+                    "risk_score": hotspot.risk_score,
                 },
-                affected_components=[f"{hotspot['package']}@{hotspot['version']}"],
+                affected_components=[f"{hotspot.package}@{hotspot.version}"],
                 action={
                     "type": "fix_hotspot",
-                    "package": hotspot["package"],
-                    "current_version": hotspot["version"],
-                    "fixed_versions": hotspot["fixed_versions"],
-                    "reasons": hotspot["reasons"],
-                    "is_malware": hotspot["has_malware"],
-                    "is_kev": hotspot["kev_count"] > 0,
+                    "package": hotspot.package,
+                    "current_version": hotspot.version,
+                    "fixed_versions": hotspot.fixed_versions,
+                    "reasons": hotspot.reasons,
+                    "is_malware": hotspot.has_malware,
+                    "is_kev": hotspot.kev_count > 0,
                     "steps": get_hotspot_remediation_steps(hotspot),
                 },
-                effort="low" if hotspot["fixed_versions"] else "high",
+                effort="low" if hotspot.fixed_versions else "high",
             )
         )
 

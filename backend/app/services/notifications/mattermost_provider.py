@@ -1,8 +1,9 @@
 import asyncio
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
+from prometheus_client import Counter
 
 from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient
@@ -12,11 +13,13 @@ from app.services.notifications.base import NotificationProvider
 logger = logging.getLogger(__name__)
 
 # Import metrics for notification tracking
+notifications_sent_total: Optional[Counter] = None
+notifications_failed_total: Optional[Counter] = None
+
 try:
     from app.core.metrics import notifications_failed_total, notifications_sent_total
 except ImportError:
-    notifications_sent_total = None
-    notifications_failed_total = None
+    pass
 
 
 class MattermostProvider(NotificationProvider):
@@ -25,7 +28,7 @@ class MattermostProvider(NotificationProvider):
         # Lock to prevent concurrent bot ID fetches within the same pod
         self._bot_id_lock = asyncio.Lock()
 
-    async def _get_bot_user_id(self, client: httpx.AsyncClient, base_url: str, headers: dict) -> Optional[str]:
+    async def _get_bot_user_id(self, client: InstrumentedAsyncClient, base_url: str, headers: dict) -> Optional[str]:
         if self._bot_user_id:
             return self._bot_user_id
 
@@ -48,7 +51,7 @@ class MattermostProvider(NotificationProvider):
                 return None
 
     async def _get_user_id_by_username(
-        self, client: httpx.AsyncClient, username: str, base_url: str, headers: dict
+        self, client: InstrumentedAsyncClient, username: str, base_url: str, headers: dict
     ) -> Optional[str]:
         # Remove @ if present
         username = username.lstrip("@")
@@ -64,7 +67,7 @@ class MattermostProvider(NotificationProvider):
             return None
 
     async def _create_dm_channel(
-        self, client: httpx.AsyncClient, user_id: str, base_url: str, headers: dict
+        self, client: InstrumentedAsyncClient, user_id: str, base_url: str, headers: dict
     ) -> Optional[str]:
         bot_id = await self._get_bot_user_id(client, base_url, headers)
         if not bot_id:
@@ -83,7 +86,7 @@ class MattermostProvider(NotificationProvider):
             return None
 
     async def _get_channel_id_by_name(
-        self, client: httpx.AsyncClient, channel_name: str, base_url: str, headers: dict
+        self, client: InstrumentedAsyncClient, channel_name: str, base_url: str, headers: dict
     ) -> Optional[str]:
         # Remove # if present
         channel_name = channel_name.lstrip("#")
@@ -119,6 +122,7 @@ class MattermostProvider(NotificationProvider):
         subject: str,
         message: str,
         system_settings: Optional[SystemSettings] = None,
+        **kwargs: Any,
     ) -> bool:
         # Determine configuration
         mattermost_url = system_settings.mattermost_url if system_settings else None

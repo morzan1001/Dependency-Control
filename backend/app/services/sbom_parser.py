@@ -193,10 +193,10 @@ class SBOMParser:
                 except Exception:
                     continue
         else:
-            handler = self.format_handlers.get(format_type)
-            if handler:
+            format_handler = self.format_handlers.get(format_type)
+            if format_handler is not None:
                 try:
-                    handler(sbom, result)
+                    format_handler(sbom, result)
                 except Exception as e:
                     logger.error(f"Error parsing {format_type.value} SBOM: {e}")
 

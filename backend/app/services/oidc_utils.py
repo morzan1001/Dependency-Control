@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 async def find_jwks_key(
     kid: str,
-    get_jwks: Callable[[], Awaitable[Dict[str, Any]]],
+    get_jwks: Callable[[], Awaitable[Optional[Dict[str, Any]]]],
     invalidate_cache: Callable[[], Awaitable[None]],
     provider_name: str = "OIDC",
 ) -> Optional[Dict[str, Any]]:
@@ -37,18 +37,20 @@ async def find_jwks_key(
     """
     jwks = await get_jwks()
 
-    for k in jwks.get("keys", []):
-        if k.get("kid") == kid:
-            return k
+    if jwks:
+        for k in jwks.get("keys", []):
+            if k.get("kid") == kid:
+                return k
 
     # Key not found - try refreshing cache (key rotation scenario)
     logger.info(f"{provider_name} key {kid} not in cache, refreshing JWKS...")
     await invalidate_cache()
     jwks = await get_jwks()
 
-    for k in jwks.get("keys", []):
-        if k.get("kid") == kid:
-            return k
+    if jwks:
+        for k in jwks.get("keys", []):
+            if k.get("kid") == kid:
+                return k
 
     logger.error(f"No matching {provider_name} key found for kid: {kid} after refresh")
     return None
@@ -56,7 +58,7 @@ async def find_jwks_key(
 
 async def validate_oidc_token(
     token: str,
-    get_jwks: Callable[[], Awaitable[Dict[str, Any]]],
+    get_jwks: Callable[[], Awaitable[Optional[Dict[str, Any]]]],
     invalidate_cache: Callable[[], Awaitable[None]],
     issuer: str,
     audience: Optional[str],

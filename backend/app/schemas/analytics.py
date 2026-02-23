@@ -10,6 +10,20 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
+class CVEEnrichmentResult(BaseModel):
+    """Result of CVE enrichment data processing from process_cve_enrichments()."""
+
+    max_epss: Optional[float] = None
+    max_percentile: Optional[float] = None
+    max_risk: Optional[float] = None
+    has_kev: bool = False
+    kev_count: int = 0
+    kev_ransomware_use: bool = False
+    kev_due_date: Optional[str] = None
+    exploit_maturity: str = "unknown"
+    days_until_due: Optional[int] = None
+
+
 class SeverityBreakdown(BaseModel):
     """Breakdown of findings by severity level."""
 

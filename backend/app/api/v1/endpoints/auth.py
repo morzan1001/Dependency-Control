@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 
 import httpx
 import pyotp
+from prometheus_client import Counter
 
 from app.core.http_utils import InstrumentedAsyncClient
 from fastapi import (
@@ -54,6 +55,12 @@ from app.schemas.user import UserCreate, UserPasswordReset
 logger = logging.getLogger(__name__)
 
 # Import metrics for authentication tracking
+auth_login_attempts_total: Optional[Counter] = None
+auth_2fa_verifications_total: Optional[Counter] = None
+auth_oidc_logins_total: Optional[Counter] = None
+auth_signups_total: Optional[Counter] = None
+auth_password_resets_total: Optional[Counter] = None
+
 try:
     from app.core.metrics import (
         auth_2fa_verifications_total,
@@ -63,11 +70,7 @@ try:
         auth_signups_total,
     )
 except ImportError:
-    auth_login_attempts_total = None
-    auth_2fa_verifications_total = None
-    auth_oidc_logins_total = None
-    auth_signups_total = None
-    auth_password_resets_total = None
+    pass
 
 router = CustomAPIRouter()
 
@@ -216,6 +219,8 @@ async def refresh_token(
         )
 
     user_repo = UserRepository(db)
+    if not token_data.sub:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token")
     user = await user_repo.get_raw_by_username(token_data.sub)
     if not user:
         raise HTTPException(

@@ -82,7 +82,7 @@ class CLIAnalyzer(Analyzer):
 
         finally:
             # Cleanup temp files
-            self._cleanup_files([tmp_sbom_path] + extra_paths)
+            self._cleanup_files([p for p in [tmp_sbom_path] + extra_paths if p is not None])
 
     def _create_temp_sbom(self, sbom: Dict[str, Any]) -> str:
         """Create a temporary file containing the SBOM JSON."""
@@ -130,7 +130,7 @@ class CLIAnalyzer(Analyzer):
             await process.wait()
             logger.error(f"{self.name} timed out after {self.cli_timeout}s")
             return b"", f"{self.name} timed out after {self.cli_timeout} seconds".encode(), 1
-        return stdout, stderr, process.returncode
+        return stdout, stderr, process.returncode or 0
 
     def _handle_error(self, stderr: bytes) -> Dict[str, Any]:
         """Handle CLI error output."""

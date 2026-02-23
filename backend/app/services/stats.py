@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -110,7 +110,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
                 )
 
         # 4. Calculate stats using CVSS severity scores from constants
-        pipeline = [
+        pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": scan_id, "waived": False}},
             {
                 "$project": {

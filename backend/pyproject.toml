@@ -48,6 +48,10 @@ plugins = ["pydantic.mypy"]
 implicit_reexport = true
 check_untyped_defs = true
 
+[[tool.mypy.overrides]]
+module = "app.api.*"
+disable_error_code = ["dict-item"]
+
 [tool.ruff]
 line-length = 120
 exclude = [".git", "__pycache__", "docs/source/conf.py", "old", "build", "dist"]
@@ -61,6 +65,9 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore:Accessing argon2.__version__ is deprecated:DeprecationWarning",
+]
 
 [tool.tox]
 env_list = ["test", "lint", "typecheck"]

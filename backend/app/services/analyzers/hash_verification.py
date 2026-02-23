@@ -90,7 +90,7 @@ class HashVerificationAnalyzer(Analyzer):
             },
         }
 
-    async def _verify_component(self, client: httpx.AsyncClient, component: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def _verify_component(self, client: InstrumentedAsyncClient, component: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Verify a single component's hash against the registry."""
 
         name = component.get("name", "")
@@ -157,7 +157,7 @@ class HashVerificationAnalyzer(Analyzer):
 
     async def _verify_pypi(
         self,
-        client: httpx.AsyncClient,
+        client: InstrumentedAsyncClient,
         name: str,
         version: str,
         sbom_hashes: Dict[str, str],
@@ -248,7 +248,7 @@ class HashVerificationAnalyzer(Analyzer):
 
     async def _verify_npm(
         self,
-        client: httpx.AsyncClient,
+        client: InstrumentedAsyncClient,
         name: str,
         version: str,
         sbom_hashes: Dict[str, str],

@@ -13,7 +13,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any, Dict
 
 from fastapi import Depends, HTTPException
 
@@ -312,7 +312,7 @@ async def ingest_sbom(
 
     now = datetime.now(timezone.utc)
 
-    scan_update = {
+    scan_update: Dict[str, Any] = {
         "$set": {
             "branch": data.branch or "unknown",
             "commit_hash": data.commit_hash,

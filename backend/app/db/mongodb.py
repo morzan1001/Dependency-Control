@@ -9,17 +9,19 @@ import logging
 from typing import Any, Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from prometheus_client import Gauge
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Import metrics for database monitoring
+db_connections_active: Optional[Gauge] = None
+
 try:
     from app.core.metrics import db_connections_active
 except ImportError:
-    # Fallback if metrics module is not available yet (during initial setup)
-    db_connections_active = None
+    pass
 
 
 # Connection pool settings (Motor uses these internally)

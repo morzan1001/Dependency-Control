@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.config import settings
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
@@ -51,7 +52,7 @@ class GHSAProvider:
             headers["Authorization"] = f"Bearer {self._github_token}"
         return headers
 
-    async def fetch_ghsa_advisory(self, client: httpx.AsyncClient, ghsa_id: str) -> Optional[GHSAData]:
+    async def fetch_ghsa_advisory(self, client: InstrumentedAsyncClient, ghsa_id: str) -> Optional[GHSAData]:
         """
         Fetch a single GitHub Security Advisory by its GHSA ID.
 
@@ -170,7 +171,7 @@ class GHSAProvider:
             return GHSAData(**cached)
         return None
 
-    async def resolve_ghsa_to_cve(self, client: httpx.AsyncClient, ghsa_ids: List[str]) -> Dict[str, GHSAData]:
+    async def resolve_ghsa_to_cve(self, client: InstrumentedAsyncClient, ghsa_ids: List[str]) -> Dict[str, GHSAData]:
         """
         Resolve multiple GHSA IDs to CVEs and get advisory metadata.
 
@@ -224,7 +225,7 @@ class GHSAProvider:
                     logger.warning(f"Exception during GHSA fetch: {result}")
                     continue
 
-                ghsa_id, ghsa_data = result
+                ghsa_id, ghsa_data = result  # type: ignore[misc]
                 if ghsa_data:
                     results[ghsa_id] = ghsa_data
                 else:

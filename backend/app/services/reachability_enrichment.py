@@ -100,9 +100,9 @@ async def enrich_findings_with_reachability(
     logger.debug(f"Found callgraph for scan {scan_id}")
 
     # Extract module usage from callgraph
-    module_usage = callgraph.get("module_usage", {})
-    import_map = callgraph.get("import_map", {})
-    language = callgraph.get("language", "unknown")
+    module_usage = callgraph.module_usage or {}
+    import_map = callgraph.import_map or {}
+    language = callgraph.language or "unknown"
 
     enriched_count = 0
 
@@ -371,7 +371,7 @@ async def run_pending_reachability_for_scan(
     Returns:
         Dict with results: {"findings_enriched": int, "error": str or None}
     """
-    result = {
+    result: Dict[str, Any] = {
         "findings_enriched": 0,
         "error": None,
     }

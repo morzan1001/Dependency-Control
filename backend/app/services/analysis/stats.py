@@ -21,7 +21,6 @@ from app.services.analysis.types import (
     EPSSKEVSummary,
     EPSSScoreCounts,
     ExploitMaturityCounts,
-    FindingDict,
     HighRiskCVE,
     KEVDetail,
     ReachabilityLevelCounts,
@@ -42,7 +41,7 @@ def _format_datetime(value: Optional[Any]) -> Optional[str]:
     return str(value)
 
 
-def build_epss_kev_summary(findings: List[FindingDict]) -> EPSSKEVSummary:
+def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
     """
     Build a summary of EPSS/KEV enrichment for raw data view.
 
@@ -132,7 +131,7 @@ def build_epss_kev_summary(findings: List[FindingDict]) -> EPSSKEVSummary:
                 high_risk_cve: HighRiskCVE = {
                     "cve": finding.get("finding_id") or finding.get("id", ""),
                     "component": finding.get("component", ""),
-                    "version": finding.get("version", ""),
+                    "version": finding.get("version") or "",
                     "risk_score": round(risk_score, 1),
                     "epss_score": round(epss_score, 4) if epss_score else None,
                     "in_kev": details.get("in_kev", False),
@@ -158,7 +157,7 @@ def build_epss_kev_summary(findings: List[FindingDict]) -> EPSSKEVSummary:
 
 
 def build_reachability_summary(
-    findings: List[FindingDict],
+    findings: List[Dict[str, Any]],
     callgraph: Dict[str, Any],
     enriched_count: int,
 ) -> ReachabilitySummary:
@@ -205,7 +204,7 @@ def build_reachability_summary(
         vuln_info: VulnerabilityInfo = {
             "cve": finding.get("finding_id") or finding.get("id", ""),
             "component": finding.get("component", ""),
-            "version": finding.get("version", ""),
+            "version": finding.get("version") or "",
             "severity": finding.get("severity", "unknown"),
             "reachability_level": reachability_level,
             "reachable_functions": reachability_data.get("matched_symbols", [])[:5],

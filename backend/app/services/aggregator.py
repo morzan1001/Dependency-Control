@@ -216,7 +216,7 @@ class ResultAggregator:
 
         # 2. Group by Version + CVE-Set hash to find potential duplicates
         # Map: (version, cve_set_hash) -> List[Finding]
-        groups: Dict[str, List[Finding]] = {}
+        groups: Dict[tuple, List[Finding]] = {}
         sast_groups: Dict[Any, List[Finding]] = {}  # Map: (component, line) -> List[Finding]
 
         for f in current_findings:
@@ -274,12 +274,14 @@ class ResultAggregator:
             # to ensure consistent structure (sast_findings list) for all SAST findings
             if len(group) == 1:
                 merged_f = self._merge_sast_findings(group)
-                final_findings.append(merged_f)
+                if merged_f:
+                    final_findings.append(merged_f)
                 continue
 
             # Merge items in group
             merged_f = self._merge_sast_findings(group)
-            final_findings.append(merged_f)
+            if merged_f:
+                final_findings.append(merged_f)
 
         # Process vulnerability groups
         for key, group in groups.items():
@@ -593,7 +595,7 @@ class ResultAggregator:
         except TypeError:
             valid_majors.sort(key=lambda x: str(x[0]))
 
-        return ", ".join([vm[2] for vm in valid_majors])
+        return ", ".join([str(vm[2]) for vm in valid_majors if vm[2] is not None])
 
     def _resolve_fixed_versions(self, versions: List[str]) -> Optional[str]:
         """
@@ -672,20 +674,20 @@ class ResultAggregator:
             merged_details["sast_findings"].append(entry)
 
             # Aggregate sets
-            if f.details.get("cwe_ids"):
-                for cwe in f.details.get("cwe_ids"):
-                    if cwe not in merged_details["cwe_ids"]:
-                        merged_details["cwe_ids"].append(cwe)
+            cwe_ids = f.details.get("cwe_ids") or []
+            for cwe in cwe_ids:
+                if cwe not in merged_details["cwe_ids"]:
+                    merged_details["cwe_ids"].append(cwe)
 
-            if f.details.get("category_groups"):
-                for cat in f.details.get("category_groups"):
-                    if cat not in merged_details["category_groups"]:
-                        merged_details["category_groups"].append(cat)
+            category_groups = f.details.get("category_groups") or []
+            for cat in category_groups:
+                if cat not in merged_details["category_groups"]:
+                    merged_details["category_groups"].append(cat)
 
-            if f.details.get("owasp"):
-                for start in f.details.get("owasp"):
-                    if start not in merged_details["owasp"]:
-                        merged_details["owasp"].append(start)
+            owasp = f.details.get("owasp") or []
+            for item in owasp:
+                if item not in merged_details["owasp"]:
+                    merged_details["owasp"].append(item)
 
             if f.description and f.description not in all_descriptions:
                 all_descriptions.append(f.description)
@@ -717,7 +719,7 @@ class ResultAggregator:
             aliases=([f.id for f in findings if f.id != base.id] if len(findings) > 1 else base.aliases),
         )
 
-    def _merge_vulnerability_into_list(self, target_list: List[Any], source_entry: Dict[str, Any]):
+    def _merge_vulnerability_into_list(self, target_list: List[Any], source_entry: VulnerabilityEntry):
         """
         Merges a source vulnerability entry into a target list, handling deduplication by ID and Aliases.
         """
@@ -876,7 +878,7 @@ class ResultAggregator:
             "fixed_version": (
                 str(finding.details.get("fixed_version")) if finding.details.get("fixed_version") else None
             ),
-            "cvss_score": (float(finding.details.get("cvss_score")) if finding.details.get("cvss_score") else None),
+            "cvss_score": (float(cvss) if (cvss := finding.details.get("cvss_score")) is not None else None),
             "cvss_vector": (str(finding.details.get("cvss_vector")) if finding.details.get("cvss_vector") else None),
             "references": combined_refs,
             "aliases": finding.aliases or [],

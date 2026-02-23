@@ -8,6 +8,8 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from typing import Optional
 
+from prometheus_client import Counter
+
 from app.core.constants import SMTP_TIMEOUT_SECONDS
 from app.models.system import SystemSettings
 from app.services.notifications.base import NotificationProvider
@@ -15,11 +17,13 @@ from app.services.notifications.base import NotificationProvider
 logger = logging.getLogger(__name__)
 
 # Import metrics for notification tracking
+notifications_sent_total: Optional[Counter] = None
+notifications_failed_total: Optional[Counter] = None
+
 try:
     from app.core.metrics import notifications_failed_total, notifications_sent_total
 except ImportError:
-    notifications_sent_total = None
-    notifications_failed_total = None
+    pass
 
 # Import aiosmtplib for async SMTP (required dependency)
 try:
@@ -77,7 +81,7 @@ class EmailProvider(NotificationProvider):
             logger.error(f"Async SMTP send failed: {e}")
             raise
 
-    async def send(
+    async def send(  # type: ignore[override]
         self,
         destination: str,
         subject: str,

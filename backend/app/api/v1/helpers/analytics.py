@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.schemas.analytics import CVEEnrichmentResult
 from app.services.recommendation.common import get_attr
 
 from app.core.constants import (
@@ -118,7 +119,7 @@ async def _resolve_active_scan_ids(
         for p in projects_needing_lookup
     ]
 
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"$or": or_conditions}},
         {"$sort": {"created_at": -1}},
         {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
@@ -197,24 +198,15 @@ def extract_fix_versions(details_list: List[Any]) -> set:
     return fix_versions
 
 
-def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any]) -> Dict[str, Any]:
+def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any]) -> CVEEnrichmentResult:
     """
     Process CVE enrichment data and extract maximum values.
 
-    Returns dict with:
+    Returns CVEEnrichmentResult with:
         max_epss, max_percentile, max_risk, has_kev, kev_count,
         kev_ransomware_use, kev_due_date, exploit_maturity
     """
-    result = {
-        "max_epss": None,
-        "max_percentile": None,
-        "max_risk": None,
-        "has_kev": False,
-        "kev_count": 0,
-        "kev_ransomware_use": False,
-        "kev_due_date": None,
-        "exploit_maturity": "unknown",
-    }
+    result = CVEEnrichmentResult()
 
     for fid in finding_ids:
         if fid not in enrichments:
@@ -224,30 +216,30 @@ def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any])
 
         # EPSS scores
         if enr.epss_score is not None:
-            if result["max_epss"] is None or enr.epss_score > result["max_epss"]:
-                result["max_epss"] = enr.epss_score
-                result["max_percentile"] = enr.epss_percentile
+            if result.max_epss is None or enr.epss_score > result.max_epss:
+                result.max_epss = enr.epss_score
+                result.max_percentile = enr.epss_percentile
 
         # Risk score
         if enr.risk_score is not None:
-            if result["max_risk"] is None or enr.risk_score > result["max_risk"]:
-                result["max_risk"] = enr.risk_score
+            if result.max_risk is None or enr.risk_score > result.max_risk:
+                result.max_risk = enr.risk_score
 
         # KEV data
         if enr.is_kev:
-            result["has_kev"] = True
-            result["kev_count"] += 1
+            result.has_kev = True
+            result.kev_count += 1
             if enr.kev_ransomware_use:
-                result["kev_ransomware_use"] = True
+                result.kev_ransomware_use = True
             if enr.kev_due_date:
-                if result["kev_due_date"] is None or enr.kev_due_date < result["kev_due_date"]:
-                    result["kev_due_date"] = enr.kev_due_date
+                if result.kev_due_date is None or enr.kev_due_date < result.kev_due_date:
+                    result.kev_due_date = enr.kev_due_date
 
         # Exploit maturity
         if EXPLOIT_MATURITY_ORDER.get(enr.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(
-            result["exploit_maturity"], 0
+            result.exploit_maturity, 0
         ):
-            result["exploit_maturity"] = enr.exploit_maturity
+            result.exploit_maturity = enr.exploit_maturity
 
     return result
 
@@ -255,7 +247,7 @@ def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any])
 def calculate_impact_score(
     severity_counts: Dict[str, int],
     affected_projects: int,
-    enrichment_data: Dict[str, Any],
+    enrichment_data: CVEEnrichmentResult,
     has_fix: bool,
     days_known: Optional[int],
 ) -> float:
@@ -283,9 +275,9 @@ def calculate_impact_score(
     base_impact = float(severity_score * reach_multiplier)
 
     # KEV Boost (strongest signal - actively exploited)
-    days_until_due = enrichment_data.get("days_until_due")
-    if enrichment_data.get("has_kev"):
-        if enrichment_data.get("kev_ransomware_use"):
+    days_until_due = enrichment_data.days_until_due
+    if enrichment_data.has_kev:
+        if enrichment_data.kev_ransomware_use:
             base_impact *= KEV_RANSOMWARE_BOOST
         elif days_until_due is not None and days_until_due < 0:
             base_impact *= KEV_OVERDUE_BOOST
@@ -295,7 +287,7 @@ def calculate_impact_score(
             base_impact *= KEV_DEFAULT_BOOST
 
     # EPSS Boost (probability of exploitation)
-    max_epss = enrichment_data.get("max_epss")
+    max_epss = enrichment_data.max_epss
     if max_epss:
         if max_epss >= EPSS_VERY_HIGH_THRESHOLD:
             base_impact *= EPSS_VERY_HIGH_BOOST
@@ -305,8 +297,7 @@ def calculate_impact_score(
             base_impact *= EPSS_MEDIUM_BOOST
 
     # Exploit maturity boost
-    exploit_maturity = enrichment_data.get("exploit_maturity", "unknown")
-    base_impact *= EXPLOIT_MATURITY_BOOST.get(exploit_maturity, 1.0)
+    base_impact *= EXPLOIT_MATURITY_BOOST.get(enrichment_data.exploit_maturity, 1.0)
 
     # Fix availability boost (prioritize fixable issues)
     if has_fix:
@@ -321,17 +312,17 @@ def calculate_impact_score(
 
 def build_priority_reasons(
     severity_counts: Dict[str, int],
-    enrichment_data: Dict[str, Any],
+    enrichment_data: CVEEnrichmentResult,
     affected_projects: int,
     has_fix: bool,
     days_known: Optional[int],
 ) -> List[str]:
     """Build human-readable priority reasons list."""
     reasons = []
-    days_until_due = enrichment_data.get("days_until_due")
-    max_epss = enrichment_data.get("max_epss")
+    days_until_due = enrichment_data.days_until_due
+    max_epss = enrichment_data.max_epss
 
-    if enrichment_data.get("kev_ransomware_use"):
+    if enrichment_data.kev_ransomware_use:
         reasons.append("ransomware:Used in ransomware campaigns - fix immediately")
 
     if days_until_due is not None and days_until_due < 0:
@@ -339,7 +330,7 @@ def build_priority_reasons(
     elif days_until_due is not None and days_until_due <= KEV_DUE_SOON_DAYS:
         reasons.append(f"deadline:CISA deadline in {days_until_due} days")
 
-    if enrichment_data.get("has_kev") and not enrichment_data.get("kev_ransomware_use"):
+    if enrichment_data.has_kev and not enrichment_data.kev_ransomware_use:
         reasons.append("kev:Actively exploited in the wild (CISA KEV)")
 
     if max_epss and max_epss >= EPSS_HIGH_THRESHOLD:
@@ -414,7 +405,7 @@ def build_findings_severity_map(
 
 
 def build_hotspot_priority_reasons(
-    enrichment_data: Dict[str, Any],
+    enrichment_data: CVEEnrichmentResult,
     severity_counts: Dict[str, int],
     has_fix: bool,
     days_until_due: Optional[int],
@@ -435,7 +426,7 @@ def build_hotspot_priority_reasons(
     """
     reasons = []
 
-    if enrichment_data.get("kev_ransomware_use"):
+    if enrichment_data.kev_ransomware_use:
         reasons.append("ransomware:Used in ransomware campaigns")
 
     if days_until_due is not None and days_until_due < 0:
@@ -443,10 +434,10 @@ def build_hotspot_priority_reasons(
     elif days_until_due is not None and days_until_due <= KEV_DUE_SOON_DAYS:
         reasons.append(f"deadline:CISA deadline in {days_until_due} days")
 
-    if enrichment_data.get("has_kev") and not enrichment_data.get("kev_ransomware_use"):
+    if enrichment_data.has_kev and not enrichment_data.kev_ransomware_use:
         reasons.append("kev:Actively exploited (CISA KEV)")
 
-    max_epss = enrichment_data.get("max_epss")
+    max_epss = enrichment_data.max_epss
     if max_epss and max_epss >= EPSS_HIGH_THRESHOLD:
         reasons.append(f"epss:High EPSS ({max_epss * 100:.1f}%)")
 

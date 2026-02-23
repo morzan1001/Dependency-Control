@@ -105,7 +105,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
     async def _check_component(
         self,
-        client: httpx.AsyncClient,
+        client: InstrumentedAsyncClient,
         component: Dict[str, Any],
         github_token: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
@@ -229,7 +229,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         # Generic message for other risks
         return f"{name}@{version} has {risk_count} maintainer risk{'s' if risk_count > 1 else ''}"
 
-    async def _check_pypi(self, client: httpx.AsyncClient, name: str) -> Optional[Dict[str, Any]]:
+    async def _check_pypi(self, client: InstrumentedAsyncClient, name: str) -> Optional[Dict[str, Any]]:
         """Fetch maintainer info from PyPI."""
         try:
             response = await client.get(f"{PYPI_API_URL}/{name}/json")
@@ -272,7 +272,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             logger.debug(f"PyPI check failed for {name}: {e}")
             return None
 
-    async def _check_npm(self, client: httpx.AsyncClient, name: str) -> Optional[Dict[str, Any]]:
+    async def _check_npm(self, client: InstrumentedAsyncClient, name: str) -> Optional[Dict[str, Any]]:
         """Fetch maintainer info from npm."""
         try:
             encoded_name = name.replace("/", "%2F") if "/" in name else name
@@ -311,7 +311,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             return None
 
     async def _check_github(
-        self, client: httpx.AsyncClient, repo: str, github_token: Optional[str] = None
+        self, client: InstrumentedAsyncClient, repo: str, github_token: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """Fetch repository health from GitHub API.
 

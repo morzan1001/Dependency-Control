@@ -29,7 +29,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         Apply waiver to specific vulnerability within findings.
         Uses MongoDB array_filters to update nested vulnerability objects.
         """
-        update_data = {"details.vulnerabilities.$[vuln].waived": waived}
+        update_data: Dict[str, Any] = {"details.vulnerabilities.$[vuln].waived": waived}
         if waiver_reason:
             update_data["details.vulnerabilities.$[vuln].waiver_reason"] = waiver_reason
 
@@ -53,7 +53,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
     ) -> int:
         """Apply waiver to findings matching query (for non-vulnerability or finding-level waivers)."""
         full_query = {"scan_id": scan_id, **query}
-        update_data = {"waived": waived}
+        update_data: Dict[str, Any] = {"waived": waived}
         if waiver_reason:
             update_data["waiver_reason"] = waiver_reason
 
@@ -90,7 +90,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     async def get_severity_counts(self, scan_id: str) -> Dict[str, int]:
         """Get finding counts by severity for a scan."""
-        pipeline = [
+        pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": scan_id}},
             {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
         ]
@@ -99,7 +99,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     async def get_type_counts(self, scan_id: str) -> Dict[str, int]:
         """Get finding counts by type for a scan."""
-        pipeline = [
+        pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": scan_id}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
         ]

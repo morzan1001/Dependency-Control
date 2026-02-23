@@ -126,7 +126,7 @@ class DepsDevAnalyzer(Analyzer):
 
         # Build cache keys for all components
         cache_keys = []
-        component_map = {}
+        component_map: Dict[str, Any] = {}
 
         for component in components:
             purl = component.get("purl", "")
@@ -147,22 +147,22 @@ class DepsDevAnalyzer(Analyzer):
         cached_data: Dict[str, Any] = await cache_service.mget(cache_keys)
 
         for cache_key, data in cached_data.items():
-            component = component_map.get(cache_key)
-            if not component:
+            cached_comp = component_map.get(cache_key)
+            if not cached_comp:
                 continue
 
             if data:
-                key = f"{component.get('name')}@{component.get('version')}"
+                key = f"{cached_comp.get('name')}@{cached_comp.get('version')}"
                 cached_results[key] = data
             else:
-                uncached_components.append(component)
+                uncached_components.append(cached_comp)
 
         return cached_results, uncached_components
 
     async def _check_component_with_limit(
         self,
         semaphore: asyncio.Semaphore,
-        client: httpx.AsyncClient,
+        client: InstrumentedAsyncClient,
         component: Dict[str, Any],
         threshold: float,
     ) -> Optional[Dict[str, Any]]:
@@ -183,7 +183,7 @@ class DepsDevAnalyzer(Analyzer):
         )
 
     async def _check_component(
-        self, client: httpx.AsyncClient, component: Dict[str, Any], threshold: float
+        self, client: InstrumentedAsyncClient, component: Dict[str, Any], threshold: float
     ) -> Optional[Dict[str, Any]]:
         """Check a component for Scorecard data and package metadata via deps.dev API."""
         purl = component.get("purl", "")

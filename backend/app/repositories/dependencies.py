@@ -48,7 +48,7 @@ class DependencyRepository(BaseRepository[Dependency]):
 
     async def get_unique_packages(self, scan_ids: List[str]) -> int:
         """Get count of unique packages across scans."""
-        pipeline = [
+        pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$name"}},
             {"$count": "count"},
@@ -58,7 +58,7 @@ class DependencyRepository(BaseRepository[Dependency]):
 
     async def get_type_distribution(self, scan_ids: List[str]) -> List[Dict[str, Any]]:
         """Get dependency type distribution across scans."""
-        pipeline = [
+        pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},

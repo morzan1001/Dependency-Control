@@ -21,8 +21,9 @@ class TeamCreate(TeamBase):
     pass
 
 
-class TeamUpdate(TeamBase):
+class TeamUpdate(BaseModel):
     name: Optional[str] = None
+    description: Optional[str] = None
 
 
 class TeamResponse(TeamBase):

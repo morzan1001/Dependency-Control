@@ -16,12 +16,13 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
 if TYPE_CHECKING:
     from app.models.webhook import Webhook
 
 import httpx
+from prometheus_client import Counter
 
 from app.core.http_utils import InstrumentedAsyncClient
 from app.services.webhooks.types import (
@@ -56,11 +57,13 @@ from app.core.constants import (
 logger = logging.getLogger(__name__)
 
 # Import metrics for webhook tracking
+webhooks_triggered_total: Optional[Counter] = None
+webhooks_failed_total: Optional[Counter] = None
+
 try:
     from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
 except ImportError:
-    webhooks_triggered_total = None
-    webhooks_failed_total = None
+    pass
 
 
 class WebhookService:
@@ -267,7 +270,7 @@ class WebhookService:
         db: AsyncIOMotorDatabase,
         webhook_id: str,
         event_type: str,
-        payload: Dict[str, Any],
+        payload: "Mapping[str, Any]",
         success: bool,
         status_code: Optional[int] = None,
         error: Optional[str] = None,
@@ -313,7 +316,7 @@ class WebhookService:
         self,
         db: AsyncIOMotorDatabase,
         webhook: "Webhook",
-        payload: Dict[str, Any],
+        payload: "Mapping[str, Any]",
         event_type: str,
     ) -> bool:
         """
@@ -473,7 +476,7 @@ class WebhookService:
         self,
         db: AsyncIOMotorDatabase,
         event_type: str,
-        payload: Dict[str, Any],
+        payload: "Mapping[str, Any]",
         project_id: Optional[str] = None,
     ) -> None:
         """

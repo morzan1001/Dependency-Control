@@ -122,7 +122,7 @@ class WaiverRepository:
 
         if include_global:
             # Include both project-specific and global waivers
-            query = {
+            query: Dict[str, Any] = {
                 "$and": [
                     {
                         "$or": [

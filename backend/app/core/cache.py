@@ -21,6 +21,8 @@ from typing import Any, Callable, Dict, List, Optional, TypeVar
 import redis.asyncio as redis
 from redis.asyncio.connection import ConnectionPool
 
+from prometheus_client import Counter, Gauge
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,12 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 # Import metrics for cache monitoring
+cache_hits_total: Optional[Counter] = None
+cache_misses_total: Optional[Counter] = None
+cache_keys_total: Optional[Gauge] = None
+cache_connected_clients: Optional[Gauge] = None
+cache_size_bytes: Optional[Gauge] = None
+
 try:
     from app.core.metrics import (
         cache_connected_clients,
@@ -37,12 +45,7 @@ try:
         cache_size_bytes,
     )
 except ImportError:
-    # Fallback if metrics module is not available yet
-    cache_hits_total = None
-    cache_misses_total = None
-    cache_keys_total = None
-    cache_connected_clients = None
-    cache_size_bytes = None
+    pass
 
 
 class CacheTTL:
@@ -173,7 +176,7 @@ class CacheService:
                 )
                 self._client = redis.Redis(connection_pool=self._pool)
                 # Test connection
-                await self._client.ping()
+                await self._client.ping()  # type: ignore[misc]
                 self._available = True
                 self._unavailable_since = 0
                 logger.info("Redis cache connection established")

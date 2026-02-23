@@ -4,6 +4,7 @@ from typing import Dict, List
 from app.core.constants import QUICK_WIN_SCORING_WEIGHTS
 from app.schemas.recommendation import (
     Priority,
+    QuickWinEntry,
     Recommendation,
     RecommendationType,
 )
@@ -26,7 +27,7 @@ def identify_quick_wins(
     recommendations = []
 
     # Group vulnerabilities by package
-    vulns_by_package: Dict[str, List[Dict]] = defaultdict(list)
+    vulns_by_package: Dict[str, List[ModelOrDict]] = defaultdict(list)
     for f in vuln_findings:
         component = get_attr(f, "component", "")
         details = get_attr(f, "details", {})
@@ -46,11 +47,13 @@ def identify_quick_wins(
             continue
 
         # Get all fixed versions
-        fixed_versions = []
+        fixed_versions: List[str] = []
         for v in vulns:
             v_details = get_attr(v, "details", {})
-            if isinstance(v_details, dict) and v_details.get("fixed_version"):
-                fixed_versions.append(v_details.get("fixed_version"))
+            if isinstance(v_details, dict):
+                fv = v_details.get("fixed_version")
+                if fv:
+                    fixed_versions.append(fv)
         fixed_versions = list(set(fixed_versions))
 
         if not fixed_versions:
@@ -77,58 +80,58 @@ def identify_quick_wins(
         )
 
         quick_wins.append(
-            {
-                "package": pkg,
-                "version": get_attr(vulns[0], "version", "unknown"),
-                "fixed_version": calculate_best_fix_version(fixed_versions),
-                "vuln_count": len(vulns),
-                "critical_count": critical_count,
-                "high_count": high_count,
-                "kev_count": kev_count,
-                "is_direct": is_direct,
-                "score": score,
-            }
+            QuickWinEntry(
+                package=pkg,
+                version=get_attr(vulns[0], "version", "unknown"),
+                fixed_version=calculate_best_fix_version(fixed_versions),
+                vuln_count=len(vulns),
+                critical_count=critical_count,
+                high_count=high_count,
+                kev_count=kev_count,
+                is_direct=is_direct,
+                score=score,
+            )
         )
 
     # Sort by score and take top quick wins
-    quick_wins.sort(key=lambda x: x["score"], reverse=True)
+    quick_wins.sort(key=lambda x: x.score, reverse=True)
 
     for qw in quick_wins[:5]:  # Top 5 quick wins
-        if qw["vuln_count"] < 2 and qw["kev_count"] == 0:
+        if qw.vuln_count < 2 and qw.kev_count == 0:
             continue
 
-        dep_type = "direct dependency" if qw["is_direct"] else "transitive dependency"
+        dep_type = "direct dependency" if qw.is_direct else "transitive dependency"
 
         recommendations.append(
             Recommendation(
                 type=(
                     RecommendationType.SINGLE_UPDATE_MULTI_FIX
-                    if qw["vuln_count"] >= 3
+                    if qw.vuln_count >= 3
                     else RecommendationType.QUICK_WIN
                 ),
-                priority=(Priority.HIGH if qw["kev_count"] > 0 or qw["critical_count"] > 0 else Priority.MEDIUM),
-                title=f"Quick Win: Update {qw['package']}",
+                priority=(Priority.HIGH if qw.kev_count > 0 or qw.critical_count > 0 else Priority.MEDIUM),
+                title=f"Quick Win: Update {qw.package}",
                 description=(
-                    f"Updating this {dep_type} from {qw['version']} to {qw['fixed_version']} "
-                    f"will fix {qw['vuln_count']} vulnerabilities in a single update! "
-                    f"({qw['critical_count']} critical, {qw['high_count']} high)"
+                    f"Updating this {dep_type} from {qw.version} to {qw.fixed_version} "
+                    f"will fix {qw.vuln_count} vulnerabilities in a single update! "
+                    f"({qw.critical_count} critical, {qw.high_count} high)"
                 ),
                 impact={
-                    "critical": qw["critical_count"],
-                    "high": qw["high_count"],
-                    "medium": qw["vuln_count"] - qw["critical_count"] - qw["high_count"],
+                    "critical": qw.critical_count,
+                    "high": qw.high_count,
+                    "medium": qw.vuln_count - qw.critical_count - qw.high_count,
                     "low": 0,
-                    "total": qw["vuln_count"],
-                    "kev_count": qw["kev_count"],
+                    "total": qw.vuln_count,
+                    "kev_count": qw.kev_count,
                 },
-                affected_components=[f"{qw['package']}@{qw['version']}"],
+                affected_components=[f"{qw.package}@{qw.version}"],
                 action={
                     "type": "quick_win_update",
-                    "package": qw["package"],
-                    "current_version": qw["version"],
-                    "target_version": qw["fixed_version"],
-                    "is_direct": qw["is_direct"],
-                    "fixes_count": qw["vuln_count"],
+                    "package": qw.package,
+                    "current_version": qw.version,
+                    "target_version": qw.fixed_version,
+                    "is_direct": qw.is_direct,
+                    "fixes_count": qw.vuln_count,
                 },
                 effort="low",
             )

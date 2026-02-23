@@ -225,7 +225,7 @@ async def broadcast_message(
                 {"project_id": p.id, "branch": {"$nin": p.deleted_branches}, "status": "completed"}
                 for p in projects_needing_lookup
             ]
-            pipeline = [
+            pipeline: List[Dict[str, Any]] = [
                 {"$match": {"$or": or_conditions}},
                 {"$sort": {"created_at": -1}},
                 {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},

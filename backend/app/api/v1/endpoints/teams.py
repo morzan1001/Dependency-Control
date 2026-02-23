@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import Depends, HTTPException, status
 
@@ -75,7 +75,7 @@ async def read_teams(
     """
     team_repo = TeamRepository(db)
 
-    query = {}
+    query: Dict[str, Any] = {}
     if search:
         query["name"] = {"$regex": re.escape(search), "$options": "i"}
 

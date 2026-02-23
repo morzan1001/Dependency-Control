@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 
 class RecommendationType(str, Enum):
     """Types of remediation recommendations."""
@@ -143,6 +145,38 @@ class VulnerabilityInfo:
         if not self.is_kev and (self.epss_score is None or self.epss_score < 0.01):
             return True
         return False
+
+
+class PackageHotspot(BaseModel):
+    """Aggregated hotspot data for a package with multiple severe issues."""
+
+    package: str
+    version: str = "unknown"
+    vuln_count: int = 0
+    critical_count: int = 0
+    high_count: int = 0
+    kev_count: int = 0
+    high_epss_count: int = 0
+    reachable_count: int = 0
+    risk_score: float = 0.0
+    reasons: List[str] = []
+    fixed_versions: List[str] = []
+    has_malware: bool = False
+    is_eol: bool = False
+
+
+class QuickWinEntry(BaseModel):
+    """A quick win update candidate that fixes multiple vulnerabilities."""
+
+    package: str
+    version: str = "unknown"
+    fixed_version: str = "unknown"
+    vuln_count: int = 0
+    critical_count: int = 0
+    high_count: int = 0
+    kev_count: int = 0
+    is_direct: bool = False
+    score: float = 0.0
 
 
 @dataclass

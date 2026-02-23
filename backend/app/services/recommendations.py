@@ -9,7 +9,7 @@ Type-safe implementation using Pydantic models for findings and dependencies.
 
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.core.constants import MAX_DEPENDENCY_DEPTH, OUTDATED_DEPENDENCY_THRESHOLD_DAYS
 from app.schemas.recommendation import Recommendation
@@ -106,11 +106,11 @@ class RecommendationEngine:
 
     async def generate_recommendations(
         self,
-        findings: Optional[List[ModelOrDict]] = None,
-        dependencies: Optional[List[ModelOrDict]] = None,
+        findings: Optional[Sequence[ModelOrDict]] = None,
+        dependencies: Optional[Sequence[ModelOrDict]] = None,
         source_target: Optional[str] = None,
-        previous_scan_findings: Optional[List[ModelOrDict]] = None,
-        scan_history: Optional[List[Dict[str, Any]]] = None,
+        previous_scan_findings: Optional[Sequence[ModelOrDict]] = None,
+        scan_history: Optional[Sequence[Dict[str, Any]]] = None,
         cross_project_data: Optional[Dict[str, Any]] = None,
     ) -> List[Recommendation]:
         """
@@ -128,9 +128,9 @@ class RecommendationEngine:
             List of prioritized recommendations
         """
         # Use empty lists if None
-        findings_list = findings or []
-        dependencies_list = dependencies or []
-        previous_findings_list = previous_scan_findings
+        findings_list: List[ModelOrDict] = list(findings) if findings else []
+        dependencies_list: List[ModelOrDict] = list(dependencies) if dependencies else []
+        previous_findings_list: Optional[List[ModelOrDict]] = list(previous_scan_findings) if previous_scan_findings else None
 
         logger.debug(
             f"Generating recommendations for {len(findings_list)} findings, {len(dependencies_list)} dependencies"
@@ -222,9 +222,10 @@ class RecommendationEngine:
             )
 
         if scan_history:
+            scan_history_list: List[ModelOrDict] = list(scan_history)
             _safe_extend(
                 recommendations,
-                lambda: trends.analyze_recurring_issues(scan_history),
+                lambda: trends.analyze_recurring_issues(scan_history_list),
                 "recurring_issues",
             )
 

@@ -10,8 +10,10 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateOne
 
+from prometheus_client import Counter, Histogram
+
 from app.core import ensure_utc
-from app.models.project import Project
+from app.models.project import Project, Scan
 from app.repositories import (
     AnalysisResultRepository,
     CallgraphRepository,
@@ -38,6 +40,24 @@ from app.services.analysis.types import Database, ScanDict
 logger = logging.getLogger(__name__)
 
 # Import metrics for detailed analysis tracking
+analysis_scans_total: Optional[Counter] = None
+analysis_findings_total: Optional[Counter] = None
+analysis_errors_total: Optional[Counter] = None
+analysis_sbom_processed_total: Optional[Counter] = None
+analysis_components_parsed_total: Optional[Counter] = None
+analysis_sbom_parse_errors_total: Optional[Counter] = None
+analysis_gridfs_operations_total: Optional[Counter] = None
+analysis_enrichment_total: Optional[Counter] = None
+analysis_epss_scores: Optional[Histogram] = None
+analysis_kev_vulnerabilities_total: Optional[Counter] = None
+analysis_reachable_vulnerabilities_total: Optional[Counter] = None
+analysis_waivers_applied_total: Optional[Counter] = None
+analysis_race_conditions_total: Optional[Counter] = None
+analysis_rescan_operations_total: Optional[Counter] = None
+analysis_aggregation_duration_seconds: Optional[Histogram] = None
+analysis_findings_by_type: Optional[Counter] = None
+analysis_duration_seconds: Optional[Histogram] = None
+
 try:
     from app.core.metrics import (
         analysis_aggregation_duration_seconds,
@@ -59,26 +79,7 @@ try:
         analysis_duration_seconds,
     )
 except ImportError:
-    # Fallback if metrics module is not available yet
-    (
-        analysis_scans_total,
-        analysis_findings_total,
-        analysis_errors_total,
-        analysis_sbom_processed_total,
-        analysis_components_parsed_total,
-        analysis_sbom_parse_errors_total,
-        analysis_gridfs_operations_total,
-        analysis_enrichment_total,
-        analysis_epss_scores,
-        analysis_kev_vulnerabilities_total,
-        analysis_reachable_vulnerabilities_total,
-        analysis_waivers_applied_total,
-        analysis_race_conditions_total,
-        analysis_rescan_operations_total,
-        analysis_aggregation_duration_seconds,
-        analysis_findings_by_type,
-        analysis_duration_seconds,
-    ) = [None] * 17
+    pass
 
 
 def _get_waiver_type(waiver: dict) -> str:
@@ -103,7 +104,7 @@ async def _get_github_instance_token(db: Database) -> Optional[str]:
     return doc.get("access_token") if doc else None
 
 
-async def _carry_over_external_results(scan_id: str, scan_doc: Optional[ScanDict], db: Database) -> None:
+async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
     """
     Copies analysis results from the original scan to the re-scan for analyzers
     that are NOT part of the internal SBOM analysis (e.g. Secret Scanning, SAST).
@@ -140,12 +141,12 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional[ScanDict
         await result_repo.upsert(
             {
                 "scan_id": scan_id,
-                "analyzer_name": old_result["analyzer_name"],
-                "result": old_result["result"],
+                "analyzer_name": old_result.analyzer_name,
+                "result": old_result.result,
             },
             {"$setOnInsert": new_result},
         )
-        logger.debug(f"Carried over result for {old_result['analyzer_name']}")
+        logger.debug(f"Carried over result for {old_result.analyzer_name}")
 
 
 async def process_analyzer(
@@ -400,15 +401,16 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     # Filter active waivers
     active_waivers = [
-        w for w in waivers if not (w.get("expiration_date") and ensure_utc(w["expiration_date"]) < datetime.now(timezone.utc))
+        w for w in waivers
+        if not (w.get("expiration_date") and (exp := ensure_utc(w["expiration_date"])) is not None and exp < datetime.now(timezone.utc))
     ]
 
     # Save Findings to 'findings' collection
     await finding_repo.delete_many({"scan_id": scan_id})
 
-    findings_to_insert = []
+    findings_to_insert: List[Dict[str, Any]] = []
     for f in aggregated_findings:
-        record = f.model_dump()
+        record: Dict[str, Any] = f.model_dump()
         record["scan_id"] = scan_id
         record["project_id"] = project_id
         record["finding_id"] = f.id
@@ -416,7 +418,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         findings_to_insert.append(record)
 
     # Post-Processing: Enrich vulnerability findings
-    vulnerability_findings = [f for f in findings_to_insert if f.get("type") == "vulnerability"]
+    vulnerability_findings: List[Dict[str, Any]] = [f for f in findings_to_insert if f.get("type") == "vulnerability"]
 
     github_token = system_settings.github_token
     if not github_token:
@@ -447,8 +449,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                 analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
 
             # Track EPSS scores and KEV findings
-            for finding in vulnerability_findings:
-                details = finding.get("details", {})
+            for vf in vulnerability_findings:
+                details = vf.get("details", {})
                 epss_score = details.get("epss_score")
                 if epss_score is not None and analysis_epss_scores:
                     try:
@@ -502,8 +504,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
                 # Track reachable vulnerabilities by level
                 if analysis_reachable_vulnerabilities_total:
-                    for finding in vulnerability_findings:
-                        details = finding.get("details", {})
+                    for vf in vulnerability_findings:
+                        details = vf.get("details", {})
                         reachability = details.get("reachability", {})
                         if reachability.get("is_reachable"):
                             level = reachability.get("level", "unknown")
@@ -561,7 +563,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Track waiver metrics
     if analysis_waivers_applied_total:
         # Count by waiver type
-        waiver_types = {}
+        waiver_types: Dict[str, int] = {}
         for waiver in active_waivers:
             waiver_type = _get_waiver_type(waiver)
             waiver_types[waiver_type] = waiver_types.get(waiver_type, 0) + 1
@@ -646,7 +648,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Update Project stats (reuse scan_doc from the beginning)
     if scan_doc.is_rescan and scan_doc.original_scan_id:
         await scan_repo.update_raw(
-            scan_doc["original_scan_id"],
+            scan_doc.original_scan_id,
             {
                 "$set": {
                     "latest_rescan_id": scan_id,

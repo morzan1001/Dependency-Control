@@ -215,7 +215,7 @@ def extract_grype_cvss(
         return None, None
 
     best_cvss = None
-    best_version = (0, 0)
+    best_version: Tuple[int, ...] = (0, 0)
 
     def _parse_cvss_version(v: str) -> Tuple[int, ...]:
         """Parse CVSS version string to numeric tuple for correct comparison."""

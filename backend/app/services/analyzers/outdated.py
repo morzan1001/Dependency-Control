@@ -95,7 +95,7 @@ class OutdatedAnalyzer(Analyzer):
 
         # Build cache keys
         cache_keys = []
-        component_map = {}
+        component_map: Dict[str, Any] = {}
         skipped_count = 0
 
         for component in components:
@@ -120,23 +120,23 @@ class OutdatedAnalyzer(Analyzer):
         cached_data: Dict[str, Any] = await cache_service.mget(cache_keys)
 
         for cache_key, latest_version in cached_data.items():
-            component = component_map.get(cache_key)
-            if not component:
+            cached_comp = component_map.get(cache_key)
+            if not cached_comp:
                 continue
 
             # Distinguish between "not cached" (None) and "cached empty" ("")
             if latest_version is not None:
                 if latest_version:  # Non-empty cached value
-                    cached_results.append((component, latest_version))
+                    cached_results.append((cached_comp, latest_version))
                 # Empty string = negative cache, skip without re-fetching
             else:
                 # None = not in cache, need to fetch
-                uncached_components.append(component)
+                uncached_components.append(cached_comp)
 
         return cached_results, uncached_components
 
     async def _check_component_for_batch(
-        self, client: httpx.AsyncClient, component: Dict[str, Any]
+        self, client: InstrumentedAsyncClient, component: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Check component and return result with distributed lock to prevent stampede."""
         purl_str = component.get("purl", "")

@@ -29,7 +29,7 @@ def correlate_scorecard_with_vulnerabilities(
         return recommendations
 
     # Build scorecard lookup by component
-    scorecard_by_component = {}
+    scorecard_by_component: Dict[str, Dict[str, Any]] = {}
     for qf in quality_findings:
         component = get_attr(qf, "component", "")
         if not component:
@@ -43,7 +43,7 @@ def correlate_scorecard_with_vulnerabilities(
         }
 
     # Find vulnerabilities in poorly maintained packages
-    high_risk_vulns = []
+    high_risk_vulns: List[Dict[str, Any]] = []
 
     for vf in vulnerability_findings:
         component = get_attr(vf, "component", "")
@@ -217,7 +217,7 @@ def analyze_cross_project_patterns(
                 cast(list, package_usage[name]["projects"]).append(proj.get("project_name"))
 
     # Packages with multiple versions across projects
-    inconsistent_packages = [
+    inconsistent_packages: List[Dict[str, Any]] = [
         {
             "name": name,
             "versions": list(data["versions"]),

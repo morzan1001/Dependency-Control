@@ -122,12 +122,10 @@ def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendati
                 ransomware_vulns.append(f)
             else:
                 kev_vulns.append(f)
-        elif (
-            isinstance(details, dict)
-            and details.get("epss_score")
-            and details.get("epss_score") >= EPSS_VERY_HIGH_THRESHOLD
-        ):
-            high_epss_vulns.append(f)
+        elif isinstance(details, dict):
+            epss = details.get("epss_score")
+            if epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD:
+                high_epss_vulns.append(f)
 
     if ransomware_vulns:
         affected_packages = list({get_attr(f, "component", "") for f in ransomware_vulns})

@@ -118,6 +118,10 @@ class Scan(BaseModel):
     stats: Optional[Stats] = None
     completed_at: Optional[datetime] = None
 
+    # Reachability enrichment
+    reachability_pending: Optional[bool] = None
+    reachability_pending_since: Optional[datetime] = None
+
     # Re-scan metadata
     is_rescan: bool = False
     original_scan_id: Optional[str] = None

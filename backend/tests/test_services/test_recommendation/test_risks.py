@@ -1,6 +1,6 @@
 """Tests for risk detection: hotspots, toxic dependencies, and attack surface analysis."""
 
-from app.schemas.recommendation import Priority, RecommendationType
+from app.schemas.recommendation import PackageHotspot, Priority, RecommendationType
 from app.services.recommendation.risks import (
     analyze_attack_surface,
     detect_critical_hotspots,
@@ -249,22 +249,22 @@ class TestDetectCriticalHotspotsRemediation:
 
 class TestGetHotspotRemediationSteps:
     def test_malware_steps(self):
-        hotspot = {"has_malware": True, "kev_count": 0, "fixed_versions": [], "package": "x"}
+        hotspot = PackageHotspot(package="x", has_malware=True, kev_count=0, fixed_versions=[])
         steps = get_hotspot_remediation_steps(hotspot)
         assert any("malware" in s.lower() for s in steps)
 
     def test_kev_steps(self):
-        hotspot = {"has_malware": False, "kev_count": 1, "fixed_versions": [], "package": "x"}
+        hotspot = PackageHotspot(package="x", has_malware=False, kev_count=1, fixed_versions=[])
         steps = get_hotspot_remediation_steps(hotspot)
         assert any("exploited" in s.lower() for s in steps)
 
     def test_fixable_steps(self):
-        hotspot = {"has_malware": False, "kev_count": 0, "fixed_versions": ["2.0"], "package": "x"}
+        hotspot = PackageHotspot(package="x", has_malware=False, kev_count=0, fixed_versions=["2.0"])
         steps = get_hotspot_remediation_steps(hotspot)
         assert any("2.0" in s for s in steps)
 
     def test_no_fix_steps(self):
-        hotspot = {"has_malware": False, "kev_count": 0, "fixed_versions": [], "package": "x"}
+        hotspot = PackageHotspot(package="x", has_malware=False, kev_count=0, fixed_versions=[])
         steps = get_hotspot_remediation_steps(hotspot)
         assert any("alternative" in s.lower() for s in steps)
 

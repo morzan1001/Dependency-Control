@@ -297,7 +297,7 @@ async def read_projects(
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     # Build search query
-    search_query = {}
+    search_query: Dict[str, Any] = {}
     if search:
         search_query["name"] = {"$regex": re.escape(search), "$options": "i"}
 
@@ -576,7 +576,7 @@ async def read_project_branches(
     deleted_set = set(project.deleted_branches) if project else set()
 
     # Get last scan date per branch
-    pipeline = [
+    pipeline: List[Dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
         {"$group": {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
     ]
@@ -809,7 +809,7 @@ async def update_notification_settings(
     is_owner = project.owner_id == str(current_user.id)
     has_update_perm = has_permission(current_user.permissions, Permissions.PROJECT_UPDATE)
 
-    update_data = {}
+    update_data: Dict[str, Any] = {}
 
     # Handle enforcement setting (Owner/Admin only)
     if settings.enforce_notification_settings is not None:
@@ -939,6 +939,8 @@ async def read_analysis_results(
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
+    if not scan.project_id:
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
 
     return await analysis_repo.find_by_scan(scan_id)
@@ -1028,9 +1030,11 @@ async def read_scan_findings(
     scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
+    if not scan.project_id:
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
 
-    query = {"scan_id": scan_id}
+    query: Dict[str, Any] = {"scan_id": scan_id}
 
     if type:
         query["type"] = type
@@ -1162,6 +1166,8 @@ async def get_scan_stats(
     scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
+    if not scan.project_id:
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
 
     pipeline: List[Dict[str, Any]] = [
@@ -1209,7 +1215,7 @@ async def update_project_member(
 
     project_repo = ProjectRepository(db)
 
-    update_fields = {}
+    update_fields: Dict[str, Any] = {}
     if member_in.role:
         update_fields[f"members.{member_index}.role"] = member_in.role
     if member_in.notification_preferences:

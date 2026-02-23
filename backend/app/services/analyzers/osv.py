@@ -153,7 +153,7 @@ class OSVAnalyzer(Analyzer):
 
         # Build cache keys for components with PURLs
         cache_keys = []
-        component_map = {}
+        component_map: Dict[str, Any] = {}
 
         for component in components:
             purl = component.get("purl")
@@ -169,8 +169,8 @@ class OSVAnalyzer(Analyzer):
         cached_data = await cache_service.mget(cache_keys)
 
         for cache_key, data in cached_data.items():
-            component = component_map.get(cache_key)
-            if not component:
+            cached_comp = component_map.get(cache_key)
+            if not cached_comp:
                 continue
 
             if data:
@@ -178,7 +178,7 @@ class OSVAnalyzer(Analyzer):
                 if data.get("vulnerabilities"):
                     cached_results.append(data)
             else:
-                uncached_components.append(component)
+                uncached_components.append(cached_comp)
 
         return cached_results, uncached_components
 

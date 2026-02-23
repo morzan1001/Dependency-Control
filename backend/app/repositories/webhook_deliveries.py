@@ -57,7 +57,7 @@ class WebhookDeliveriesRepository:
         }
 
         await self.collection.insert_one(log_entry)
-        return log_entry["_id"]
+        return str(log_entry["_id"])
 
     async def get_recent_deliveries(self, webhook_id: str, limit: int = 100) -> List[Dict[str, Any]]:
         """
@@ -102,7 +102,7 @@ class WebhookDeliveriesRepository:
         Returns:
             Dict with total, successful, failed counts and success_rate percentage
         """
-        pipeline = [
+        pipeline: List[Dict[str, Any]] = [
             {"$match": {"webhook_id": webhook_id}},
             {
                 "$group": {

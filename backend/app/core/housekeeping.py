@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import List, TYPE_CHECKING, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
@@ -143,6 +143,8 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
 
                 # Check if time to scan
                 last_scan_aware = ensure_utc(project.last_scan_at)
+                if not last_scan_aware:
+                    continue
                 next_scan_due = last_scan_aware + timedelta(hours=interval_hours)
                 if datetime.now(timezone.utc) < next_scan_due:
                     continue
@@ -273,7 +275,7 @@ async def run_housekeeping() -> None:
             logger.info("Running project-specific housekeeping...")
 
             # Group projects by retention_days to minimize DB queries
-            pipeline = [
+            pipeline: List[Dict[str, Any]] = [
                 {"$match": {"retention_days": {"$gt": 0}}},  # Ignore keep-forever
                 {
                     "$group": {
@@ -466,13 +468,13 @@ async def sync_project_branches(project_data: dict, db) -> None:
             from app.repositories.github_instances import GitHubInstanceRepository
             from app.services.github import GitHubService
 
-            instance_repo = GitHubInstanceRepository(db)
-            instance = await instance_repo.get_by_id(github_instance_id)
-            if instance and instance.access_token:
-                service = GitHubService(instance)
+            gh_instance_repo = GitHubInstanceRepository(db)
+            gh_instance = await gh_instance_repo.get_by_id(github_instance_id)
+            if gh_instance and gh_instance.access_token:
+                gh_service = GitHubService(gh_instance)
                 parts = github_repo_path.split("/", 1)
                 if len(parts) == 2:
-                    vcs_branches = await service.list_branches(parts[0], parts[1])
+                    vcs_branches = await gh_service.list_branches(parts[0], parts[1])
 
         if vcs_branches is None:
             return

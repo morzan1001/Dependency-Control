@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from typing import List
+from typing import Any, Dict, List
 
 from app.schemas.recommendation import (
     Priority,
@@ -24,7 +24,7 @@ def analyze_outdated_dependencies(
     """
     recommendations = []
 
-    outdated_deps = []
+    outdated_deps: List[Dict[str, Any]] = []
 
     for dep in dependencies:
         name = str(get_attr(dep, "name", "")).lower()
@@ -126,7 +126,7 @@ def analyze_version_fragmentation(
     recommendations = []
 
     # Group dependencies by name (normalize to lowercase)
-    deps_by_name = defaultdict(list)
+    deps_by_name: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for dep in dependencies:
         name = str(get_attr(dep, "name", "")).lower()
         if name:
@@ -140,7 +140,7 @@ def analyze_version_fragmentation(
             )
 
     # Find packages with multiple versions
-    fragmented = []
+    fragmented: List[Dict[str, Any]] = []
     for name, versions in deps_by_name.items():
         unique_versions = {v["version"] for v in versions}
         if len(unique_versions) > 1:
@@ -224,7 +224,7 @@ def analyze_dev_in_production(
     """
     recommendations = []
 
-    potential_dev_deps = []
+    potential_dev_deps: List[Dict[str, Any]] = []
 
     for dep in dependencies:
         name = str(get_attr(dep, "name") or "").lower()

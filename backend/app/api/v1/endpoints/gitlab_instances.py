@@ -225,6 +225,8 @@ async def update_instance(
 
     # Fetch updated instance
     updated_instance = await instance_repo.get_by_id(instance_id)
+    if not updated_instance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found after update")
 
     logger.info(f"Updated GitLab instance '{updated_instance.name}' by user {current_user.username}")
 

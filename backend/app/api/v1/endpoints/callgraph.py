@@ -203,10 +203,8 @@ async def get_callgraph(
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found for this project")
 
-    # Remove MongoDB _id
-    callgraph.pop("_id", None)
-
-    return CallgraphResponse(**callgraph)
+    data = callgraph.model_dump(by_alias=False, exclude={"id"})
+    return CallgraphResponse(**data)
 
 
 @router.get("/{project_id}/callgraph/modules", responses={**RESP_AUTH_404})
@@ -228,18 +226,18 @@ async def get_module_usage(
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found")
 
-    module_usage = callgraph.get("module_usage", {})
+    module_usage = callgraph.module_usage or {}
 
     # Sort by import count
     sorted_modules = sorted(
         module_usage.items(),
-        key=lambda x: x[1].get("import_count", 0) + x[1].get("call_count", 0),
+        key=lambda x: getattr(x[1], "import_count", 0) + getattr(x[1], "call_count", 0),
         reverse=True,
     )
 
     return ModuleUsageResponse(
         project_id=project_id,
-        language=callgraph.get("language"),
+        language=callgraph.language,
         modules=[{"name": k, "module": k, **v} for k, v in sorted_modules],
     )
 

@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
+
+from prometheus_client import Counter
 
 from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient
@@ -14,11 +16,13 @@ from app.services.notifications.base import NotificationProvider
 logger = logging.getLogger(__name__)
 
 # Import metrics for notification tracking
+notifications_sent_total: Optional[Counter] = None
+notifications_failed_total: Optional[Counter] = None
+
 try:
     from app.core.metrics import notifications_failed_total, notifications_sent_total
 except ImportError:
-    notifications_sent_total = None
-    notifications_failed_total = None
+    pass
 
 
 class SlackProvider(NotificationProvider):
@@ -124,6 +128,7 @@ class SlackProvider(NotificationProvider):
         subject: str,
         message: str,
         system_settings: Optional[SystemSettings] = None,
+        **kwargs: Any,
     ) -> bool:
         if not system_settings:
             return False

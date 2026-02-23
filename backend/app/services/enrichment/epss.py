@@ -5,6 +5,7 @@ from typing import Dict, List
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, EPSS_API_URL
 from app.schemas.enrichment import EPSSData
 
@@ -20,7 +21,7 @@ class EPSSProvider:
         self._batch_size = ANALYZER_BATCH_SIZES.get("epss", 100)
         self._timeout = ANALYZER_TIMEOUTS.get("epss", ANALYZER_TIMEOUTS["default"])
 
-    async def fetch_epss_batch(self, client: httpx.AsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
+    async def fetch_epss_batch(self, client: InstrumentedAsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
         """Fetch EPSS scores for a batch of CVEs with retry logic."""
         if not cves:
             return {}
@@ -85,7 +86,7 @@ class EPSSProvider:
         logger.error(f"EPSS API failed after {self._max_retries} attempts: {last_error}")
         return {}
 
-    async def load_epss_scores(self, client: httpx.AsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
+    async def load_epss_scores(self, client: InstrumentedAsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
         """Load EPSS scores for given CVEs, using Redis cache where available."""
         result = {}
         missing_cves = []

@@ -23,10 +23,10 @@ try:
     )
 except ImportError:
     # Fallback if metrics module is not available yet
-    worker_queue_size = None
-    worker_active_count = None
-    worker_jobs_processed_total = None
-    worker_job_duration_seconds = None
+    worker_queue_size = None  # type: ignore[assignment]
+    worker_active_count = None  # type: ignore[assignment]
+    worker_jobs_processed_total = None  # type: ignore[assignment]
+    worker_job_duration_seconds = None  # type: ignore[assignment]
 
 # Default graceful shutdown timeout (should be less than K8s terminationGracePeriodSeconds)
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25

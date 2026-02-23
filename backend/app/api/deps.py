@@ -5,6 +5,7 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from prometheus_client import Counter
 from pydantic import ValidationError
 
 from app.core import security
@@ -27,10 +28,12 @@ _MSG_INVALID_API_KEY = "Invalid API Key"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 
 # Import metrics for token validation tracking
+auth_token_validations_total: Optional[Counter] = None
+
 try:
     from app.core.metrics import auth_token_validations_total
 except ImportError:
-    auth_token_validations_total = None
+    pass
 
 
 async def get_system_settings(
@@ -59,9 +62,9 @@ async def get_current_user(
     )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username: str = payload.get("sub")
+        username = payload.get("sub")
         permissions: list[str] = payload.get("permissions", [])
-        jti: str = payload.get("jti")  # JWT ID for blacklist check
+        jti = payload.get("jti")  # JWT ID for blacklist check
 
         if username is None:
             raise credentials_exception
@@ -86,6 +89,8 @@ async def get_current_user(
             )
 
     user_repo = UserRepository(db)
+    if not token_data.sub:
+        raise credentials_exception
     user = await user_repo.get_raw_by_username(token_data.sub)
     if user is None:
         if auth_token_validations_total:
@@ -366,15 +371,15 @@ async def get_project_for_ingest(
                 project = Project(**project_data)
 
                 # Sync repository path/name if repo was renamed
-                updates: dict = {}
+                gh_updates: dict = {}
                 if project.github_repository_path != github_repository_path:
-                    updates["github_repository_path"] = github_repository_path
+                    gh_updates["github_repository_path"] = github_repository_path
                     if project.name == project.github_repository_path:
-                        updates["name"] = github_repository_path
+                        gh_updates["name"] = github_repository_path
 
-                if updates:
-                    await project_repo.update(project.id, updates)
-                    for key, value in updates.items():
+                if gh_updates:
+                    await project_repo.update(project.id, gh_updates)
+                    for key, value in gh_updates.items():
                         setattr(project, key, value)
 
                 return project
