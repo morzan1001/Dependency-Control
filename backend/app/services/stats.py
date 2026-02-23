@@ -62,12 +62,12 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     holder_id = f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
     lock_ttl = 300  # 5 minutes - should be enough for stats recalculation
 
-    if not await lock_repo.acquire_lock(lock_name, holder_id, lock_ttl):
+    lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, lock_ttl)
+    if not lock_acquired:
         logger.warning(
             f"Could not acquire lock for stats recalculation of project {project_id}. "
             f"Another process is already recalculating stats."
         )
-        # Return None to signal that recalculation is already in progress
         return None
 
     try:
@@ -186,9 +186,10 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         return stats
 
     finally:
-        # Always release the lock, even if an exception occurs
-        await lock_repo.release_lock(lock_name)
-        logger.debug(f"Released lock {lock_name} for project {project_id}")
+        # Only release the lock if we successfully acquired it
+        if lock_acquired:
+            await lock_repo.release_lock(lock_name)
+            logger.debug(f"Released lock {lock_name} for project {project_id}")
 
 
 async def recalculate_all_projects(db: AsyncIOMotorDatabase) -> int:

@@ -71,37 +71,33 @@ export default function ProjectDetails() {
       }
   }
 
-  const handleExportCsv = async () => {
+  const downloadFile = async (fetchBlob: () => Promise<Blob>, filename: string, errorMsg: string) => {
     try {
-      const blob = await projectApi.exportCsv(id!)
+      const blob = await fetchBlob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `project-${project?.name}-export.csv`
+      a.download = filename
       document.body.appendChild(a)
       a.click()
       window.URL.revokeObjectURL(url)
       a.remove()
     } catch {
-      toast.error("Failed to export CSV")
+      toast.error(errorMsg)
     }
   }
 
-  const handleExportSbom = async () => {
-    try {
-      const blob = await projectApi.exportSbom(id!)
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `project-${project?.name}-sbom.json`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      a.remove()
-    } catch {
-      toast.error("Failed to export SBOM")
-    }
-  }
+  const handleExportCsv = () => downloadFile(
+    () => projectApi.exportCsv(id!),
+    `project-${project?.name}-export.csv`,
+    "Failed to export CSV"
+  )
+
+  const handleExportSbom = () => downloadFile(
+    () => projectApi.exportSbom(id!),
+    `project-${project?.name}-sbom.json`,
+    "Failed to export SBOM"
+  )
 
   if (isLoadingProject) {
     return (

@@ -1,12 +1,9 @@
-import { api } from '@/api/client';
+import { api, buildQueryParams } from '@/api/client';
 import { Team, TeamCreate, TeamMemberCreate } from '@/types/team';
 
 export const teamApi = {
   getAll: async (search?: string, sortBy = 'name', sortOrder = 'asc'): Promise<Team[]> => {
-    const params = new URLSearchParams();
-    if (search) params.append('search', search);
-    params.append('sort_by', sortBy);
-    params.append('sort_order', sortOrder);
+    const params = buildQueryParams({ search, sort_by: sortBy, sort_order: sortOrder });
     const response = await api.get<Team[]>('/teams/', { params });
     return response.data;
   },

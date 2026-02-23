@@ -1,101 +1,102 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { gitlabInstancesApi } from '@/api/gitlab-instances';
 import { githubInstancesApi } from '@/api/github-instances';
-import { GitLabInstanceCreate, GitLabInstanceUpdate } from '@/types/gitlab';
-import { GitHubInstanceCreate, GitHubInstanceUpdate } from '@/types/github';
+import { GitLabInstance, GitLabInstanceCreate, GitLabInstanceUpdate, GitLabInstanceList, GitLabInstanceTestConnectionResponse } from '@/types/gitlab';
+import { GitHubInstance, GitHubInstanceCreate, GitHubInstanceUpdate, GitHubInstanceList, GitHubInstanceTestConnectionResponse } from '@/types/github';
 
-export const gitlabInstanceKeys = {
-  all: ['gitlab-instances'] as const,
-  list: (params?: { active_only?: boolean }) => [...gitlabInstanceKeys.all, params] as const,
-};
+// --- Query Keys ---
 
-export const githubInstanceKeys = {
-  all: ['github-instances'] as const,
-  list: (params?: { active_only?: boolean }) => [...githubInstanceKeys.all, params] as const,
-};
+function createInstanceKeys(prefix: string) {
+  return {
+    all: [prefix] as const,
+    list: (params?: { active_only?: boolean }) => [prefix, params] as const,
+  };
+}
 
-export const useGitLabInstances = (params?: { active_only?: boolean }) => {
-  return useQuery({
-    queryKey: gitlabInstanceKeys.list(params),
-    queryFn: () => gitlabInstancesApi.list(params),
-  });
-};
+export const gitlabInstanceKeys = createInstanceKeys('gitlab-instances');
+export const githubInstanceKeys = createInstanceKeys('github-instances');
 
-export const useGitHubInstances = (params?: { active_only?: boolean }) => {
-  return useQuery({
-    queryKey: githubInstanceKeys.list(params),
-    queryFn: () => githubInstancesApi.list(params),
-  });
-};
+// --- Hook Factory ---
 
-export const useCreateGitLabInstance = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (data: GitLabInstanceCreate) => gitlabInstancesApi.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
-    },
-  });
-};
+interface InstanceApi<TInstance, TList, TCreate, TUpdate, TTest> {
+  list: (params?: { page?: number; size?: number; active_only?: boolean }) => Promise<TList>;
+  get: (id: string) => Promise<TInstance>;
+  create: (data: TCreate) => Promise<TInstance>;
+  update: (id: string, data: TUpdate) => Promise<TInstance>;
+  delete: (id: string, force?: boolean) => Promise<void>;
+  testConnection: (id: string) => Promise<TTest>;
+}
 
-export const useUpdateGitLabInstance = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: GitLabInstanceUpdate }) => gitlabInstancesApi.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
-    },
-  });
-};
+function createInstanceHooks<TInstance, TList, TCreate, TUpdate, TTest>(
+  api: InstanceApi<TInstance, TList, TCreate, TUpdate, TTest>,
+  keys: ReturnType<typeof createInstanceKeys>,
+) {
+  const useInstances = (params?: { active_only?: boolean }) =>
+    useQuery({
+      queryKey: keys.list(params),
+      queryFn: () => api.list(params),
+    });
 
-export const useDeleteGitLabInstance = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, force }: { id: string; force?: boolean }) => gitlabInstancesApi.delete(id, force),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
-    },
-  });
-};
+  const useCreate = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: (data: TCreate) => api.create(data),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.all });
+      },
+    });
+  };
 
-export const useTestGitLabConnection = () => {
-  return useMutation({
-    mutationFn: (id: string) => gitlabInstancesApi.testConnection(id),
-  });
-};
+  const useUpdate = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: ({ id, data }: { id: string; data: TUpdate }) => api.update(id, data),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.all });
+      },
+    });
+  };
 
-export const useCreateGitHubInstance = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (data: GitHubInstanceCreate) => githubInstancesApi.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
-    },
-  });
-};
+  const useDelete = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationFn: ({ id, force }: { id: string; force?: boolean }) => api.delete(id, force),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.all });
+      },
+    });
+  };
 
-export const useUpdateGitHubInstance = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: GitHubInstanceUpdate }) => githubInstancesApi.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
-    },
-  });
-};
+  const useTestConnection = () =>
+    useMutation({
+      mutationFn: (id: string) => api.testConnection(id),
+    });
 
-export const useDeleteGitHubInstance = () => {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, force }: { id: string; force?: boolean }) => githubInstancesApi.delete(id, force),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
-    },
-  });
-};
+  return { useInstances, useCreate, useUpdate, useDelete, useTestConnection };
+}
 
-export const useTestGitHubConnection = () => {
-  return useMutation({
-    mutationFn: (id: string) => githubInstancesApi.testConnection(id),
-  });
-};
+// --- GitLab Hooks ---
+
+const gitlab = createInstanceHooks<GitLabInstance, GitLabInstanceList, GitLabInstanceCreate, GitLabInstanceUpdate, GitLabInstanceTestConnectionResponse>(
+  gitlabInstancesApi,
+  gitlabInstanceKeys,
+);
+
+export const useGitLabInstances = gitlab.useInstances;
+export const useCreateGitLabInstance = gitlab.useCreate;
+export const useUpdateGitLabInstance = gitlab.useUpdate;
+export const useDeleteGitLabInstance = gitlab.useDelete;
+export const useTestGitLabConnection = gitlab.useTestConnection;
+
+// --- GitHub Hooks ---
+
+const github = createInstanceHooks<GitHubInstance, GitHubInstanceList, GitHubInstanceCreate, GitHubInstanceUpdate, GitHubInstanceTestConnectionResponse>(
+  githubInstancesApi,
+  githubInstanceKeys,
+);
+
+export const useGitHubInstances = github.useInstances;
+export const useCreateGitHubInstance = github.useCreate;
+export const useUpdateGitHubInstance = github.useUpdate;
+export const useDeleteGitHubInstance = github.useDelete;
+export const useTestGitHubConnection = github.useTestConnection;

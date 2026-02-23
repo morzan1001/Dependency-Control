@@ -1,16 +1,10 @@
-import { api } from '@/api/client';
+import { api, buildQueryParams } from '@/api/client';
 import { Token } from '@/types/auth';
 import { User, UserCreate, TwoFASetup } from '@/types/user';
 
 export const authApi = {
   login: async (username: string, password: string, otp?: string): Promise<Token> => {
-    const params = new URLSearchParams();
-    params.append('username', username);
-    params.append('password', password);
-    params.append('grant_type', 'password');
-    if (otp) {
-      params.append('otp', otp);
-    }
+    const params = buildQueryParams({ username, password, grant_type: 'password', otp });
 
     const response = await api.post<Token>('/login/access-token', params, {
       headers: {

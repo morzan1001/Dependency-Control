@@ -1,5 +1,5 @@
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useState } from 'react'
 import { SbomResponse, SbomTool, SbomToolComponent } from '@/types/scan'
 import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
@@ -32,6 +32,7 @@ export default function ScanDetails() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const sbomRefs = useRef<(HTMLDivElement | null)[]>([])
+  const [highlightedSbomIndex, setHighlightedSbomIndex] = useState<number | null>(null)
   const { data: scan, isLoading: isScanLoading } = useScan(scanId!)
   const { data: scanHistory } = useScanHistory(projectId!, scanId!)
 
@@ -77,10 +78,7 @@ export default function ScanDetails() {
         sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
 
-      sbomElement.classList.add('ring-2', 'ring-primary', 'ring-offset-2')
-      setTimeout(() => {
-        sbomElement.classList.remove('ring-2', 'ring-primary', 'ring-offset-2')
-      }, 2000)
+      setHighlightedSbomIndex(index)
     }
   }, [])
 
@@ -93,6 +91,14 @@ export default function ScanDetails() {
       }
     }
   }, [activeTab, sbomParam, isSbomsLoading, scanSboms, scrollToSbom])
+
+  useEffect(() => {
+    if (highlightedSbomIndex === null) return
+    const timeoutId = setTimeout(() => {
+      setHighlightedSbomIndex(null)
+    }, 2000)
+    return () => clearTimeout(timeoutId)
+  }, [highlightedSbomIndex])
 
   if (isScanLoading || isProjectLoading) {
     return (
@@ -580,10 +586,10 @@ export default function ScanDetails() {
                                     
                                     if (sbomResponse.error) {
                                         return (
-                                            <Card 
-                                                key={index} 
+                                            <Card
+                                                key={index}
                                                 ref={(el) => { sbomRefs.current[index] = el }}
-                                                className="transition-all duration-300 border-destructive"
+                                                className={`transition-all duration-300 border-destructive ${highlightedSbomIndex === index ? 'ring-2 ring-primary ring-offset-2' : ''}`}
                                             >
                                                 <CardHeader className="bg-destructive/10 pb-4">
                                                     <CardTitle className="text-lg flex items-center justify-between">
@@ -619,10 +625,10 @@ export default function ScanDetails() {
                                     }
 
                                     return (
-                                        <Card 
-                                            key={index} 
+                                        <Card
+                                            key={index}
                                             ref={(el) => { sbomRefs.current[index] = el }}
-                                            className="transition-all duration-300"
+                                            className={`transition-all duration-300 ${highlightedSbomIndex === index ? 'ring-2 ring-primary ring-offset-2' : ''}`}
                                         >
                                             <CardHeader className="bg-muted/50 pb-4">
                                                 <CardTitle className="text-lg flex items-center justify-between">

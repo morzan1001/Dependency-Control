@@ -60,6 +60,13 @@ export const COPY_FEEDBACK_DELAY_MS = 2000;
 export const API_TIMEOUT_MS = 30000;
 export const API_REFRESH_TIMEOUT_MS = 10000;
 
+// Standardized React Query configurations
+export const QUERY_STALE_TIMES = {
+  FAST: 2 * 60 * 1000,       // 2 min - frequently changing data (dashboard stats)
+  STANDARD: 5 * 60 * 1000,   // 5 min - most data
+  SLOW: 30 * 60 * 1000,      // 30 min - rarely changing data (dependency types, configs)
+} as const;
+
 export const ANALYTICS_PERMISSIONS = [
   Permissions.ANALYTICS_READ,
   Permissions.ANALYTICS_SUMMARY,

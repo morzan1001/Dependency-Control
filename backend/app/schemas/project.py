@@ -44,7 +44,7 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., description="The name of the project", examples=["My Awesome App"])
     team_id: Optional[str] = Field(None, description="ID of the team this project belongs to")
     active_analyzers: List[str] = Field(
-        default=["trivy", "osv", "license_compliance", "end_of_life"],
+        default_factory=lambda: ["trivy", "osv", "license_compliance", "end_of_life"],
         description="List of analyzers to run on this project",
         examples=[["end_of_life", "os_malware", "trivy"]],
     )

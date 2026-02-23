@@ -75,6 +75,18 @@ _MSG_EMAIL_NOT_CONFIGURED = "Email server not configured"
 _MSG_USER_INACTIVE = "User account is inactive"
 
 
+async def _check_rate_limit(key: str, max_attempts: int = 5, window_seconds: int = 300) -> None:
+    """Check rate limit using Redis cache. Raises 429 if exceeded."""
+    cache_key = f"rate_limit:{key}"
+    attempts = await cache_service.get(cache_key)
+    if attempts is not None and attempts >= max_attempts:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many attempts. Please try again in {window_seconds // 60} minutes.",
+        )
+    await cache_service.set(cache_key, (attempts or 0) + 1, ttl_seconds=window_seconds)
+
+
 @router.post("/login/access-token", response_model=Token, summary="Login to get access token", responses={**RESP_400, **RESP_401, **RESP_500})
 async def login_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -88,6 +100,7 @@ async def login_access_token(
     - **password**: User password
     - **otp**: One Time Password (if 2FA is enabled)
     """
+    await _check_rate_limit(f"login:{form_data.username}")
     user_repo = UserRepository(db)
     # Try username first, then email as fallback
     user = await user_repo.get_raw_by_username(form_data.username)
@@ -543,24 +556,10 @@ async def login_oidc_callback(
             detail="Invalid or expired state parameter",
         )
 
-    # Mark state as used ATOMICALLY by setting valid=False
-    # If another request already did this, we'll detect it
-    # Try to update state to invalid
-    await cache_service.set(
-        state_key,
-        {"valid": False, "used_at": datetime.now(timezone.utc).isoformat()},
-        ttl_seconds=60,
-    )
-
-    # Double-check: if state is still valid in cache after our update attempt
-    # This prevents race condition where two requests process same state
-    recheck_state = await cache_service.get(state_key)
-    if recheck_state and recheck_state.get("valid"):
-        # Another request is using this state concurrently
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="State parameter already in use",
-        )
+    # Atomically consume the state by deleting it.
+    # Only the first request to delete it will proceed; subsequent requests
+    # will find the state missing and be rejected above (cached_state check).
+    await cache_service.delete(state_key)
 
     # Use same redirect_uri logic as authorize endpoint
     if settings.FRONTEND_BASE_URL and not settings.FRONTEND_BASE_URL.startswith("http://localhost"):
@@ -736,6 +735,7 @@ async def login_oidc_callback(
     responses={**RESP_501},
 )
 async def forgot_password(
+    request: Request,
     background_tasks: BackgroundTasks,
     email: Annotated[str, Body(embed=True)],
     db: DatabaseDep,
@@ -746,6 +746,7 @@ async def forgot_password(
 
     SECURITY: Uses constant-time response to prevent timing attacks.
     """
+    await _check_rate_limit(f"forgot_pw:{request.client.host if request.client else 'unknown'}", max_attempts=3, window_seconds=600)
     import asyncio
     import time
 
@@ -790,12 +791,13 @@ async def forgot_password(
     responses={**RESP_400, **RESP_404},
 )
 async def reset_password(
-    reset_in: UserPasswordReset, db: DatabaseDep
+    request: Request, reset_in: UserPasswordReset, db: DatabaseDep
 ) -> PasswordResetResponse:
     """
     Reset password using the token received via email.
     Token is one-time use to prevent replay attacks.
     """
+    await _check_rate_limit(f"reset_pw:{request.client.host if request.client else 'unknown'}", max_attempts=5, window_seconds=600)
     token_hash = hashlib.sha256(reset_in.token.encode()).hexdigest()
     token_key = f"used_reset_token:{token_hash}"
 

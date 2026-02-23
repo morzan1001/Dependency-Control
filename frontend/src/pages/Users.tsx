@@ -9,22 +9,19 @@ import { UserTable } from '@/components/users/UserTable';
 import { UserDetailsDialog } from '@/components/users/UserDetailsDialog';
 import { Input } from '@/components/ui/input';
 import { Search } from 'lucide-react';
-import { useDebounce } from '@/hooks/use-debounce';
-import { DEBOUNCE_DELAY_MS, SMALL_PAGE_SIZE } from '@/lib/constants'; 
+import { usePaginationState } from '@/hooks/use-pagination-state';
+import { SMALL_PAGE_SIZE } from '@/lib/constants';
 
 export default function UsersPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [page, setPage] = useState(0);
-  const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState("username");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
-  const debouncedSearch = useDebounce(search, DEBOUNCE_DELAY_MS);
+  const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
+    usePaginationState({ defaultSort: 'username', defaultOrder: 'asc' });
   const limit = SMALL_PAGE_SIZE;
-  
+
   const { hasPermission } = useAuth();
-  
+
   const { data: users, isLoading: isLoadingUsers, error } = useUsers(
-    page * limit,
+    (page - 1) * limit,
     limit,
     debouncedSearch,
     sortBy,
@@ -107,11 +104,11 @@ export default function UsersPage() {
             <CardTitle>All Users</CardTitle>
           </CardHeader>
           <CardContent>
-            <UserTable 
-              users={allUsers} 
-              page={page} 
-              limit={limit} 
-              onPageChange={setPage} 
+            <UserTable
+              users={allUsers}
+              page={page - 1}
+              limit={limit}
+              onPageChange={(p) => setPage(p + 1)}
               onSelectUser={setSelectedUser}
               sortBy={sortBy}
               sortOrder={sortOrder}

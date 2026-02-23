@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { useTeams } from '@/hooks/queries/use-teams';
 import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
-import { useDebounce } from '@/hooks/use-debounce';
-import { DEBOUNCE_DELAY_MS } from '@/lib/constants';
+import { usePaginationState } from '@/hooks/use-pagination-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -32,11 +31,8 @@ export default function TeamsPage() {
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [selectedTeamIdForAddMember, setSelectedTeamIdForAddMember] = useState<string | null>(null);
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState("name");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
-
-  const debouncedSearch = useDebounce(search, DEBOUNCE_DELAY_MS);
+  const { search, setSearch, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
+    usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' });
 
   const { data: teams, isLoading, error } = useTeams(debouncedSearch, sortBy, sortOrder);
 

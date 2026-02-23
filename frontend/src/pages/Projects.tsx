@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useProjects } from '@/hooks/queries/use-projects';
 import { useAppConfig } from '@/hooks/queries/use-system';
 import { useAuth } from '@/context/useAuth';
-import { useDebounce } from '@/hooks/use-debounce';
+import { usePaginationState } from '@/hooks/use-pagination-state';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,20 +24,9 @@ import {
 export default function ProjectsPage() {
   const { hasPermission } = useAuth();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [sortBy, setSortBy] = useState('created_at');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
+    usePaginationState();
   const limit = PROJECT_GRID_PAGE_SIZE;
-
-  const debouncedSearch = useDebounce(search, 300);
-
-  // Reset page when search changes using the recommended "adjust state during render" pattern
-  const [prevSearch, setPrevSearch] = useState(debouncedSearch);
-  if (debouncedSearch !== prevSearch) {
-    setPrevSearch(debouncedSearch);
-    setPage(1);
-  }
 
   const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjects(
     debouncedSearch,

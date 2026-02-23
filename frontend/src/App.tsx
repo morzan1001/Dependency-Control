@@ -25,6 +25,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { systemApi } from '@/api/system'
 import { useState, useEffect } from 'react'
 
@@ -131,7 +132,9 @@ function AppRoutes() {
       } />
       <Route element={
         <ProtectedRoute>
-          <DashboardLayout />
+          <ErrorBoundary>
+            <DashboardLayout />
+          </ErrorBoundary>
         </ProtectedRoute>
       }>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

@@ -486,7 +486,7 @@ class TestMongoRoundTrip:
         original = Project(
             name="My App",
             owner_id="u1",
-            members=[ProjectMember(user_id="u2", role="developer")],
+            members=[ProjectMember(user_id="u2", role="editor")],
             active_analyzers=["trivy", "osv"],
             retention_days=30,
         )

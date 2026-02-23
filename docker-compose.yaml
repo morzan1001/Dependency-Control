@@ -160,5 +160,4 @@ networks:
 volumes:
   mongodb_data:
   redis_data:
-  appsmith_stacks:
   pg_data:

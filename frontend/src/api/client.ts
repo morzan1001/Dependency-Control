@@ -103,6 +103,61 @@ const refreshAccessToken = async (): Promise<string | null> => {
   return refreshPromise;
 };
 
+/**
+ * Build URLSearchParams from an object, skipping null/undefined/empty values.
+ * Arrays are joined with commas.
+ */
+export function buildQueryParams(obj: Record<string, unknown>): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === undefined || value === null || value === '') continue;
+    if (Array.isArray(value)) {
+      if (value.length > 0) params.append(key, value.join(','));
+    } else {
+      params.append(key, String(value));
+    }
+  }
+  return params;
+}
+
+/**
+ * Generic CRUD API factory for SCM instance resources.
+ * Eliminates duplication between GitHub/GitLab instance APIs.
+ */
+export function createInstanceApi<
+  TInstance,
+  TCreate,
+  TUpdate,
+  TList,
+  TTestResponse,
+>(basePath: string) {
+  return {
+    list: async (params?: { page?: number; size?: number; active_only?: boolean }): Promise<TList> => {
+      const response = await api.get<TList>(`${basePath}/`, { params });
+      return response.data;
+    },
+    get: async (instanceId: string): Promise<TInstance> => {
+      const response = await api.get<TInstance>(`${basePath}/${instanceId}`);
+      return response.data;
+    },
+    create: async (data: TCreate): Promise<TInstance> => {
+      const response = await api.post<TInstance>(`${basePath}/`, data);
+      return response.data;
+    },
+    update: async (instanceId: string, data: TUpdate): Promise<TInstance> => {
+      const response = await api.put<TInstance>(`${basePath}/${instanceId}`, data);
+      return response.data;
+    },
+    delete: async (instanceId: string, force = false): Promise<void> => {
+      await api.delete(`${basePath}/${instanceId}`, { params: { force } });
+    },
+    testConnection: async (instanceId: string): Promise<TTestResponse> => {
+      const response = await api.post<TTestResponse>(`${basePath}/${instanceId}/test-connection`);
+      return response.data;
+    },
+  };
+}
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {

@@ -1,10 +1,8 @@
 import logging
-import re
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
-from jose import jwt
 
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.cache import cache_service
@@ -14,6 +12,7 @@ from app.core.constants import (
 )
 from app.models.github_api import GitHubOIDCPayload
 from app.models.github_instance import GitHubInstance
+from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
 
@@ -197,55 +196,12 @@ class GitHubService:
 
         Handles key rotation by refreshing JWKS cache if key is not found.
         """
-        try:
-            # 1. Get Key ID from Header
-            headers = jwt.get_unverified_header(token)
-            kid = headers.get("kid")
-            if not kid:
-                logger.warning("GitHub OIDC Token missing 'kid' in header")
-                return None
-
-            # 2. Fetch JWKS
-            jwks = await self.get_jwks()
-
-            # 3. Find Key
-            key = None
-            for k in jwks.get("keys", []):
-                if k.get("kid") == kid:
-                    key = k
-                    break
-
-            # 4. If key not found, try refreshing cache (key rotation scenario)
-            if not key:
-                logger.info(f"GitHub key {kid} not in cache, refreshing JWKS...")
-                await self._invalidate_jwks_cache()
-                jwks = await self.get_jwks()
-
-                for k in jwks.get("keys", []):
-                    if k.get("kid") == kid:
-                        key = k
-                        break
-
-            if not key:
-                logger.error(f"No matching GitHub key found for kid: {kid} after refresh")
-                return None
-
-            # 5. Verify JWT
-            jwt_options = {}
-            if self.instance.oidc_audience:
-                jwt_options["verify_aud"] = True
-            else:
-                jwt_options["verify_aud"] = False
-
-            payload = jwt.decode(
-                token,
-                key,
-                algorithms=["RS256"],
-                issuer=self.base_url,
-                audience=(self.instance.oidc_audience if self.instance.oidc_audience else None),
-                options=jwt_options,
-            )
-            return GitHubOIDCPayload(**payload)
-        except Exception as e:
-            logger.error(f"GitHub OIDC Token validation error: {e}")
-            return None
+        return await _validate_oidc_token(
+            token=token,
+            get_jwks=self.get_jwks,
+            invalidate_cache=self._invalidate_jwks_cache,
+            issuer=self.base_url,
+            audience=self.instance.oidc_audience or None,
+            payload_model=GitHubOIDCPayload,
+            provider_name="GitHub",
+        )

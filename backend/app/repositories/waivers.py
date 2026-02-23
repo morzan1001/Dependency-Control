@@ -55,7 +55,19 @@ class WaiverRepository:
         skip: int = 0,
         limit: int = 1000,
     ) -> List[Dict[str, Any]]:
-        """Find waivers for a project."""
+        """Find waivers for a project.
+
+        Returns raw dicts (not Waiver models) for performance in bulk operations.
+        When listing many waivers, avoiding model instantiation reduces overhead.
+
+        Args:
+            project_id: The project ID to filter waivers by.
+            skip: Number of documents to skip (for pagination).
+            limit: Maximum number of documents to return.
+
+        Returns:
+            List[Dict[str, Any]]: Raw MongoDB documents as dictionaries.
+        """
         cursor = self.collection.find({"project_id": project_id}).skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
@@ -67,7 +79,22 @@ class WaiverRepository:
         sort_by: str = "created_at",
         sort_order: int = -1,
     ) -> List[Dict[str, Any]]:
-        """Find multiple waivers matching query."""
+        """Find multiple waivers matching query.
+
+        Returns raw dicts (not Waiver models) for performance in bulk operations.
+        This method is used for paginated listings and search results where
+        constructing full Waiver model instances would add unnecessary overhead.
+
+        Args:
+            query: MongoDB query filter.
+            skip: Number of documents to skip (for pagination).
+            limit: Maximum number of documents to return.
+            sort_by: Field name to sort by.
+            sort_order: Sort direction (1 for ascending, -1 for descending).
+
+        Returns:
+            List[Dict[str, Any]]: Raw MongoDB documents as dictionaries.
+        """
         cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
@@ -131,7 +158,19 @@ class WaiverRepository:
         return await cursor.to_list(length=10000)
 
     async def find_by_finding(self, project_id: str, finding_id: str) -> Optional[Waiver]:
-        """Find waiver for a specific finding."""
+        """Find waiver for a specific finding.
+
+        Returns a Waiver model instance (not a raw dict) because this is a
+        single-item lookup where the caller typically needs the full validated
+        model for business logic (e.g., checking expiration, applying waiver).
+
+        Args:
+            project_id: The project ID to scope the search.
+            finding_id: The finding ID to match.
+
+        Returns:
+            Optional[Waiver]: The Waiver model instance, or None if not found.
+        """
         data = await self.collection.find_one(
             {
                 "project_id": project_id,
@@ -143,7 +182,19 @@ class WaiverRepository:
         return None
 
     async def find_by_package(self, project_id: str, package_name: str) -> List[Waiver]:
-        """Find waivers for a specific package."""
+        """Find waivers for a specific package.
+
+        Returns a list of Waiver model instances (not raw dicts) because
+        package-level lookups are scoped and typically small in number,
+        and callers need validated models for applying waiver logic.
+
+        Args:
+            project_id: The project ID to scope the search.
+            package_name: The package name to match.
+
+        Returns:
+            List[Waiver]: List of Waiver model instances.
+        """
         cursor = self.collection.find(
             {
                 "project_id": project_id,

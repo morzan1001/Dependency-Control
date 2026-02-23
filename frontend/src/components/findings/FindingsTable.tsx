@@ -161,6 +161,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
             ) : allRows.length === 0 ? (
                 <NoData entityName="findings" />
             ) : (
+                <TooltipProvider>
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
                         <TableRow className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
@@ -217,42 +218,40 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                                     <SeverityBadge severity={finding.severity} />
                                                     {/* Reachability indicator */}
                                                     {finding.details?.reachability && (
-                                                        <TooltipProvider>
-                                                            <Tooltip>
-                                                                <TooltipTrigger asChild>
-                                                                    <div className={`flex items-center justify-center w-5 h-5 rounded-full ${
-                                                                        finding.details.reachability.is_reachable
-                                                                            ? 'bg-red-100 text-severity-critical'
-                                                                            : 'bg-green-100 text-success'
-                                                                    }`}>
-                                                                        {finding.details.reachability.is_reachable ? (
-                                                                            <AlertTriangle className="h-3 w-3" />
-                                                                        ) : (
-                                                                            <Shield className="h-3 w-3" />
-                                                                        )}
-                                                                    </div>
-                                                                </TooltipTrigger>
-                                                                <TooltipContent side="right">
-                                                                    <div className="space-y-1">
-                                                                        <p className="font-medium">
-                                                                            {finding.details.reachability.is_reachable 
-                                                                                ? 'Reachable Code' 
-                                                                                : 'Not Reachable'}
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <div className={`flex items-center justify-center w-5 h-5 rounded-full ${
+                                                                    finding.details.reachability.is_reachable
+                                                                        ? 'bg-red-100 text-severity-critical'
+                                                                        : 'bg-green-100 text-success'
+                                                                }`}>
+                                                                    {finding.details.reachability.is_reachable ? (
+                                                                        <AlertTriangle className="h-3 w-3" />
+                                                                    ) : (
+                                                                        <Shield className="h-3 w-3" />
+                                                                    )}
+                                                                </div>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent side="right">
+                                                                <div className="space-y-1">
+                                                                    <p className="font-medium">
+                                                                        {finding.details.reachability.is_reachable
+                                                                            ? 'Reachable Code'
+                                                                            : 'Not Reachable'}
+                                                                    </p>
+                                                                    {finding.details.reachability.analysis_level && (
+                                                                        <p className="text-xs">
+                                                                            Analysis: {finding.details.reachability.analysis_level}
                                                                         </p>
-                                                                        {finding.details.reachability.analysis_level && (
-                                                                            <p className="text-xs">
-                                                                                Analysis: {finding.details.reachability.analysis_level}
-                                                                            </p>
-                                                                        )}
-                                                                        {finding.details.reachability.confidence_score && (
-                                                                            <p className="text-xs">
-                                                                                Confidence: {Math.round(finding.details.reachability.confidence_score * 100)}%
-                                                                            </p>
-                                                                        )}
-                                                                    </div>
-                                                                </TooltipContent>
-                                                            </Tooltip>
-                                                        </TooltipProvider>
+                                                                    )}
+                                                                    {finding.details.reachability.confidence_score && (
+                                                                        <p className="text-xs">
+                                                                            Confidence: {Math.round(finding.details.reachability.confidence_score * 100)}%
+                                                                        </p>
+                                                                    )}
+                                                                </div>
+                                                            </TooltipContent>
+                                                        </Tooltip>
                                                     )}
                                                 </div>
                                             </TableCell>
@@ -275,36 +274,34 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                             </TableCell>
                                             <TableCell className="p-4 align-middle">
                                                 {sourceInfo ? (
-                                                    <TooltipProvider>
-                                                        <Tooltip>
-                                                            <TooltipTrigger asChild>
-                                                                <div className="flex items-center justify-center">
-                                                                    <sourceInfo.icon className={`h-5 w-5 ${sourceInfo.color}`} />
-                                                                </div>
-                                                            </TooltipTrigger>
-                                                            <TooltipContent side="top" className="max-w-xs">
-                                                                <div className="space-y-1">
-                                                                    <p className="font-medium">{sourceInfo.label}</p>
-                                                                    {finding.source_target && (
-                                                                        <p className="text-xs text-muted-foreground break-all">{finding.source_target}</p>
-                                                                    )}
-                                                                    {finding.direct !== undefined && (
-                                                                        <div className="space-y-0.5">
-                                                                            <p className="text-xs">
-                                                                                {finding.direct ? "Direct dependency" : "Transitive dependency"}
-                                                                                {finding.direct_inferred ? " (inferred)" : ""}
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <div className="flex items-center justify-center">
+                                                                <sourceInfo.icon className={`h-5 w-5 ${sourceInfo.color}`} />
+                                                            </div>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent side="top" className="max-w-xs">
+                                                            <div className="space-y-1">
+                                                                <p className="font-medium">{sourceInfo.label}</p>
+                                                                {finding.source_target && (
+                                                                    <p className="text-xs text-muted-foreground break-all">{finding.source_target}</p>
+                                                                )}
+                                                                {finding.direct !== undefined && (
+                                                                    <div className="space-y-0.5">
+                                                                        <p className="text-xs">
+                                                                            {finding.direct ? "Direct dependency" : "Transitive dependency"}
+                                                                            {finding.direct_inferred ? " (inferred)" : ""}
+                                                                        </p>
+                                                                        {finding.direct_inferred && (
+                                                                            <p className="text-xs text-muted-foreground italic">
+                                                                                Classification inferred (SBOM had no dependency graph)
                                                                             </p>
-                                                                            {finding.direct_inferred && (
-                                                                                <p className="text-xs text-muted-foreground italic">
-                                                                                    Classification inferred (SBOM had no dependency graph)
-                                                                                </p>
-                                                                            )}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            </TooltipContent>
-                                                        </Tooltip>
-                                                    </TooltipProvider>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </TooltipContent>
+                                                    </Tooltip>
                                                 ) : (
                                                     <span className="text-muted-foreground text-center block">-</span>
                                                 )}
@@ -340,6 +337,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                         )}
                     </TableBody>
                 </table>
+                </TooltipProvider>
             )}
 
             {selectedFinding && (
@@ -427,8 +425,8 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                     const res = await scanApi.getFindings(scanId, { search: id, skip: 0, limit: 200 })
                                     found = res.items.find(f => f.id === id) || res.items[0]
                                 }
-                            } catch {
-                                // ignore; keep modal as-is
+                            } catch (err) {
+                                console.error('Failed to fetch finding details:', err)
                             }
                         }
                         

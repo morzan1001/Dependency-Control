@@ -1,4 +1,4 @@
-import { api } from '@/api/client';
+import { api, buildQueryParams } from '@/api/client';
 import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings, ProjectMember, BranchInfo } from '@/types/project';
 
 export const projectApi = {
@@ -9,12 +9,7 @@ export const projectApi = {
     sortBy: string = 'created_at',
     sortOrder: 'asc' | 'desc' = 'desc'
   ): Promise<ProjectsResponse> => {
-    const params = new URLSearchParams();
-    if (search) params.append('search', search);
-    params.append('skip', skip.toString());
-    params.append('limit', limit.toString());
-    params.append('sort_by', sortBy);
-    params.append('sort_order', sortOrder);
+    const params = buildQueryParams({ search, skip, limit, sort_by: sortBy, sort_order: sortOrder });
 
     const response = await api.get<ProjectsResponse>('/projects/', { params });
     return response.data;

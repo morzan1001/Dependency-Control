@@ -334,18 +334,18 @@ def _make_reachable_finding(
     reachable_functions=None,
 ):
     """Create a minimal FindingDict for reachability tests."""
-    finding = {
+    reachability_data: dict = {"analysis_level": reachability_level}
+    if reachable is not None:
+        reachability_data["is_reachable"] = reachable
+    if reachable_functions is not None:
+        reachability_data["matched_symbols"] = reachable_functions
+    return {
         "finding_id": finding_id,
         "component": component,
         "version": version,
         "severity": severity,
-        "reachability_level": reachability_level,
+        "details": {"reachability": reachability_data},
     }
-    if reachable is not None:
-        finding["reachable"] = reachable
-    if reachable_functions is not None:
-        finding["reachable_functions"] = reachable_functions
-    return finding
 
 
 def _make_callgraph(language="python", modules=None, imports=None, created_at=None):

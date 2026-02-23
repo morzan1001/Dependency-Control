@@ -2,9 +2,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import PROJECT_ROLE_VIEWER
+from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES
 from app.models.finding import Finding
 from app.models.stats import Stats
 from app.models.types import PyObjectId
@@ -12,10 +12,17 @@ from app.models.types import PyObjectId
 
 class ProjectMember(BaseModel):
     user_id: str
-    role: str = PROJECT_ROLE_VIEWER  # One of PROJECT_ROLES
+    role: str = PROJECT_ROLE_VIEWER
     notification_preferences: Dict[str, List[str]] = Field(default_factory=dict)
     username: Optional[str] = None
     inherited_from: Optional[str] = None  # e.g. "Team: DevOps"
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in PROJECT_ROLES:
+            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
+        return v
 
 
 class Project(BaseModel):
@@ -28,10 +35,10 @@ class Project(BaseModel):
     owner_id: str
     team_id: Optional[str] = None
     owner_notification_preferences: Dict[str, List[str]] = Field(default_factory=dict)
-    members: List[ProjectMember] = []
+    members: List[ProjectMember] = Field(default_factory=list)
     api_key_hash: Optional[str] = Field(None, exclude=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    active_analyzers: List[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
+    active_analyzers: List[str] = Field(default_factory=lambda: ["trivy", "osv", "license_compliance", "end_of_life"])
     stats: Optional[Stats] = None
     last_scan_at: Optional[datetime] = None
     latest_scan_id: Optional[str] = None
@@ -98,7 +105,7 @@ class Scan(BaseModel):
     pipeline_user: Optional[str] = None
 
     # This allows us to keep the Scan document small while preserving the raw data.
-    sbom_refs: List[Dict[str, Any]] = []
+    sbom_refs: List[Dict[str, Any]] = Field(default_factory=list)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = "pending"
@@ -121,7 +128,7 @@ class Scan(BaseModel):
 
     # Pipeline result tracking - prevents premature completion when multiple scanners run
     last_result_at: Optional[datetime] = None  # When the last scanner result was received
-    received_results: List[str] = []  # List of analyzer names that have submitted results
+    received_results: List[str] = Field(default_factory=list)  # List of analyzer names that have submitted results
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 

@@ -430,13 +430,15 @@ async def run_pending_reachability_for_scan(
 
         # Update findings in database with reachability data
         for finding_dict in findings_dicts:
-            if finding_dict.get("reachable") is not None:
+            reachability_data = finding_dict.get("details", {}).get("reachability")
+            if reachability_data is not None:
                 await finding_repo.update(
                     finding_dict["_id"],
                     {
-                        "reachable": finding_dict.get("reachable"),
-                        "reachability_level": finding_dict.get("reachability_level"),
-                        "reachable_functions": finding_dict.get("reachable_functions", []),
+                        "reachable": reachability_data.get("is_reachable"),
+                        "reachability_level": reachability_data.get("analysis_level"),
+                        "reachable_functions": reachability_data.get("matched_symbols", []),
+                        "details.reachability": reachability_data,
                     },
                 )
 
@@ -510,8 +512,9 @@ def _build_reachability_summary_for_pending(
     }
 
     for finding in findings:
-        reachable = finding.get("reachable")
-        reachability_level = finding.get("reachability_level", "unknown")
+        reachability_data = finding.get("details", {}).get("reachability", {})
+        reachable = reachability_data.get("is_reachable")
+        reachability_level = reachability_data.get("analysis_level", "unknown")
 
         vuln_info = {
             "cve": finding.get("finding_id") or finding.get("id", ""),
@@ -519,7 +522,7 @@ def _build_reachability_summary_for_pending(
             "version": finding.get("version", ""),
             "severity": finding.get("severity", "unknown"),
             "reachability_level": reachability_level,
-            "reachable_functions": finding.get("reachable_functions", [])[:5],
+            "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
         }
 
         if reachability_level in summary["reachability_levels"]:

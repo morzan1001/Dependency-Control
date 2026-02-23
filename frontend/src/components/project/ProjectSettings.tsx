@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { useProjectBranches, useUpdateProjectNotifications, useTransferOwnership } from '@/hooks/queries/use-projects'
+import { projectKeys, useProjectBranches, useUpdateProjectNotifications, useTransferOwnership } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances } from '@/hooks/queries/use-instances'
 import { WebhookCreate } from '@/types/webhook'
@@ -126,7 +126,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const updateProjectMutation = useMutation({
     mutationFn: (data: ProjectUpdate) => projectApi.update(projectId, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['project', projectId] })
+      queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
       toast.success("Project updated successfully")
     },
     onError: (error) => {

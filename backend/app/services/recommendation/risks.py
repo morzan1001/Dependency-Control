@@ -9,7 +9,7 @@ from app.schemas.recommendation import (
 from app.core.constants import (
     EPSS_HIGH_THRESHOLD,
     SCORECARD_LOW_THRESHOLD,
-    SEVERITY_WEIGHTS,
+    get_severity_weight,
 )
 from app.services.recommendation.common import get_attr, ModelOrDict
 
@@ -135,7 +135,7 @@ def detect_critical_hotspots(
             if get_attr(f, "reachable") is True:
                 pkg_data["reachable_count"] += 1
             risk_score = details.get("risk_score", 0) if isinstance(details, dict) else 0
-            pkg_data["total_risk_score"] += risk_score or SEVERITY_WEIGHTS.get(severity, 0)
+            pkg_data["total_risk_score"] += risk_score or get_severity_weight(severity)
         elif finding_type == "quality":
             pkg_data["quality_issues"].append(f)
         elif finding_type == "license":

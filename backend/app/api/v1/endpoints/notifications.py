@@ -1,5 +1,6 @@
 import html
 import logging
+import re
 from datetime import datetime
 from typing import Annotated, Any, Dict, List, Set
 
@@ -95,7 +96,7 @@ async def suggest_packages(
     dep_repo = DependencyRepository(db)
 
     pipeline: List[Dict[str, Any]] = [
-        {"$match": {"name": {"$regex": q, "$options": "i"}}},
+        {"$match": {"name": {"$regex": re.escape(q), "$options": "i"}}},
         {"$group": {"_id": "$name"}},
         {"$sort": {"_id": 1}},
         {"$limit": 20},

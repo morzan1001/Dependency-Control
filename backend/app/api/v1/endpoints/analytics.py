@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from typing import Annotated, Any, Dict, List, Optional
 
@@ -633,7 +634,7 @@ async def search_dependencies_advanced(
     if not scan_ids:
         return DependencySearchResponse(items=[], total=0, page=0, size=limit)
 
-    query = {"scan_id": {"$in": scan_ids}, "name": {"$regex": q, "$options": "i"}}
+    query = {"scan_id": {"$in": scan_ids}, "name": {"$regex": re.escape(q), "$options": "i"}}
     if version:
         query["version"] = version
     if type:
@@ -802,7 +803,7 @@ async def search_vulnerabilities(
 
     # Build query for findings
     # Search in: id, aliases, details.vulnerabilities[].id, description
-    search_regex = {"$regex": q, "$options": "i"}
+    search_regex = {"$regex": re.escape(q), "$options": "i"}
 
     query = {
         "scan_id": {"$in": scan_ids},
@@ -1214,9 +1215,9 @@ async def get_project_recommendations(
         if scan and scan.project_id != project_id:
             scan = None
     else:
-        # Get latest scan for project
+        # Get latest completed scan for project
         scans = await scan_repo.find_many(
-            {"project_id": project_id},
+            {"project_id": project_id, "status": "completed"},
             limit=1,
             sort=[("created_at", -1)],
         )

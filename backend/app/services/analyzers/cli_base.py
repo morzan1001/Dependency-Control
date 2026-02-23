@@ -111,6 +111,9 @@ class CLIAnalyzer(Analyzer):
         """Build command line arguments. Must be implemented by subclasses."""
         raise NotImplementedError
 
+    # Default timeout for CLI tool execution (5 minutes)
+    cli_timeout: int = 300
+
     async def _execute_command(self, args: List[str]) -> Tuple[bytes, bytes, int]:
         """Execute the CLI command and return stdout, stderr, returncode."""
         process = await asyncio.create_subprocess_exec(
@@ -118,7 +121,15 @@ class CLIAnalyzer(Analyzer):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=self.cli_timeout
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            logger.error(f"{self.name} timed out after {self.cli_timeout}s")
+            return b"", f"{self.name} timed out after {self.cli_timeout} seconds".encode(), 1
         return stdout, stderr, process.returncode
 
     def _handle_error(self, stderr: bytes) -> Dict[str, Any]:

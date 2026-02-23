@@ -198,8 +198,9 @@ def build_reachability_summary(
     }
 
     for finding in findings:
-        reachable = finding.get("reachable")
-        reachability_level: str = finding.get("reachability_level", "unknown")
+        reachability_data = finding.get("details", {}).get("reachability", {})
+        reachable = reachability_data.get("is_reachable")
+        reachability_level: str = reachability_data.get("analysis_level", "unknown")
 
         vuln_info: VulnerabilityInfo = {
             "cve": finding.get("finding_id") or finding.get("id", ""),
@@ -207,7 +208,7 @@ def build_reachability_summary(
             "version": finding.get("version", ""),
             "severity": finding.get("severity", "unknown"),
             "reachability_level": reachability_level,
-            "reachable_functions": finding.get("reachable_functions", [])[:5],
+            "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
         }
 
         reachability_counts = cast(Dict[str, int], summary["reachability_levels"])

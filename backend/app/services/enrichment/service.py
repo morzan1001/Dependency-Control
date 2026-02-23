@@ -185,7 +185,7 @@ class VulnerabilityEnrichmentService:
                     if alias.startswith("CVE-"):
                         if alias not in cve_to_findings:
                             cve_to_findings[alias] = []
-                        if finding not in cve_to_findings[alias]:
+                        if not any(f.get("_id") == finding.get("_id") for f in cve_to_findings[alias]):
                             cve_to_findings[alias].append(finding)
 
             # Also check aliases at finding level
@@ -193,7 +193,7 @@ class VulnerabilityEnrichmentService:
                 if alias.startswith("CVE-"):
                     if alias not in cve_to_findings:
                         cve_to_findings[alias] = []
-                    if finding not in cve_to_findings[alias]:
+                    if not any(f.get("_id") == finding.get("_id") for f in cve_to_findings[alias]):
                         cve_to_findings[alias].append(finding)
 
         if not cve_to_findings:
@@ -234,7 +234,7 @@ class VulnerabilityEnrichmentService:
                                 # Add this CVE to our enrichment list
                                 if ghsa_data.cve_id not in cve_to_findings:
                                     cve_to_findings[ghsa_data.cve_id] = []
-                                if finding not in cve_to_findings[ghsa_data.cve_id]:
+                                if not any(f.get("_id") == finding.get("_id") for f in cve_to_findings[ghsa_data.cve_id]):
                                     cve_to_findings[ghsa_data.cve_id].append(finding)
 
                             # Add other aliases from GHSA

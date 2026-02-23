@@ -38,6 +38,29 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
     return default
 
 
+def group_findings_by_field(
+    findings: List[ModelOrDict],
+    field: str = "component",
+) -> Dict[str, List[ModelOrDict]]:
+    """
+    Group findings by a field value (e.g., component, type, severity).
+
+    Args:
+        findings: List of finding models or dicts
+        field: Field name to group by
+
+    Returns:
+        Dict mapping field values to lists of findings
+    """
+    grouped: Dict[str, List[ModelOrDict]] = {}
+    for finding in findings:
+        key = get_attr(finding, field, "unknown") or "unknown"
+        if key not in grouped:
+            grouped[key] = []
+        grouped[key].append(finding)
+    return grouped
+
+
 def extract_cve_id(finding: ModelOrDict) -> Optional[str]:
     """
     Extract CVE ID from a finding using multiple strategies.

@@ -317,8 +317,20 @@ spec:
   policyTypes:
   - Egress
   egress:
-  # Allow everything for Operator to ensure it can manage resources and talk to K8s API
-  - {}
+  # Allow access to K8s API server
+  - ports:
+    - port: 443
+      protocol: TCP
+    - port: 6443
+      protocol: TCP
+  # Allow access to MongoDB pods
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: mongod
+    ports:
+    - port: 27017
+      protocol: TCP
 
 ---
 # Allow Operator to receive healthchecks from Kubelet

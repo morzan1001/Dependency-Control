@@ -1,4 +1,4 @@
-import { api } from '@/api/client';
+import { api, buildQueryParams } from '@/api/client';
 import {
     DashboardStats,
     SearchResult,
@@ -24,10 +24,7 @@ export const analyticsApi = {
     },
 
     searchDependencies: async (query: string, version?: string): Promise<SearchResult[]> => {
-        const params = new URLSearchParams();
-        params.append('q', query);
-        if (version) params.append('version', version);
-
+        const params = buildQueryParams({ q: query, version });
         const response = await api.get<SearchResult[]>('/analytics/search', { params });
         return response.data;
     },
@@ -38,34 +35,31 @@ export const analyticsApi = {
     },
 
     getTopDependencies: async (limit = 20, type?: string): Promise<DependencyUsage[]> => {
-        const params = new URLSearchParams();
-        params.append('limit', limit.toString());
-        if (type) params.append('type', type);
+        const params = buildQueryParams({ limit, type });
         const response = await api.get<DependencyUsage[]>('/analytics/dependencies/top', { params });
         return response.data;
     },
 
     getDependencyTree: async (projectId: string, scanId?: string): Promise<DependencyTreeNode[]> => {
-        const params = new URLSearchParams();
-        if (scanId) params.append('scan_id', scanId);
+        const params = buildQueryParams({ scan_id: scanId });
         const response = await api.get<DependencyTreeNode[]>(`/analytics/projects/${projectId}/dependency-tree`, { params });
         return response.data;
     },
 
     getImpactAnalysis: async (limit = 20): Promise<ImpactAnalysisResult[]> => {
-        const params = new URLSearchParams();
-        params.append('limit', limit.toString());
+        const params = buildQueryParams({ limit });
         const response = await api.get<ImpactAnalysisResult[]>('/analytics/impact', { params });
         return response.data;
     },
 
-    getVulnerabilityHotspots: async (params: HotspotsQueryParams = {}): Promise<VulnerabilityHotspot[]> => {
-        const urlParams = new URLSearchParams();
-        if (params.skip !== undefined) urlParams.append('skip', params.skip.toString());
-        urlParams.append('limit', (params.limit ?? 20).toString());
-        if (params.sort_by) urlParams.append('sort_by', params.sort_by);
-        if (params.sort_order) urlParams.append('sort_order', params.sort_order);
-        const response = await api.get<VulnerabilityHotspot[]>('/analytics/hotspots', { params: urlParams });
+    getVulnerabilityHotspots: async (options: HotspotsQueryParams = {}): Promise<VulnerabilityHotspot[]> => {
+        const params = buildQueryParams({
+            skip: options.skip,
+            limit: options.limit ?? 20,
+            sort_by: options.sort_by,
+            sort_order: options.sort_order,
+        });
+        const response = await api.get<VulnerabilityHotspot[]>('/analytics/hotspots', { params });
         return response.data;
     },
 
@@ -73,21 +67,18 @@ export const analyticsApi = {
         query: string,
         options?: AdvancedSearchOptions
     ): Promise<AdvancedSearchResponse> => {
-        const params = new URLSearchParams();
-        params.append('q', query);
-        if (options?.version) params.append('version', options.version);
-        if (options?.type) params.append('type', options.type);
-        if (options?.source_type) params.append('source_type', options.source_type);
-        if (options?.has_vulnerabilities !== undefined) {
-          params.append('has_vulnerabilities', options.has_vulnerabilities.toString());
-        }
-        if (options?.project_ids?.length) {
-          params.append('project_ids', options.project_ids.join(','));
-        }
-        if (options?.sort_by) params.append('sort_by', options.sort_by);
-        if (options?.sort_order) params.append('sort_order', options.sort_order);
-        if (options?.skip !== undefined) params.append('skip', options.skip.toString());
-        if (options?.limit) params.append('limit', options.limit.toString());
+        const params = buildQueryParams({
+            q: query,
+            version: options?.version,
+            type: options?.type,
+            source_type: options?.source_type,
+            has_vulnerabilities: options?.has_vulnerabilities,
+            project_ids: options?.project_ids,
+            sort_by: options?.sort_by,
+            sort_order: options?.sort_order,
+            skip: options?.skip,
+            limit: options?.limit,
+        });
         const response = await api.get<AdvancedSearchResponse>('/analytics/search', { params });
         return response.data;
     },
@@ -96,30 +87,25 @@ export const analyticsApi = {
         query: string,
         options?: VulnerabilitySearchOptions
       ): Promise<VulnerabilitySearchResponse> => {
-        const params = new URLSearchParams();
-        params.append('q', query);
-        if (options?.severity) params.append('severity', options.severity);
-        if (options?.in_kev !== undefined) params.append('in_kev', options.in_kev.toString());
-        if (options?.has_fix !== undefined) params.append('has_fix', options.has_fix.toString());
-        if (options?.finding_type) params.append('finding_type', options.finding_type);
-        if (options?.project_ids?.length) {
-          params.append('project_ids', options.project_ids.join(','));
-        }
-        if (options?.include_waived !== undefined) {
-          params.append('include_waived', options.include_waived.toString());
-        }
-        if (options?.sort_by) params.append('sort_by', options.sort_by);
-        if (options?.sort_order) params.append('sort_order', options.sort_order);
-        if (options?.skip !== undefined) params.append('skip', options.skip.toString());
-        if (options?.limit) params.append('limit', options.limit.toString());
+        const params = buildQueryParams({
+            q: query,
+            severity: options?.severity,
+            in_kev: options?.in_kev,
+            has_fix: options?.has_fix,
+            finding_type: options?.finding_type,
+            project_ids: options?.project_ids,
+            include_waived: options?.include_waived,
+            sort_by: options?.sort_by,
+            sort_order: options?.sort_order,
+            skip: options?.skip,
+            limit: options?.limit,
+        });
         const response = await api.get<VulnerabilitySearchResponse>('/analytics/vulnerability-search', { params });
         return response.data;
     },
 
     getComponentFindings: async (component: string, version?: string): Promise<ComponentFinding[]> => {
-        const params = new URLSearchParams();
-        params.append('component', component);
-        if (version) params.append('version', version);
+        const params = buildQueryParams({ component, version });
         const response = await api.get<ComponentFinding[]>('/analytics/component-findings', { params });
         return response.data;
     },
@@ -129,10 +115,7 @@ export const analyticsApi = {
         version?: string,
         type?: string
       ): Promise<DependencyMetadata | null> => {
-        const params = new URLSearchParams();
-        params.append('component', component);
-        if (version) params.append('version', version);
-        if (type) params.append('type', type);
+        const params = buildQueryParams({ component, version, type });
         const response = await api.get<DependencyMetadata | null>('/analytics/dependency-metadata', { params });
         return response.data;
     },
@@ -143,8 +126,7 @@ export const analyticsApi = {
     },
 
     getProjectRecommendations: async (projectId: string, scanId?: string): Promise<RecommendationsResponse> => {
-        const params = new URLSearchParams();
-        if (scanId) params.append('scan_id', scanId);
+        const params = buildQueryParams({ scan_id: scanId });
         const response = await api.get<RecommendationsResponse>(
             `/analytics/projects/${projectId}/recommendations`,
             { params }

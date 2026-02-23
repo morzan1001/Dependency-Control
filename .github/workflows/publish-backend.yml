@@ -64,6 +64,13 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,format=short
 
+      - name: Run tests
+        run: |
+          pip install poetry
+          cd backend
+          poetry install --no-interaction
+          poetry run pytest --tb=short -q
+
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v6

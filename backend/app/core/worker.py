@@ -283,6 +283,7 @@ class AnalysisWorkerManager:
                         {"_id": scan_id},
                         {"$set": {"status": "failed", "error": "Project not found"}},
                     )
+                    self._active_scans.discard(scan_id)
                     self.queue.task_done()
                     continue
 

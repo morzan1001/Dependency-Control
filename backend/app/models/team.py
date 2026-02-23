@@ -2,15 +2,22 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import TEAM_ROLE_MEMBER
+from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES
 from app.models.types import PyObjectId
 
 
 class TeamMember(BaseModel):
     user_id: str
-    role: str = TEAM_ROLE_MEMBER  # One of TEAM_ROLES
+    role: str = TEAM_ROLE_MEMBER
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in TEAM_ROLES:
+            raise ValueError(f"Role must be one of: {', '.join(TEAM_ROLES)}")
+        return v
 
 
 class Team(BaseModel):
@@ -23,7 +30,7 @@ class Team(BaseModel):
     description: Optional[str] = None
     gitlab_instance_id: Optional[str] = None
     gitlab_group_id: Optional[int] = None
-    members: List[TeamMember] = []
+    members: List[TeamMember] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

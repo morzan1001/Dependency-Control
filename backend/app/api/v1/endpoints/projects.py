@@ -1381,12 +1381,10 @@ async def export_project_sbom(
 
     scan_repo = ScanRepository(db)
 
-    scan_data = await scan_repo.get_latest_for_project(project_id, status="completed")
+    scan = await scan_repo.get_latest_for_project(project_id, status="completed")
 
-    if not scan_data:
+    if not scan:
         raise HTTPException(status_code=404, detail="No completed scans found for this project")
-
-    scan = Scan(**scan_data)
 
     # Get SBOM from GridFS via sbom_refs
     # Legacy fallback removed - all SBOMs are stored in GridFS

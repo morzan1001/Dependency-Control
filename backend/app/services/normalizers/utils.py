@@ -241,3 +241,26 @@ def extract_grype_cvss(
         return float(base_score), best_cvss.get("vector")
 
     return None, best_cvss.get("vector")
+
+
+def prefer_cve_as_primary_id(vuln_id: str, aliases: List[str]) -> Tuple[str, List[str]]:
+    """
+    Prefer a CVE ID as the primary vulnerability identifier.
+
+    If the current ID is not a CVE (e.g., GHSA, GO, PYSEC) but a CVE exists
+    in the aliases list, swap them: make the CVE the primary ID and preserve
+    the original ID in aliases.
+
+    Args:
+        vuln_id: Current vulnerability identifier
+        aliases: List of known aliases for this vulnerability
+
+    Returns:
+        Tuple of (primary_id, updated_aliases)
+    """
+    cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
+    if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
+        if vuln_id not in aliases:
+            aliases.append(vuln_id)
+        return cve_alias, aliases
+    return vuln_id, aliases

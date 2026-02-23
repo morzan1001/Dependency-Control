@@ -1,7 +1,10 @@
 import asyncio
 import logging
+from typing import List, TYPE_CHECKING, Optional
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Optional
+
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core import ensure_utc
 from app.core.config import settings
@@ -48,6 +51,53 @@ async def _get_referenced_scan_ids(db) -> list[str]:
             referenced_ids.add(original_id)
 
     return list(referenced_ids)
+
+
+async def _delete_scans_and_related_data(db, scan_ids: List[str], label: str = "") -> int:
+    """
+    Delete scans and all associated data (findings, dependencies, GridFS SBOMs, callgraphs).
+
+    Args:
+        db: Database connection
+        scan_ids: List of scan IDs to delete
+        label: Label for log messages
+
+    Returns:
+        Number of scans deleted
+    """
+    if not scan_ids:
+        return 0
+
+    # Collect GridFS references before deleting scans
+    gridfs_ids = []
+    async for scan_doc in db.scans.find({"_id": {"$in": scan_ids}}, {"sbom_refs": 1}):
+        for ref in scan_doc.get("sbom_refs", []):
+            if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
+                gid = ref.get("gridfs_id")
+                if gid:
+                    gridfs_ids.append(gid)
+
+    # Delete all related collections
+    await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids}})
+    await db.findings.delete_many({"scan_id": {"$in": scan_ids}})
+    await db.finding_records.delete_many({"scan_id": {"$in": scan_ids}})
+    await db.dependencies.delete_many({"scan_id": {"$in": scan_ids}})
+    await db.callgraphs.delete_many({"scan_id": {"$in": scan_ids}})
+    result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
+
+    # Clean up GridFS files
+    if gridfs_ids:
+        fs = AsyncIOMotorGridFSBucket(db)
+        for gid in gridfs_ids:
+            try:
+                await fs.delete(ObjectId(gid))
+            except Exception:
+                pass  # File may already be deleted
+
+    if label:
+        logger.info(f"{label}: Deleted {result.deleted_count} scans ({len(gridfs_ids)} GridFS files).")
+
+    return result.deleted_count
 
 
 async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
@@ -216,15 +266,7 @@ async def run_housekeeping() -> None:
                 )
 
                 scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
-
-                if scan_ids_to_delete:
-                    # Bulk delete all related data
-                    await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
-                    await db.findings.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
-                    await db.finding_records.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
-                    await db.dependencies.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
-                    result = await db.scans.delete_many({"_id": {"$in": scan_ids_to_delete}})
-                    logger.info(f"Global housekeeping: Deleted {result.deleted_count} scans.")
+                await _delete_scans_and_related_data(db, scan_ids_to_delete, "Global housekeeping")
 
         else:
             # Project-specific retention (Optimized: Group by retention_days)
@@ -241,6 +283,9 @@ async def run_housekeeping() -> None:
                 },
             ]
 
+            # Fetch referenced scan IDs once (not per group)
+            referenced_scan_ids = await _get_referenced_scan_ids(db)
+
             async for group in db.projects.aggregate(pipeline):
                 days = group["_id"]
                 project_ids = group["project_ids"]
@@ -249,10 +294,6 @@ async def run_housekeeping() -> None:
                     continue
 
                 cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-
-                # Find scans for this batch of projects that are too old
-                # IMPORTANT: Don't delete scans that are referenced by rescans
-                referenced_scan_ids = await _get_referenced_scan_ids(db)
 
                 cursor = db.scans.find(
                     {
@@ -265,18 +306,10 @@ async def run_housekeeping() -> None:
                 )
 
                 scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
-
-                if scan_ids_to_delete:
-                    # Bulk delete all related data for this retention group
-                    await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
-                    await db.findings.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
-                    await db.finding_records.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
-                    await db.dependencies.delete_many({"scan_id": {"$in": scan_ids_to_delete}})
-                    result = await db.scans.delete_many({"_id": {"$in": scan_ids_to_delete}})
-
-                    logger.info(
-                        f"Retention {days} days: Deleted {result.deleted_count} scans from {len(project_ids)} projects."
-                    )
+                await _delete_scans_and_related_data(
+                    db, scan_ids_to_delete,
+                    f"Retention {days}d ({len(project_ids)} projects)",
+                )
 
     except Exception as e:
         logger.error(f"Housekeeping task failed: {e}")

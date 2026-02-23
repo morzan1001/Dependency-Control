@@ -1,14 +1,9 @@
-import { api } from '@/api/client';
+import { api, buildQueryParams } from '@/api/client';
 import { User, UserCreate, UserUpdate, UserUpdateMe, SystemInvitation } from '@/types/user';
 
 export const userApi = {
   getAll: async (skip = 0, limit = 20, search?: string, sortBy = 'username', sortOrder = 'asc'): Promise<User[]> => {
-    const params = new URLSearchParams();
-    params.append('skip', skip.toString());
-    params.append('limit', limit.toString());
-    if (search) params.append('search', search);
-    params.append('sort_by', sortBy);
-    params.append('sort_order', sortOrder);
+    const params = buildQueryParams({ skip, limit, search, sort_by: sortBy, sort_order: sortOrder });
 
     const response = await api.get<User[]>('/users/', { params });
     return response.data;

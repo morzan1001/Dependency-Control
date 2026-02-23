@@ -460,7 +460,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                     analysis_kev_vulnerabilities_total.inc()
 
         except Exception as e:
-            results_summary.append(f"epss_kev: Failed")
+            results_summary.append("epss_kev: Failed")
             logger.warning(f"[epss_kev] Failed to enrich findings: {e}")
 
     # Reachability Analysis
@@ -509,7 +509,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                             level = reachability.get("level", "unknown")
                             analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
             except Exception as e:
-                results_summary.append(f"reachability: Failed")
+                results_summary.append("reachability: Failed")
                 logger.warning(f"[reachability] Failed to enrich findings: {e}")
         else:
             await scan_repo.update_raw(

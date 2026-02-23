@@ -165,7 +165,7 @@ TEAM_ROLE_ADMIN = "admin"
 TEAM_ROLE_MEMBER = "member"
 TEAM_ROLES = [TEAM_ROLE_MEMBER, TEAM_ROLE_ADMIN, TEAM_ROLE_OWNER]
 
-# Weights for calculating risk scores (supports both uppercase and lowercase keys)
+# Weights for calculating risk scores
 SEVERITY_WEIGHTS: Dict[str, float] = {
     "CRITICAL": 10.0,
     "HIGH": 7.0,
@@ -173,14 +173,14 @@ SEVERITY_WEIGHTS: Dict[str, float] = {
     "LOW": 1.0,
     "INFO": 0.0,
     "UNKNOWN": 0.0,
-    # Lowercase variants for compatibility
-    "critical": 10.0,
-    "high": 7.0,
-    "medium": 4.0,
-    "low": 1.0,
-    "info": 0.0,
-    "unknown": 0.0,
 }
+
+
+def get_severity_weight(severity: Optional[str]) -> float:
+    """Get risk weight for a severity level (case-insensitive)."""
+    if not severity:
+        return 0.0
+    return SEVERITY_WEIGHTS.get(severity.upper(), 0.0)
 
 # Common patterns for development dependencies
 DEV_DEPENDENCY_PATTERNS = [
@@ -414,14 +414,6 @@ DAYS_KNOWN_OVERDUE_THRESHOLD: int = 90  # Days a vuln is known before flagged as
 BLAST_RADIUS_THRESHOLD: int = 3  # Min affected projects for "high blast radius"
 KEV_DUE_SOON_DAYS: int = 30  # Days until KEV deadline to be "due soon"
 
-# Severity weights for impact score calculation (deprecated - use SEVERITY_WEIGHTS instead)
-IMPACT_SEVERITY_WEIGHTS: Dict[str, int] = {
-    "critical": 10,
-    "high": 5,
-    "medium": 2,
-    "low": 1,
-}
-
 # Threat intelligence
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -597,12 +589,9 @@ SEVERITY_ALIASES: Dict[str, str] = {
     "TRACE": "INFO",
 }
 
-# KICS (IaC scanner) severity mapping
+# KICS (IaC scanner) severity mapping - only non-identity mappings needed
+# Standard severities (HIGH, MEDIUM, LOW, INFO) pass through via safe_severity()
 KICS_SEVERITY_MAP: Dict[str, str] = {
-    "HIGH": "HIGH",
-    "MEDIUM": "MEDIUM",
-    "LOW": "LOW",
-    "INFO": "INFO",
     "TRACE": "INFO",
 }
 

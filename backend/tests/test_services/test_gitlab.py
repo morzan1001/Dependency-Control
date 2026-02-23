@@ -89,9 +89,9 @@ class TestGitLabServiceOIDC:
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
             mock_jwks.return_value = {"keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-            with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
+            with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "test-key-id"}
-                with patch("app.services.gitlab.jwt.decode") as mock_decode:
+                with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
                     mock_decode.return_value = {"project_id": "123", "project_path": "g/p"}
 
                     asyncio.run(service.validate_oidc_token("fake.jwt.token"))
@@ -112,9 +112,9 @@ class TestGitLabServiceOIDC:
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
             mock_jwks.return_value = {"keys": [{"kid": "test-key-id", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-            with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
+            with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "test-key-id"}
-                with patch("app.services.gitlab.jwt.decode") as mock_decode:
+                with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
                     mock_decode.return_value = {"project_id": "123", "project_path": "g/p"}
 
                     asyncio.run(service.validate_oidc_token("fake.jwt.token"))
@@ -124,7 +124,7 @@ class TestGitLabServiceOIDC:
 
     def test_missing_kid_returns_none(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
-        with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
+        with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
             mock_header.return_value = {}  # No kid
             result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
             assert result is None
@@ -135,7 +135,7 @@ class TestGitLabServiceOIDC:
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
             mock_jwks.return_value = {"keys": [{"kid": "other-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
             with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock):
-                with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
+                with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "missing-key"}
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
                     assert result is None
@@ -145,9 +145,9 @@ class TestGitLabServiceOIDC:
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
             mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-            with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
+            with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
-                with patch("app.services.gitlab.jwt.decode") as mock_decode:
+                with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
                     mock_decode.return_value = {"project_id": "123", "project_path": "group/proj"}
 
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
@@ -169,9 +169,9 @@ class TestGitLabServiceOIDC:
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
             mock_jwks.return_value = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-            with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
+            with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
-                with patch("app.services.gitlab.jwt.decode") as mock_decode:
+                with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
                     mock_decode.return_value = {"project_id": "123", "project_path": "g/p"}
 
                     asyncio.run(service.validate_oidc_token("fake.jwt.token"))
@@ -201,9 +201,9 @@ class TestGitLabServiceOIDC:
 
         with patch.object(service, "get_jwks", side_effect=get_jwks_side_effect):
             with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock) as mock_invalidate:
-                with patch("app.services.gitlab.jwt.get_unverified_header") as mock_header:
+                with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "new-key"}
-                    with patch("app.services.gitlab.jwt.decode") as mock_decode:
+                    with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
                         mock_decode.return_value = {"project_id": "42", "project_path": "g/p"}
 
                         result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))

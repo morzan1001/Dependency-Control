@@ -68,10 +68,11 @@ interface Props {
     reachability?: ReachabilityStats | null
     prioritized?: PrioritizedCounts | null
   }
+  branchCount?: number
   className?: string
 }
 
-export function ThreatIntelligenceDashboard({ stats, className }: Props) {
+export function ThreatIntelligenceDashboard({ stats, branchCount, className }: Props) {
   const threatIntel = stats.threat_intel
   const reachability = stats.reachability
   const prioritized = stats.prioritized
@@ -112,12 +113,19 @@ export function ThreatIntelligenceDashboard({ stats, className }: Props) {
               <Target className="h-5 w-5 text-primary" />
               Prioritized View
             </CardTitle>
-            {reductionPercent > 0 && (
-              <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30">
-                <ArrowDownRight className="h-3 w-3 mr-1" />
-                {reductionPercent}% noise reduction
-              </Badge>
-            )}
+            <div className="flex items-center gap-2">
+              {branchCount != null && branchCount > 1 && (
+                <Badge variant="secondary" className="text-xs">
+                  Aggregated from {branchCount} branches
+                </Badge>
+              )}
+              {reductionPercent > 0 && (
+                <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30">
+                  <ArrowDownRight className="h-3 w-3 mr-1" />
+                  {reductionPercent}% noise reduction
+                </Badge>
+              )}
+            </div>
           </div>
           <CardDescription>
             Focus on what matters most based on real-world threat data

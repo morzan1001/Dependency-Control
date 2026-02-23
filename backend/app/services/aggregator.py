@@ -244,11 +244,13 @@ class ResultAggregator:
             if not vulns:
                 continue
 
-            # Group by component+version (not just version!)
-            # This prevents false merging of different components with same version
+            # Group by artifact-name+version (not full qualified name!)
+            # This ensures cross-format names like "org.postgresql:postgresql"
+            # and "postgresql" land in the same group for proper merging.
             component = f.component.lower() if f.component else "unknown"
             version = f.version or "unknown"
-            group_key = f"{component}:{version}"
+            artifact = self._extract_artifact_name(component)
+            group_key = (artifact, version)
 
             if group_key not in groups:
                 groups[group_key] = []
@@ -288,28 +290,15 @@ class ResultAggregator:
                     merged_ids.add(group[0].id)
                 continue
 
-            # Try to merge items within the group based on name similarity
-            clusters = []
-            processed_in_group = set()
+            # Group findings by normalized artifact name (O(n) instead of O(n²))
+            component_clusters: Dict[str, List] = {}
+            for f in group:
+                name = self._extract_artifact_name(f.component or "")
+                if name not in component_clusters:
+                    component_clusters[name] = []
+                component_clusters[name].append(f)
 
-            for i in range(len(group)):
-                if i in processed_in_group:
-                    continue
-
-                f1 = group[i]
-                cluster = [f1]
-                processed_in_group.add(i)
-
-                for j in range(i + 1, len(group)):
-                    if j in processed_in_group:
-                        continue
-                    f2 = group[j]
-
-                    if self._is_same_component_name(f1.component, f2.component):
-                        cluster.append(f2)
-                        processed_in_group.add(j)
-
-                clusters.append(cluster)
+            clusters = list(component_clusters.values())
 
             # Now process clusters
             cluster_primaries = []
@@ -366,14 +355,16 @@ class ResultAggregator:
 
         Also adds contextual info from other finding types to vulnerability findings.
         """
-        # Build a map of all findings by component (normalized lowercase)
-        # Key: component_lower -> List[Finding]
+        # Build a map of all findings by artifact name (normalized)
+        # Key: artifact_name -> List[Finding]
+        # Using artifact name ensures cross-format names like
+        # "org.postgresql:postgresql" and "postgresql" are linked.
         component_map: Dict[str, List[Finding]] = {}
 
         for f in findings:
             if not f.component:
                 continue
-            key = f.component.lower()
+            key = self._extract_artifact_name(f.component)
             if key not in component_map:
                 component_map[key] = []
             component_map[key].append(f)
@@ -616,6 +607,19 @@ class ResultAggregator:
             return "unknown"
         return component.strip().lower()
 
+    def _extract_artifact_name(self, component: str) -> str:
+        """Extract artifact name from qualified component names for grouping.
+
+        Handles Maven-style 'org.postgresql:postgresql' → 'postgresql'
+        and scoped packages '@angular/core' → 'core'.
+        """
+        name = component.lower().strip() if component else "unknown"
+        if ":" in name:
+            name = name.rsplit(":", 1)[-1]
+        elif "/" in name:
+            name = name.rsplit("/", 1)[-1]
+        return name or "unknown"
+
     def _merge_sast_findings(self, findings: List[Finding]) -> Optional[Finding]:
         """
         Merges a list of SAST findings into a single finding with a list of individual results.
@@ -713,34 +717,6 @@ class ResultAggregator:
             aliases=([f.id for f in findings if f.id != base.id] if len(findings) > 1 else base.aliases),
         )
 
-    def _is_same_component_name(self, name1: str, name2: str) -> bool:
-        """
-        Checks if two component names likely refer to the same software.
-        e.g. 'postgresql' and 'org.postgresql:postgresql' -> True
-        """
-        n1 = name1.lower()
-        n2 = name2.lower()
-        if n1 == n2:
-            return True
-
-        # Check for group:artifact vs artifact
-        if ":" in n1 and n1.endswith(f":{n2}"):
-            return True
-        if ":" in n2 and n2.endswith(f":{n1}"):
-            return True
-
-        # Check for group/artifact vs artifact (e.g. @angular/core vs core - careful!)
-        # We only allow this if the "short" name is NOT generic?
-        # Actually, if they share the same VERSION and VULNERABILITIES, it is much safer to assume identity.
-        # So we can be a bit more lenient here because this check is only called when other factors match.
-
-        if "/" in n1 and n1.endswith(f"/{n2}"):
-            return True
-        if "/" in n2 and n2.endswith(f"/{n1}"):
-            return True
-
-        return False
-
     def _merge_vulnerability_into_list(self, target_list: List[Any], source_entry: Dict[str, Any]):
         """
         Merges a source vulnerability entry into a target list, handling deduplication by ID and Aliases.
@@ -824,8 +800,8 @@ class ResultAggregator:
         target.scanners = list(set(target.scanners + source.scanners))
 
         # 2. Severity (Max)
-        t_sev = get_severity_value(target.severity)
-        s_sev = get_severity_value(source.severity)
+        t_sev = get_severity_value(target.severity) or 0
+        s_sev = get_severity_value(source.severity) or 0
         if s_sev > t_sev:
             target.severity = source.severity
 

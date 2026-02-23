@@ -108,56 +108,36 @@ class TestNormalizeComponent:
         assert self.agg._normalize_component(None) == "unknown"
 
 
-class TestIsSameComponentName:
-    """Tests for _is_same_component_name - component name matching.
-
-    This function is used when findings already share the same VERSION
-    and VULNERABILITIES, so lenient matching is somewhat intentional.
-    However, overly loose matching can cause false merges.
-    """
+class TestExtractArtifactName:
+    """Tests for _extract_artifact_name - artifact extraction for grouping."""
 
     def setup_method(self):
         self.agg = ResultAggregator()
 
-    def test_exact_match(self):
-        assert self.agg._is_same_component_name("lodash", "lodash") is True
-
-    def test_case_insensitive(self):
-        assert self.agg._is_same_component_name("Lodash", "lodash") is True
-
-    def test_different_names(self):
-        assert self.agg._is_same_component_name("lodash", "express") is False
+    def test_plain_name(self):
+        assert self.agg._extract_artifact_name("lodash") == "lodash"
 
     def test_maven_group_artifact(self):
-        """Maven-style 'org.postgresql:postgresql' should match 'postgresql'."""
-        assert self.agg._is_same_component_name("org.postgresql:postgresql", "postgresql") is True
+        assert self.agg._extract_artifact_name("org.postgresql:postgresql") == "postgresql"
 
-    def test_maven_reverse(self):
-        assert self.agg._is_same_component_name("postgresql", "org.postgresql:postgresql") is True
+    def test_npm_scoped(self):
+        assert self.agg._extract_artifact_name("@angular/core") == "core"
 
-    def test_maven_different_artifact(self):
-        """'org.postgresql:driver' should NOT match 'postgresql'."""
-        assert self.agg._is_same_component_name("org.postgresql:driver", "postgresql") is False
+    def test_case_insensitive(self):
+        assert self.agg._extract_artifact_name("Lodash") == "lodash"
 
-    def test_npm_scoped_package(self):
-        """'@angular/core' vs 'core' - this matches due to / suffix check.
-        This is a potential false positive in practice (e.g., unrelated 'core' package),
-        but the function is only called when version+vulns already match.
-        """
-        result = self.agg._is_same_component_name("@angular/core", "core")
-        assert result is True
+    def test_whitespace_stripped(self):
+        assert self.agg._extract_artifact_name("  lodash  ") == "lodash"
 
-    def test_npm_scoped_different_package(self):
-        """'@angular/core' should NOT match 'http'."""
-        assert self.agg._is_same_component_name("@angular/core", "http") is False
+    def test_empty_returns_unknown(self):
+        assert self.agg._extract_artifact_name("") == "unknown"
 
-    def test_substring_not_matched(self):
-        """'express' should NOT match 'express-validator' (no : or / relation)."""
-        assert self.agg._is_same_component_name("express", "express-validator") is False
+    def test_none_returns_unknown(self):
+        assert self.agg._extract_artifact_name(None) == "unknown"
 
-    def test_colon_partial_not_matched(self):
-        """'com.foo:bar' should NOT match 'foo'."""
-        assert self.agg._is_same_component_name("com.foo:bar", "foo") is False
+    def test_colon_only_takes_last(self):
+        """'com.google.guava:guava' -> 'guava'."""
+        assert self.agg._extract_artifact_name("com.google.guava:guava") == "guava"
 
 
 class TestCalculateAggregatedFixedVersion:
@@ -558,6 +538,40 @@ class TestGetFindings:
         assert len(findings) == 1
         assert findings[0].type == "secret"
 
+    def test_cross_format_component_names_merged(self):
+        """Findings for 'org.postgresql:postgresql' and 'postgresql' with same
+        version should be merged in get_findings() instead of appearing as duplicates."""
+        self.agg.add_finding(
+            Finding(
+                id="CVE-1",
+                type=FindingType.VULNERABILITY,
+                severity=Severity.HIGH,
+                component="org.postgresql:postgresql",
+                version="42.7.3",
+                description="vuln from trivy",
+                scanners=["trivy"],
+                details={"fixed_version": "42.7.4"},
+            )
+        )
+        self.agg.add_finding(
+            Finding(
+                id="CVE-1",
+                type=FindingType.VULNERABILITY,
+                severity=Severity.HIGH,
+                component="postgresql",
+                version="42.7.3",
+                description="vuln from grype",
+                scanners=["grype"],
+                details={"fixed_version": "42.7.4"},
+            )
+        )
+        findings = self.agg.get_findings()
+        vuln_findings = [f for f in findings if f.type == "vulnerability"]
+        # Should be merged into one finding, not two
+        assert len(vuln_findings) == 1
+        # Both scanners should be present
+        assert set(vuln_findings[0].scanners) >= {"trivy", "grype"}
+
     def test_related_findings_linked_by_component(self):
         """Different finding types for same component should be cross-linked."""
         self.agg.add_finding(
@@ -589,6 +603,41 @@ class TestGetFindings:
         # Both should reference each other
         vuln_f = next(f for f in findings if f.type == "vulnerability")
         out_f = next(f for f in findings if f.type == "outdated")
+        assert out_f.id in vuln_f.related_findings
+        assert vuln_f.id in out_f.related_findings
+
+
+    def test_cross_format_related_findings_linked(self):
+        """Quality for 'org.postgresql:postgresql' and Vulnerability for 'postgresql'
+        should be linked as related findings via artifact name normalization."""
+        self.agg.add_finding(
+            Finding(
+                id="CVE-1",
+                type=FindingType.VULNERABILITY,
+                severity=Severity.HIGH,
+                component="postgresql",
+                version="42.7.3",
+                description="vuln",
+                scanners=["trivy"],
+                details={"fixed_version": "42.7.4"},
+            )
+        )
+        self.agg.add_finding(
+            Finding(
+                id="OUTDATED-postgresql",
+                type=FindingType.OUTDATED,
+                severity=Severity.INFO,
+                component="org.postgresql:postgresql",
+                version="42.7.3",
+                description="outdated",
+                scanners=["outdated"],
+                details={"fixed_version": "42.8.0"},
+            )
+        )
+        findings = self.agg.get_findings()
+        vuln_f = next(f for f in findings if f.type == "vulnerability")
+        out_f = next(f for f in findings if f.type == "outdated")
+        # Should be linked despite different component name formats
         assert out_f.id in vuln_f.related_findings
         assert vuln_f.id in out_f.related_findings
 

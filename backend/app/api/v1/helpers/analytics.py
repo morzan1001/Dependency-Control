@@ -272,8 +272,11 @@ def calculate_impact_score(
     7. Fix availability (prefer fixable issues)
     8. Days known (older = more urgent)
     """
-    # Base score from severity (weighted)
-    severity_score = sum(severity_counts.get(sev, 0) * weight for sev, weight in SEVERITY_WEIGHTS.items())
+    # Base score from severity (weighted) - severity_counts may use lowercase keys
+    severity_score = sum(
+        severity_counts.get(sev.lower(), severity_counts.get(sev, 0)) * weight
+        for sev, weight in SEVERITY_WEIGHTS.items()
+    )
 
     # Reach multiplier (how many projects affected)
     reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)

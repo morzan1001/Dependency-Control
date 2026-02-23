@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts } from '@/types/scan'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Activity, ShieldAlert, ShieldCheck, AlertTriangle } from 'lucide-react'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Activity, ShieldAlert, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThreatIntelligenceDashboard } from '@/components/ThreatIntelligenceDashboard'
@@ -27,23 +28,19 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   // Filter scans based on selection
   const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch))
 
-  // Get latest scan for PostProcessor results
-  const latestScan = filteredScans.length > 0 ? filteredScans[0] : null
-  const { data: scanResults } = useScanResults(latestScan?.id || '')
-
   // Count unique pipelines (excluding rescans)
   const uniqueScansCount = filteredScans.filter((s: Scan) => !s.is_rescan).length
 
-  // Calculate Project Stats (Using pre-calculated stats from scans)
+  // Calculate Project Stats - aggregate across ALL selected branches
   const projectStats = useMemo(() => {
       if (!filteredScans.length) return null;
 
-      // 1. Group by branch and find latest scan for each
+      // 1. Group by branch and find latest completed scan for each
       const latestScansByBranch: Record<string, Scan> = {};
-      
+
       filteredScans.forEach((scan: Scan) => {
           if (scan.status !== 'completed') return;
-          
+
           const currentLatest = latestScansByBranch[scan.branch];
           if (!currentLatest || new Date(scan.created_at) > new Date(currentLatest.created_at)) {
               latestScansByBranch[scan.branch] = scan;
@@ -60,40 +57,123 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           unknown: scan.stats?.unknown || 0
       }));
 
-      // 2. Calculate Global Stats (Use the absolute latest scan across all selected branches)
-      let globalStats: {
+      // 2. Aggregate stats across ALL branches' latest scans
+      const allBranchScans = Object.values(latestScansByBranch);
+
+      const aggregatedStats: {
           critical: number; high: number; medium: number; low: number; info: number; unknown: number;
           risk_score: number; adjusted_risk_score: number;
           threat_intel: ThreatIntelligenceStats | null; reachability: ReachabilityStats | null; prioritized: PrioritizedCounts | null;
-      } = { 
+      } = {
           critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0,
           risk_score: 0, adjusted_risk_score: 0,
           threat_intel: null, reachability: null, prioritized: null
       };
-      
-      // Find the most recent scan overall
-      const latestScan = Object.values(latestScansByBranch).sort((a, b) => 
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      )[0];
 
-      if (latestScan?.stats) {
-          globalStats = { 
-              critical: latestScan.stats.critical || 0,
-              high: latestScan.stats.high || 0,
-              medium: latestScan.stats.medium || 0,
-              low: latestScan.stats.low || 0,
-              info: latestScan.stats.info || 0,
-              unknown: latestScan.stats.unknown || 0,
-              risk_score: latestScan.stats.risk_score || 0,
-              adjusted_risk_score: latestScan.stats.adjusted_risk_score || 0,
-              threat_intel: latestScan.stats.threat_intel || null,
-              reachability: latestScan.stats.reachability || null,
-              prioritized: latestScan.stats.prioritized || null,
-          };
+      // Sum severity counts, take max risk scores
+      let maxRisk = 0;
+      let maxAdjustedRisk = 0;
+      const threatIntelAcc: ThreatIntelligenceStats = {
+          kev_count: 0, kev_ransomware_count: 0,
+          high_epss_count: 0, medium_epss_count: 0,
+          avg_epss_score: null, max_epss_score: null,
+          weaponized_count: 0, active_exploitation_count: 0,
+      };
+      const reachabilityAcc: ReachabilityStats = {
+          analyzed_count: 0, reachable_count: 0, likely_reachable_count: 0,
+          unreachable_count: 0, unknown_count: 0,
+          reachable_critical: 0, reachable_high: 0,
+      };
+      const prioritizedAcc: PrioritizedCounts = {
+          total: 0, critical: 0, high: 0, medium: 0, low: 0,
+          actionable_critical: 0, actionable_high: 0,
+          actionable_total: 0, deprioritized_count: 0,
+      };
+      let hasThreatIntel = false;
+      let hasReachability = false;
+      let hasPrioritized = false;
+      let epssScoreSum = 0;
+      let epssScoreCount = 0;
+
+      for (const scan of allBranchScans) {
+          const s = scan.stats;
+          if (!s) continue;
+
+          aggregatedStats.critical += s.critical || 0;
+          aggregatedStats.high += s.high || 0;
+          aggregatedStats.medium += s.medium || 0;
+          aggregatedStats.low += s.low || 0;
+          aggregatedStats.info += s.info || 0;
+          aggregatedStats.unknown += s.unknown || 0;
+          maxRisk = Math.max(maxRisk, s.risk_score || 0);
+          maxAdjustedRisk = Math.max(maxAdjustedRisk, s.adjusted_risk_score || 0);
+
+          if (s.threat_intel) {
+              hasThreatIntel = true;
+              const ti = s.threat_intel;
+              threatIntelAcc.kev_count += ti.kev_count || 0;
+              threatIntelAcc.kev_ransomware_count += ti.kev_ransomware_count || 0;
+              threatIntelAcc.high_epss_count += ti.high_epss_count || 0;
+              threatIntelAcc.medium_epss_count += ti.medium_epss_count || 0;
+              threatIntelAcc.weaponized_count += ti.weaponized_count || 0;
+              threatIntelAcc.active_exploitation_count += ti.active_exploitation_count || 0;
+              if (ti.avg_epss_score != null) {
+                  epssScoreSum += ti.avg_epss_score;
+                  epssScoreCount++;
+              }
+              if (ti.max_epss_score != null) {
+                  threatIntelAcc.max_epss_score = Math.max(threatIntelAcc.max_epss_score ?? 0, ti.max_epss_score);
+              }
+          }
+
+          if (s.reachability) {
+              hasReachability = true;
+              const r = s.reachability;
+              reachabilityAcc.analyzed_count += r.analyzed_count || 0;
+              reachabilityAcc.reachable_count += r.reachable_count || 0;
+              reachabilityAcc.likely_reachable_count += r.likely_reachable_count || 0;
+              reachabilityAcc.unreachable_count += r.unreachable_count || 0;
+              reachabilityAcc.unknown_count += r.unknown_count || 0;
+              reachabilityAcc.reachable_critical += r.reachable_critical || 0;
+              reachabilityAcc.reachable_high += r.reachable_high || 0;
+          }
+
+          if (s.prioritized) {
+              hasPrioritized = true;
+              const p = s.prioritized;
+              prioritizedAcc.total += p.total || 0;
+              prioritizedAcc.critical += p.critical || 0;
+              prioritizedAcc.high += p.high || 0;
+              prioritizedAcc.medium += p.medium || 0;
+              prioritizedAcc.low += p.low || 0;
+              prioritizedAcc.actionable_critical += p.actionable_critical || 0;
+              prioritizedAcc.actionable_high += p.actionable_high || 0;
+              prioritizedAcc.actionable_total += p.actionable_total || 0;
+              prioritizedAcc.deprioritized_count += p.deprioritized_count || 0;
+          }
       }
 
-      return { stats: globalStats, branchStats: branchStatsData, latestScan };
+      aggregatedStats.risk_score = maxRisk;
+      aggregatedStats.adjusted_risk_score = maxAdjustedRisk;
+      if (hasThreatIntel) {
+          threatIntelAcc.avg_epss_score = epssScoreCount > 0 ? epssScoreSum / epssScoreCount : null;
+          aggregatedStats.threat_intel = threatIntelAcc;
+      }
+      if (hasReachability) aggregatedStats.reachability = reachabilityAcc;
+      if (hasPrioritized) aggregatedStats.prioritized = prioritizedAcc;
+
+      return { stats: aggregatedStats, branchStats: branchStatsData, latestScansByBranch, branchCount: allBranchScans.length };
   }, [filteredScans]);
+
+  // Branch selector state for enrichment detail cards
+  const latestScansByBranch = projectStats?.latestScansByBranch || {};
+  const branchNames = Object.keys(latestScansByBranch);
+  const [enrichmentBranch, setEnrichmentBranch] = useState<string | null>(null);
+  const activeBranch = enrichmentBranch && branchNames.includes(enrichmentBranch)
+    ? enrichmentBranch
+    : branchNames[0] || null;
+  const enrichmentScanId = activeBranch ? latestScansByBranch[activeBranch]?.id : '';
+  const { data: scanResults } = useScanResults(enrichmentScanId || '');
 
   if (isLoading) {
     return (
@@ -208,9 +288,9 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         </Card>
       </div>
 
-      {/* Threat Intelligence Dashboard - shown when EPSS/KEV/Reachability data is available */}
+      {/* Threat Intelligence Dashboard - aggregated across all selected branches */}
       {hasEnhancedStats && (
-        <ThreatIntelligenceDashboard stats={stats} />
+        <ThreatIntelligenceDashboard stats={stats} branchCount={projectStats?.branchCount} />
       )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
@@ -317,10 +397,24 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         </div>
       )}
 
-      {/* Post-Processor Intelligence (EPSS/KEV, Reachability) */}
-      {latestScan && scanResults && scanResults.filter(r => isPostProcessorResult(r.analyzer_name)).length > 0 && (
+      {/* Post-Processor Intelligence (EPSS/KEV, Reachability) - per branch */}
+      {activeBranch && scanResults && scanResults.filter(r => isPostProcessorResult(r.analyzer_name)).length > 0 && (
         <div className="space-y-4">
-          <h3 className="text-xl font-semibold">Enrichment & Intelligence</h3>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-xl font-semibold">Enrichment & Intelligence</h3>
+            {branchNames.length > 1 && (
+              <Tabs value={activeBranch} onValueChange={setEnrichmentBranch}>
+                <TabsList>
+                  {branchNames.map(branch => (
+                    <TabsTrigger key={branch} value={branch} className="gap-1.5">
+                      <GitBranch className="h-3 w-3" />
+                      {branch}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            )}
+          </div>
           <div className="space-y-6">
             {scanResults
               .filter(r => isPostProcessorResult(r.analyzer_name))
