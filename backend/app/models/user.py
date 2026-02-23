@@ -1,7 +1,7 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -38,7 +38,7 @@ class User(BaseModel):
 
     @field_validator("notification_preferences")
     @classmethod
-    def validate_notification_preferences(cls, v):
+    def validate_notification_preferences(cls, v: Any) -> dict[str, list[str]]:
         """
         Validate notification preferences to prevent typos and invalid configurations.
         """

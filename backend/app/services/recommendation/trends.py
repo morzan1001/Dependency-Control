@@ -20,7 +20,7 @@ def analyze_regressions(
     recommendations = []
 
     # Create sets of finding identifiers
-    def finding_key(f):
+    def finding_key(f: ModelOrDict) -> str:
         """Create a unique key for a finding."""
         if get_attr(f, "type") == "vulnerability":
             details = get_attr(f, "details", {})

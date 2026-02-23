@@ -4,6 +4,7 @@ Team Repository
 Centralizes all database operations for teams.
 """
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -106,7 +107,7 @@ class TeamRepository:
             {"$set": {"members.$.role": role}},
         )
 
-    async def set_members(self, team_id: str, members: List[Dict[str, Any]], updated_at) -> None:
+    async def set_members(self, team_id: str, members: List[Dict[str, Any]], updated_at: datetime) -> None:
         """Replace all members in team."""
         await self.collection.update_one({"_id": team_id}, {"$set": {"members": members, "updated_at": updated_at}})
 

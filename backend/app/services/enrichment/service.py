@@ -29,7 +29,7 @@ class VulnerabilityEnrichmentService:
     This dramatically reduces API calls when running multiple backend replicas.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._http_client: Optional[InstrumentedAsyncClient] = None
         self._client_lock = asyncio.Lock()  # Prevent race condition on client creation
         self._epss_provider = EPSSProvider()
@@ -54,7 +54,7 @@ class VulnerabilityEnrichmentService:
             await self._http_client.start()
         return self._http_client
 
-    async def close(self):
+    async def close(self) -> None:
         """Close HTTP client."""
         if self._http_client:
             await self._http_client.close()

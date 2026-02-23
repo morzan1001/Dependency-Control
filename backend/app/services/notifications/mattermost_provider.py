@@ -23,7 +23,7 @@ except ImportError:
 
 
 class MattermostProvider(NotificationProvider):
-    def __init__(self):
+    def __init__(self) -> None:
         self._bot_user_id: Optional[str] = None
         # Lock to prevent concurrent bot ID fetches within the same pod
         self._bot_id_lock = asyncio.Lock()
@@ -41,7 +41,8 @@ class MattermostProvider(NotificationProvider):
             try:
                 response = await client.get(f"{base_url}/api/v4/users/me", headers=headers)
                 if response.status_code == 200:
-                    self._bot_user_id = response.json()["id"]
+                    bot_id: str | None = response.json()["id"]
+                    self._bot_user_id = bot_id
                     return self._bot_user_id
                 else:
                     logger.error(f"Failed to get Mattermost bot ID: {response.text}")
@@ -58,7 +59,8 @@ class MattermostProvider(NotificationProvider):
         try:
             response = await client.get(f"{base_url}/api/v4/users/username/{username}", headers=headers)
             if response.status_code == 200:
-                return response.json()["id"]
+                user_id: str | None = response.json()["id"]
+                return user_id
             else:
                 logger.warning(f"Mattermost user '{username}' not found: {response.text}")
                 return None
@@ -77,7 +79,8 @@ class MattermostProvider(NotificationProvider):
             payload = [bot_id, user_id]
             response = await client.post(f"{base_url}/api/v4/channels/direct", headers=headers, json=payload)
             if response.status_code in [200, 201]:
-                return response.json()["id"]
+                dm_channel_id: str | None = response.json()["id"]
+                return dm_channel_id
             else:
                 logger.error(f"Failed to create Mattermost DM channel: {response.text}")
                 return None
@@ -107,7 +110,8 @@ class MattermostProvider(NotificationProvider):
                     headers=headers,
                 )
                 if chan_response.status_code == 200:
-                    return chan_response.json()["id"]
+                    channel_id: str | None = chan_response.json()["id"]
+                    return channel_id
 
             logger.warning(f"Mattermost channel '{channel_name}' not found in any team.")
             return None

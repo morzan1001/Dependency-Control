@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_kics(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_kics(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize KICS IaC scan results."""
     queries = result.get("queries") or []
     if not queries:

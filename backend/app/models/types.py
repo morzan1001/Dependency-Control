@@ -12,7 +12,7 @@ def convert_objectid_to_str(v: Any) -> str:
     """Convert MongoDB ObjectId to string before Pydantic validation."""
     if isinstance(v, ObjectId):
         return str(v)
-    return v
+    return str(v)
 
 
 # Annotated type that converts MongoDB ObjectId to str before validation.

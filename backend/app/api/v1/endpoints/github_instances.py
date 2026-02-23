@@ -1,8 +1,8 @@
 import logging
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any, Dict
 
-from fastapi import Depends, HTTPException, Response, status
+from fastapi import Depends, HTTPException, status
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -51,7 +51,7 @@ async def list_instances(
     page: int = 1,
     size: int = 100,
     active_only: bool = False,
-):
+) -> Dict[str, Any]:
     """
     List all GitHub instances.
     Requires system:manage permission.
@@ -77,7 +77,7 @@ async def get_instance(
     instance_id: str,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-):
+) -> GitHubInstanceResponse:
     """
     Get a specific GitHub instance by ID.
     Requires system:manage permission.
@@ -98,7 +98,7 @@ async def create_instance(
     instance_data: GitHubInstanceCreate,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-):
+) -> GitHubInstanceResponse:
     """
     Create a new GitHub instance.
     Requires system:manage permission.
@@ -168,7 +168,7 @@ async def update_instance(
     update_data: GitHubInstanceUpdate,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-):
+) -> GitHubInstanceResponse:
     """
     Update a GitHub instance.
     Requires system:manage permission.
@@ -230,7 +230,7 @@ async def delete_instance(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     force: bool = False,
-):
+) -> None:
     """
     Delete a GitHub instance.
     Requires system:manage permission.
@@ -272,7 +272,6 @@ async def delete_instance(
         f"(force={force}, orphaned_projects={project_count})"
     )
 
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{instance_id}/test-connection", response_model=GitHubInstanceTestConnectionResponse, responses={**RESP_AUTH_404})
@@ -280,7 +279,7 @@ async def test_connection(
     instance_id: str,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-):
+) -> GitHubInstanceTestConnectionResponse:
     """
     Test OIDC endpoint connectivity for a GitHub instance.
     Requires system:manage permission.

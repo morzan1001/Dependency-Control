@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _get_referenced_scan_ids(db) -> list[str]:
+async def _get_referenced_scan_ids(db: Any) -> list[str]:
     """
     Get all scan IDs that are referenced by rescans (via original_scan_id).
     These scans should NOT be deleted by retention cleanup to prevent orphaned SBOM refs.
@@ -53,7 +53,7 @@ async def _get_referenced_scan_ids(db) -> list[str]:
     return list(referenced_ids)
 
 
-async def _delete_scans_and_related_data(db, scan_ids: List[str], label: str = "") -> int:
+async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: str = "") -> int:
     """
     Delete scans and all associated data (findings, dependencies, GridFS SBOMs, callgraphs).
 
@@ -97,7 +97,8 @@ async def _delete_scans_and_related_data(db, scan_ids: List[str], label: str = "
     if label:
         logger.info(f"{label}: Deleted {result.deleted_count} scans ({len(gridfs_ids)} GridFS files).")
 
-    return result.deleted_count
+    count: int = result.deleted_count
+    return count
 
 
 async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
@@ -440,7 +441,7 @@ async def recover_stuck_scans(
         logger.error(f"Stuck scan recovery failed: {e}")
 
 
-async def sync_project_branches(project_data: dict, db) -> None:
+async def sync_project_branches(project_data: dict, db: Any) -> None:
     """Sync branch status for a single project against its VCS provider."""
     project_id = project_data["_id"]
     project_name = project_data.get("name", project_id)

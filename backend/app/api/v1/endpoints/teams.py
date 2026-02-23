@@ -41,7 +41,7 @@ async def create_team(
     team_in: TeamCreate,
     current_user: Annotated[User, Depends(deps.PermissionChecker("team:create"))],
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Create a new team. The creator becomes the owner.
     """
@@ -69,7 +69,7 @@ async def read_teams(
     search: Optional[str] = None,
     sort_by: str = "name",
     sort_order: str = "asc",
-):
+) -> List[Dict[str, Any]]:
     """
     List teams.
     """
@@ -103,7 +103,7 @@ async def read_team(
     team_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Get team details.
     """
@@ -125,7 +125,7 @@ async def update_team(
     team_in: TeamUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> TeamResponse:
     """
     Update team details. Requires 'admin' or 'owner' role.
     """
@@ -146,7 +146,7 @@ async def delete_team(
     team_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> None:
     """
     Delete a team. Requires 'owner' role.
 
@@ -177,7 +177,7 @@ async def add_team_member(
     member_in: TeamMemberAdd,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> TeamResponse:
     """
     Add a member to the team. Requires 'admin' role.
     """
@@ -216,7 +216,7 @@ async def update_team_member(
     member_in: TeamMemberUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> TeamResponse:
     """
     Update a member's role. Requires 'admin' role.
     """
@@ -253,7 +253,7 @@ async def remove_team_member(
     user_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> TeamResponse:
     """
     Remove a member from the team. Requires 'admin' role.
     """

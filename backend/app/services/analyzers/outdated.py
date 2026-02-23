@@ -168,7 +168,8 @@ class OutdatedAnalyzer(Analyzer):
                     # Find the version marked as default (usually the latest stable)
                     for v in versions_info:
                         if v.get("isDefault"):
-                            return v.get("versionKey", {}).get("version")
+                            latest: str | None = v.get("versionKey", {}).get("version")
+                            return latest
                 return ""  # Empty string for negative cache
             except httpx.TimeoutException:
                 logger.debug(f"Timeout checking outdated for {name}")

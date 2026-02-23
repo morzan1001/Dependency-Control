@@ -9,7 +9,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from functools import wraps
-from typing import Any, AsyncGenerator, Callable, Optional, TypeVar
+from typing import Any, AsyncGenerator, Callable, Optional, TypeVar, cast
 
 import httpx
 
@@ -116,7 +116,8 @@ async def fetch_json(
             response.raise_for_status()
             duration = time.time() - start_time
             external_api_duration_seconds.labels(service=service_name).observe(duration)
-            return response.json()
+            result: dict[Any, Any] = response.json()
+            return result
     except httpx.TimeoutException:
         external_api_errors_total.labels(service=service_name).inc()
         logger.debug(f"Timeout fetching {url}")
@@ -164,7 +165,8 @@ async def post_json(
             response.raise_for_status()
             duration = time.time() - start_time
             external_api_duration_seconds.labels(service=service_name).observe(duration)
-            return response.json()
+            result: dict[Any, Any] = response.json()
+            return result
     except httpx.TimeoutException:
         external_api_errors_total.labels(service=service_name).inc()
         logger.warning(f"Timeout posting to {service_name}")
@@ -196,8 +198,8 @@ class InstrumentedAsyncClient:
         self,
         service_name: str,
         timeout: float = 30.0,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         self.service_name = service_name
         self._client: Optional[httpx.AsyncClient] = None
         self._timeout = timeout
@@ -219,7 +221,7 @@ class InstrumentedAsyncClient:
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]) -> None:
         await self.close()
 
     def _record_request(self) -> None:
@@ -234,7 +236,7 @@ class InstrumentedAsyncClient:
         """Record a failed request."""
         external_api_errors_total.labels(service=self.service_name).inc()
 
-    async def get(self, url: str, **kwargs) -> httpx.Response:
+    async def get(self, url: str, **kwargs: Any) -> httpx.Response:
         """Make a GET request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
@@ -249,7 +251,7 @@ class InstrumentedAsyncClient:
             self._record_error()
             raise
 
-    async def post(self, url: str, **kwargs) -> httpx.Response:
+    async def post(self, url: str, **kwargs: Any) -> httpx.Response:
         """Make a POST request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
@@ -264,7 +266,7 @@ class InstrumentedAsyncClient:
             self._record_error()
             raise
 
-    async def put(self, url: str, **kwargs) -> httpx.Response:
+    async def put(self, url: str, **kwargs: Any) -> httpx.Response:
         """Make a PUT request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
@@ -279,7 +281,7 @@ class InstrumentedAsyncClient:
             self._record_error()
             raise
 
-    async def delete(self, url: str, **kwargs) -> httpx.Response:
+    async def delete(self, url: str, **kwargs: Any) -> httpx.Response:
         """Make a DELETE request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
@@ -294,7 +296,7 @@ class InstrumentedAsyncClient:
             self._record_error()
             raise
 
-    async def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+    async def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         """Make an arbitrary HTTP request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
@@ -314,7 +316,7 @@ def with_http_error_handling(
     service_name: str,
     default_return: Any = None,
     log_level: str = "warning",
-):
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Decorator for async functions that make HTTP requests.
     Catches common httpx exceptions and returns a default value.
@@ -334,30 +336,30 @@ def with_http_error_handling(
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
-        async def wrapper(*args, **kwargs) -> T:
+        async def wrapper(*args: Any, **kwargs: Any) -> T:
             start_time = time.time()
             external_api_requests_total.labels(service=service_name).inc()
             try:
                 result = await func(*args, **kwargs)
                 duration = time.time() - start_time
                 external_api_duration_seconds.labels(service=service_name).observe(duration)
-                return result
+                return cast(T, result)
             except httpx.TimeoutException:
                 external_api_errors_total.labels(service=service_name).inc()
                 getattr(logger, log_level)(f"Timeout in {func.__name__} ({service_name})")
-                return default_return
+                return cast(T, default_return)
             except httpx.ConnectError:
                 external_api_errors_total.labels(service=service_name).inc()
                 getattr(logger, log_level)(f"Connection error in {func.__name__} ({service_name})")
-                return default_return
+                return cast(T, default_return)
             except httpx.HTTPStatusError as e:
                 external_api_errors_total.labels(service=service_name).inc()
                 getattr(logger, log_level)(f"HTTP {e.response.status_code} in {func.__name__} ({service_name})")
-                return default_return
+                return cast(T, default_return)
             except Exception as e:
                 external_api_errors_total.labels(service=service_name).inc()
                 logger.error(f"Error in {func.__name__} ({service_name}): {e}")
-                return default_return
+                return cast(T, default_return)
 
         return wrapper
 

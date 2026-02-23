@@ -26,14 +26,14 @@ except ImportError:
 
 
 class SlackProvider(NotificationProvider):
-    def __init__(self):
+    def __init__(self) -> None:
         # Local lock to prevent concurrent refresh within same pod
         self._refresh_lock = asyncio.Lock()
         # Cache the refreshed token to avoid redundant refreshes
         self._cached_token: Optional[str] = None
         self._cached_token_expires_at: float = 0
 
-    async def _acquire_distributed_lock(self, db, lock_name: str, ttl_seconds: int = 30) -> bool:
+    async def _acquire_distributed_lock(self, db: Any, lock_name: str, ttl_seconds: int = 30) -> bool:
         """
         Acquire a distributed lock using DistributedLocksRepository.
 
@@ -52,7 +52,7 @@ class SlackProvider(NotificationProvider):
 
         return await locks_repo.acquire_lock(lock_name, holder_id, ttl_seconds)
 
-    async def _release_distributed_lock(self, db, lock_name: str) -> None:
+    async def _release_distributed_lock(self, db: Any, lock_name: str) -> None:
         """Release a distributed lock using DistributedLocksRepository."""
         from app.repositories.distributed_locks import DistributedLocksRepository
 
@@ -116,7 +116,8 @@ class SlackProvider(NotificationProvider):
                 await repo.update(update_data)
 
                 logger.info("Successfully refreshed Slack token")
-                return new_access_token
+                access_token: str | None = new_access_token
+                return access_token
 
         except Exception as e:
             logger.error(f"Error refreshing Slack token: {e}")

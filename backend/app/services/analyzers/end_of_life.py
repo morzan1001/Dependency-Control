@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, cast
 from urllib.parse import quote
 
 import httpx
@@ -84,7 +84,7 @@ class EndOfLifeAnalyzer(Analyzer):
                             safe_product = quote(prod, safe="")
                             response = await cli.get(f"{self.api_url}/{safe_product}.json")
                             if response.status_code == 200:
-                                return response.json()
+                                return cast(List[Dict[str, Any]], response.json())
                             elif response.status_code == 404:
                                 return []  # Empty list = negative cache
                         except httpx.TimeoutException:

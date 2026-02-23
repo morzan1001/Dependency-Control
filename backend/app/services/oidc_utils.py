@@ -40,7 +40,8 @@ async def find_jwks_key(
     if jwks:
         for k in jwks.get("keys", []):
             if k.get("kid") == kid:
-                return k
+                matching_key: Dict[str, Any] = k
+                return matching_key
 
     # Key not found - try refreshing cache (key rotation scenario)
     logger.info(f"{provider_name} key {kid} not in cache, refreshing JWKS...")
@@ -50,7 +51,8 @@ async def find_jwks_key(
     if jwks:
         for k in jwks.get("keys", []):
             if k.get("kid") == kid:
-                return k
+                matching_key = k
+                return matching_key
 
     logger.error(f"No matching {provider_name} key found for kid: {kid} after refresh")
     return None

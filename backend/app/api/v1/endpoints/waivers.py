@@ -32,7 +32,7 @@ async def create_waiver(
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
     current_user: CurrentUserDep,
-):
+) -> Waiver:
     """
     Create a new waiver/exception for a vulnerability.
     """
@@ -70,7 +70,7 @@ async def list_waivers(
     sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500, description="Number of items to return")] = 50,
-):
+) -> Dict[str, Any]:
     """
     List waivers with pagination.
     """

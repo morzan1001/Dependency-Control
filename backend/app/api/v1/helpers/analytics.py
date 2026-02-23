@@ -41,7 +41,7 @@ from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
 
 
-def require_analytics_permission(user: User, permission: str):
+def require_analytics_permission(user: User, permission: str) -> None:
     """Raise 403 if user doesn't have the required analytics permission."""
     # Check for the specific permission or the general analytics:read permission
     if not has_permission(user.permissions, [Permissions.ANALYTICS_READ, permission]):

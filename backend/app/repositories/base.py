@@ -5,7 +5,7 @@ Provides a generic, type-safe base class for all repositories.
 Reduces code duplication and ensures consistent database operations.
 """
 
-from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, AsyncGenerator, Dict, Generic, List, Optional, Type, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pydantic import BaseModel
@@ -143,7 +143,7 @@ class BaseRepository(Generic[T]):
             # Handle BulkWriteError - some documents may have been inserted
             if hasattr(e, "details") and "writeErrors" in e.details:
                 # Count successful inserts
-                inserted_count = e.details.get("nInserted", 0)
+                inserted_count: int = e.details.get("nInserted", 0)
                 return inserted_count
             raise
 
@@ -184,7 +184,7 @@ class BaseRepository(Generic[T]):
         self,
         query: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, int]] = None,
-    ):
+    ) -> AsyncGenerator[Optional[T], None]:
         """Iterate over documents matching query (async generator)."""
         async for doc in self.collection.find(query or {}, projection):
             yield self._to_model(doc)
@@ -193,7 +193,7 @@ class BaseRepository(Generic[T]):
         self,
         query: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, int]] = None,
-    ):
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """Iterate over raw documents matching query (async generator)."""
         async for doc in self.collection.find(query or {}, projection):
             yield doc

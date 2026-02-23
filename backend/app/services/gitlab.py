@@ -2,7 +2,7 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, cast
 
 import httpx
 
@@ -222,7 +222,8 @@ class GitLabService:
         # Check Redis cache first
         cached_uri = await cache_service.get(cache_key)
         if cached_uri:
-            return cached_uri
+            result: str = cached_uri
+            return result
 
         async with InstrumentedAsyncClient("GitLab OIDC", timeout=10.0) as client:
             try:
@@ -230,7 +231,7 @@ class GitLabService:
                 response = await client.get(f"{self.base_url}/.well-known/openid-configuration")
                 if response.status_code == 200:
                     config = response.json()
-                    jwks_uri = config.get("jwks_uri")
+                    jwks_uri: str | None = config.get("jwks_uri")
                     if jwks_uri:
                         # Cache in Redis for all pods
                         await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITLAB_JWKS_URI_CACHE_TTL)
@@ -250,7 +251,8 @@ class GitLabService:
         # Check Redis cache first
         cached_jwks = await cache_service.get(cache_key)
         if cached_jwks:
-            return cached_jwks
+            result_jwks: dict[Any, Any] = cached_jwks
+            return result_jwks
 
         async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
             try:
@@ -260,7 +262,7 @@ class GitLabService:
                 if jwks_uri:
                     response = await client.get(jwks_uri)
                     if response.status_code == 200:
-                        jwks = response.json()
+                        jwks: dict[Any, Any] = response.json()
                         # Cache in Redis for all pods
                         await cache_service.set(cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
                         return jwks
@@ -269,11 +271,11 @@ class GitLabService:
                 for path in ["/-/jwks", "/oauth/discovery/keys"]:
                     response = await client.get(f"{self.base_url}{path}")
                     if response.status_code == 200:
-                        jwks = response.json()
+                        jwks_fallback: dict[Any, Any] = response.json()
                         # Cache in Redis for all pods
-                        await cache_service.set(cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
+                        await cache_service.set(cache_key, jwks_fallback, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
                         logger.info(f"JWKS fetched from fallback path: {path}")
-                        return jwks
+                        return jwks_fallback
 
                 logger.error("Failed to fetch JWKS from any known endpoint")
             except Exception as e:

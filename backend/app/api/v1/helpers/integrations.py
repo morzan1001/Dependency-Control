@@ -83,7 +83,8 @@ async def exchange_slack_code_for_token(
                     error_code=error,
                 )
 
-            return result
+            result_data: dict[str, Any] = result
+            return result_data
 
     except httpx.TimeoutException as e:
         logger.error(f"Slack OAuth timeout: {e}")

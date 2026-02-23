@@ -2,7 +2,7 @@ import base64
 import io
 import logging
 import re
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 import pyotp
 import qrcode
@@ -51,7 +51,7 @@ async def create_user(
     user_in: UserCreate,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_CREATE]))],
     db: DatabaseDep,
-):
+) -> User:
     """
     Create a new user. Requires 'user:create' permission.
     """
@@ -93,7 +93,7 @@ async def read_users(
     search: Optional[str] = None,
     sort_by: str = "username",
     sort_order: str = "asc",
-):
+) -> List[User]:
     query = {}
     if search:
         escaped_search = re.escape(search)
@@ -114,7 +114,7 @@ async def read_users(
 @router.get("/me", response_model=UserSchema, responses={**RESP_AUTH})
 async def read_user_me(
     current_user: CurrentUserDep,
-):
+) -> User:
     """
     Get current user.
     """
@@ -126,7 +126,7 @@ async def update_user_me(
     user_in: UserUpdateMe,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Update own profile.
     """
@@ -155,7 +155,7 @@ async def read_user_by_id(
     user_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """Get user by ID. Requires admin permission or self."""
     check_admin_or_self(current_user, user_id, [Permissions.USER_READ])
     return await get_user_or_404(user_id, db)
@@ -167,7 +167,7 @@ async def update_user(
     user_in: UserUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """Update user. Requires admin permission or self."""
     has_admin_perm = check_admin_or_self(current_user, user_id, [Permissions.USER_UPDATE])
 
@@ -213,7 +213,7 @@ async def migrate_to_local(
     password_in: UserMigrateToLocal,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Migrate SSO user to local account by setting a password.
     """
@@ -236,7 +236,7 @@ async def migrate_user_to_local(
     user_id: str,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Admin only: Migrate a user to local authentication.
     This does not set a password, but changes the auth_provider to 'local'.
@@ -259,7 +259,7 @@ async def reset_user_password(
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Admin only: Trigger password reset for a user.
     Generates a reset token and link.
@@ -316,7 +316,7 @@ async def update_password_me(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Update current user password.
     """
@@ -362,7 +362,7 @@ async def update_password_me(
 async def setup_2fa(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, str]:
     """
     Generate a new 2FA secret and QR code.
     Only available for local auth users. OIDC users should configure 2FA in their identity provider.
@@ -401,7 +401,7 @@ async def enable_2fa(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Verify OTP and enable 2FA.
     Only available for local auth users. OIDC users should configure 2FA in their identity provider.
@@ -462,7 +462,7 @@ async def disable_2fa(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Disable 2FA.
     """
@@ -505,7 +505,7 @@ async def admin_disable_2fa(
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Admin only: Disable 2FA for a user (e.g. lost device).
     """
@@ -547,7 +547,7 @@ async def delete_user(
     user_id: str,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_DELETE]))],
     db: DatabaseDep,
-):
+) -> None:
     """
     Delete a user or revoke a pending invitation.
     Requires 'user:delete' permission.

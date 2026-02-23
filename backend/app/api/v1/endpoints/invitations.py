@@ -1,7 +1,7 @@
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, List
+from typing import Annotated, Any, Dict, List
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException, status
 
@@ -28,7 +28,7 @@ async def read_system_invitations(
     current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
     skip: int = 0,
     limit: int = 100,
-):
+) -> List[Dict[str, Any]]:
     """
     List all pending system invitations. Requires 'user:create' permission.
     """
@@ -43,7 +43,7 @@ async def create_system_invitation(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
     email: Annotated[str, Body(..., embed=True)],
-):
+) -> Dict[str, Any]:
     """
     Create a system invitation for a new user. Requires 'user:create' permission.
     """
@@ -94,7 +94,7 @@ async def create_system_invitation(
 
 
 @router.get("/system/{token}", responses={**RESP_404})
-async def validate_system_invitation(token: str, db: DatabaseDep):
+async def validate_system_invitation(token: str, db: DatabaseDep) -> Dict[str, Any]:
     """
     Validate a system invitation token.
     """
@@ -113,7 +113,7 @@ async def accept_system_invitation(
     token: Annotated[str, Body(...)],
     username: Annotated[str, Body(...)],
     password: Annotated[str, Body(...)],
-):
+) -> User:
     """
     Accept a system invitation and create a user account.
     """

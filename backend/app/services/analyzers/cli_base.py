@@ -145,7 +145,8 @@ class CLIAnalyzer(Analyzer):
             if not output_str.strip():
                 return {self.empty_result_key: []}
 
-            return json.loads(output_str)
+            result: Dict[str, Any] = json.loads(output_str)
+            return result
         except json.JSONDecodeError:
             output_str = stdout.decode()
             return {

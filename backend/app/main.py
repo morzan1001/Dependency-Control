@@ -72,7 +72,7 @@ app.add_middleware(PrometheusMiddleware)
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error(f"Global exception handler caught: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
@@ -81,7 +81,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 @app.on_event("startup")
-async def startup_event():
+async def startup_event() -> None:
     max_retries = 30
     retry_interval = 5
 
@@ -108,7 +108,7 @@ async def startup_event():
 
 
 @app.on_event("shutdown")
-async def shutdown_event():
+async def shutdown_event() -> None:
     await worker_manager.stop()
     await close_mongo_connection()
 
@@ -156,5 +156,5 @@ app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scrip
 
 
 @app.get("/")
-async def root():
+async def root() -> dict[str, str]:
     return {"message": "Welcome to Dependency Control API"}

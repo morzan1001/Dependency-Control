@@ -9,9 +9,9 @@ when multiple backend containers run simultaneously.
 import logging
 import re
 import time
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from importlib.metadata import version as get_version
-from typing import Callable
+from typing import Any, Callable, Generator
 
 from fastapi import Request, Response
 from prometheus_client import (
@@ -371,7 +371,7 @@ uptime_seconds = Gauge(
 startup_time = time.time()
 
 
-def update_uptime():
+def update_uptime() -> None:
     """Update the uptime metric."""
     uptime_seconds.set(time.time() - startup_time)
 
@@ -399,7 +399,8 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Skip metrics for the /metrics endpoint itself to avoid recursion
         if request.url.path == "/metrics":
-            return await call_next(request)
+            response: Response = await call_next(request)
+            return response
 
         method = request.method
         # Normalize endpoint path (remove IDs for better grouping)
@@ -466,11 +467,11 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
         return path
 
 
-def track_db_operation(collection: str, operation: str):
+def track_db_operation(collection: str, operation: str) -> AbstractContextManager[None]:
     """Context manager to track database operation metrics."""
 
     @contextmanager
-    def _tracker():
+    def _tracker() -> Generator[None, None, None]:
         start_time = time.time()
         try:
             yield
@@ -485,11 +486,11 @@ def track_db_operation(collection: str, operation: str):
     return _tracker()
 
 
-def track_cache_operation(operation: str):
+def track_cache_operation(operation: str) -> AbstractContextManager[None]:
     """Context manager to track cache operation metrics."""
 
     @contextmanager
-    def _tracker():
+    def _tracker() -> Generator[None, None, None]:
         start_time = time.time()
         try:
             yield
@@ -502,11 +503,11 @@ def track_cache_operation(operation: str):
     return _tracker()
 
 
-def track_external_api(service: str):
+def track_external_api(service: str) -> AbstractContextManager[None]:
     """Context manager to track external API call metrics."""
 
     @contextmanager
-    def _tracker():
+    def _tracker() -> Generator[None, None, None]:
         start_time = time.time()
         try:
             yield
@@ -520,7 +521,7 @@ def track_external_api(service: str):
     return _tracker()
 
 
-async def update_db_stats(database) -> None:
+async def update_db_stats(database: Any) -> None:
     """
     Update database statistics gauge metrics.
 

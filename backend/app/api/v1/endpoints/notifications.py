@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 async def get_broadcast_history(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))],
-):
+) -> List[BroadcastHistoryItem]:
     """
     Get history of sent broadcasts
     """
@@ -89,7 +89,7 @@ async def suggest_packages(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))],
     q: Annotated[str, Query(min_length=2, description="Search query for package name")],
-):
+) -> List[str]:
     """
     Suggest package names for advisories based on existing dependencies.
     """
@@ -113,7 +113,7 @@ async def broadcast_message(
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))],
-):
+) -> BroadcastResult:
     """
     Send a broadcast message to all users, specific teams, or owners of projects affecting a specific dependency.
     """

@@ -23,7 +23,7 @@ async def slack_callback(
     code: str,
     db: DatabaseDep,
     state: Optional[str] = None,
-):
+) -> RedirectResponse:
     """
     Callback endpoint for Slack OAuth.
     Exchanges the code for an access token and refresh token.

@@ -476,7 +476,7 @@ async def resend_verification_email_public(
     description="Redirects the user to the configured OIDC provider for authentication.",
     responses={**RESP_400, **RESP_500},
 )
-async def login_oidc_authorize(request: Request, db: DatabaseDep):
+async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectResponse:
     """
     Initiate OIDC login flow by redirecting to the identity provider.
     """
@@ -532,7 +532,7 @@ async def login_oidc_callback(
     code: str,
     db: DatabaseDep,
     state: Optional[str] = None,
-):
+) -> RedirectResponse:
     """
     Handle OIDC callback after user authenticates with the identity provider.
     Exchanges the authorization code for tokens and creates/updates the user.

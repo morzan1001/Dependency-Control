@@ -5,7 +5,7 @@ Centralizes all database operations for scans.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -141,14 +141,14 @@ class ScanRepository:
         cursor = self.collection.find({"status": "pending"})
         return await cursor.to_list(None)
 
-    async def iterate(self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None):
+    async def iterate(self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Iterate over scans matching query (async generator)."""
         async for doc in self.collection.find(query, projection):
             yield doc
 
     async def claim_pending_scan(self, scan_id: str, worker_id: str) -> Optional[Dict[str, Any]]:
         """Atomically claim a pending scan for processing."""
-        return await self.collection.find_one_and_update(
+        result: Optional[Dict[str, Any]] = await self.collection.find_one_and_update(
             {"_id": scan_id, "status": "pending"},
             {
                 "$set": {
@@ -159,6 +159,7 @@ class ScanRepository:
             },
             return_document=True,
         )
+        return result
 
     async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Run aggregation pipeline."""

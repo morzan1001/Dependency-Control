@@ -76,7 +76,7 @@ _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 async def get_dashboard_stats(
     db: DatabaseDep,
     current_user: CurrentUserDep,
-):
+) -> Dict[str, Any]:
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
@@ -189,7 +189,7 @@ async def create_project(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.PROJECT_CREATE))],
     db: DatabaseDep,
     settings: Annotated[SystemSettings, Depends(deps.get_system_settings)],
-):
+) -> ProjectApiKeyResponse:
     """
     Create a new project and return the initial API Key.
 
@@ -250,7 +250,7 @@ async def rotate_api_key(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> ProjectApiKeyResponse:
     """
     Invalidate the old API Key and generate a new one.
 
@@ -282,7 +282,7 @@ async def read_projects(
     limit: int = 20,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-):
+) -> Dict[str, Any]:
     """
     Retrieve projects.
 
@@ -355,7 +355,7 @@ async def read_all_scans(
     skip: int = 0,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-):
+) -> List[Dict[str, Any]]:
     """
     Retrieve scans for all projects the user has access to.
     Supports pagination and sorting.
@@ -412,7 +412,7 @@ async def read_project(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Project:
     """
     Get a specific project by ID.
     """
@@ -516,7 +516,7 @@ async def update_project(
     project_in: ProjectUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Project:
     """
     Update project details (name, team, active analyzers).
     Requires 'admin' role on the project.
@@ -564,7 +564,7 @@ async def read_project_branches(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> List[BranchInfo]:
     """Get all unique branches for a project with their active/deleted status."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
@@ -600,7 +600,7 @@ async def sync_project_branches_endpoint(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> List[BranchInfo]:
     """Trigger branch status sync against the VCS provider for a project."""
     await check_project_access(project_id, current_user, db, required_role="editor")
 
@@ -632,7 +632,7 @@ async def read_project_scans(
     exclude_rescans: bool = False,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-):
+) -> List[Scan]:
     """
     Get scans for a project.
     """
@@ -676,7 +676,7 @@ async def trigger_rescan(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Scan:
     """
     Manually trigger a re-scan for a specific scan.
     This creates a new scan entry with the same SBOMs but runs the analysis again.
@@ -759,7 +759,7 @@ async def read_scan_history(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> List[Scan]:
     """
     Get the history of a scan (including re-scans).
     Returns the original scan and all subsequent re-scans, sorted by date.
@@ -800,7 +800,7 @@ async def update_notification_settings(
     settings: ProjectNotificationSettings,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Project:
     """
     Update notification preferences for the current user in this project.
     """
@@ -877,7 +877,7 @@ async def invite_user(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Add an existing user to the project by their email address.
 
@@ -930,7 +930,7 @@ async def read_analysis_results(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> List[AnalysisResult]:
     """Get the results of all analyzers for a specific scan."""
     scan_repo = ScanRepository(db)
     analysis_repo = AnalysisResultRepository(db)
@@ -951,7 +951,7 @@ async def read_scan(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Scan:
     """
     Get details of a specific scan.
     Note: SBOMs are stored in GridFS and not returned here for performance reasons.
@@ -978,7 +978,7 @@ async def read_scan_sboms(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> List[Dict[str, Any]]:
     """
     Get raw SBOM data for a specific scan.
     SBOMs are stored in GridFS and resolved on demand.
@@ -1019,7 +1019,7 @@ async def read_scan_findings(
     category: Optional[str] = None,  # security, secret, sast, compliance, quality
     severity: Optional[str] = None,
     search: Optional[str] = None,
-):
+) -> Dict[str, Any]:
     """
     Get paginated findings for a scan.
     """
@@ -1155,7 +1155,7 @@ async def get_scan_stats(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Dict[str, Any]:
     """
     Get finding statistics by category for a scan.
     """
@@ -1192,7 +1192,7 @@ async def update_project_member(
     member_in: ProjectMemberUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Project:
     """
     Update the role of a project member.
     Requires 'admin' role on the project.
@@ -1241,7 +1241,7 @@ async def remove_project_member(
     user_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Project:
     """
     Remove a user from the project.
     Requires 'admin' role on the project.
@@ -1281,7 +1281,7 @@ async def transfer_ownership(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     new_owner_id: Annotated[str, Body(embed=True)],
-):
+) -> Project:
     """
     Transfer project ownership to another user.
 
@@ -1325,7 +1325,7 @@ async def export_project_csv(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Response:
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
@@ -1382,7 +1382,7 @@ async def export_project_sbom(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Response:
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
@@ -1418,7 +1418,7 @@ async def delete_project(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> None:
     """
     Delete a project and all associated data (scans, results).
     Requires 'project:delete' permission or being the project owner.
@@ -1486,7 +1486,7 @@ async def get_project_waivers(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> List[Waiver]:
     """
     Get all waivers for a specific project.
     """

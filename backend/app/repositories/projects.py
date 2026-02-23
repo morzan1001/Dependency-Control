@@ -4,7 +4,7 @@ Project Repository
 Centralizes all database operations for projects.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
@@ -253,7 +253,7 @@ class ProjectRepository:
         """
         await self.collection.update_one({"_id": project_id, "members.user_id": user_id}, {"$set": update_data})
 
-    async def iterate_all(self, query: Optional[Dict[str, Any]] = None):
+    async def iterate_all(self, query: Optional[Dict[str, Any]] = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Iterate over all projects (async generator)."""
         async for doc in self.collection.find(query or {}):
             yield doc

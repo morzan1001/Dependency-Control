@@ -122,7 +122,7 @@ class SBOMParser:
     Universal SBOM parser that handles multiple formats and normalizes output.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.format_handlers = {
             SBOMFormat.CYCLONEDX: self._parse_cyclonedx,
             SBOMFormat.SPDX: self._parse_spdx,
@@ -205,7 +205,7 @@ class SBOMParser:
 
         return result
 
-    def _parse_cyclonedx(self, sbom: Dict[str, Any], result: ParsedSBOM):
+    def _parse_cyclonedx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
 
         # Extract metadata
@@ -669,7 +669,7 @@ class SBOMParser:
         license_str, _ = self._extract_cyclonedx_licenses_full(licenses)
         return license_str
 
-    def _parse_syft(self, sbom: Dict[str, Any], result: ParsedSBOM):
+    def _parse_syft(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
         """Parse Syft JSON format SBOM."""
 
         # Extract descriptor (tool info)
@@ -995,7 +995,7 @@ class SBOMParser:
         license_str, _ = self._extract_syft_licenses_full(licenses)
         return license_str
 
-    def _parse_spdx(self, sbom: Dict[str, Any], result: ParsedSBOM):
+    def _parse_spdx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
         """Parse SPDX format SBOM."""
 
         result.tool_name = "spdx"

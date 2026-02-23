@@ -259,7 +259,7 @@ async def get_dependency_tree(
     )
     findings_map = build_findings_severity_map(findings)
 
-    def build_node(dep) -> DependencyTreeNode:
+    def build_node(dep: Any) -> DependencyTreeNode:
         name = get_attr(dep, "name", "")
         finding_info = findings_map.get(name, {})
 
@@ -741,7 +741,8 @@ async def search_dependencies_advanced(
 def _get_description(vuln: dict, finding: Any) -> str | None:
     """Extract description from vulnerability or finding."""
     if vuln.get("description"):
-        return vuln["description"][:200]
+        desc_text: str = vuln["description"][:200]
+        return desc_text
     desc = getattr(finding, "description", None)
     if desc:
         return str(desc)[:200]
@@ -1103,7 +1104,7 @@ async def get_dependency_metadata_endpoint(
                 license_obligations = license_info.get("obligations", [])
 
     # Helper function to get first non-null value from dependencies
-    def first_value(key: str):
+    def first_value(key: str) -> Optional[Any]:
         for dep in dependencies:
             val = get_attr(dep, key)
             if val:

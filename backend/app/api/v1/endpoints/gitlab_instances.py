@@ -1,8 +1,8 @@
 import logging
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any, Dict
 
-from fastapi import Depends, HTTPException, Response, status
+from fastapi import Depends, HTTPException, status
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -53,7 +53,7 @@ async def list_instances(
     page: int = 1,
     size: int = 100,
     active_only: bool = False,
-):
+) -> Dict[str, Any]:
     """
     List all GitLab instances.
     Requires system:manage permission.
@@ -79,7 +79,7 @@ async def get_instance(
     instance_id: str,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-):
+) -> GitLabInstanceResponse:
     """
     Get a specific GitLab instance by ID.
     Requires system:manage permission.
@@ -100,7 +100,7 @@ async def create_instance(
     instance_data: GitLabInstanceCreate,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-):
+) -> GitLabInstanceResponse:
     """
     Create a new GitLab instance.
     Requires system:manage permission.
@@ -173,7 +173,7 @@ async def update_instance(
     update_data: GitLabInstanceUpdate,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-):
+) -> GitLabInstanceResponse:
     """
     Update a GitLab instance.
     Requires system:manage permission.
@@ -239,7 +239,7 @@ async def delete_instance(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     force: bool = False,
-):
+) -> None:
     """
     Delete a GitLab instance.
     Requires system:manage permission.
@@ -281,7 +281,6 @@ async def delete_instance(
         f"(force={force}, orphaned_projects={project_count})"
     )
 
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{instance_id}/test-connection", response_model=GitLabInstanceTestConnectionResponse, responses={**RESP_AUTH_404})
@@ -289,7 +288,7 @@ async def test_connection(
     instance_id: str,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-):
+) -> GitLabInstanceTestConnectionResponse:
     """
     Test connection to a GitLab instance.
     Requires system:manage permission.

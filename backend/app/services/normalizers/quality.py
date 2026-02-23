@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """
     Process OpenSSF Scorecard results and package metadata from deps_dev scanner.
     Also stores scorecard data for component enrichment.
@@ -116,7 +116,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
         )
 
 
-def normalize_typosquatting(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_typosquatting(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize typosquatting detection findings."""
     for item in result.get("typosquatting_issues") or []:
         similarity = item.get("similarity", 0)
@@ -141,7 +141,7 @@ def normalize_typosquatting(aggregator: "ResultAggregator", result: Dict[str, An
         )
 
 
-def normalize_maintainer_risk(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_maintainer_risk(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize maintainer risk results into findings."""
     for item in result.get("maintainer_issues") or []:
         risks: List[Dict[str, Any]] = item.get("risks") or []

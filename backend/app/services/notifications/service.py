@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.models.project import Project
 from app.models.system import SystemSettings
@@ -17,7 +17,7 @@ _LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."
 
 
 class NotificationService:
-    def __init__(self):
+    def __init__(self) -> None:
         self.email_provider = EmailProvider()
         self.slack_provider = SlackProvider()
         self.mattermost_provider = MattermostProvider()
@@ -31,7 +31,7 @@ class NotificationService:
         message: str,
         system_settings: Optional[SystemSettings] = None,
         html_message: Optional[str] = None,
-    ):
+    ) -> None:
         channels = prefs.get(event_type, [])
         tasks = []
 
@@ -83,9 +83,9 @@ class NotificationService:
         event_type: str,
         subject: str,
         message: str,
-        db=None,
+        db: Any = None,
         html_message: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Send a notification to a user based on their global preferences.
         """
@@ -113,10 +113,10 @@ class NotificationService:
         event_type: str,
         subject: str,
         message: str,
-        db=None,
+        db: Any = None,
         forced_channels: Optional[List[str]] = None,
         html_message: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Send a notification to multiple users.
         """
@@ -154,10 +154,10 @@ class NotificationService:
         event_type: str,
         subject: str,
         message: str,
-        db,
+        db: Any,
         forced_channels: Optional[List[str]] = None,
         html_message: Optional[str] = None,
-    ):
+    ) -> None:
         """
         Send notifications to project members.
         """

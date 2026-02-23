@@ -42,7 +42,7 @@ async def upload_callgraph(
     request: CallgraphUploadRequest,
     db: DatabaseDep,
     current_user: CurrentUserDep,
-):
+) -> CallgraphUploadResponse:
     """
     Upload call graph data for a project.
 

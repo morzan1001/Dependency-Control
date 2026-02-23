@@ -1,4 +1,5 @@
 import time
+from typing import Any, Dict
 
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
@@ -27,8 +28,8 @@ def get_max_uptime_seconds() -> int:
     return getattr(settings, "MAX_POD_UPTIME_SECONDS", 86400)
 
 
-@router.get("/live", summary="Liveness Probe")
-async def liveness():
+@router.get("/live", summary="Liveness Probe", response_model=None)
+async def liveness() -> Dict[str, Any] | JSONResponse:
     """
     Liveness probe to check if the application process is running.
 
@@ -55,8 +56,8 @@ async def liveness():
     return {"status": "alive", "uptime_seconds": int(uptime)}
 
 
-@router.get("/ready", summary="Readiness Probe")
-async def readiness():
+@router.get("/ready", summary="Readiness Probe", response_model=None)
+async def readiness() -> Dict[str, Any] | JSONResponse:
     """
     Detailed readiness probe.
     Checks:
@@ -115,7 +116,7 @@ async def readiness():
 
 
 @router.get("/cache", summary="Cache Health & Statistics")
-async def cache_health():
+async def cache_health() -> Dict[str, Any]:
     """
     Get detailed cache health status and statistics.
 

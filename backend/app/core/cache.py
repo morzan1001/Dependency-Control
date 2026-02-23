@@ -146,7 +146,7 @@ class CacheService:
 
     RECONNECT_INTERVAL_SECONDS = 30
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._pool: Optional[ConnectionPool] = None
         self._client: Optional[redis.Redis] = None
         self._available: bool = True

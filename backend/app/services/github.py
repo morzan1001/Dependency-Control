@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, cast
 
 import httpx
 
@@ -133,7 +133,8 @@ class GitHubService:
 
         cached_uri = await cache_service.get(cache_key)
         if cached_uri:
-            return cached_uri
+            result: str = cached_uri
+            return result
 
         # Fast path for github.com
         if "token.actions.githubusercontent.com" in self.base_url:
@@ -146,7 +147,7 @@ class GitHubService:
                 response = await client.get(f"{self.base_url}/.well-known/openid-configuration")
                 if response.status_code == 200:
                     config = response.json()
-                    jwks_uri = config.get("jwks_uri")
+                    jwks_uri: str | None = config.get("jwks_uri")
                     if jwks_uri:
                         await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
                         return jwks_uri
@@ -167,7 +168,8 @@ class GitHubService:
 
         cached_jwks = await cache_service.get(cache_key)
         if cached_jwks:
-            return cached_jwks
+            result_jwks: dict[Any, Any] = cached_jwks
+            return result_jwks
 
         async with InstrumentedAsyncClient("GitHub JWKS", timeout=10.0) as client:
             try:
@@ -176,7 +178,7 @@ class GitHubService:
                 if jwks_uri:
                     response = await client.get(jwks_uri)
                     if response.status_code == 200:
-                        jwks = response.json()
+                        jwks: dict[Any, Any] = response.json()
                         await cache_service.set(cache_key, jwks, ttl_seconds=GITHUB_JWKS_CACHE_TTL)
                         return jwks
 

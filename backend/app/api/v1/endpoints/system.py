@@ -15,6 +15,7 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions
 from app.models.user import User
+from app.models.system import SystemSettings
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.system import (
     AppConfig,
@@ -32,7 +33,7 @@ router = CustomAPIRouter()
 async def get_settings(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
-):
+) -> SystemSettings:
     """
     Get system settings. Requires 'system:manage' permission.
     """
@@ -45,7 +46,7 @@ async def update_settings(
     settings_in: SystemSettingsUpdate,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
-):
+) -> SystemSettings:
     """
     Update system settings. Requires 'system:manage' permission.
     """
@@ -72,7 +73,7 @@ async def update_settings(
     response_model=PublicConfig,
     summary="Get public system configuration",
 )
-async def get_public_config(db: DatabaseDep):
+async def get_public_config(db: DatabaseDep) -> PublicConfig:
     """
     Returns public configuration flags (e.g. if registration is allowed).
     No authentication required.
@@ -96,7 +97,7 @@ async def get_public_config(db: DatabaseDep):
 async def get_app_config(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> AppConfig:
     """
     Returns lightweight, non-sensitive configuration for authenticated users.
     This endpoint provides only the data needed by frontend components
@@ -132,7 +133,7 @@ async def get_app_config(
 async def get_notification_channels(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> List[str]:
     """
     Returns a list of available notification channels based on the server configuration.
     Requires authentication.

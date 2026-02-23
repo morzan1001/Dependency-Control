@@ -37,7 +37,7 @@ from app.services.normalizers.security import (
 
 
 class ResultAggregator:
-    def __init__(self):
+    def __init__(self) -> None:
         self.findings: Dict[str, Finding] = {}
         self.alias_map: Dict[str, str] = {}
         self._scorecard_cache: Dict[str, Dict[str, Any]] = {}  # component@version -> scorecard data
@@ -51,7 +51,7 @@ class ResultAggregator:
             self._dependency_enrichments[key] = DependencyEnrichment(name=name, version=version)
         return self._dependency_enrichments[key]
 
-    def enrich_from_deps_dev(self, name: str, version: str, metadata: Dict[str, Any]):
+    def enrich_from_deps_dev(self, name: str, version: str, metadata: Dict[str, Any]) -> None:
         """Enrich dependency with data from deps.dev."""
         enrichment = self._get_or_create_enrichment(name, version)
         if "deps_dev" not in enrichment.sources:
@@ -133,7 +133,7 @@ class ResultAggregator:
         if metadata.get("has_slsa_provenance"):
             enrichment.has_slsa_provenance = True
 
-    def enrich_from_license_scanner(self, name: str, version: str, license_info: Dict[str, Any]):
+    def enrich_from_license_scanner(self, name: str, version: str, license_info: Dict[str, Any]) -> None:
         """Enrich dependency with data from license compliance scanner."""
         enrichment = self._get_or_create_enrichment(name, version)
         if "license_compliance" not in enrichment.sources:
@@ -162,7 +162,7 @@ class ResultAggregator:
             # Store full license data for reference
             self._license_data[f"{name}@{version}"] = license_info
 
-    def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: Optional[str] = None):
+    def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: Optional[str] = None) -> None:
         """
         Dispatches the result to the specific normalizer based on analyzer name.
         """
@@ -349,7 +349,7 @@ class ResultAggregator:
 
         return final_findings
 
-    def _link_related_findings_by_component(self, findings: List[Finding]):
+    def _link_related_findings_by_component(self, findings: List[Finding]) -> None:
         """
         Links ALL findings for the same component together, regardless of type.
         This creates a web of related findings where:
@@ -393,7 +393,7 @@ class ResultAggregator:
                     self._add_context_to_vulnerability(f1, f2)
                     self._add_context_to_vulnerability(f2, f1)
 
-    def _add_context_to_vulnerability(self, vuln_finding: Finding, other_finding: Finding):
+    def _add_context_to_vulnerability(self, vuln_finding: Finding, other_finding: Finding) -> None:
         """
         Adds contextual information from other finding types to a vulnerability finding.
         """
@@ -462,7 +462,7 @@ class ResultAggregator:
         """
         return self._license_data
 
-    def _enrich_with_scorecard(self, findings: List[Finding]):
+    def _enrich_with_scorecard(self, findings: List[Finding]) -> None:
         """
         Enriches non-scorecard findings with scorecard data for the same component.
         This adds maintenance and quality context to vulnerability findings.
@@ -719,7 +719,7 @@ class ResultAggregator:
             aliases=([f.id for f in findings if f.id != base.id] if len(findings) > 1 else base.aliases),
         )
 
-    def _merge_vulnerability_into_list(self, target_list: List[Any], source_entry: VulnerabilityEntry):
+    def _merge_vulnerability_into_list(self, target_list: List[Any], source_entry: VulnerabilityEntry) -> None:
         """
         Merges a source vulnerability entry into a target list, handling deduplication by ID and Aliases.
         """
@@ -796,7 +796,7 @@ class ResultAggregator:
         if not match_found:
             target_list.append(source_entry)
 
-    def _merge_findings_data(self, target: Finding, source: Finding):
+    def _merge_findings_data(self, target: Finding, source: Finding) -> None:
         """Merges data from source finding into target finding."""
         # 1. Scanners
         target.scanners = list(set(target.scanners + source.scanners))
@@ -841,7 +841,7 @@ class ResultAggregator:
             return v[1:]
         return v
 
-    def add_finding(self, finding: Finding, source: Optional[str] = None):
+    def add_finding(self, finding: Finding, source: Optional[str] = None) -> None:
         """
         Adds a finding to the map, merging if it already exists.
         """
@@ -852,7 +852,7 @@ class ResultAggregator:
         else:
             self._add_generic_finding(finding, source)
 
-    def _add_vulnerability_finding(self, finding: Finding, source: Optional[str] = None):
+    def _add_vulnerability_finding(self, finding: Finding, source: Optional[str] = None) -> None:
         # Normalize keys
         raw_comp = finding.component if finding.component else "unknown"
         comp_key = self._normalize_component(raw_comp)
@@ -943,7 +943,7 @@ class ResultAggregator:
             )
             self.findings[agg_key] = agg_finding
 
-    def _add_quality_finding(self, finding: Finding, source: Optional[str] = None):
+    def _add_quality_finding(self, finding: Finding, source: Optional[str] = None) -> None:
         """
         Adds a quality finding to the map, aggregating multiple quality issues
         (scorecard, maintainer_risk, etc.) for the same component+version.
@@ -1056,7 +1056,7 @@ class ResultAggregator:
             )
             self.findings[agg_key] = agg_finding
 
-    def _update_quality_description(self, finding: Finding):
+    def _update_quality_description(self, finding: Finding) -> None:
         """Updates the description of an aggregated quality finding."""
         quality_issues = finding.details.get("quality_issues", [])
         count = len(quality_issues)
@@ -1094,7 +1094,7 @@ class ResultAggregator:
 
         finding.description = " | ".join(parts) if parts else f"{count} quality issues"
 
-    def _add_generic_finding(self, finding: Finding, source: Optional[str] = None):
+    def _add_generic_finding(self, finding: Finding, source: Optional[str] = None) -> None:
         """
         Adds a finding to the map, merging if it already exists.
         Key for deduplication: type + id + component + version

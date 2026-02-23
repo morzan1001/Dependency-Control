@@ -34,7 +34,7 @@ def _format_datetime(value: Optional[Any]) -> Optional[str]:
     if value is None:
         return None
     if hasattr(value, "isoformat"):
-        return value.isoformat()
+        return cast(str, value.isoformat())
     # If it's already a string, return as-is (unless empty)
     if isinstance(value, str):
         return value if value else None

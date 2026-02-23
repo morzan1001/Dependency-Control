@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_malware(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_malware(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """
     Normalize malware findings from the OpenSourceMalware.com API (os_malware scanner).
     Note: OpenSSF malware data comes through OSV scanner and is handled by _normalize_osv_malware.
@@ -48,7 +48,7 @@ def normalize_malware(aggregator: "ResultAggregator", result: Dict[str, Any], so
         )
 
 
-def normalize_hash_verification(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_hash_verification(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize hash verification results into findings."""
     for item in result.get("hash_issues") or []:
         component = safe_get(item, "component", "unknown")

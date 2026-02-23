@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_outdated(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_outdated(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize outdated package findings."""
     for item in result.get("outdated_dependencies") or []:
         component = safe_get(item, "component", "unknown")
@@ -27,7 +27,7 @@ def normalize_outdated(aggregator: "ResultAggregator", result: Dict[str, Any], s
         )
 
 
-def normalize_eol(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_eol(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize end-of-life findings."""
     for item in result.get("eol_issues") or []:
         eol_info = item.get("eol_info") or {}

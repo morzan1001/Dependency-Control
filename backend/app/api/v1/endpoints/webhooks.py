@@ -5,7 +5,7 @@ Provides CRUD operations for project-specific and global webhooks,
 plus webhook testing functionality.
 """
 
-from typing import Annotated, Any, Dict
+from typing import Annotated, Any, Dict, Optional
 
 from fastapi import Depends, HTTPException, Query
 
@@ -43,7 +43,7 @@ async def create_webhook(
     webhook_in: WebhookCreate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Webhook:
     """
     Create a webhook for a project.
 
@@ -64,7 +64,7 @@ async def list_webhooks(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
-):
+) -> Dict[str, Any]:
     """
     List all webhooks for a project with pagination.
 
@@ -85,7 +85,7 @@ async def create_global_webhook(
     webhook_in: WebhookCreate,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
-):
+) -> Webhook:
     """
     Create a global webhook.
 
@@ -104,7 +104,7 @@ async def list_global_webhooks(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
-):
+) -> Dict[str, Any]:
     """
     List global webhooks with pagination.
 
@@ -123,7 +123,7 @@ async def get_webhook(
     webhook_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Webhook:
     """
     Get a specific webhook by ID.
 
@@ -142,7 +142,7 @@ async def update_webhook(
     webhook_update: WebhookUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> Optional[Webhook]:
     """
     Update a webhook configuration.
 
@@ -189,7 +189,7 @@ async def test_webhook(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     test_request: WebhookTestRequest = WebhookTestRequest(),
-):
+) -> WebhookTestResponse:
     """
     Send a test webhook to verify the configuration.
 

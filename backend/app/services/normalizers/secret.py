@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize TruffleHog secret scan results."""
     # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
     for finding in result.get("findings") or []:

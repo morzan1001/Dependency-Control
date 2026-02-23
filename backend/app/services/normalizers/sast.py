@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
-def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize OpenGrep (Semgrep) SAST results."""
     # OpenGrep can send data as "findings" or "results"
     results = result.get("findings") or result.get("results") or []
@@ -104,7 +104,7 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], s
         )
 
 
-def normalize_bearer(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None):
+def normalize_bearer(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize Bearer SAST results."""
     findings_container = result.get("findings") or {}
 

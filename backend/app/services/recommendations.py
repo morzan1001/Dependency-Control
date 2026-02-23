@@ -99,7 +99,7 @@ class RecommendationEngine:
     Delegates analysis to specialized modules in app.services.recommendation.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Configuration from constants (instance vars for compatibility)
         self.outdated_threshold_days = OUTDATED_DEPENDENCY_THRESHOLD_DAYS
         self.max_dependency_depth = MAX_DEPENDENCY_DEPTH

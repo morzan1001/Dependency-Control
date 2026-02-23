@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.core import security
 from app.core.config import settings
 from app.db.mongodb import get_database
+from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories import (
@@ -157,7 +158,7 @@ class PermissionChecker:
 async def get_project_by_api_key(
     x_api_key: str = Header(..., alias="X-API-Key"),
     db: AsyncIOMotorDatabase = Depends(get_database),
-):
+) -> Project:
     if "." not in x_api_key:
         raise HTTPException(
             status_code=403,
@@ -188,7 +189,7 @@ async def get_project_for_ingest(
     oidc_token: Optional[str] = Header(None, alias="Job-Token"),
     db: AsyncIOMotorDatabase = Depends(get_database),
     settings: SystemSettings = Depends(get_system_settings),
-):
+) -> Project:
     from app.models.project import Project, ProjectMember
 
     project_repo = ProjectRepository(db)
