@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { toast } from "sonner"
 import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
@@ -61,7 +61,7 @@ interface UserDetailsDialogProps {
 
 export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialogProps) {
   const { hasPermission } = useAuth();
-  const navigate = useNavigate();
+
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [resetLink, setResetLink] = useState<string | null>(null);
 
@@ -311,15 +311,13 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                   >
                     <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
                       {userProjects.map(project => (
-                        <li
-                          key={project.id}
-                          role="link"
-                          tabIndex={0}
-                          className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
-                          onClick={() => navigate(`/projects/${project.id}`)}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/projects/${project.id}`); } }}
-                        >
-                          <span>{project.name}</span>
+                        <li key={project.id}>
+                          <Link
+                            to={`/projects/${project.id}`}
+                            className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors"
+                          >
+                            <span>{project.name}</span>
+                          </Link>
                         </li>
                       ))}
                     </ul>
@@ -342,15 +340,13 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                   >
                     <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
                       {userTeams.map(team => (
-                        <li
-                          key={team.id}
-                          role="link"
-                          tabIndex={0}
-                          className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
-                          onClick={() => navigate('/teams')}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/teams'); } }}
-                        >
-                          <span>{team.name}</span>
+                        <li key={team.id}>
+                          <Link
+                            to="/teams"
+                            className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors"
+                          >
+                            <span>{team.name}</span>
+                          </Link>
                         </li>
                       ))}
                     </ul>

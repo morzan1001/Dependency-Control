@@ -45,6 +45,7 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
             node.has_findings ? getSeverityBorder() : "border-l-transparent",
           )}
           role="treeitem"
+          aria-selected={false}
           tabIndex={0}
           style={{ paddingLeft: `${level * 24 + 12}px` }}
           onClick={() => onSelect?.(node)}

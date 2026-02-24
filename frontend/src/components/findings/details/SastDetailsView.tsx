@@ -340,13 +340,11 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                         const isExpanded = expandedIssues.has(issue.id)
                         return (
                              <div key={issue.id} className="border rounded-lg overflow-hidden bg-card text-card-foreground shadow-sm">
-                                <div
-                                    className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50 transition-colors"
-                                    role="button"
-                                    tabIndex={0}
+                                <button
+                                    type="button"
+                                    className="w-full text-left flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50 transition-colors"
                                     aria-expanded={isExpanded}
                                     onClick={() => toggleIssue(issue.id)}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleIssue(issue.id); } }}
                                 >
                                      <div className="flex items-center gap-3 overflow-hidden">
                                         {isExpanded ? <ChevronDown className="h-4 w-4 flex-shrink-0" /> : <ChevronRight className="h-4 w-4 flex-shrink-0" />}
@@ -366,8 +364,8 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                                             </div>
                                         </div>
                                      </div>
-                                </div>
-                                
+                                </button>
+
                                 {isExpanded && (
                                     <div className="p-4 pt-0 border-t bg-muted/10">
                                         <div className="mt-4">

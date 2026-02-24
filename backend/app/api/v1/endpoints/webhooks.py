@@ -98,7 +98,7 @@ async def create_global_webhook(
     return await webhook_repo.create(webhook)
 
 
-@router.get("/global/", response_model=Dict[str, Any], responses=RESP_AUTH)
+@router.get("/global/", responses=RESP_AUTH)
 async def list_global_webhooks(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
@@ -183,7 +183,7 @@ async def delete_webhook(
     await webhook_repo.delete(webhook_id)
 
 
-@router.post("/{webhook_id}/test", response_model=WebhookTestResponse, responses=RESP_AUTH_404)
+@router.post("/{webhook_id}/test", responses=RESP_AUTH_404)
 async def test_webhook(
     webhook_id: str,
     current_user: CurrentUserDep,

@@ -42,18 +42,16 @@ export function CopyableCode({ value, className = '' }: CopyableCodeProps) {
 export function CopyableText({ value, className = '' }: CopyableCodeProps) {
   const { copied, copy } = useCopyToClipboard()
 
-  const handleCopy = (e: React.MouseEvent<HTMLSpanElement>) => {
+  const handleCopy = (e: React.MouseEvent<HTMLButtonElement>) => {
     copy(value, e)
   }
 
   return (
-    <span
+    <button
+      type="button"
       className={`inline-flex items-center gap-1 cursor-pointer hover:bg-muted/50 rounded px-1 ${className}`}
-      role="button"
-      tabIndex={0}
       aria-label="Copy to clipboard"
       onClick={handleCopy}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCopy(e as unknown as React.MouseEvent<HTMLSpanElement>); } }}
     >
       <code className="text-xs font-mono">{value}</code>
       {copied ? (
@@ -61,6 +59,6 @@ export function CopyableText({ value, className = '' }: CopyableCodeProps) {
       ) : (
         <Copy className="h-3 w-3 opacity-50 hover:opacity-100" />
       )}
-    </span>
+    </button>
   )
 }

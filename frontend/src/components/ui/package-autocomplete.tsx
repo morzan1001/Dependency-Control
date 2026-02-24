@@ -71,11 +71,12 @@ export function PackageAutocomplete({
            )}
            
            {!isLoading && suggestions && suggestions.length > 0 && (
-              <div className="max-h-[200px] overflow-y-auto p-1">
+              <div role="listbox" className="max-h-[200px] overflow-y-auto p-1">
                  {suggestions.map((pkg) => (
                     <div
                        key={pkg}
                        role="option"
+                       aria-selected={pkg === inputValue}
                        tabIndex={0}
                        className={cn(
                           "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground cursor-pointer"

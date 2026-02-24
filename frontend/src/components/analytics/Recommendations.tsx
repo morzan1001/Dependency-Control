@@ -286,13 +286,11 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
   
   return (
     <Card className="overflow-hidden">
-      <div
-        className="p-4 cursor-pointer hover:bg-muted/50 transition-colors"
-        role="button"
-        tabIndex={0}
+      <button
+        type="button"
+        className="w-full text-left p-4 cursor-pointer hover:bg-muted/50 transition-colors"
         aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!expanded); } }}
       >
         <div className="flex items-start gap-4">
           {/* Type Icon */}
@@ -356,16 +354,16 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
           </div>
           
           {/* Expand Toggle */}
-          <Button variant="ghost" size="icon" className="shrink-0">
+          <span className="shrink-0 inline-flex items-center justify-center h-10 w-10 rounded-md hover:bg-accent hover:text-accent-foreground">
             {expanded ? (
               <ChevronDown className="h-4 w-4" />
             ) : (
               <ChevronRight className="h-4 w-4" />
             )}
-          </Button>
+          </span>
         </div>
-      </div>
-      
+      </button>
+
       {/* Expanded Details */}
       {expanded && (
         <CardContent className="pt-0 border-t">
