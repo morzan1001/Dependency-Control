@@ -122,6 +122,7 @@ def build_script_info(script_name: str) -> ScriptInfo:
     responses={
         200: {"description": "Script hash and version information"},
         404: {"description": "Script not found"},
+        500: {"description": "Internal server error"},
     },
 )
 async def get_script_hash(script_name: str) -> ScriptInfo:
@@ -161,6 +162,7 @@ async def get_script_hash(script_name: str) -> ScriptInfo:
             "content": {"text/plain": {"example": "#!/bin/bash\n# Script content..."}},
         },
         404: {"description": "Script not found"},
+        500: {"description": "Internal server error"},
     },
 )
 async def get_script(

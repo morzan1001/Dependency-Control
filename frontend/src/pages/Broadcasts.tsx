@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useBroadcast, useBroadcastHistory } from "@/hooks/queries/use-broadcast"
 import { AdvisoryPackage, NotificationChannel } from "@/types/broadcast"
 import { useTeams } from "@/hooks/queries/use-teams"
@@ -39,8 +39,9 @@ export default function Broadcasts() {
   const [announcementMessage, setAnnouncementMessage] = useState("")
   const [advisorySubject, setAdvisorySubject] = useState("")
   const [advisoryMessage, setAdvisoryMessage] = useState("")
-  const [packages, setPackages] = useState<AdvisoryPackage[]>([
-    { name: "", version: "", type: "" }
+  const packageKeyCounter = useRef(1)
+  const [packages, setPackages] = useState<(AdvisoryPackage & { _key: number })[]>([
+    { name: "", version: "", type: "", _key: 0 }
   ])
   const [impactCount, setImpactCount] = useState<number | null>(null)
   const [impactProjectCount, setImpactProjectCount] = useState<number | null>(null)
@@ -53,7 +54,7 @@ export default function Broadcasts() {
   }, [activeTab, announcementTarget, packages, selectedTeams])
 
   const handleChannelToggle = (channel: NotificationChannel) => {
-    setChannels(current => 
+    setChannels(current =>
       current.includes(channel)
         ? current.filter(c => c !== channel)
         : [...current, channel]
@@ -61,7 +62,8 @@ export default function Broadcasts() {
   }
 
   const addPackage = () => {
-    setPackages([...packages, { name: "", version: "", type: "" }])
+    const newKey = packageKeyCounter.current++
+    setPackages([...packages, { name: "", version: "", type: "", _key: newKey }])
   }
 
   const removePackage = (index: number) => {
@@ -158,7 +160,7 @@ export default function Broadcasts() {
       })
       setAdvisorySubject("")
       setAdvisoryMessage("")
-      setPackages([{ name: "", version: "", type: "" }])
+      setPackages([{ name: "", version: "", type: "", _key: packageKeyCounter.current++ }])
       refetchHistory()
     } catch {
       toast.error("Failed to send advisory")
@@ -334,7 +336,7 @@ export default function Broadcasts() {
                 </div>
                 
                 {packages.map((pkg, index) => (
-                    <div key={index} className="flex gap-3 items-end p-3 border rounded-md bg-muted/20">
+                    <div key={pkg._key} className="flex gap-3 items-end p-3 border rounded-md bg-muted/20">
                         <div className="flex-1 space-y-2">
                             <Label className="text-xs">Package Name</Label>
                             <PackageAutocomplete 

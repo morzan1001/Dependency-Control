@@ -1,5 +1,7 @@
 import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
+import { useCurrentUser } from '@/hooks/queries/use-users';
+import { canUpdateTeam, canDeleteTeam, canManageTeamMembers } from '@/lib/team-roles';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { UserPlus, Trash2, Edit } from 'lucide-react';
@@ -13,10 +15,15 @@ interface TeamCardProps {
 }
 
 export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete }: TeamCardProps) {
-  const { hasPermission } = useAuth();
+  const { permissions } = useAuth();
+  const { data: currentUser } = useCurrentUser();
+
+  const canEdit = currentUser ? canUpdateTeam(team, currentUser.id, permissions) : false;
+  const canRemove = currentUser ? canDeleteTeam(team, currentUser.id, permissions) : false;
+  const canManageMembers = currentUser ? canManageTeamMembers(team, currentUser.id, permissions) : false;
 
   return (
-    <Card 
+    <Card
       className="flex flex-col cursor-pointer hover:bg-muted/50 transition-colors"
       onClick={() => onManageMembers(team)}
     >
@@ -25,7 +32,7 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete 
           {team.name}
         </CardTitle>
         <div className="flex items-center gap-1">
-            {hasPermission('team:update') && (
+            {canEdit && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -38,7 +45,7 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete 
                   <Edit className="h-4 w-4" />
               </Button>
             )}
-            {hasPermission('team:delete') && (
+            {canRemove && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -73,10 +80,10 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete 
         </div>
       </CardContent>
       <CardFooter>
-          {hasPermission('team:update') && (
-            <Button 
-              variant="outline" 
-              className="w-full" 
+          {canManageMembers && (
+            <Button
+              variant="outline"
+              className="w-full"
               onClick={(e: React.MouseEvent) => {
                 e.stopPropagation();
                 onAddMember(team.id);

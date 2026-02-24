@@ -249,7 +249,7 @@ class TestExtractGrypeCvss:
             {"version": "3.2", "metrics": {"baseScore": 5.0}, "vector": "V32"},
             {"version": "3.10", "metrics": {"baseScore": 9.0}, "vector": "V310"},
         ]
-        score, vector = extract_grype_cvss(cvss_list)
+        score, _ = extract_grype_cvss(cvss_list)
         # Correct behavior: 3.10 > 3.2, so score should be 9.0
         # If string comparison is used, this will incorrectly return 5.0
         assert score == 9.0, (

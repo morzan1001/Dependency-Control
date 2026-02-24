@@ -139,8 +139,29 @@ def correlate_scorecard_with_vulnerabilities(
     return recommendations
 
 
+def _build_cve_project_map(projects: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """Build a mapping of CVE -> list of project names from cross-project data."""
+    cve_project_map: Dict[str, List[str]] = defaultdict(list)
+    for proj in projects:
+        for cve in proj.get("cves", []):
+            cve_project_map[cve].append(str(proj.get("project_name", proj.get("project_id", ""))))
+    return cve_project_map
+
+
+def _build_package_usage(projects: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Build package usage map across projects."""
+    package_usage: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"versions": set(), "projects": []})
+    for proj in projects:
+        for pkg in proj.get("packages", []):
+            name = pkg.get("name", "").lower()
+            if name:
+                cast(set, package_usage[name]["versions"]).add(pkg.get("version", "unknown"))
+                cast(list, package_usage[name]["projects"]).append(proj.get("project_name"))
+    return package_usage
+
+
 def analyze_cross_project_patterns(
-    current_findings: List[ModelOrDict],
+    _current_findings: List[ModelOrDict],
     dependencies: List[ModelOrDict],
     cross_project_data: Dict[str, Any],
 ) -> List[Recommendation]:
@@ -155,11 +176,7 @@ def analyze_cross_project_patterns(
     projects = cross_project_data["projects"]
     total_projects = cross_project_data.get("total_projects", len(projects))
 
-    cve_project_map = defaultdict(list)  # CVE -> list of project names
-
-    for proj in projects:
-        for cve in proj.get("cves", []):
-            cve_project_map[cve].append(proj.get("project_name", proj.get("project_id")))
+    cve_project_map = _build_cve_project_map(projects)
 
     # CVEs affecting multiple projects
     widespread_cves = [
@@ -169,7 +186,7 @@ def analyze_cross_project_patterns(
     ]
 
     if widespread_cves:
-        widespread_cves.sort(key=lambda x: x["count"], reverse=True)
+        widespread_cves.sort(key=lambda x: cast(int, x["count"]), reverse=True)
 
         recommendations.append(
             Recommendation(
@@ -196,7 +213,7 @@ def analyze_cross_project_patterns(
                     "cves": [
                         {
                             "cve": c["cve"],
-                            "affected_projects": c["projects"][:5],
+                            "affected_projects": cast(list, c["projects"])[:5],
                             "total_affected": c["count"],
                         }
                         for c in widespread_cves[:5]
@@ -207,14 +224,7 @@ def analyze_cross_project_patterns(
             )
         )
 
-    package_usage: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"versions": set(), "projects": []})
-
-    for proj in projects:
-        for pkg in proj.get("packages", []):
-            name = pkg.get("name", "").lower()
-            if name:
-                cast(set, package_usage[name]["versions"]).add(pkg.get("version", "unknown"))
-                cast(list, package_usage[name]["projects"]).append(proj.get("project_name"))
+    package_usage = _build_package_usage(projects)
 
     # Packages with multiple versions across projects
     inconsistent_packages: List[Dict[str, Any]] = [
@@ -279,7 +289,7 @@ def analyze_cross_project_patterns(
 
     projects_by_severity = sorted(
         projects,
-        key=lambda p: (p.get("total_critical", 0) * 10 + p.get("total_high", 0)),
+        key=lambda p: p.get("total_critical", 0) * 10 + p.get("total_high", 0),
         reverse=True,
     )
 

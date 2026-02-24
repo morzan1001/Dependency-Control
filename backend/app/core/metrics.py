@@ -376,7 +376,7 @@ def update_uptime() -> None:
     uptime_seconds.set(time.time() - startup_time)
 
 
-async def metrics_endpoint(request: Request) -> Response:
+async def metrics_endpoint(_request: Request) -> Response:
     """
     Prometheus metrics endpoint.
 
@@ -492,13 +492,10 @@ def track_cache_operation(operation: str) -> AbstractContextManager[None]:
     @contextmanager
     def _tracker() -> Generator[None, None, None]:
         start_time = time.time()
-        try:
-            yield
-            duration = time.time() - start_time
-            cache_operations_total.labels(operation=operation).inc()
-            cache_operation_duration_seconds.labels(operation=operation).observe(duration)
-        except Exception:
-            raise
+        yield
+        duration = time.time() - start_time
+        cache_operations_total.labels(operation=operation).inc()
+        cache_operation_duration_seconds.labels(operation=operation).observe(duration)
 
     return _tracker()
 

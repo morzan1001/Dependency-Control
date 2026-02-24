@@ -12,7 +12,7 @@ import { getErrorMessage } from '@/lib/utils'
 export default function AcceptInvite() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')
-  const [error, setError] = useState<string | null>(!token ? "Invalid invitation link." : null)
+  const [error, setError] = useState<string | null>(token ? null : "Invalid invitation link.")
   const [isLoading, setIsLoading] = useState(!!token)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [email, setEmail] = useState<string | null>(null)

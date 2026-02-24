@@ -16,7 +16,7 @@ interface UserDetailsCardProps {
   notificationChannels: string[] | undefined;
 }
 
-export function UserDetailsCard({ user, notificationChannels }: UserDetailsCardProps) {
+export function UserDetailsCard({ user, notificationChannels }: Readonly<UserDetailsCardProps>) {
   const queryClient = useQueryClient();
   const [username, setUsername] = useState(user?.username || '');
   const [email, setEmail] = useState(user?.email || '');

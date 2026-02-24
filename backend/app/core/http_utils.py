@@ -9,7 +9,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from functools import wraps
-from typing import Any, AsyncGenerator, Callable, Optional, TypeVar, cast
+from typing import Any, AsyncGenerator, Callable, Optional
 
 import httpx
 
@@ -20,8 +20,6 @@ from app.core.metrics import (
 )
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 class HTTPRequestError(Exception):
@@ -338,30 +336,30 @@ def with_http_error_handling(
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> T:
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
             start_time = time.time()
             external_api_requests_total.labels(service=service_name).inc()
             try:
                 result = await func(*args, **kwargs)
                 duration = time.time() - start_time
                 external_api_duration_seconds.labels(service=service_name).observe(duration)
-                return cast(T, result)
+                return result
             except httpx.TimeoutException:
                 external_api_errors_total.labels(service=service_name).inc()
                 getattr(logger, log_level)(f"Timeout in {func.__name__} ({service_name})")
-                return cast(T, default_return)
+                return default_return
             except httpx.ConnectError:
                 external_api_errors_total.labels(service=service_name).inc()
                 getattr(logger, log_level)(f"Connection error in {func.__name__} ({service_name})")
-                return cast(T, default_return)
+                return default_return
             except httpx.HTTPStatusError as e:
                 external_api_errors_total.labels(service=service_name).inc()
                 getattr(logger, log_level)(f"HTTP {e.response.status_code} in {func.__name__} ({service_name})")
-                return cast(T, default_return)
+                return default_return
             except Exception as e:
                 external_api_errors_total.labels(service=service_name).inc()
                 logger.error(f"Error in {func.__name__} ({service_name}): {e}")
-                return cast(T, default_return)
+                return default_return
 
         return wrapper
 

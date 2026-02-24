@@ -87,8 +87,8 @@ export default function SearchPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {results.map((result: SearchResult, index: number) => (
-                  <TableRow key={index}>
+                {results.map((result: SearchResult) => (
+                  <TableRow key={`${result.project_id}-${result.package}-${result.version}`}>
                     <TableCell>
                       <Link to={`/projects/${result.project_id}`} className="hover:underline font-medium flex items-center gap-2">
                         <Package className="h-4 w-4" />

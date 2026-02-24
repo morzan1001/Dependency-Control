@@ -6,7 +6,7 @@ EPSS/KEV enrichment and reachability analysis data.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Literal, Optional, cast
 
 from app.core.constants import HIGH_RISK_SCORE_THRESHOLD, sort_by_severity
 from app.models.stats import (
@@ -41,6 +41,70 @@ def _format_datetime(value: Optional[Any]) -> Optional[str]:
     return str(value)
 
 
+def _classify_epss_score(epss_score: float) -> Literal["high", "medium", "low"]:
+    """Classify an EPSS score into high/medium/low bucket."""
+    if epss_score > 0.1:
+        return "high"
+    if epss_score > 0.01:
+        return "medium"
+    return "low"
+
+
+def _process_finding_epss(
+    details: Dict[str, Any], summary: EPSSKEVSummary, epss_scores: List[float]
+) -> Optional[float]:
+    """Process EPSS data for a single finding. Returns the epss_score if present."""
+    epss_score = details.get("epss_score")
+    if epss_score is None:
+        return None
+    summary["epss_enriched"] += 1
+    epss_scores.append(float(epss_score))
+    summary["epss_scores"][_classify_epss_score(float(epss_score))] += 1
+    return float(epss_score)
+
+
+def _process_finding_kev(finding: Dict[str, Any], details: Dict[str, Any], summary: EPSSKEVSummary) -> None:
+    """Process KEV data for a single finding."""
+    if not details.get("in_kev"):
+        return
+    summary["kev_matches"] += 1
+    kev_detail: KEVDetail = {
+        "cve": finding.get("finding_id") or finding.get("id", ""),
+        "component": finding.get("component", ""),
+        "due_date": details.get("kev_due_date"),
+        "ransomware": details.get("kev_ransomware_use", False),
+    }
+    summary["kev_details"].append(kev_detail)
+    if details.get("kev_ransomware_use"):
+        summary["kev_ransomware"] += 1
+
+
+def _process_finding_risk(
+    finding: Dict[str, Any],
+    details: Dict[str, Any],
+    epss_score: Optional[float],
+    maturity: str,
+    risk_scores: List[float],
+    summary: EPSSKEVSummary,
+) -> None:
+    """Process risk score data for a single finding."""
+    risk_score = details.get("risk_score")
+    if risk_score is None:
+        return
+    risk_scores.append(float(risk_score))
+    if risk_score > HIGH_RISK_SCORE_THRESHOLD:
+        high_risk_cve: HighRiskCVE = {
+            "cve": finding.get("finding_id") or finding.get("id", ""),
+            "component": finding.get("component", ""),
+            "version": finding.get("version") or "",
+            "risk_score": round(risk_score, 1),
+            "epss_score": round(epss_score, 4) if epss_score else None,
+            "in_kev": details.get("in_kev", False),
+            "exploit_maturity": maturity,
+        }
+        summary["high_risk_cves"].append(high_risk_cve)
+
+
 def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
     """
     Build a summary of EPSS/KEV enrichment for raw data view.
@@ -51,11 +115,7 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
     Returns:
         Summary dict with statistics and details
     """
-    epss_scores_counts: EPSSScoreCounts = {
-        "high": 0,
-        "medium": 0,
-        "low": 0,
-    }
+    epss_scores_counts: EPSSScoreCounts = {"high": 0, "medium": 0, "low": 0}
 
     exploit_maturity_counts: ExploitMaturityCounts = {
         "weaponized": 0,
@@ -88,32 +148,8 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
     for finding in findings:
         details = finding.get("details", {})
 
-        # EPSS enrichment
-        epss_score = details.get("epss_score")
-        if epss_score is not None:
-            summary["epss_enriched"] += 1
-            epss_scores.append(float(epss_score))
-
-            if epss_score > 0.1:
-                summary["epss_scores"]["high"] += 1
-            elif epss_score > 0.01:
-                summary["epss_scores"]["medium"] += 1
-            else:
-                summary["epss_scores"]["low"] += 1
-
-        # KEV enrichment
-        if details.get("in_kev"):
-            summary["kev_matches"] += 1
-            kev_detail: KEVDetail = {
-                "cve": finding.get("finding_id") or finding.get("id", ""),
-                "component": finding.get("component", ""),
-                "due_date": details.get("kev_due_date"),
-                "ransomware": details.get("kev_ransomware_use", False),
-            }
-            summary["kev_details"].append(kev_detail)
-
-            if details.get("kev_ransomware_use"):
-                summary["kev_ransomware"] += 1
+        epss_score = _process_finding_epss(details, summary, epss_scores)
+        _process_finding_kev(finding, details, summary)
 
         # Exploit maturity
         maturity: str = details.get("exploit_maturity", "unknown")
@@ -121,23 +157,7 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
         if maturity in exploit_maturity:
             exploit_maturity[maturity] += 1
 
-        # Risk score
-        risk_score = details.get("risk_score")
-        if risk_score is not None:
-            risk_scores.append(float(risk_score))
-
-            # Track high-risk CVEs
-            if risk_score > HIGH_RISK_SCORE_THRESHOLD:
-                high_risk_cve: HighRiskCVE = {
-                    "cve": finding.get("finding_id") or finding.get("id", ""),
-                    "component": finding.get("component", ""),
-                    "version": finding.get("version") or "",
-                    "risk_score": round(risk_score, 1),
-                    "epss_score": round(epss_score, 4) if epss_score else None,
-                    "in_kev": details.get("in_kev", False),
-                    "exploit_maturity": maturity,
-                }
-                summary["high_risk_cves"].append(high_risk_cve)
+        _process_finding_risk(finding, details, epss_score, maturity, risk_scores, summary)
 
     # Calculate averages
     if epss_scores:
@@ -150,7 +170,6 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
 
     # Sort high-risk CVEs by risk score
     summary["high_risk_cves"].sort(key=lambda x: x["risk_score"], reverse=True)
-    # Limit to top 20
     summary["high_risk_cves"] = summary["high_risk_cves"][:20]
 
     return summary

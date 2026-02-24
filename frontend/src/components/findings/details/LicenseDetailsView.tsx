@@ -72,12 +72,12 @@ const LICENSE_CATEGORY_CONFIG: Record<
   },
 }
 
-export function LicenseDetailsView({ details }: { details: FindingDetails }) {
+export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetails }>) {
   const license = (details.license as string) || 'Unknown'
-  const licenseUrl = details.license_url as string | undefined
+  const licenseUrl = details.license_url
   const category = (details.category as string) || 'unknown'
-  const explanation = details.explanation as string | undefined
-  const recommendation = details.recommendation as string | undefined
+  const explanation = details.explanation
+  const recommendation = details.recommendation
   const obligations = (details.obligations as string[]) || []
   const risks = (details.license_risks as string[]) || []
 
@@ -148,8 +148,8 @@ export function LicenseDetailsView({ details }: { details: FindingDetails }) {
               Obligations ({obligations.length})
             </h4>
             <div className="p-3 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/30 space-y-2">
-              {obligations.map((obligation, idx) => (
-                <div key={idx} className="flex items-start gap-2 text-sm">
+              {obligations.map((obligation) => (
+                <div key={obligation} className="flex items-start gap-2 text-sm">
                   <span className="text-blue-500 dark:text-blue-400 mt-0.5">•</span>
                   <span>{obligation}</span>
                 </div>
@@ -166,8 +166,8 @@ export function LicenseDetailsView({ details }: { details: FindingDetails }) {
               Risks ({risks.length})
             </h4>
             <div className="p-3 rounded-lg border border-red-200 bg-red-50/50 dark:border-red-800 dark:bg-red-950/30 space-y-2">
-              {risks.map((risk, idx) => (
-                <div key={idx} className="flex items-start gap-2 text-sm">
+              {risks.map((risk) => (
+                <div key={risk} className="flex items-start gap-2 text-sm">
                   <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
                   <span>{risk}</span>
                 </div>

@@ -1,7 +1,7 @@
 import { Finding } from './scan';
-import { Severity, SeverityBreakdown } from './common';
+import type { Severity, SeverityBreakdown } from './common';
 
-export type { Severity, SeverityBreakdown };
+export type { Severity, SeverityBreakdown } from './common';
 
 export interface DashboardStats {
     total_projects: number;

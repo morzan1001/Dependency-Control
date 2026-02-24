@@ -15,8 +15,8 @@ export function ReferencesList({ urls, compact = false }: ReferencesListProps) {
 
     return (
         <ul className="space-y-1">
-            {urls.map((url, idx) => (
-                <li key={idx} className={compact ? "text-xs" : "text-sm"}>
+            {urls.map((url) => (
+                <li key={url} className={compact ? "text-xs" : "text-sm"}>
                     <a
                         href={url}
                         target="_blank"

@@ -159,6 +159,69 @@ function InfoRow({
   )
 }
 
+/** Resolve the badge variant for a license category */
+function getLicenseBadgeVariant(category?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (category === 'permissive' || category === 'public_domain') return 'default'
+  if (category === 'weak_copyleft') return 'secondary'
+  if (category === 'strong_copyleft' || category === 'network_copyleft') return 'destructive'
+  return 'outline'
+}
+
+/** Build the URL for a security advisory identifier */
+function getAdvisoryUrl(advisory: string): string | undefined {
+  if (advisory.startsWith('GHSA-')) return `https://github.com/advisories/${advisory}`
+  if (advisory.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${advisory}`
+  return undefined
+}
+
+/** Determine whether an advisory identifier is linkable */
+function isLinkableAdvisory(advisory: string): boolean {
+  return advisory.startsWith('GHSA-') || advisory.startsWith('CVE-')
+}
+
+/** Scorecard display sub-component */
+function ScorecardDisplay({ metadata }: { metadata: DependencyMetadata }) {
+  const scorecard = metadata.deps_dev?.scorecard
+  if (!scorecard) return null
+
+  const score = scorecard.overall_score ?? 0
+  let colorClass = 'text-destructive'
+  if (score >= 7) colorClass = 'text-success'
+  else if (score >= 4) colorClass = 'text-warning'
+
+  let badgeVariant: 'default' | 'secondary' | 'destructive' = 'destructive'
+  if (score >= 7) badgeVariant = 'default'
+  else if (score >= 4) badgeVariant = 'secondary'
+
+  return (
+    <div className="flex items-center gap-3 p-3 bg-background rounded-md">
+      <Shield className={cn("h-6 w-6", colorClass)} />
+      <div className="flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">OpenSSF Scorecard</span>
+          <Badge variant={badgeVariant}>
+            {scorecard.overall_score?.toFixed(1) ?? "N/A"} / 10
+          </Badge>
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {scorecard.checks_count} checks evaluated
+          {scorecard.date && ` • ${formatDate(scorecard.date)}`}
+        </p>
+      </div>
+      {metadata.deps_dev?.project_url && (
+        <a
+          href={`https://scorecard.dev/viewer/?uri=${encodeURIComponent(metadata.deps_dev.project_url.replace(/^https?:\/\//, ''))}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary hover:underline text-sm flex items-center gap-1"
+        >
+          View Report <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
+    </div>
+  )
+}
+
 // Dependency Metadata Section Component
 function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata }) {
   const [showDetails, setShowDetails] = useState(false)
@@ -181,14 +244,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               <Badge variant="destructive">Deprecated</Badge>
             )}
             {metadata.license && (
-              <Badge variant={
-                metadata.license_category === "permissive" ? "default" :
-                metadata.license_category === "public_domain" ? "default" :
-                metadata.license_category === "weak_copyleft" ? "secondary" :
-                metadata.license_category === "strong_copyleft" ? "destructive" :
-                metadata.license_category === "network_copyleft" ? "destructive" :
-                "outline"
-              } className="text-xs">
+              <Badge variant={getLicenseBadgeVariant(metadata.license_category)} className="text-xs">
                 <FileText className="h-3 w-3 mr-1" />
                 {metadata.license}
               </Badge>
@@ -222,18 +278,14 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               {metadata.deps_dev.known_advisories.map((advisory, i) => (
                 <a
                   key={i}
-                  href={advisory.startsWith('GHSA-') 
-                    ? `https://github.com/advisories/${advisory}` 
-                    : advisory.startsWith('CVE-')
-                    ? `https://nvd.nist.gov/vuln/detail/${advisory}`
-                    : undefined}
+                  href={getAdvisoryUrl(advisory)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={advisory.startsWith('GHSA-') || advisory.startsWith('CVE-') ? 'cursor-pointer' : ''}
+                  className={isLinkableAdvisory(advisory) ? 'cursor-pointer' : ''}
                 >
                   <Badge variant="destructive" className="text-xs hover:opacity-80">
                     {advisory}
-                    {(advisory.startsWith('GHSA-') || advisory.startsWith('CVE-')) && (
+                    {isLinkableAdvisory(advisory) && (
                       <ExternalLink className="h-2.5 w-2.5 ml-1" />
                     )}
                   </Badge>
@@ -287,42 +339,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
       )}
 
       {/* Scorecard - Always visible */}
-      {metadata.deps_dev?.scorecard && (
-        <div className="flex items-center gap-3 p-3 bg-background rounded-md">
-          <Shield className={cn(
-            "h-6 w-6",
-            (metadata.deps_dev.scorecard.overall_score ?? 0) >= 7 ? "text-success" :
-            (metadata.deps_dev.scorecard.overall_score ?? 0) >= 4 ? "text-warning" :
-            "text-destructive"
-          )} />
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <span className="font-medium">OpenSSF Scorecard</span>
-              <Badge variant={
-                (metadata.deps_dev.scorecard.overall_score ?? 0) >= 7 ? "default" :
-                (metadata.deps_dev.scorecard.overall_score ?? 0) >= 4 ? "secondary" :
-                "destructive"
-              }>
-                {metadata.deps_dev.scorecard.overall_score?.toFixed(1) ?? "N/A"} / 10
-              </Badge>
-            </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {metadata.deps_dev.scorecard.checks_count} checks evaluated
-              {metadata.deps_dev.scorecard.date && ` • ${formatDate(metadata.deps_dev.scorecard.date)}`}
-            </p>
-          </div>
-          {metadata.deps_dev?.project_url && (
-            <a
-              href={`https://scorecard.dev/viewer/?uri=${encodeURIComponent(metadata.deps_dev.project_url.replace(/^https?:\/\//, ''))}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline text-sm flex items-center gap-1"
-            >
-              View Report <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
-        </div>
-      )}
+      <ScorecardDisplay metadata={metadata} />
 
       {/* External Links - Always visible */}
       {hasExternalLinks && (
@@ -585,13 +602,14 @@ export function AnalyticsDependencyModal({
               )}
             </h3>
 
-            {isLoadingFindings ? (
+            {isLoadingFindings && (
               <div className="space-y-2">
                 {new Array(3).fill(0).map((_, i) => (
                   <Skeleton key={i} className="h-16 w-full" />
                 ))}
               </div>
-            ) : sortedFindings.length > 0 ? (
+            )}
+            {!isLoadingFindings && sortedFindings.length > 0 && (
               <Table className="table-fixed">
                 <TableHeader>
                   <TableRow>
@@ -637,13 +655,15 @@ export function AnalyticsDependencyModal({
                     >
                       <TableCell className="font-mono text-xs truncate">
                         <div className="flex items-center gap-1">
-                          {finding.id?.startsWith('CVE-') ? (
-                            <span className="text-destructive font-medium">{finding.id}</span>
-                          ) : finding.id?.includes('Multiple') ? (
-                            <span className="text-orange-500 font-medium">{finding.id}</span>
-                          ) : (
-                            <span>{finding.id || '-'}</span>
-                          )}
+                          {(() => {
+                            if (finding.id?.startsWith('CVE-')) {
+                              return <span className="text-destructive font-medium">{finding.id}</span>
+                            }
+                            if (finding.id?.includes('Multiple')) {
+                              return <span className="text-orange-500 font-medium">{finding.id}</span>
+                            }
+                            return <span>{finding.id || '-'}</span>
+                          })()}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -667,7 +687,8 @@ export function AnalyticsDependencyModal({
                   ))}
                 </TableBody>
               </Table>
-            ) : (
+            )}
+            {!isLoadingFindings && sortedFindings.length === 0 && (
               <div className="flex flex-col items-center justify-center py-8 text-muted-foreground bg-muted/30 rounded-lg">
                 <Shield className="h-8 w-8 mb-2" />
                 <p>No findings for this dependency</p>

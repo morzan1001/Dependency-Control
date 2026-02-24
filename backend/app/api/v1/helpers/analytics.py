@@ -13,7 +13,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.schemas.analytics import CVEEnrichmentResult
 from app.services.recommendation.common import get_attr
-
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     BLAST_RADIUS_THRESHOLD,
@@ -39,6 +38,10 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
+
+# MongoDB aggregation pipeline operators
+MONGO_MATCH = "$match"
+MONGO_GROUP = "$group"
 
 
 def require_analytics_permission(user: User, permission: str) -> None:
@@ -120,9 +123,9 @@ async def _resolve_active_scan_ids(
     ]
 
     pipeline: List[Dict[str, Any]] = [
-        {"$match": {"$or": or_conditions}},
+        {MONGO_MATCH: {"$or": or_conditions}},
         {"$sort": {"created_at": -1}},
-        {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
+        {MONGO_GROUP: {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
     ]
 
     cursor = db.scans.aggregate(pipeline)
@@ -242,6 +245,38 @@ def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any])
     return result
 
 
+def _calculate_kev_boost(enrichment_data: CVEEnrichmentResult) -> float:
+    """Calculate the KEV-based boost multiplier for impact scoring."""
+    if not enrichment_data.has_kev:
+        return 1.0
+
+    if enrichment_data.kev_ransomware_use:
+        return KEV_RANSOMWARE_BOOST
+
+    days_until_due = enrichment_data.days_until_due
+    if days_until_due is not None and days_until_due < 0:
+        return KEV_OVERDUE_BOOST
+    if days_until_due is not None and days_until_due <= KEV_DUE_SOON_DAYS:
+        return KEV_DUE_SOON_BOOST
+
+    return KEV_DEFAULT_BOOST
+
+
+def _calculate_epss_boost(max_epss: Optional[float]) -> float:
+    """Calculate the EPSS-based boost multiplier for impact scoring."""
+    if not max_epss:
+        return 1.0
+
+    if max_epss >= EPSS_VERY_HIGH_THRESHOLD:
+        return EPSS_VERY_HIGH_BOOST
+    if max_epss >= EPSS_HIGH_THRESHOLD:
+        return EPSS_HIGH_BOOST
+    if max_epss >= EPSS_MEDIUM_THRESHOLD:
+        return EPSS_MEDIUM_BOOST
+
+    return 1.0
+
+
 def calculate_impact_score(
     severity_counts: Dict[str, int],
     affected_projects: int,
@@ -273,26 +308,10 @@ def calculate_impact_score(
     base_impact = float(severity_score * reach_multiplier)
 
     # KEV Boost (strongest signal - actively exploited)
-    days_until_due = enrichment_data.days_until_due
-    if enrichment_data.has_kev:
-        if enrichment_data.kev_ransomware_use:
-            base_impact *= KEV_RANSOMWARE_BOOST
-        elif days_until_due is not None and days_until_due < 0:
-            base_impact *= KEV_OVERDUE_BOOST
-        elif days_until_due is not None and days_until_due <= KEV_DUE_SOON_DAYS:
-            base_impact *= KEV_DUE_SOON_BOOST
-        else:
-            base_impact *= KEV_DEFAULT_BOOST
+    base_impact *= _calculate_kev_boost(enrichment_data)
 
     # EPSS Boost (probability of exploitation)
-    max_epss = enrichment_data.max_epss
-    if max_epss:
-        if max_epss >= EPSS_VERY_HIGH_THRESHOLD:
-            base_impact *= EPSS_VERY_HIGH_BOOST
-        elif max_epss >= EPSS_HIGH_THRESHOLD:
-            base_impact *= EPSS_HIGH_BOOST
-        elif max_epss >= EPSS_MEDIUM_THRESHOLD:
-            base_impact *= EPSS_MEDIUM_BOOST
+    base_impact *= _calculate_epss_boost(enrichment_data.max_epss)
 
     # Exploit maturity boost
     base_impact *= EXPLOIT_MATURITY_BOOST.get(enrichment_data.exploit_maturity, 1.0)
@@ -522,13 +541,13 @@ async def gather_cross_project_data(
     # Batch fetch: Get CVEs for all scans via aggregation
     cve_pipeline: List[Dict[str, Any]] = [
         {
-            "$match": {
+            MONGO_MATCH: {
                 "scan_id": {"$in": other_scan_ids},
                 "type": "vulnerability",
             }
         },
         {
-            "$group": {
+            MONGO_GROUP: {
                 "_id": "$scan_id",
                 "cves": {"$addToSet": "$details.cve_id"},
             }
@@ -539,9 +558,9 @@ async def gather_cross_project_data(
 
     # Batch fetch: Get packages for all scans via aggregation
     pkg_pipeline: List[Dict[str, Any]] = [
-        {"$match": {"scan_id": {"$in": other_scan_ids}}},
+        {MONGO_MATCH: {"scan_id": {"$in": other_scan_ids}}},
         {
-            "$group": {
+            MONGO_GROUP: {
                 "_id": "$scan_id",
                 "packages": {"$push": {"name": "$name", "version": "$version"}},
             }

@@ -73,6 +73,18 @@ def _categorize_vulnerabilities(
     return kev_vulns, high_epss_vulns, critical_vulns
 
 
+def _format_vuln_line(index: int, vuln: Dict[str, Any]) -> str:
+    """Format a single vulnerability line for notification message."""
+    vuln_line = f"  {index}. {vuln['id']} ({vuln['severity']}) - {vuln['package']}"
+    if vuln["version"]:
+        vuln_line += f"@{vuln['version']}"
+    if vuln.get("in_kev"):
+        vuln_line += " [KEV]"
+    if vuln.get("epss_score"):
+        vuln_line += f" [EPSS: {vuln['epss_score'] * 100:.1f}%]"
+    return vuln_line
+
+
 def _build_vulnerability_message(
     project_name: str,
     kev_vulns: List[Dict[str, Any]],
@@ -111,15 +123,7 @@ def _build_vulnerability_message(
     if top_vulns:
         message += "\nTop Priority Vulnerabilities:\n"
         for i, vuln in enumerate(top_vulns, 1):
-            vuln_line = f"  {i}. {vuln['id']} ({vuln['severity']})"
-            vuln_line += f" - {vuln['package']}"
-            if vuln["version"]:
-                vuln_line += f"@{vuln['version']}"
-            if vuln.get("in_kev"):
-                vuln_line += " [KEV]"
-            if vuln.get("epss_score"):
-                vuln_line += f" [EPSS: {vuln['epss_score'] * 100:.1f}%]"
-            message += vuln_line + "\n"
+            message += _format_vuln_line(i, vuln) + "\n"
 
     message += f"\nView full report: {scan_id}"
 
@@ -209,69 +213,72 @@ async def send_scan_notifications(
         kev_vulns, high_epss_vulns, critical_vulns = _categorize_vulnerabilities(vulnerability_findings)
 
         # Send notification if there are significant vulnerabilities
-        if kev_vulns or high_epss_vulns or critical_vulns:
-            # Sort and get top 10 most critical vulnerabilities
-            top_vulns = sorted(
-                critical_vulns,
-                key=lambda x: (
-                    not x.get("in_kev", False),  # KEV first
-                    -(x.get("epss_score") or 0),  # Then by EPSS
-                    SEVERITY_ORDER.get(x.get("severity", "LOW"), 4),
-                ),
-            )[:10]
+        has_significant_vulns = kev_vulns or high_epss_vulns or critical_vulns
+        if not has_significant_vulns:
+            return
 
-            subject, message = _build_vulnerability_message(
-                project.name,
-                kev_vulns,
-                high_epss_vulns,
-                critical_vulns,
-                top_vulns,
-                scan_id,
-            )
+        # Sort and get top 10 most critical vulnerabilities
+        top_vulns = sorted(
+            critical_vulns,
+            key=lambda x: (
+                not x.get("in_kev", False),  # KEV first
+                -(x.get("epss_score") or 0),  # Then by EPSS
+                SEVERITY_ORDER.get(x.get("severity", "LOW"), 4),
+            ),
+        )[:10]
 
-            scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
-            vuln_html = get_vulnerability_found_template(
-                report_link=scan_link,
-                project_name=settings.PROJECT_NAME,
-                project_name_scanned=project.name,
-                vulnerabilities=top_vulns,
-                has_kev=bool(kev_vulns),
-                kev_count=len(kev_vulns),
-                kev_vulnerabilities=kev_vulns,
-                has_high_epss=bool(high_epss_vulns),
-                high_epss_count=len(high_epss_vulns),
-            )
+        subject, message = _build_vulnerability_message(
+            project.name,
+            kev_vulns,
+            high_epss_vulns,
+            critical_vulns,
+            top_vulns,
+            scan_id,
+        )
 
-            await notification_service.notify_project_members(
-                project=project,
-                event_type="vulnerability_found",
-                subject=subject,
-                message=message,
+        scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
+        vuln_html = get_vulnerability_found_template(
+            report_link=scan_link,
+            project_name=settings.PROJECT_NAME,
+            project_name_scanned=project.name,
+            vulnerabilities=top_vulns,
+            has_kev=bool(kev_vulns),
+            kev_count=len(kev_vulns),
+            kev_vulnerabilities=kev_vulns,
+            has_high_epss=bool(high_epss_vulns),
+            high_epss_count=len(high_epss_vulns),
+        )
+
+        await notification_service.notify_project_members(
+            project=project,
+            event_type="vulnerability_found",
+            subject=subject,
+            message=message,
+            db=db,
+            html_message=vuln_html,
+        )
+
+        logger.info(
+            f"Sent vulnerability_found notification for project {project.name}: "
+            f"{len(kev_vulns)} KEV, {len(high_epss_vulns)} high EPSS, "
+            f"{len(critical_vulns)} critical/high"
+        )
+
+        # Trigger vulnerability_found webhook
+        try:
+            await webhook_service.trigger_vulnerability_found(
                 db=db,
-                html_message=vuln_html,
+                scan_id=scan_id,
+                project_id=str(project.id),
+                project_name=project.name,
+                critical_count=sum(1 for v in critical_vulns if v.get("severity") == "CRITICAL"),
+                high_count=sum(1 for v in critical_vulns if v.get("severity") == "HIGH"),
+                kev_count=len(kev_vulns),
+                high_epss_count=len(high_epss_vulns),
+                top_vulnerabilities=top_vulns,
             )
-
-            logger.info(
-                f"Sent vulnerability_found notification for project {project.name}: "
-                f"{len(kev_vulns)} KEV, {len(high_epss_vulns)} high EPSS, "
-                f"{len(critical_vulns)} critical/high"
-            )
-
-            # Trigger vulnerability_found webhook
-            try:
-                await webhook_service.trigger_vulnerability_found(
-                    db=db,
-                    scan_id=scan_id,
-                    project_id=str(project.id),
-                    project_name=project.name,
-                    critical_count=sum(1 for v in critical_vulns if v.get("severity") == "CRITICAL"),
-                    high_count=sum(1 for v in critical_vulns if v.get("severity") == "HIGH"),
-                    kev_count=len(kev_vulns),
-                    high_epss_count=len(high_epss_vulns),
-                    top_vulnerabilities=top_vulns,
-                )
-            except Exception as e:
-                logger.error(f"Failed to trigger vulnerability_found webhook: {e}")
+        except Exception as e:
+            logger.error(f"Failed to trigger vulnerability_found webhook: {e}")
 
     except Exception as e:
         logger.error(f"Failed to process vulnerability notifications: {e}")

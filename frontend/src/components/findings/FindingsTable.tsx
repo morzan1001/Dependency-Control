@@ -129,7 +129,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
 
     return (
         <div ref={parentRef} className="relative w-full">
-            {isLoading ? (
+            {isLoading && (
                 <div className="relative">
                     <table className="w-full text-sm table-fixed">
                         <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
@@ -144,7 +144,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                         </TableHeader>
                         <TableBody>
                             {Array.from({ length: 10 }).map((_, i) => (
-                                <TableRow key={i} className="w-full border-b">
+                                <TableRow key={`skeleton-${i}`} className="w-full border-b">
                                     <TableCell className="p-4"><Skeleton className="h-6 w-16" /></TableCell>
                                     <TableCell className="p-4"><Skeleton className="h-6 w-24" /></TableCell>
                                     <TableCell className="p-4"><Skeleton className="h-6 w-32" /></TableCell>
@@ -156,11 +156,14 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                         </TableBody>
                     </table>
                 </div>
-            ) : isError ? (
+            )}
+            {!isLoading && isError && (
                 <InlineError message="Error loading findings" />
-            ) : allRows.length === 0 ? (
+            )}
+            {!isLoading && !isError && allRows.length === 0 && (
                 <NoData entityName="findings" />
-            ) : (
+            )}
+            {!isLoading && !isError && allRows.length > 0 && (
                 <TooltipProvider>
                 <table className="w-full caption-bottom text-sm table-fixed">
                     <TableHeader className="sticky top-0 bg-background z-50 shadow-sm">
@@ -194,7 +197,7 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
                             const isLoaderRow = virtualRow.index > allRows.length - 1
                             const finding = allRows[virtualRow.index]
-                            const sourceInfo = !isLoaderRow ? getSourceInfo(finding?.source_type) : null
+                            const sourceInfo = isLoaderRow ? null : getSourceInfo(finding?.source_type)
 
                             return (
                                 <TableRow
@@ -310,8 +313,8 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                                 <div className="flex flex-wrap gap-1">
                                                     <FindingTypeBadge type={finding.type} />
                                                     {/* Show additional absorbed finding types */}
-                                                    {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }, idx: number) => (
-                                                        <FindingTypeBadge key={idx} type={addType.type} />
+                                                    {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }) => (
+                                                        <FindingTypeBadge key={addType.type} type={addType.type} />
                                                     ))}
                                                     {/* Show context indicators */}
                                                     {finding.details?.outdated_info && !finding.details?.additional_finding_types?.some((t: { type: string }) => t.type === 'outdated') && (

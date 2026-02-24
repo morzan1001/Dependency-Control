@@ -6,7 +6,8 @@ for reachability analysis.
 """
 
 import logging
-from typing import Any, Dict
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
@@ -21,6 +22,7 @@ from app.api.v1.helpers.callgraph import (
     parse_madge_format,
     parse_pyan_format,
 )
+from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
 from app.models.callgraph import Callgraph
 from app.repositories import CallgraphRepository
 from app.schemas.callgraph import (
@@ -36,7 +38,71 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/{project_id}/callgraph", response_model=CallgraphUploadResponse, responses={**RESP_AUTH_400})
+_FORMAT_LANGUAGE_MAP = {
+    "madge": "javascript",
+    "pyan": "python",
+    "go-callvis": "go",
+}
+
+_FORMAT_PARSERS = {
+    "madge": parse_madge_format,
+    "pyan": parse_pyan_format,
+    "go-callvis": parse_pyan_format,
+    "generic": parse_generic_format,
+}
+
+
+def _resolve_format(request_format: str, data: Dict[str, Any]) -> str:
+    """Resolve the callgraph format, auto-detecting if needed."""
+    if request_format != "auto":
+        return request_format
+    detected = detect_format(data)
+    if detected == "unknown":
+        raise HTTPException(
+            status_code=400,
+            detail="Could not auto-detect callgraph format. Please specify 'format' explicitly.",
+        )
+    return detected
+
+
+def _resolve_scan_id(
+    request_scan_id: Optional[str], project_id: str, pipeline_id: Optional[int], commit_hash: Optional[str]
+) -> Optional[str]:
+    """Resolve the scan_id from request context."""
+    if request_scan_id:
+        return request_scan_id
+    if not pipeline_id:
+        return None
+    if commit_hash:
+        scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}"
+    else:
+        scan_id_seed = f"{project_id}-{pipeline_id}"
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+
+
+def _build_upsert_filter(
+    project_id: str, scan_id: Optional[str], pipeline_id: Optional[int], warnings: List[str]
+) -> Tuple[Dict[str, Any], str]:
+    """Build the MongoDB upsert filter and a context string for logging."""
+    if scan_id:
+        return {"project_id": project_id, "scan_id": scan_id}, f"scan {scan_id}"
+    if pipeline_id:
+        return {"project_id": project_id, "pipeline_id": pipeline_id}, f"pipeline {pipeline_id}"
+    warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
+    return {"project_id": project_id, "scan_id": None, "pipeline_id": None}, "project-level (no pipeline context)"
+
+
+def _parse_callgraph(
+    format_type: str, data: Dict[str, Any], language: str
+) -> Tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
+    """Parse callgraph data using the appropriate parser for the format."""
+    parser = _FORMAT_PARSERS.get(format_type)
+    if not parser:
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {format_type}")
+    return parser(data, language)
+
+
+@router.post("/{project_id}/callgraph", responses=RESP_AUTH_400)
 async def upload_callgraph(
     project_id: str,
     request: CallgraphUploadRequest,
@@ -55,63 +121,24 @@ async def upload_callgraph(
     The callgraph is used for reachability analysis to determine
     if vulnerable code paths are actually used in the project.
     """
-    # Verify project exists and user has write access
     await check_callgraph_access(project_id, current_user, db, require_write=True)
 
     callgraph_repo = CallgraphRepository(db)
 
-    # Detect format
-    format_type = request.format
-    if format_type == "auto":
-        format_type = detect_format(request.data)
-        if format_type == "unknown":
-            raise HTTPException(
-                status_code=400,
-                detail="Could not auto-detect callgraph format. Please specify 'format' explicitly.",
-            )
+    format_type = _resolve_format(request.format, request.data)
+    language = request.language or _FORMAT_LANGUAGE_MAP.get(format_type, "unknown")
 
-    # Determine language
-    language = request.language
-    if not language:
-        language_map = {
-            "madge": "javascript",
-            "pyan": "python",
-            "go-callvis": "go",
-        }
-        language = language_map.get(format_type, "unknown")
-
-    # Parse based on format
-    warnings = []
+    warnings: List[str] = []
     try:
-        if format_type == "madge":
-            imports, calls, module_usage = parse_madge_format(request.data, language)
-        elif format_type == "pyan":
-            imports, calls, module_usage = parse_pyan_format(request.data, language)
-        elif format_type == "go-callvis":
-            # Similar to pyan, use same parser with slight adjustments
-            imports, calls, module_usage = parse_pyan_format(request.data, language)
-        elif format_type == "generic":
-            imports, calls, module_usage = parse_generic_format(request.data, language)
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported format: {format_type}")
+        imports, calls, module_usage = _parse_callgraph(format_type, request.data, language)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to parse callgraph: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {str(e)}")
 
-    import uuid
-
-    scan_id = request.scan_id
-    if not scan_id and request.pipeline_id:
-        # This ensures callgraph is linked to the correct scan
-        if request.commit_hash:
-            # Deterministic: Same commit + pipeline = same scan
-            scan_id_seed = f"{project_id}-{request.pipeline_id}-{request.commit_hash}"
-            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-        else:
-            # No commit_hash: Use pipeline_id only (less precise)
-            scan_id_seed = f"{project_id}-{request.pipeline_id}"
-            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-
+    scan_id = _resolve_scan_id(request.scan_id, project_id, request.pipeline_id, request.commit_hash)
+    if scan_id and not request.scan_id:
         logger.debug(f"Generated deterministic scan_id {scan_id} from pipeline_id {request.pipeline_id}")
 
     callgraph = Callgraph(
@@ -119,7 +146,7 @@ async def upload_callgraph(
         pipeline_id=request.pipeline_id,
         branch=request.branch,
         commit_hash=request.commit_hash,
-        scan_id=scan_id,  # Link to the resolved scan
+        scan_id=scan_id,
         language=language,
         tool=request.tool or format_type,
         tool_version=request.tool_version,
@@ -132,19 +159,7 @@ async def upload_callgraph(
         analysis_duration_ms=request.analysis_duration_ms,
     )
 
-    # Upsert callgraph - keyed by scan_id if available, otherwise by pipeline_id
-    # This ensures one callgraph per scan/pipeline
-    if scan_id:
-        upsert_filter: Dict[str, Any] = {"project_id": project_id, "scan_id": scan_id}
-        match_context = f"scan {scan_id}"
-    elif request.pipeline_id:
-        upsert_filter = {"project_id": project_id, "pipeline_id": request.pipeline_id}
-        match_context = f"pipeline {request.pipeline_id}"
-    else:
-        # No scan_id or pipeline_id - this is unusual, warn the user
-        upsert_filter = {"project_id": project_id, "scan_id": None, "pipeline_id": None}
-        match_context = "project-level (no pipeline context)"
-        warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
+    upsert_filter, match_context = _build_upsert_filter(project_id, scan_id, request.pipeline_id, warnings)
 
     callgraph_data = callgraph.model_dump(by_alias=True)
     callgraph_id = callgraph_data.pop("_id")
@@ -187,7 +202,7 @@ async def upload_callgraph(
     )
 
 
-@router.get("/{project_id}/callgraph", responses={**RESP_AUTH_404})
+@router.get("/{project_id}/callgraph", responses=RESP_AUTH_404)
 async def get_callgraph(
     project_id: str,
     db: DatabaseDep,
@@ -207,7 +222,7 @@ async def get_callgraph(
     return CallgraphResponse(**data)
 
 
-@router.get("/{project_id}/callgraph/modules", responses={**RESP_AUTH_404})
+@router.get("/{project_id}/callgraph/modules", responses=RESP_AUTH_404)
 async def get_module_usage(
     project_id: str,
     db: DatabaseDep,
@@ -242,7 +257,7 @@ async def get_module_usage(
     )
 
 
-@router.delete("/{project_id}/callgraph", responses={**RESP_AUTH_404})
+@router.delete("/{project_id}/callgraph", responses=RESP_AUTH_404)
 async def delete_callgraph(
     project_id: str,
     db: DatabaseDep,

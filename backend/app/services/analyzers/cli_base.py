@@ -92,9 +92,9 @@ class CLIAnalyzer(Analyzer):
 
     async def _preprocess_sbom(
         self,
-        sbom: Dict[str, Any],
+        _sbom: Dict[str, Any],
         tmp_sbom_path: str,
-        settings: Optional[Dict[str, Any]],
+        _settings: Optional[Dict[str, Any]],
     ) -> Tuple[str, List[str]]:
         """
         Preprocess SBOM before analysis.

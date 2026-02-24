@@ -48,6 +48,64 @@ class ReachabilityResult(TypedDict, total=False):
     vulnerable_symbols: List[str]
 
 
+async def _fetch_callgraph(
+    project_id: str,
+    scan_id: str,
+    db: AsyncIOMotorDatabase,
+) -> Any:
+    """
+    Fetch the callgraph for a scan, falling back to pipeline_id match.
+
+    Returns the callgraph object or None if not found.
+    """
+    from app.repositories import CallgraphRepository, ScanRepository
+
+    callgraph_repo = CallgraphRepository(db)
+    scan_repo = ScanRepository(db)
+
+    # Priority: exact scan_id match > fallback to pipeline_id match
+    callgraph = await callgraph_repo.get_minimal_by_scan(project_id, scan_id)
+    if callgraph:
+        return callgraph
+
+    # Fallback: try to find callgraph via pipeline_id
+    scan = await scan_repo.get_by_id(scan_id)
+    if scan and scan.pipeline_id:
+        return await callgraph_repo.get_minimal_by_pipeline(project_id, scan.pipeline_id)
+
+    return None
+
+
+def _enrich_single_finding(
+    finding: Dict[str, Any],
+    module_usage: Dict[str, Any],
+    import_map: Dict[str, List[str]],
+    language: str,
+) -> bool:
+    """
+    Enrich a single finding with reachability data. Returns True if enriched.
+    """
+    if finding.get("type") != "vulnerability":
+        return False
+
+    component = finding.get("component", "")
+    if not component:
+        return False
+
+    reachability = _analyze_reachability(
+        finding=finding,
+        component=component,
+        module_usage=module_usage,
+        import_map=import_map,
+        language=language,
+    )
+
+    if "details" not in finding:
+        finding["details"] = {}
+    finding["details"]["reachability"] = reachability
+    return True
+
+
 async def enrich_findings_with_reachability(
     findings: List[Dict[str, Any]],
     project_id: str,
@@ -77,21 +135,7 @@ async def enrich_findings_with_reachability(
         logger.warning("No scan_id available for reachability enrichment")
         return 0
 
-    # Use repositories for consistent data access
-    from app.repositories import CallgraphRepository, ScanRepository
-
-    callgraph_repo = CallgraphRepository(db)
-    scan_repo = ScanRepository(db)
-
-    # Fetch callgraph linked to this scan
-    # Priority: exact scan_id match > fallback to pipeline_id match
-    callgraph = await callgraph_repo.get_minimal_by_scan(project_id, scan_id)
-
-    if not callgraph:
-        # Fallback: try to find callgraph via pipeline_id
-        scan = await scan_repo.get_by_id(scan_id)
-        if scan and scan.pipeline_id:
-            callgraph = await callgraph_repo.get_minimal_by_pipeline(project_id, scan.pipeline_id)
+    callgraph = await _fetch_callgraph(project_id, scan_id, db)
 
     if not callgraph:
         logger.debug(f"No callgraph available for scan {scan_id}")
@@ -107,27 +151,8 @@ async def enrich_findings_with_reachability(
     enriched_count = 0
 
     for finding in findings:
-        if finding.get("type") != "vulnerability":
-            continue
-
-        component = finding.get("component", "")
-        if not component:
-            continue
-
-        # Analyze reachability
-        reachability = _analyze_reachability(
-            finding=finding,
-            component=component,
-            module_usage=module_usage,
-            import_map=import_map,
-            language=language,
-        )
-
-        # Add to finding details
-        if "details" not in finding:
-            finding["details"] = {}
-        finding["details"]["reachability"] = reachability
-        enriched_count += 1
+        if _enrich_single_finding(finding, module_usage, import_map, language):
+            enriched_count += 1
 
     return enriched_count
 

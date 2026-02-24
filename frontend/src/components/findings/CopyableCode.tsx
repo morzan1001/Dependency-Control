@@ -49,8 +49,11 @@ export function CopyableText({ value, className = '' }: CopyableCodeProps) {
   return (
     <span
       className={`inline-flex items-center gap-1 cursor-pointer hover:bg-muted/50 rounded px-1 ${className}`}
+      role="button"
+      tabIndex={0}
+      aria-label="Copy to clipboard"
       onClick={handleCopy}
-      title="Click to copy"
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCopy(e as unknown as React.MouseEvent<HTMLSpanElement>); } }}
     >
       <code className="text-xs font-mono">{value}</code>
       {copied ? (

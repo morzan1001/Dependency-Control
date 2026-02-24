@@ -61,18 +61,27 @@ from app.schemas.project import (
     RiskyProject,
     ScanFindingsResponse,
 )
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404, RESP_AUTH_404, RESP_500
+from app.api.v1.helpers.responses import (
+    RESP_AUTH,
+    RESP_AUTH_400_404,
+    RESP_AUTH_400_404_500,
+    RESP_AUTH_404,
+    RESP_AUTH_404_500,
+)
 from app.schemas.waiver import WaiverResponse
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
+
+# MongoDB aggregation pipeline operator
+MONGO_GROUP = "$group"
 
 _MSG_PROJECT_NOT_FOUND = "Project not found"
 _MSG_SCAN_NOT_FOUND = "Scan not found"
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
 
-@router.get("/dashboard/stats", response_model=DashboardStats, responses={**RESP_AUTH})
+@router.get("/dashboard/stats", response_model=DashboardStats, responses=RESP_AUTH)
 async def get_dashboard_stats(
     db: DatabaseDep,
     current_user: CurrentUserDep,
@@ -115,7 +124,7 @@ async def get_dashboard_stats(
             "$facet": {
                 "totals": [
                     {
-                        "$group": {
+                        MONGO_GROUP: {
                             "_id": None,
                             "total_projects": {"$sum": 1},
                             "total_critical": {"$sum": "$stats.critical"},
@@ -179,10 +188,9 @@ async def get_dashboard_stats(
 
 @router.post(
     "/",
-    response_model=ProjectApiKeyResponse,
     summary="Create a new project",
     status_code=201,
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def create_project(
     project_in: ProjectCreate,
@@ -242,9 +250,8 @@ async def create_project(
 
 @router.post(
     "/{project_id}/rotate-key",
-    response_model=ProjectApiKeyResponse,
     summary="Rotate Project API Key",
-    responses={**RESP_AUTH_404},
+    responses=RESP_AUTH_404,
 )
 async def rotate_api_key(
     project_id: str,
@@ -273,7 +280,7 @@ async def rotate_api_key(
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
 
-@router.get("/", response_model=ProjectListEnriched, summary="List all projects", responses={**RESP_AUTH})
+@router.get("/", response_model=ProjectListEnriched, summary="List all projects", responses=RESP_AUTH)
 async def read_projects(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -346,7 +353,7 @@ async def read_projects(
     "/scans",
     response_model=List[RecentScan],
     summary="List scans across all accessible projects",
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def read_all_scans(
     current_user: CurrentUserDep,
@@ -407,7 +414,29 @@ async def read_all_scans(
     return scans
 
 
-@router.get("/{project_id}", response_model=Project, summary="Get project details", responses={**RESP_AUTH_404})
+def _merge_team_members(data: Dict[str, Any], t_users: Dict[str, str]) -> None:
+    """Merge team members into project members list, skipping duplicates."""
+    team_data = data.get("team_data")
+    if not team_data:
+        return
+
+    existing_ids = set(m["user_id"] for m in data["members"])
+    for tm in team_data.get("members", []):
+        uid = tm["user_id"]
+        if uid in existing_ids:
+            continue
+        role = "admin" if tm.get("role") in ["admin", "owner"] else "viewer"
+        data["members"].append(
+            {
+                "user_id": uid,
+                "role": role,
+                "username": t_users.get(uid),
+                "inherited_from": f"Team: {team_data.get('name')}",
+            }
+        )
+
+
+@router.get("/{project_id}", summary="Get project details", responses=RESP_AUTH_404)
 async def read_project(
     project_id: str,
     current_user: CurrentUserDep,
@@ -463,31 +492,15 @@ async def read_project(
 
     data = result[0]
 
-    # Map users
+    # Map users and enrich members
     p_users = {str(u["_id"]): u["username"] for u in data.get("project_users", [])}
     t_users = {str(u["_id"]): u["username"] for u in data.get("team_users", [])}
 
-    # Enrich direct members
     for m in data.get("members", []):
         m["username"] = p_users.get(m["user_id"])
 
     # Merge team members
-    team_data = data.get("team_data")
-    if team_data:
-        existing_ids = set(m["user_id"] for m in data["members"])
-
-        for tm in team_data.get("members", []):
-            uid = tm["user_id"]
-            if uid not in existing_ids:
-                role = "admin" if tm.get("role") in ["admin", "owner"] else "viewer"
-                data["members"].append(
-                    {
-                        "user_id": uid,
-                        "role": role,
-                        "username": t_users.get(uid),
-                        "inherited_from": f"Team: {team_data.get('name')}",
-                    }
-                )
+    _merge_team_members(data, t_users)
 
     # Construct Project object
     data.pop("team_data", None)
@@ -510,7 +523,7 @@ async def read_project(
     return project
 
 
-@router.put("/{project_id}", response_model=Project, summary="Update project details", responses={**RESP_AUTH_404})
+@router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_404)
 async def update_project(
     project_id: str,
     project_in: ProjectUpdate,
@@ -540,7 +553,7 @@ async def update_project(
             if not is_member:
                 raise HTTPException(status_code=403, detail="You are not a member of the target team")
 
-    update_data = {k: v for k, v in project_in.model_dump(exclude_unset=True).items()}
+    update_data = dict(project_in.model_dump(exclude_unset=True))
 
     # Apply system settings enforcement
     system_settings = await deps.get_system_settings(db)
@@ -561,9 +574,8 @@ async def update_project(
 
 @router.get(
     "/{project_id}/branches",
-    response_model=List[BranchInfo],
     summary="List project branches",
-    responses={**RESP_AUTH_404},
+    responses=RESP_AUTH_404,
 )
 async def read_project_branches(
     project_id: str,
@@ -583,7 +595,7 @@ async def read_project_branches(
     # Get last scan date per branch
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
-        {"$group": {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
+        {MONGO_GROUP: {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
     ]
     last_scans = {}
     async for doc in db.scans.aggregate(pipeline):
@@ -602,9 +614,8 @@ async def read_project_branches(
 
 @router.post(
     "/{project_id}/sync-branches",
-    response_model=List[BranchInfo],
     summary="Sync branch status from VCS",
-    responses={**RESP_AUTH_404},
+    responses=RESP_AUTH_400_404,
 )
 async def sync_project_branches_endpoint(
     project_id: str,
@@ -631,7 +642,7 @@ async def sync_project_branches_endpoint(
     return await read_project_branches(project_id, current_user, db)
 
 
-@router.get("/{project_id}/scans", response_model=List[Scan], summary="List project scans", responses={**RESP_AUTH_404})
+@router.get("/{project_id}/scans", summary="List project scans", responses=RESP_AUTH_404)
 async def read_project_scans(
     project_id: str,
     current_user: CurrentUserDep,
@@ -678,9 +689,8 @@ async def read_project_scans(
 
 @router.post(
     "/{project_id}/scans/{scan_id}/rescan",
-    response_model=Scan,
     summary="Trigger a manual re-scan",
-    responses={**RESP_AUTH_400_404, **RESP_500},
+    responses=RESP_AUTH_400_404_500,
 )
 async def trigger_rescan(
     project_id: str,
@@ -761,9 +771,8 @@ async def trigger_rescan(
 
 @router.get(
     "/{project_id}/scans/{scan_id}/history",
-    response_model=List[Scan],
     summary="Get scan history",
-    responses={**RESP_AUTH_404},
+    responses=RESP_AUTH_404,
 )
 async def read_scan_history(
     project_id: str,
@@ -802,9 +811,8 @@ async def read_scan_history(
 
 @router.put(
     "/{project_id}/notifications",
-    response_model=Project,
     summary="Update notification settings",
-    responses={**RESP_AUTH_400_404},
+    responses=RESP_AUTH_400_404,
 )
 async def update_notification_settings(
     project_id: str,
@@ -880,7 +888,7 @@ async def update_notification_settings(
 @router.post(
     "/{project_id}/invite",
     summary="Add a user to project by email",
-    responses={**RESP_AUTH_400_404},
+    responses=RESP_AUTH_400_404,
 )
 async def invite_user(
     project_id: str,
@@ -933,9 +941,8 @@ async def invite_user(
 
 @router.get(
     "/scans/{scan_id}/results",
-    response_model=List[AnalysisResult],
     summary="Get analysis results",
-    responses={**RESP_AUTH_404},
+    responses=RESP_AUTH_404,
 )
 async def read_analysis_results(
     scan_id: str,
@@ -957,7 +964,7 @@ async def read_analysis_results(
     return await analysis_repo.find_by_scan(scan_id)
 
 
-@router.get("/scans/{scan_id}", response_model=Scan, summary="Get scan details", responses={**RESP_AUTH_404})
+@router.get("/scans/{scan_id}", summary="Get scan details", responses=RESP_AUTH_404)
 async def read_scan(
     scan_id: str,
     current_user: CurrentUserDep,
@@ -981,9 +988,8 @@ async def read_scan(
 
 @router.get(
     "/scans/{scan_id}/sboms",
-    response_model=List[Dict[str, Any]],
     summary="Get raw SBOMs for a scan",
-    responses={**RESP_AUTH_404},
+    responses=RESP_AUTH_404,
 )
 async def read_scan_sboms(
     scan_id: str,
@@ -1016,7 +1022,7 @@ async def read_scan_sboms(
     "/scans/{scan_id}/findings",
     response_model=ScanFindingsResponse,
     summary="Get scan findings with pagination",
-    responses={**RESP_AUTH_404},
+    responses=RESP_AUTH_404,
 )
 async def read_scan_findings(
     scan_id: str,
@@ -1161,7 +1167,7 @@ async def read_scan_findings(
     return build_pagination_response(data, total, skip, limit)
 
 
-@router.get("/scans/{scan_id}/stats", responses={**RESP_AUTH_404})
+@router.get("/scans/{scan_id}/stats", responses=RESP_AUTH_404)
 async def get_scan_stats(
     scan_id: str,
     current_user: CurrentUserDep,
@@ -1183,7 +1189,7 @@ async def get_scan_stats(
 
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": scan_id}},
-        {"$group": {"_id": "$type", "count": {"$sum": 1}}},
+        {MONGO_GROUP: {"_id": "$type", "count": {"$sum": 1}}},
     ]
 
     results = await finding_repo.aggregate(pipeline)
@@ -1193,9 +1199,8 @@ async def get_scan_stats(
 
 @router.put(
     "/{project_id}/members/{user_id}",
-    response_model=Project,
     summary="Update project member role",
-    responses={**RESP_AUTH_400_404},
+    responses=RESP_AUTH_400_404,
 )
 async def update_project_member(
     project_id: str,
@@ -1243,9 +1248,8 @@ async def update_project_member(
 
 @router.delete(
     "/{project_id}/members/{user_id}",
-    response_model=Project,
     summary="Remove user from project",
-    responses={**RESP_AUTH_400_404},
+    responses=RESP_AUTH_400_404,
 )
 async def remove_project_member(
     project_id: str,
@@ -1283,9 +1287,8 @@ async def remove_project_member(
 
 @router.post(
     "/{project_id}/transfer-ownership",
-    response_model=Project,
     summary="Transfer project ownership",
-    responses={**RESP_AUTH_400},
+    responses=RESP_AUTH_400_404,
 )
 async def transfer_ownership(
     project_id: str,
@@ -1331,7 +1334,7 @@ async def transfer_ownership(
     raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
-@router.get("/{project_id}/export/csv", summary="Export latest scan results as CSV", responses={**RESP_AUTH_404})
+@router.get("/{project_id}/export/csv", summary="Export latest scan results as CSV", responses=RESP_AUTH_404)
 async def export_project_csv(
     project_id: str,
     current_user: CurrentUserDep,
@@ -1388,7 +1391,7 @@ async def export_project_csv(
     )
 
 
-@router.get("/{project_id}/export/sbom", summary="Export latest SBOM", responses={**RESP_AUTH_404, **RESP_500})
+@router.get("/{project_id}/export/sbom", summary="Export latest SBOM", responses=RESP_AUTH_404_500)
 async def export_project_sbom(
     project_id: str,
     current_user: CurrentUserDep,
@@ -1424,7 +1427,7 @@ async def export_project_sbom(
     )
 
 
-@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT, responses={**RESP_AUTH_404})
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT, responses=RESP_AUTH_404)
 async def delete_project(
     project_id: str,
     current_user: CurrentUserDep,
@@ -1492,7 +1495,7 @@ async def delete_project(
     await project_repo.delete(project_id)
 
 
-@router.get("/{project_id}/waivers", response_model=List[WaiverResponse], responses={**RESP_AUTH_404})
+@router.get("/{project_id}/waivers", response_model=List[WaiverResponse], responses=RESP_AUTH_404)
 async def get_project_waivers(
     project_id: str,
     current_user: CurrentUserDep,

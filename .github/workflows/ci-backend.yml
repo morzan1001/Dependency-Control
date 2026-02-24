@@ -41,6 +41,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -53,10 +55,16 @@ jobs:
           cd backend
           poetry install --no-interaction
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
           cd backend
-          poetry run pytest --tb=short -q
+          poetry run pytest --cov=app --cov-branch --cov-report=xml:coverage.xml --tb=short -q
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
 
   typecheck:
     name: Type Check

@@ -60,16 +60,16 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
     setSelectedPermissions([]);
   };
 
-  const handleSelectGroupAll = (groupPermissions: string[], select: boolean) => {
-    if (select) {
-      setSelectedPermissions(prev => {
-        const newPerms = new Set(prev);
-        groupPermissions.forEach(p => newPerms.add(p));
-        return [...newPerms];
-      });
-    } else {
-      setSelectedPermissions(prev => prev.filter(p => !groupPermissions.includes(p)));
-    }
+  const selectGroupPermissions = (groupPermissions: string[]) => {
+    setSelectedPermissions(prev => {
+      const newPerms = new Set(prev);
+      groupPermissions.forEach(p => newPerms.add(p));
+      return [...newPerms];
+    });
+  };
+
+  const deselectGroupPermissions = (groupPermissions: string[]) => {
+    setSelectedPermissions(prev => prev.filter(p => !groupPermissions.includes(p)));
   };
 
   const isGroupFullySelected = (groupPermissions: string[]) => {
@@ -166,7 +166,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
                           variant="ghost"
                           size="sm"
                           className="h-6 text-xs"
-                          onClick={() => handleSelectGroupAll(groupPermIds, !allSelected)}
+                          onClick={() => allSelected ? deselectGroupPermissions(groupPermIds) : selectGroupPermissions(groupPermIds)}
                         >
                           {allSelected ? 'Deselect All' : 'Select All'}
                         </Button>

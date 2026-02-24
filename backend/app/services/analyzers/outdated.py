@@ -135,6 +135,37 @@ class OutdatedAnalyzer(Analyzer):
 
         return cached_results, uncached_components
 
+    def _find_default_version(self, versions_info: List[Any]) -> Optional[str]:
+        """Find the version marked as default (usually the latest stable)."""
+        for v in versions_info:
+            if v.get("isDefault"):
+                version = v.get("versionKey", {}).get("version")
+                return str(version) if version is not None else None
+        return None
+
+    def _build_outdated_result(
+        self, name: str, version: str, latest_version: Optional[str], purl_str: str, cache_key: str
+    ) -> Optional[Dict[str, Any]]:
+        """Build result dict based on whether the version is outdated."""
+        if latest_version and latest_version != version:
+            return {
+                "component": name,
+                "current_version": version,
+                "latest_version": latest_version,
+                "purl": purl_str,
+                "severity": Severity.INFO.value,
+                "message": f"Update available: {latest_version}",
+                "_cache_key": cache_key,
+                "_latest_version": latest_version,
+            }
+        if latest_version:
+            # Version is current, return metadata for tracking
+            return {
+                "_cache_key": cache_key,
+                "_latest_version": latest_version,
+            }
+        return None
+
     async def _check_component_for_batch(
         self, client: InstrumentedAsyncClient, component: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
@@ -163,13 +194,8 @@ class OutdatedAnalyzer(Analyzer):
                 response = await client.get(url, follow_redirects=True)
                 if response.status_code == 200:
                     data = response.json()
-                    versions_info = data.get("versions", [])
-
-                    # Find the version marked as default (usually the latest stable)
-                    for v in versions_info:
-                        if v.get("isDefault"):
-                            latest: str | None = v.get("versionKey", {}).get("version")
-                            return latest
+                    latest = self._find_default_version(data.get("versions", []))
+                    return latest if latest else ""
                 return ""  # Empty string for negative cache
             except httpx.TimeoutException:
                 logger.debug(f"Timeout checking outdated for {name}")
@@ -188,22 +214,4 @@ class OutdatedAnalyzer(Analyzer):
             ttl_seconds=CacheTTL.LATEST_VERSION,
         )
 
-        # Build result if version is outdated
-        if latest_version and latest_version != version:
-            return {
-                "component": name,
-                "current_version": version,
-                "latest_version": latest_version,
-                "purl": purl_str,
-                "severity": Severity.INFO.value,
-                "message": f"Update available: {latest_version}",
-                "_cache_key": cache_key,
-                "_latest_version": latest_version,
-            }
-        elif latest_version:
-            # Version is current, return metadata for tracking
-            return {
-                "_cache_key": cache_key,
-                "_latest_version": latest_version,
-            }
-        return None
+        return self._build_outdated_result(name, version, latest_version, purl_str, cache_key)

@@ -5,6 +5,7 @@ set -euo pipefail
 # Configuration & Constants
 SCRIPT_VERSION="1.0.0"
 TEMP_DIR="${TMPDIR:-/tmp}/dep-control-$$"
+readonly MSG_BUILDING_PAYLOAD="Building payload..."
 
 # Colors for output (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -259,7 +260,7 @@ scan_sbom() {
     log_info "Generating SBOM..."
     syft . -o json > "$TEMP_DIR/sbom.json"
     
-    log_info "Building payload..."
+    log_info "$MSG_BUILDING_PAYLOAD"
     build_base_payload "$TEMP_DIR/sbom.json" "sboms" "\$data" > "$TEMP_DIR/payload.json"
     
     upload_results "/api/v1/ingest" "$TEMP_DIR/payload.json"
@@ -288,7 +289,7 @@ scan_secrets() {
     log_info "Running TruffleHog..."
     trufflehog git file://. --json > "$TEMP_DIR/trufflehog.json" 2>/dev/null || true
     
-    log_info "Building payload..."
+    log_info "$MSG_BUILDING_PAYLOAD"
     build_base_payload "$TEMP_DIR/trufflehog.json" "findings" "\$data" > "$TEMP_DIR/payload.json"
     
     upload_results "/api/v1/ingest/trufflehog" "$TEMP_DIR/payload.json" "true"
@@ -315,7 +316,7 @@ scan_sast() {
     log_info "Running Semgrep..."
     semgrep scan --config=auto --json --output "$TEMP_DIR/opengrep.json" . 2>/dev/null || true
     
-    log_info "Building payload..."
+    log_info "$MSG_BUILDING_PAYLOAD"
     build_base_payload "$TEMP_DIR/opengrep.json" "findings" "\$data[0].results" > "$TEMP_DIR/payload.json"
     
     upload_results "/api/v1/ingest/opengrep" "$TEMP_DIR/payload.json"
@@ -338,7 +339,7 @@ scan_iac() {
     log_info "Running KICS..."
     kics scan -p . -o "$TEMP_DIR" --output-name kics-results.json --report-formats json --ignore-on-exit all 2>/dev/null || true
     
-    log_info "Building payload..."
+    log_info "$MSG_BUILDING_PAYLOAD"
     # KICS has a different output structure
     jq -n \
         --arg pn "$PROJECT_NAME" \
@@ -389,7 +390,7 @@ scan_bearer() {
     log_info "Running Bearer..."
     bearer scan . --format json --output "$TEMP_DIR/bearer.json" 2>/dev/null || true
     
-    log_info "Building payload..."
+    log_info "$MSG_BUILDING_PAYLOAD"
     build_base_payload "$TEMP_DIR/bearer.json" "findings" "\$data[0]" > "$TEMP_DIR/payload.json"
     
     upload_results "/api/v1/ingest/bearer" "$TEMP_DIR/payload.json"
@@ -550,7 +551,7 @@ PYTHON_EOF
         return 0
     fi
     
-    log_info "Building payload..."
+    log_info "$MSG_BUILDING_PAYLOAD"
     jq -n \
         --arg format "$format" \
         --arg lang "$lang" \

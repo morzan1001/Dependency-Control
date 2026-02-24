@@ -126,9 +126,7 @@ export const PRESET_USER: Permission[] = [
   Permissions.ANALYTICS_RECOMMENDATIONS,
   // Waivers - can view own waivers
   Permissions.WAIVER_READ,
-  // Webhooks - can create and view webhooks for own projects
-  Permissions.WEBHOOK_CREATE,
-  Permissions.WEBHOOK_READ,
+  // Webhooks - managed via project roles (admin), no global override needed
 ];
 
 // Viewer: Read-only access

@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
+
 # Import metrics for cache monitoring
 cache_hits_total: Optional[Counter] = None
 cache_misses_total: Optional[Counter] = None
@@ -232,9 +234,7 @@ class CacheService:
             Cached value or None if not found/expired
         """
         if not self._available:
-            if self._should_retry_connection() and await self._try_reconnect():
-                pass
-            else:
+            if not (self._should_retry_connection() and await self._try_reconnect()):
                 return None
 
         try:
@@ -248,7 +248,7 @@ class CacheService:
                 cache_misses_total.inc()
             return None
         except redis.ConnectionError:
-            logger.warning("Redis connection lost, disabling cache temporarily")
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
             self._available = False
             self._unavailable_since = asyncio.get_event_loop().time()
             return None
@@ -272,9 +272,7 @@ class CacheService:
             True if cached successfully, False otherwise
         """
         if not self._available:
-            if self._should_retry_connection() and await self._try_reconnect():
-                pass
-            else:
+            if not (self._should_retry_connection() and await self._try_reconnect()):
                 return False
 
         if ttl_seconds is None:
@@ -286,7 +284,7 @@ class CacheService:
             await client.setex(self._make_key(key), ttl_seconds, serialized)
             return True
         except redis.ConnectionError:
-            logger.warning("Redis connection lost, disabling cache temporarily")
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
             self._available = False
             self._unavailable_since = asyncio.get_event_loop().time()
             return False
@@ -300,9 +298,7 @@ class CacheService:
     async def delete(self, key: str) -> bool:
         """Delete a key from cache."""
         if not self._available:
-            if self._should_retry_connection() and await self._try_reconnect():
-                pass
-            else:
+            if not (self._should_retry_connection() and await self._try_reconnect()):
                 return False
 
         try:
@@ -310,7 +306,7 @@ class CacheService:
             await client.delete(self._make_key(key))
             return True
         except redis.ConnectionError:
-            logger.warning("Redis connection lost, disabling cache temporarily")
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
             self._available = False
             self._unavailable_since = asyncio.get_event_loop().time()
             return False

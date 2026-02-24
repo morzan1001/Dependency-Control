@@ -20,7 +20,7 @@ from app.schemas.gitlab_instance import (
     GitLabInstanceTestConnectionResponse,
     GitLabInstanceUpdate,
 )
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404, RESP_AUTH_404, RESP_500
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404_500, RESP_AUTH_404
 from app.services.gitlab import GitLabService
 
 router = CustomAPIRouter()
@@ -46,7 +46,7 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
     )
 
 
-@router.get("/", response_model=GitLabInstanceList, responses={**RESP_AUTH})
+@router.get("/", response_model=GitLabInstanceList, responses=RESP_AUTH)
 async def list_instances(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
@@ -74,7 +74,7 @@ async def list_instances(
     return build_pagination_response(items, total, page, size)
 
 
-@router.get("/{instance_id}", response_model=GitLabInstanceResponse, responses={**RESP_AUTH_404})
+@router.get("/{instance_id}", responses=RESP_AUTH_404)
 async def get_instance(
     instance_id: str,
     db: DatabaseDep,
@@ -95,9 +95,7 @@ async def get_instance(
     return _to_response(instance)
 
 
-@router.post(
-    "/", response_model=GitLabInstanceResponse, status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH_400}
-)
+@router.post("/", status_code=status.HTTP_201_CREATED, responses=RESP_AUTH_400)
 async def create_instance(
     instance_data: GitLabInstanceCreate,
     db: DatabaseDep,
@@ -169,7 +167,7 @@ async def create_instance(
     return _to_response(created_instance)
 
 
-@router.put("/{instance_id}", response_model=GitLabInstanceResponse, responses={**RESP_AUTH_400_404, **RESP_500})
+@router.put("/{instance_id}", responses=RESP_AUTH_400_404_500)
 async def update_instance(
     instance_id: str,
     update_data: GitLabInstanceUpdate,
@@ -235,7 +233,7 @@ async def update_instance(
     return _to_response(updated_instance)
 
 
-@router.delete("/{instance_id}", status_code=status.HTTP_204_NO_CONTENT, responses={**RESP_AUTH_400_404, **RESP_500})
+@router.delete("/{instance_id}", status_code=status.HTTP_204_NO_CONTENT, responses=RESP_AUTH_400_404_500)
 async def delete_instance(
     instance_id: str,
     db: DatabaseDep,
@@ -284,9 +282,7 @@ async def delete_instance(
     )
 
 
-@router.post(
-    "/{instance_id}/test-connection", response_model=GitLabInstanceTestConnectionResponse, responses={**RESP_AUTH_404}
-)
+@router.post("/{instance_id}/test-connection", responses=RESP_AUTH_404)
 async def test_connection(
     instance_id: str,
     db: DatabaseDep,

@@ -1,6 +1,6 @@
-import { Severity } from './common';
+import type { Severity } from './common';
 
-export type { Severity };
+export type { Severity } from './common';
 
 export interface PipelineMetadata {
   CI_COMMIT_BRANCH?: string;

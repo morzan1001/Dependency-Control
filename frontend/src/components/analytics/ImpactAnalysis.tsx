@@ -18,7 +18,7 @@ interface ImpactAnalysisProps {
   onSelectComponent?: (result: ImpactAnalysisResult) => void;
 }
 
-export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
+export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisProps>) {
   const { data: results, isLoading } = useImpactAnalysis(20)
 
   // Calculate max impact score for relative sizing
@@ -79,13 +79,14 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
         </div>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {isLoading && (
           <div className="space-y-2">
-            {new Array(5).fill(0).map((_, i) => (
-              <Skeleton key={i} className="h-16 w-full" />
+            {Array.from({ length: 5 }, (_, i) => (
+              <Skeleton key={`skeleton-${i}`} className="h-16 w-full" />
             ))}
           </div>
-        ) : results && results.length > 0 ? (
+        )}
+        {!isLoading && results && results.length > 0 && (
           <div className="space-y-4">
             {/* Top 3 Priority Fixes */}
             <div className="grid gap-4 md:grid-cols-3">
@@ -184,8 +185,8 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                     {r.priority_reasons && r.priority_reasons.length > 0 && (
                       <div className="mt-2 pt-2 border-t border-muted">
                         <ul className="text-xs text-muted-foreground space-y-0.5">
-                          {r.priority_reasons.slice(0, 3).map((reason, i) => (
-                            <li key={i}>{renderPriorityReason(reason)}</li>
+                          {r.priority_reasons.slice(0, 3).map((reason) => (
+                            <li key={reason}>{renderPriorityReason(reason)}</li>
                           ))}
                         </ul>
                       </div>
@@ -259,12 +260,16 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <div className="flex flex-col items-center">
-                                <span className={`font-medium ${
-                                  r.max_epss_score >= 0.1 ? 'text-severity-critical' :
-                                  r.max_epss_score >= 0.01 ? 'text-severity-high' : 'text-muted-foreground'
-                                }`}>
-                                  {formatEpssScore(r.max_epss_score)}
-                                </span>
+                                {(() => {
+                                  let epssColorClass = 'text-muted-foreground'
+                                  if (r.max_epss_score >= 0.1) epssColorClass = 'text-severity-critical'
+                                  else if (r.max_epss_score >= 0.01) epssColorClass = 'text-severity-high'
+                                  return (
+                                    <span className={`font-medium ${epssColorClass}`}>
+                                      {formatEpssScore(r.max_epss_score)}
+                                    </span>
+                                  )
+                                })()}
                               </div>
                             </TooltipTrigger>
                             <TooltipContent>
@@ -378,8 +383,8 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
                             <TooltipContent className="max-w-xs">
                               <p className="font-medium mb-1">Priority Reasons:</p>
                               <ul className="text-xs space-y-1">
-                                {r.priority_reasons.map((reason, i) => (
-                                  <li key={i}>{renderPriorityReason(reason)}</li>
+                                {r.priority_reasons.map((reason) => (
+                                  <li key={reason}>{renderPriorityReason(reason)}</li>
                                 ))}
                               </ul>
                             </TooltipContent>
@@ -394,7 +399,8 @@ export function ImpactAnalysis({ onSelectComponent }: ImpactAnalysisProps) {
               </TableBody>
             </Table>
           </div>
-        ) : (
+        )}
+        {!isLoading && (!results || results.length === 0) && (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
             <Zap className="h-12 w-12 mb-4" />
             <p>No vulnerabilities found to analyze</p>

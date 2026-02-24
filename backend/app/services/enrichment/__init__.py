@@ -10,8 +10,8 @@ vulnerability_enrichment_service = VulnerabilityEnrichmentService()
 async def enrich_vulnerability_findings(
     findings: List[Dict[str, Any]],
     github_token: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """Convenience function to enrich findings.
+) -> None:
+    """Convenience function to enrich findings in-place.
 
     Args:
         findings: List of finding dicts to enrich
@@ -20,7 +20,7 @@ async def enrich_vulnerability_findings(
     # Set the GitHub token on the service if provided
     if github_token:
         vulnerability_enrichment_service.set_github_token(github_token)
-    return await vulnerability_enrichment_service.enrich_findings(findings)
+    await vulnerability_enrichment_service.enrich_findings(findings)
 
 
 async def get_cve_enrichment(cves: List[str]) -> Dict[str, VulnerabilityEnrichment]:

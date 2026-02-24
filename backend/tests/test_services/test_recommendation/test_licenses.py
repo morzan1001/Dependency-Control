@@ -26,7 +26,7 @@ class TestProcessLicensesEmpty:
         assert process_licenses([]) == []
 
     def test_empty_iterable(self):
-        assert process_licenses(list()) == []
+        assert process_licenses([]) == []
 
 
 class TestProcessLicensesSingleFinding:

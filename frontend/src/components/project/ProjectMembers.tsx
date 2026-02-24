@@ -5,6 +5,8 @@ import { projectKeys } from '@/hooks/queries/use-projects'
 import { getErrorMessage } from '@/lib/utils'
 import { Project } from '@/types/project'
 import { useAuth } from '@/context/useAuth'
+import { useCurrentUser } from '@/hooks/queries/use-users'
+import { canManageProjectMembers } from '@/lib/project-roles'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,7 +45,11 @@ interface ProjectMembersProps {
 
 export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
   const queryClient = useQueryClient()
-  const { hasPermission } = useAuth()
+  const { permissions } = useAuth()
+  const { data: currentUser } = useCurrentUser()
+  const canManageMembers = currentUser
+    ? canManageProjectMembers(project, currentUser.id, permissions)
+    : false
   const [isInviteMemberOpen, setIsInviteMemberOpen] = useState(false)
   const [inviteEmail, setInviteEmail] = useState("")
   const [inviteRole, setInviteRole] = useState("viewer")
@@ -97,7 +103,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
           <CardTitle>Project Members</CardTitle>
           <CardDescription>Manage who has access to this project.</CardDescription>
         </div>
-        {hasPermission('project:update') && (
+        {canManageMembers && (
           <Dialog open={isInviteMemberOpen} onOpenChange={setIsInviteMemberOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
@@ -166,7 +172,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
                   <Select
                     value={member.role}
                     onValueChange={(value) => updateMemberMutation.mutate({ userId: member.user_id, role: value })}
-                    disabled={member.user_id === project.owner_id || !hasPermission('project:update') || !!member.inherited_from}
+                    disabled={member.user_id === project.owner_id || !canManageMembers || !!member.inherited_from}
                   >
                     <SelectTrigger className="w-[120px]">
                       <SelectValue />
@@ -188,7 +194,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
                   )}
                 </TableCell>
                 <TableCell>
-                  {member.user_id !== project.owner_id && hasPermission('project:update') && !member.inherited_from && (
+                  {member.user_id !== project.owner_id && canManageMembers && !member.inherited_from && (
                     <Button 
                       variant="ghost" 
                       size="icon" 

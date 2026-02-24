@@ -86,7 +86,7 @@ class TestParsePurl:
         assert parse_purl("") is None
 
     def test_parse_returns_none_for_none(self):
-        assert parse_purl(None) is None
+        assert parse_purl(None) is None  # type: ignore[arg-type]  # Testing None handling
 
     def test_parse_returns_none_for_non_pkg_prefix(self):
         assert parse_purl("http://example.com") is None
@@ -185,7 +185,7 @@ class TestGetPurlType:
         assert get_purl_type("") is None
 
     def test_returns_none_for_none(self):
-        assert get_purl_type(None) is None
+        assert get_purl_type(None) is None  # type: ignore[arg-type]  # Testing None handling
 
     def test_returns_none_for_non_pkg(self):
         assert get_purl_type("http://example.com") is None
@@ -256,4 +256,4 @@ class TestNormalizeHashAlgorithm:
         assert normalize_hash_algorithm("") == ""
 
     def test_none(self):
-        assert normalize_hash_algorithm(None) == ""
+        assert normalize_hash_algorithm(None) == ""  # type: ignore[arg-type]  # Testing None handling

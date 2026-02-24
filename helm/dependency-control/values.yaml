@@ -171,9 +171,11 @@ frontend:
     limits:
       cpu: 200m
       memory: 256Mi
+      ephemeral-storage: 512Mi
     requests:
       cpu: 50m
       memory: 128Mi
+      ephemeral-storage: 128Mi
 
   securityContext:
     runAsUser: 101
@@ -249,9 +251,11 @@ backend:
     limits:
       cpu: 1000m
       memory: 2Gi
+      ephemeral-storage: 1Gi
     requests:
       cpu: 200m
       memory: 512Mi
+      ephemeral-storage: 256Mi
 
   securityContext:
     runAsUser: 1000

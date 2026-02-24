@@ -21,8 +21,8 @@ interface WebhookManagerProps {
   onDelete: (id: string) => Promise<void>
   title?: string
   description?: string
-  createPermission?: string
-  deletePermission?: string
+  createPermission?: string | boolean
+  deletePermission?: string | boolean
 }
 
 export function WebhookManager({ 
@@ -37,6 +37,12 @@ export function WebhookManager({
 }: WebhookManagerProps) {
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const { hasPermission } = useAuth()
+  const canCreate = typeof createPermission === 'boolean'
+    ? createPermission
+    : hasPermission(createPermission)
+  const canDeleteWh = typeof deletePermission === 'boolean'
+    ? deletePermission
+    : hasPermission(deletePermission)
   const [newWebhook, setNewWebhook] = useState<WebhookCreate>({
     url: "",
     events: [],
@@ -102,7 +108,7 @@ export function WebhookManager({
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>
         </div>
-        {hasPermission(createPermission) && (
+        {canCreate && (
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Webhook</Button>
@@ -179,7 +185,7 @@ export function WebhookManager({
                   </TableCell>
                   <TableCell>{formatDate(webhook.created_at)}</TableCell>
                   <TableCell>
-                    {hasPermission(deletePermission) && (
+                    {canDeleteWh && (
                       <Button variant="ghost" size="icon" onClick={() => handleDelete(webhook.id)}>
                         <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>

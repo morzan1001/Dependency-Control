@@ -40,9 +40,11 @@ export function getErrorMessage(error: ErrorWithResponse | Error | unknown): str
   return (error as Error).message || "An unknown error occurred";
 }
 
+const DEFAULT_DATE_FORMAT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' }
+
 export function formatDate(
   date: string | Date | undefined | null,
-  options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' }
+  options: Intl.DateTimeFormatOptions = DEFAULT_DATE_FORMAT
 ): string {
   if (!date) return 'N/A'
   try {

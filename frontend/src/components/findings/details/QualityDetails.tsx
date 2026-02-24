@@ -108,8 +108,8 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
           icon={AlertTriangle}
         >
           <div className="flex flex-wrap gap-2">
-            {criticalIssues.map((issue, idx) => (
-              <Badge key={idx} variant="destructive" className="text-xs">
+            {criticalIssues.map((issue) => (
+              <Badge key={issue} variant="destructive" className="text-xs">
                 {formatScorecardCriticalIssue(issue)}
               </Badge>
             ))}
@@ -121,8 +121,8 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
       {failedChecks.length > 0 && (
         <DetailSection label={`Failed Checks (${failedChecks.length})`}>
           <div className="grid grid-cols-2 gap-2">
-            {failedChecks.map((check, idx) => (
-              <div key={idx} className="flex items-center justify-between p-2 bg-muted/50 rounded border">
+            {failedChecks.map((check) => (
+              <div key={check.name} className="flex items-center justify-between p-2 bg-muted/50 rounded border">
                 <span className="text-sm">{check.name}</span>
                 <Badge variant="outline" className={getScoreColor(check.score)}>
                   {check.score}/10
@@ -157,8 +157,8 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
             Recommendations
           </h4>
           <p className="text-sm text-blue-700 dark:text-blue-400">
-            {recommendation.split(' • ').map((rec, idx) => (
-              <span key={idx} className="block">
+            {recommendation.split(' • ').map((rec) => (
+              <span key={rec} className="block">
                 • {rec}
               </span>
             ))}
@@ -222,12 +222,12 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
       {risks.length > 0 && (
         <DetailSection label={`Risk Factors (${risks.length})`}>
           <div className="space-y-2">
-            {risks.map((risk, idx) => {
+            {risks.map((risk) => {
               const Icon = getRiskIcon(risk.type)
               const severityScore = risk.severity_score ?? 1
               const riskMessage = risk.message || risk.description || ''
               return (
-                <div key={idx} className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg border">
+                <div key={risk.type} className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg border">
                   <Icon className="h-4 w-4 mt-0.5 text-muted-foreground flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
@@ -321,7 +321,7 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
                   )}
                   {maintainerInfo.project_urls &&
                     Object.entries(maintainerInfo.project_urls).map(([name, url]) =>
-                      name !== 'Homepage' ? (
+                      name === 'Homepage' ? null : (
                         <a
                           key={name}
                           href={url}
@@ -332,7 +332,7 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
                           <ExternalLink className="h-3 w-3" />
                           {name}
                         </a>
-                      ) : null
+                      )
                     )}
                 </div>
               </div>

@@ -73,7 +73,7 @@ def get_hotspot_remediation_steps(hotspot: PackageHotspot) -> List[str]:
 
 def detect_critical_hotspots(
     findings: List[ModelOrDict],
-    dependencies: List[ModelOrDict],
+    _dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
     """
     Detect critical hotspots - packages that accumulate multiple severe issues.

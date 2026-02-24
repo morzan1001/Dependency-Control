@@ -104,6 +104,29 @@ def process_typosquatting(
     ]
 
 
+def _classify_vuln_finding(
+    f: ModelOrDict,
+    kev_vulns: List[ModelOrDict],
+    ransomware_vulns: List[ModelOrDict],
+    high_epss_vulns: List[ModelOrDict],
+) -> None:
+    """Classify a single vulnerability finding into KEV, ransomware, or high EPSS."""
+    details = get_attr(f, "details", {})
+    if not isinstance(details, dict):
+        return
+
+    if details.get("is_kev"):
+        if details.get("kev_ransomware"):
+            ransomware_vulns.append(f)
+        else:
+            kev_vulns.append(f)
+        return
+
+    epss = details.get("epss_score")
+    if epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD:
+        high_epss_vulns.append(f)
+
+
 def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendation]:
     """
     Detect vulnerabilities with known exploits (KEV, ransomware, high EPSS).
@@ -111,21 +134,12 @@ def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendati
     """
     recommendations = []
 
-    kev_vulns = []
-    ransomware_vulns = []
-    high_epss_vulns = []
+    kev_vulns: List[ModelOrDict] = []
+    ransomware_vulns: List[ModelOrDict] = []
+    high_epss_vulns: List[ModelOrDict] = []
 
     for f in vuln_findings:
-        details = get_attr(f, "details", {})
-        if isinstance(details, dict) and details.get("is_kev"):
-            if details.get("kev_ransomware"):
-                ransomware_vulns.append(f)
-            else:
-                kev_vulns.append(f)
-        elif isinstance(details, dict):
-            epss = details.get("epss_score")
-            if epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD:
-                high_epss_vulns.append(f)
+        _classify_vuln_finding(f, kev_vulns, ransomware_vulns, high_epss_vulns)
 
     if ransomware_vulns:
         affected_packages = list({get_attr(f, "component", "") for f in ransomware_vulns})

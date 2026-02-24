@@ -401,16 +401,18 @@ export function CICDInstancesManagement() {
         </div>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {isLoading && (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
-        ) : instances.length === 0 ? (
+        )}
+        {!isLoading && instances.length === 0 && (
           <div className="text-center py-8 text-muted-foreground">
             <p>No CI/CD instances configured yet.</p>
             <p className="text-sm mt-2">Click "Add Instance" to connect GitLab or GitHub.</p>
           </div>
-        ) : (
+        )}
+        {!isLoading && instances.length > 0 && (
           <Table>
             <TableHeader>
               <TableRow>
@@ -702,7 +704,11 @@ function InstanceForm({
       {/* Access Token */}
       <div className="grid gap-2">
         <Label htmlFor="ci-access-token">
-          Access Token {isEdit ? "(leave empty to keep current)" : formData.type === "gitlab" ? "*" : ""}
+          Access Token {(() => {
+            if (isEdit) return "(leave empty to keep current)"
+            if (formData.type === "gitlab") return "*"
+            return ""
+          })()}
         </Label>
         <Input
           id="ci-access-token"

@@ -16,6 +16,18 @@ from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
 
 
+def _has_global_permission(user: User, require_write: bool) -> bool:
+    """Check if user has global permissions for callgraph access."""
+    if require_write:
+        return has_permission(user.permissions, Permissions.PROJECT_UPDATE)
+    return has_permission(user.permissions, [Permissions.PROJECT_READ_ALL, Permissions.PROJECT_UPDATE])
+
+
+def _is_member(members: List[Dict[str, Any]], user_id: str) -> bool:
+    """Check if user_id appears in a members list."""
+    return any(member.get("user_id") == user_id for member in members)
+
+
 async def check_callgraph_access(
     project_id: str,
     user: User,
@@ -51,31 +63,24 @@ async def check_callgraph_access(
         return project
 
     # Check global permissions
-    if require_write:
-        if has_permission(user.permissions, Permissions.PROJECT_UPDATE):
-            return project
-    else:
-        if has_permission(user.permissions, [Permissions.PROJECT_READ_ALL, Permissions.PROJECT_UPDATE]):
-            return project
+    if _has_global_permission(user, require_write):
+        return project
 
     # Check team membership
     team_id = project.get("team_id")
     if team_id:
         team = await team_repo.get_raw_by_id(team_id)
-        if team:
-            for member in team.get("members", []):
-                if member.get("user_id") == user_id:
-                    return project
+        if team and _is_member(team.get("members", []), user_id):
+            return project
 
     # Check direct project membership
-    for member in project.get("members", []):
-        if member.get("user_id") == user_id:
-            return project
+    if _is_member(project.get("members", []), user_id):
+        return project
 
     raise HTTPException(status_code=403, detail="Access denied")
 
 
-def normalize_module_name(module: str, language: str) -> str:
+def normalize_module_name(module: str, _language: str) -> str:
     """
     Normalize a module/package name for consistent matching.
 
@@ -104,6 +109,24 @@ def normalize_module_name(module: str, language: str) -> str:
         return module.split("/")[0]
 
     return module
+
+
+def _is_external_module(dep: str) -> bool:
+    """Check if a dependency is an external module (not a relative path)."""
+    return not dep.startswith("./") and not dep.startswith("../")
+
+
+def _get_or_create_module_usage(module_usage: Dict[str, ModuleUsage], base_module: str) -> ModuleUsage:
+    """Get existing or create new ModuleUsage entry."""
+    if base_module not in module_usage:
+        module_usage[base_module] = ModuleUsage(
+            module=base_module,
+            import_count=0,
+            call_count=0,
+            import_locations=[],
+            used_symbols=[],
+        )
+    return module_usage[base_module]
 
 
 def parse_madge_format(
@@ -141,22 +164,72 @@ def parse_madge_format(
             )
 
             # Aggregate module usage (only for external modules)
-            if not dep.startswith("./") and not dep.startswith("../"):
+            if _is_external_module(dep):
                 base_module = normalize_module_name(dep, language)
-                if base_module not in module_usage:
-                    module_usage[base_module] = ModuleUsage(
-                        module=base_module,
-                        import_count=0,
-                        call_count=0,
-                        import_locations=[],
-                        used_symbols=[],
-                    )
-                module_usage[base_module].import_count += 1
-                if file_path not in module_usage[base_module].import_locations:
-                    module_usage[base_module].import_locations.append(file_path)
+                usage = _get_or_create_module_usage(module_usage, base_module)
+                usage.import_count += 1
+                if file_path not in usage.import_locations:
+                    usage.import_locations.append(file_path)
 
     # Madge doesn't provide call edges, only imports
     return imports, [], module_usage
+
+
+def _track_module_call(module_usage: Dict[str, ModuleUsage], target: str, language: str) -> None:
+    """Track a call edge's module usage and used symbol."""
+    if "." not in target:
+        return
+    module = target.rsplit(".", 1)[0]
+    base_module = normalize_module_name(module, language)
+    usage = _get_or_create_module_usage(module_usage, base_module)
+    usage.call_count += 1
+
+    symbol = target.rsplit(".", 1)[-1]
+    if symbol not in usage.used_symbols:
+        usage.used_symbols.append(symbol)
+
+
+def _track_module_import(
+    module_usage: Dict[str, ModuleUsage],
+    target: str,
+    language: str,
+    source_info: Dict[str, Any],
+    imports: List[ImportEntry],
+    seen_imports: set[tuple[str, str]],
+) -> None:
+    """Track a uses edge's import and module usage."""
+    if "." not in target:
+        return
+
+    module = target.rsplit(".", 1)[0]
+    symbol = target.rsplit(".", 1)[-1]
+    file_path = source_info.get("file", "")
+    import_key = (module, file_path)
+
+    # Create import entry if not already seen
+    if import_key not in seen_imports:
+        seen_imports.add(import_key)
+        imports.append(
+            ImportEntry(
+                module=module,
+                file=file_path,
+                line=source_info.get("line", 0),
+                imported_symbols=[symbol],
+                is_dynamic=False,
+            )
+        )
+
+        # Update module usage
+        base_module = normalize_module_name(module, language)
+        usage = _get_or_create_module_usage(module_usage, base_module)
+        usage.import_count += 1
+        if file_path and file_path not in usage.import_locations:
+            usage.import_locations.append(file_path)
+
+    # Always track the symbol
+    base_module = normalize_module_name(module, language)
+    if base_module in module_usage and symbol not in module_usage[base_module].used_symbols:
+        module_usage[base_module].used_symbols.append(symbol)
 
 
 def parse_pyan_format(
@@ -208,65 +281,10 @@ def parse_pyan_format(
                     call_type="direct",
                 )
             )
-
-            # Extract module from target
-            if "." in target:
-                module = target.rsplit(".", 1)[0]
-                base_module = normalize_module_name(module, language)
-                if base_module not in module_usage:
-                    module_usage[base_module] = ModuleUsage(
-                        module=base_module,
-                        import_count=0,
-                        call_count=0,
-                        import_locations=[],
-                        used_symbols=[],
-                    )
-                module_usage[base_module].call_count += 1
-
-                # Track used symbol
-                symbol = target.rsplit(".", 1)[-1]
-                if symbol not in module_usage[base_module].used_symbols:
-                    module_usage[base_module].used_symbols.append(symbol)
+            _track_module_call(module_usage, target, language)
 
         elif edge_type == "uses":
-            # "uses" edges indicate imports/dependencies
-            if "." in target:
-                module = target.rsplit(".", 1)[0]
-                symbol = target.rsplit(".", 1)[-1]
-                file_path = source_info.get("file", "")
-                import_key = (module, file_path)
-
-                # Create import entry if not already seen
-                if import_key not in seen_imports:
-                    seen_imports.add(import_key)
-                    imports.append(
-                        ImportEntry(
-                            module=module,
-                            file=file_path,
-                            line=source_info.get("line", 0),
-                            imported_symbols=[symbol],
-                            is_dynamic=False,
-                        )
-                    )
-
-                    # Update module usage
-                    base_module = normalize_module_name(module, language)
-                    if base_module not in module_usage:
-                        module_usage[base_module] = ModuleUsage(
-                            module=base_module,
-                            import_count=0,
-                            call_count=0,
-                            import_locations=[],
-                            used_symbols=[],
-                        )
-                    module_usage[base_module].import_count += 1
-                    if file_path and file_path not in module_usage[base_module].import_locations:
-                        module_usage[base_module].import_locations.append(file_path)
-
-                # Always track the symbol
-                base_module = normalize_module_name(module, language)
-                if base_module in module_usage and symbol not in module_usage[base_module].used_symbols:
-                    module_usage[base_module].used_symbols.append(symbol)
+            _track_module_import(module_usage, target, language, source_info, imports, seen_imports)
 
     return imports, calls, module_usage
 

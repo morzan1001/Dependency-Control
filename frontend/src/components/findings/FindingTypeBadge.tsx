@@ -122,8 +122,8 @@ export function FindingTypeBadges({ primaryType, additionalTypes, className = ''
   return (
     <div className={`flex flex-wrap gap-1 ${className}`}>
       <FindingTypeBadge type={primaryType} />
-      {additionalTypes?.map((addType, idx) => (
-        <FindingTypeBadge key={idx} type={addType.type} />
+      {additionalTypes?.map((addType) => (
+        <FindingTypeBadge key={addType.type} type={addType.type} />
       ))}
     </div>
   )

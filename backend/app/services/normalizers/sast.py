@@ -13,6 +13,92 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
+def _build_opengrep_description(check_id: str, message: str) -> str:
+    """Build description, prefixing with short rule name if check_id is meaningful."""
+    if "." in check_id:
+        short_rule_name = check_id.split(".")[-1]
+        return f"{short_rule_name}: {message}"
+    return message
+
+
+def _parse_opengrep_item(item: Dict[str, Any]) -> Finding:
+    """Parse a single OpenGrep result item into a Finding."""
+    check_id = item.get("check_id") or "unknown-check"
+    path = item.get("path") or "unknown"
+
+    start_obj = item.get("start") or {}
+    end_obj = item.get("end") or {}
+
+    start_line = start_obj.get("line", 0)
+    start_col = start_obj.get("col", 0)
+    end_line = end_obj.get("line", 0)
+    end_col = end_obj.get("col", 0)
+
+    extra = item.get("extra") or {}
+    sev_str = (extra.get("severity") or "INFO").upper()
+    severity = safe_severity(OPENGREP_SEVERITY_MAP.get(sev_str, sev_str))
+    message = extra.get("message") or "Potential issue found"
+
+    # OpenGrep (semgrep) metadata
+    metadata = extra.get("metadata") or {}
+    cwe = metadata.get("cwe") or []
+    owasp = metadata.get("owasp") or []
+
+    # Unique ID combining rule and location
+    finding_id = build_finding_id("OPENGREP", check_id, path, start_line)
+
+    description = _build_opengrep_description(check_id, message)
+
+    # Build details with full SAST context
+    details = {
+        "rule_id": check_id,
+        "check_id": check_id,
+        "title": message,
+        "code_extract": extra.get("lines"),
+        "start": {"line": start_line, "column": start_col},
+        "end": {"line": end_line, "column": end_col},
+        # CWE handling - normalize to array of IDs
+        "cwe_ids": normalize_cwe_list(cwe),
+        "owasp": normalize_list(owasp),
+        # Risk assessment
+        "impact": metadata.get("impact"),
+        "confidence": metadata.get("confidence"),
+        "likelihood": metadata.get("likelihood"),
+        # Classification
+        "category": metadata.get("category"),
+        "category_groups": metadata.get("category_groups") or [],
+        "subcategory": normalize_list(metadata.get("subcategory")),
+        "technology": normalize_list(metadata.get("technology")),
+        "vulnerability_class": normalize_list(metadata.get("vulnerability_class")),
+        # Documentation
+        "references": metadata.get("references") or [],
+        "source_rule_url": metadata.get("source-rule-url") or metadata.get("source_rule_url"),
+        "source": metadata.get("source"),
+        "shortlink": metadata.get("shortlink"),
+        "license": metadata.get("license"),
+        # Fingerprint for deduplication
+        "fingerprint": extra.get("fingerprint"),
+    }
+
+    return Finding(
+        id=finding_id,
+        type=FindingType.SAST,
+        severity=severity,
+        component=path,  # SAST findings are attached to files
+        version=None,
+        description=description,
+        scanners=["opengrep"],
+        location={
+            "file": path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "start_column": start_col,
+            "end_column": end_col,
+        },
+        details=details,
+    )
+
+
 def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize OpenGrep (Semgrep) SAST results."""
     # OpenGrep can send data as "findings" or "results"
@@ -21,87 +107,7 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], s
         return
 
     for item in results:
-        check_id = item.get("check_id") or "unknown-check"
-        path = item.get("path") or "unknown"
-
-        start_obj = item.get("start") or {}
-        end_obj = item.get("end") or {}
-
-        start_line = start_obj.get("line", 0)
-        start_col = start_obj.get("col", 0)
-        end_line = end_obj.get("line", 0)
-        end_col = end_obj.get("col", 0)
-
-        extra = item.get("extra") or {}
-        sev_str = (extra.get("severity") or "INFO").upper()
-        severity = safe_severity(OPENGREP_SEVERITY_MAP.get(sev_str, sev_str))
-        message = extra.get("message") or "Potential issue found"
-
-        # OpenGrep (semgrep) metadata
-        metadata = extra.get("metadata") or {}
-        cwe = metadata.get("cwe") or []
-        owasp = metadata.get("owasp") or []
-
-        # Unique ID combining rule and location
-        finding_id = build_finding_id("OPENGREP", check_id, path, start_line)
-
-        description = message
-        # If check_id is meaningful (not generated), prefix it
-        if "rules." in check_id or "." in check_id:
-            short_rule_name = check_id.split(".")[-1]
-            description = f"{short_rule_name}: {message}"
-
-        # Build details with full SAST context
-        details = {
-            "rule_id": check_id,
-            "check_id": check_id,
-            "title": message,
-            "code_extract": extra.get("lines"),
-            "start": {"line": start_line, "column": start_col},
-            "end": {"line": end_line, "column": end_col},
-            # CWE handling - normalize to array of IDs
-            "cwe_ids": normalize_cwe_list(cwe),
-            "owasp": normalize_list(owasp),
-            # Risk assessment
-            "impact": metadata.get("impact"),
-            "confidence": metadata.get("confidence"),
-            "likelihood": metadata.get("likelihood"),
-            # Classification
-            "category": metadata.get("category"),
-            "category_groups": metadata.get("category_groups") or [],
-            "subcategory": normalize_list(metadata.get("subcategory")),
-            "technology": normalize_list(metadata.get("technology")),
-            "vulnerability_class": normalize_list(metadata.get("vulnerability_class")),
-            # Documentation
-            "references": metadata.get("references") or [],
-            "source_rule_url": metadata.get("source-rule-url") or metadata.get("source_rule_url"),
-            "source": metadata.get("source"),
-            "shortlink": metadata.get("shortlink"),
-            "license": metadata.get("license"),
-            # Fingerprint for deduplication
-            "fingerprint": extra.get("fingerprint"),
-        }
-
-        aggregator.add_finding(
-            Finding(
-                id=finding_id,
-                type=FindingType.SAST,
-                severity=severity,
-                component=path,  # SAST findings are attached to files
-                version=None,
-                description=description,
-                scanners=["opengrep"],
-                location={
-                    "file": path,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                    "start_column": start_col,
-                    "end_column": end_col,
-                },
-                details=details,
-            ),
-            source=source,
-        )
+        aggregator.add_finding(_parse_opengrep_item(item), source=source)
 
 
 def normalize_bearer(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:

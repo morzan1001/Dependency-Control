@@ -291,13 +291,21 @@ export default function Dashboard() {
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-high font-bold">{project.stats?.high || 0}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
-                                                <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
-                                                    (project.stats?.critical || 0) > 0 ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80' :
-                                                    (project.stats?.high || 0) > 0 ? 'bg-severity-high text-severity-high-foreground hover:bg-severity-high/80' :
-                                                    'bg-success text-success-foreground hover:bg-success/80'
-                                                }`}>
-                                                    {(project.stats?.critical || 0) > 0 ? 'Critical' : (project.stats?.high || 0) > 0 ? 'High Risk' : 'Secure'}
-                                                </span>
+                                                {(() => {
+                                                    const hasCritical = (project.stats?.critical || 0) > 0
+                                                    const hasHigh = (project.stats?.high || 0) > 0
+                                                    const statusClassName = hasCritical
+                                                        ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
+                                                        : hasHigh
+                                                        ? 'bg-severity-high text-severity-high-foreground hover:bg-severity-high/80'
+                                                        : 'bg-success text-success-foreground hover:bg-success/80'
+                                                    const statusLabel = hasCritical ? 'Critical' : hasHigh ? 'High Risk' : 'Secure'
+                                                    return (
+                                                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${statusClassName}`}>
+                                                            {statusLabel}
+                                                        </span>
+                                                    )
+                                                })()}
                                             </td>
                                         </tr>
                                     )

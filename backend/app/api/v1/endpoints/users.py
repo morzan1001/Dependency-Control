@@ -46,7 +46,7 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH_400})
+@router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED, responses=RESP_AUTH_400)
 async def create_user(
     user_in: UserCreate,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_CREATE]))],
@@ -84,7 +84,7 @@ async def create_user(
     return new_user
 
 
-@router.get("/", response_model=List[UserSchema], responses={**RESP_AUTH})
+@router.get("/", response_model=List[UserSchema], responses=RESP_AUTH)
 async def read_users(
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_READ_ALL]))],
     db: DatabaseDep,
@@ -111,7 +111,7 @@ async def read_users(
     return users
 
 
-@router.get("/me", response_model=UserSchema, responses={**RESP_AUTH})
+@router.get("/me", response_model=UserSchema, responses=RESP_AUTH)
 async def read_user_me(
     current_user: CurrentUserDep,
 ) -> User:
@@ -121,7 +121,7 @@ async def read_user_me(
     return current_user
 
 
-@router.patch("/me", response_model=UserSchema, responses={**RESP_AUTH_400})
+@router.patch("/me", response_model=UserSchema, responses=RESP_AUTH_400)
 async def update_user_me(
     user_in: UserUpdateMe,
     current_user: CurrentUserDep,
@@ -150,7 +150,7 @@ async def update_user_me(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.get("/{user_id}", response_model=UserSchema, responses={**RESP_AUTH_404})
+@router.get("/{user_id}", response_model=UserSchema, responses=RESP_AUTH_404)
 async def read_user_by_id(
     user_id: str,
     current_user: CurrentUserDep,
@@ -161,7 +161,7 @@ async def read_user_by_id(
     return await get_user_or_404(user_id, db)
 
 
-@router.put("/{user_id}", response_model=UserSchema, responses={**RESP_AUTH_400_404})
+@router.put("/{user_id}", response_model=UserSchema, responses=RESP_AUTH_400_404)
 async def update_user(
     user_id: str,
     user_in: UserUpdate,
@@ -207,7 +207,7 @@ async def update_user(
     return await fetch_updated_user(user_id, db)
 
 
-@router.post("/me/migrate", response_model=UserSchema, responses={**RESP_AUTH_400})
+@router.post("/me/migrate", response_model=UserSchema, responses=RESP_AUTH_400)
 async def migrate_to_local(
     *,
     password_in: UserMigrateToLocal,
@@ -231,7 +231,7 @@ async def migrate_to_local(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.post("/{user_id}/migrate", response_model=UserSchema, responses={**RESP_AUTH_400_404})
+@router.post("/{user_id}/migrate", response_model=UserSchema, responses=RESP_AUTH_400_404)
 async def migrate_user_to_local(
     user_id: str,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
@@ -253,7 +253,7 @@ async def migrate_user_to_local(
     return await fetch_updated_user(user_id, db)
 
 
-@router.post("/{user_id}/reset-password", responses={**RESP_AUTH_400_404})
+@router.post("/{user_id}/reset-password", responses=RESP_AUTH_400_404)
 async def reset_user_password(
     user_id: str,
     background_tasks: BackgroundTasks,
@@ -310,7 +310,7 @@ async def reset_user_password(
     return response
 
 
-@router.post("/me/password", response_model=UserSchema, responses={**RESP_AUTH_400})
+@router.post("/me/password", response_model=UserSchema, responses=RESP_AUTH_400)
 async def update_password_me(
     password_in: UserPasswordUpdate,
     background_tasks: BackgroundTasks,
@@ -358,7 +358,7 @@ async def update_password_me(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.post("/me/2fa/setup", response_model=User2FASetup, responses={**RESP_AUTH_400})
+@router.post("/me/2fa/setup", response_model=User2FASetup, responses=RESP_AUTH_400)
 async def setup_2fa(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -395,7 +395,7 @@ async def setup_2fa(
     return {"secret": secret, "qr_code": qr_code_base64}
 
 
-@router.post("/me/2fa/enable", response_model=UserSchema, responses={**RESP_AUTH_400})
+@router.post("/me/2fa/enable", response_model=UserSchema, responses=RESP_AUTH_400)
 async def enable_2fa(
     verify_in: User2FAVerify,
     background_tasks: BackgroundTasks,
@@ -456,7 +456,7 @@ async def enable_2fa(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.post("/me/2fa/disable", response_model=UserSchema, responses={**RESP_AUTH_400})
+@router.post("/me/2fa/disable", response_model=UserSchema, responses=RESP_AUTH_400)
 async def disable_2fa(
     disable_in: User2FADisable,
     background_tasks: BackgroundTasks,
@@ -499,7 +499,7 @@ async def disable_2fa(
     return await fetch_updated_user(current_user.id, db)
 
 
-@router.post("/{user_id}/2fa/disable", response_model=UserSchema, responses={**RESP_AUTH_400_404})
+@router.post("/{user_id}/2fa/disable", response_model=UserSchema, responses=RESP_AUTH_400_404)
 async def admin_disable_2fa(
     user_id: str,
     background_tasks: BackgroundTasks,
@@ -542,7 +542,7 @@ async def admin_disable_2fa(
     return await fetch_updated_user(user_id, db)
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, responses={**RESP_AUTH_400_404})
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT, responses=RESP_AUTH_400_404)
 async def delete_user(
     user_id: str,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_DELETE]))],

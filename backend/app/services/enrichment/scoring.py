@@ -28,6 +28,47 @@ def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: O
     return "unknown"
 
 
+def _calculate_epss_contribution(epss_score: float) -> float:
+    """
+    Calculate the EPSS contribution to risk score (0-25 points).
+
+    Non-linear scaling: high EPSS scores get disproportionately more weight.
+    """
+    if epss_score >= EPSS_HIGH_THRESHOLD:  # Top 10% - very likely to be exploited
+        contribution = 20 + (min(epss_score, 1.0) * 5)
+    elif epss_score >= EPSS_MEDIUM_THRESHOLD:  # 1-10% - moderate likelihood
+        contribution = 10 + (epss_score * 100)  # 10-20 points
+    else:  # < 1% - low likelihood
+        contribution = epss_score * 1000  # 0-10 points
+    return min(contribution, 25)
+
+
+def _apply_reachability_modifier(
+    score: float,
+    is_reachable: Optional[bool],
+    reachability_level: Optional[str],
+) -> float:
+    """
+    Apply reachability modifier to risk score.
+
+    If code is unreachable, significantly reduce the score.
+    If confirmed reachable, apply a slight boost.
+    """
+    if is_reachable is None and reachability_level is None:
+        return score
+
+    if is_reachable is False or reachability_level == "unreachable":
+        # Unreachable: reduce score by 60% (still keep some risk as analysis isn't perfect)
+        return score * 0.4
+
+    if reachability_level == "confirmed":
+        # Confirmed reachable: 10% boost
+        return score * 1.1
+
+    # "likely" or other reachable states - no modifier
+    return score
+
+
 def calculate_risk_score(
     cvss_score: Optional[float],
     epss_score: Optional[float],
@@ -63,14 +104,7 @@ def calculate_risk_score(
     # EPSS contribution (0-25 points)
     # EPSS tells us the PROBABILITY of exploitation in the next 30 days
     if epss_score is not None:
-        # Non-linear scaling: high EPSS scores get disproportionately more weight
-        if epss_score >= EPSS_HIGH_THRESHOLD:  # Top 10% - very likely to be exploited
-            epss_contribution = 20 + (min(epss_score, 1.0) * 5)
-        elif epss_score >= EPSS_MEDIUM_THRESHOLD:  # 1-10% - moderate likelihood
-            epss_contribution = 10 + (epss_score * 100)  # 10-20 points
-        else:  # < 1% - low likelihood
-            epss_contribution = epss_score * 1000  # 0-10 points
-        score += min(epss_contribution, 25)
+        score += _calculate_epss_contribution(epss_score)
 
     # KEV bonus - confirmed active exploitation is critical
     if is_kev:
@@ -81,18 +115,7 @@ def calculate_risk_score(
         score += 5
 
     # Apply reachability modifier
-    # If we know the code is unreachable, significantly reduce the score
-    # If reachable or unknown, keep the score as-is or boost it slightly
-    if is_reachable is not None or reachability_level is not None:
-        if is_reachable is False or reachability_level == "unreachable":
-            # Unreachable: reduce score by 60% (still keep some risk as analysis isn't perfect)
-            score *= 0.4
-        elif is_reachable is True or reachability_level in ("confirmed", "likely"):
-            # Confirmed reachable: slight boost
-            if reachability_level == "confirmed":
-                score *= 1.1  # 10% boost for confirmed reachability
-            # "likely" gets no modifier - baseline score
-    # If reachability is unknown/not analyzed, no modifier applied
+    score = _apply_reachability_modifier(score, is_reachable, reachability_level)
 
     return min(score, 100.0)
 

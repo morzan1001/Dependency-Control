@@ -2,6 +2,11 @@
 
 **Dependency Control** is a centralized security and compliance platform for managing software supply chain risks. It aggregates SBOMs, secret scans, SAST, and IaC analysis to provide a unified view of your project's security posture.
 
+[![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=morzan1001_Dependency-Control&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=morzan1001_Dependency-Control)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=morzan1001_Dependency-Control&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=morzan1001_Dependency-Control)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=morzan1001_Dependency-Control&metric=bugs)](https://sonarcloud.io/summary/new_code?id=morzan1001_Dependency-Control)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=morzan1001_Dependency-Control&metric=coverage)](https://sonarcloud.io/summary/new_code?id=morzan1001_Dependency-Control)
+
 ![Dashboard](assets/dashboard.png)
 
 ## ✨ Features

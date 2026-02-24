@@ -9,25 +9,27 @@ if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
 
+def _extract_file_path(finding: Dict[str, Any]) -> str:
+    """Extract file path from TruffleHog source metadata."""
+    source_metadata = finding.get("SourceMetadata") or {}
+    data = source_metadata.get("Data") or {}
+
+    filesystem = data.get("Filesystem") or {}
+    if filesystem.get("file"):
+        return str(filesystem["file"])
+
+    git = data.get("Git") or {}
+    if git.get("file"):
+        return str(git["file"])
+
+    return "unknown"
+
+
 def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize TruffleHog secret scan results."""
     # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
     for finding in result.get("findings") or []:
-        # Extract file path from various source metadata formats
-        file_path = "unknown"
-        source_metadata = finding.get("SourceMetadata") or {}
-        data = source_metadata.get("Data") or {}
-
-        # Check Filesystem source
-        filesystem = data.get("Filesystem") or {}
-        if filesystem.get("file"):
-            file_path = filesystem["file"]
-        else:
-            # Check Git source
-            git = data.get("Git") or {}
-            if git.get("file"):
-                file_path = git["file"]
-
+        file_path = _extract_file_path(finding)
         detector = finding.get("DetectorType") or "Generic Secret"
 
         # Create a unique ID based on detector, file path, and secret hash

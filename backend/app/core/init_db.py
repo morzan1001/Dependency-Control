@@ -13,6 +13,9 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
+# MongoDB operator for partialFilterExpression type checks
+MONGO_TYPE = "$type"
+
 
 async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     """
@@ -134,8 +137,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
         unique=True,
         partialFilterExpression={
-            "gitlab_instance_id": {"$type": "string"},
-            "gitlab_project_id": {"$type": "int"},
+            "gitlab_instance_id": {MONGO_TYPE: "string"},
+            "gitlab_project_id": {MONGO_TYPE: "int"},
         },
     )
     await database["projects"].create_index("gitlab_instance_id")  # For instance-wide queries
@@ -244,8 +247,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("github_instance_id", pymongo.ASCENDING), ("github_repository_id", pymongo.ASCENDING)],
         unique=True,
         partialFilterExpression={
-            "github_instance_id": {"$type": "string"},
-            "github_repository_id": {"$type": "string"},
+            "github_instance_id": {MONGO_TYPE: "string"},
+            "github_repository_id": {MONGO_TYPE: "string"},
         },
     )
 

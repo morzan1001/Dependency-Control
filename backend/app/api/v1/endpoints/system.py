@@ -28,8 +28,8 @@ from app.schemas.system import (
 router = CustomAPIRouter()
 
 
-@router.get("/", response_model=SystemSettingsResponse, responses={**RESP_AUTH})
-@router.get("/settings", response_model=SystemSettingsResponse, responses={**RESP_AUTH})
+@router.get("/", response_model=SystemSettingsResponse, responses=RESP_AUTH)
+@router.get("/settings", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 async def get_settings(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
@@ -40,8 +40,8 @@ async def get_settings(
     return await deps.get_system_settings(db, auto_init=True)
 
 
-@router.put("/", response_model=SystemSettingsResponse, responses={**RESP_AUTH})
-@router.put("/settings", response_model=SystemSettingsResponse, responses={**RESP_AUTH})
+@router.put("/", response_model=SystemSettingsResponse, responses=RESP_AUTH)
+@router.put("/settings", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 async def update_settings(
     settings_in: SystemSettingsUpdate,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
@@ -70,7 +70,6 @@ async def update_settings(
 
 @router.get(
     "/public-config",
-    response_model=PublicConfig,
     summary="Get public system configuration",
 )
 async def get_public_config(db: DatabaseDep) -> PublicConfig:
@@ -90,9 +89,8 @@ async def get_public_config(db: DatabaseDep) -> PublicConfig:
 
 @router.get(
     "/app-config",
-    response_model=AppConfig,
     summary="Get application configuration for authenticated users",
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def get_app_config(
     current_user: CurrentUserDep,
@@ -126,9 +124,8 @@ async def get_app_config(
 
 @router.get(
     "/notifications/channels",
-    response_model=List[str],
     summary="Get available notification channels",
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def get_notification_channels(
     current_user: CurrentUserDep,

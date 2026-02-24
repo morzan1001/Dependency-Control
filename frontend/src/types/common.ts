@@ -8,8 +8,6 @@ export interface PaginatedResponse<T> {
 
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NEGLIGIBLE' | 'INFO' | 'UNKNOWN';
 
-export type ObjectId = string;
-
 export interface SeverityBreakdown {
   critical: number;
   high: number;

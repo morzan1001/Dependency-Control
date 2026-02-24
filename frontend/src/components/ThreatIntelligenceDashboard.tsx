@@ -72,7 +72,7 @@ interface Props {
   className?: string
 }
 
-export function ThreatIntelligenceDashboard({ stats, branchCount, className }: Props) {
+export function ThreatIntelligenceDashboard({ stats, branchCount, className }: Readonly<Props>) {
   const threatIntel = stats.threat_intel
   const reachability = stats.reachability
   const prioritized = stats.prioritized

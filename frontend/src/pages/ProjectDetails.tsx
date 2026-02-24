@@ -31,7 +31,7 @@ export default function ProjectDetails() {
   const [selectedBranches, setSelectedBranches] = useState<string[]>([])
   const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
-  
+
   const { data: project, isLoading: isLoadingProject } = useProject(id!)
 
   const { data: branches } = useProjectBranches(id!)

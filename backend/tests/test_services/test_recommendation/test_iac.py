@@ -27,7 +27,7 @@ class TestProcessIacEmpty:
         assert process_iac([]) == []
 
     def test_empty_iterable(self):
-        assert process_iac(list()) == []
+        assert process_iac([]) == []
 
 
 class TestProcessIacDocker:

@@ -305,8 +305,8 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
           </CardHeader>
           <CardContent className="pt-4">
             <div className="space-y-2">
-              {data.kev_details.map((kev, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+              {data.kev_details.map((kev) => (
+                <div key={kev.cve} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                   <div className="flex items-center gap-3">
                     {kev.ransomware ? (
                       <Skull className="h-5 w-5 text-red-600" />
@@ -356,8 +356,8 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {data.high_risk_cves.slice(0, 10).map((cve, idx) => (
-                <Collapsible key={idx}>
+              {data.high_risk_cves.slice(0, 10).map((cve) => (
+                <Collapsible key={`${cve.cve}-${cve.component}`}>
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
                     <div className="flex items-center gap-4">
                       <span className="font-mono text-sm">{cve.cve}</span>
@@ -598,8 +598,8 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
           </CardHeader>
           <CardContent className="pt-4">
             <div className="space-y-2">
-              {data.reachable_vulnerabilities.slice(0, 15).map((vuln, idx) => (
-                <Collapsible key={idx}>
+              {data.reachable_vulnerabilities.slice(0, 15).map((vuln) => (
+                <Collapsible key={`${vuln.cve}-${vuln.component}`}>
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-red-50/50 dark:bg-red-950/50 hover:bg-red-100/50 dark:hover:bg-red-900/50 transition-colors">
                     <div className="flex items-center gap-4">
                       <span className="font-mono text-sm">{vuln.cve}</span>
@@ -629,8 +629,8 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
                         <div>
                           <p className="text-muted-foreground mb-1">Reachable functions:</p>
                           <div className="flex flex-wrap gap-1">
-                            {vuln.reachable_functions.map((fn, i) => (
-                              <code key={i} className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                            {vuln.reachable_functions.map((fn) => (
+                              <code key={fn} className="text-xs bg-muted px-1.5 py-0.5 rounded">
                                 {fn}
                               </code>
                             ))}
@@ -660,8 +660,8 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
               These vulnerabilities exist in dependencies but the vulnerable code paths are not used by your application.
             </p>
             <div className="grid gap-2">
-              {data.unreachable_vulnerabilities.slice(0, 10).map((vuln, idx) => (
-                <div key={idx} className="flex items-center justify-between p-2 rounded bg-muted/50">
+              {data.unreachable_vulnerabilities.slice(0, 10).map((vuln) => (
+                <div key={`${vuln.cve}-${vuln.component}`} className="flex items-center justify-between p-2 rounded bg-muted/50">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">{vuln.cve}</span>
                     <span className="text-sm text-muted-foreground">

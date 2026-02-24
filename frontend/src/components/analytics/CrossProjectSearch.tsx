@@ -55,10 +55,10 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
     queryFn: async ({ pageParam = 0 }) => {
       return analyticsApi.searchDependenciesAdvanced(debouncedQuery, {
         version: version || undefined,
-        type: selectedType !== '__all__' ? selectedType : undefined,
-        source_type: selectedSourceType !== '__all__' ? selectedSourceType : undefined,
+        type: selectedType === '__all__' ? undefined : selectedType,
+        source_type: selectedSourceType === '__all__' ? undefined : selectedSourceType,
         has_vulnerabilities: hasVulnerabilities === '__all__' ? undefined : hasVulnerabilities === 'true',
-        project_ids: selectedProject !== '__all__' ? [selectedProject] : undefined,
+        project_ids: selectedProject === '__all__' ? undefined : [selectedProject],
         skip: pageParam,
         limit: DEFAULT_PAGE_SIZE,
       })
@@ -325,6 +325,8 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                             <div
                               key={`${result.project_id}-${result.package}-${result.version}-${virtualRow.index}`}
                               className="flex items-center border-b cursor-pointer hover:bg-muted transition-colors"
+                              role="row"
+                              tabIndex={0}
                               style={{
                                 position: 'absolute',
                                 top: `${virtualRow.start}px`,
@@ -333,6 +335,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                                 height: `${virtualRow.size}px`,
                               }}
                               onClick={() => onSelectResult?.(result)}
+                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectResult?.(result); } }}
                             >
                               <div className="w-[250px] px-4 py-2 truncate">
                                 <div className="flex items-center gap-2 min-w-0">

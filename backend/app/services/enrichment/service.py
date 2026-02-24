@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.constants import ANALYZER_TIMEOUTS, EXPLOIT_MATURITY_ORDER
 from app.core.http_utils import InstrumentedAsyncClient
-from app.schemas.enrichment import GHSAData, VulnerabilityEnrichment
+from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry, VulnerabilityEnrichment
 from app.services.enrichment.epss import EPSSProvider
 from app.services.enrichment.ghsa import GHSAProvider
 from app.services.enrichment.kev import KEVProvider
@@ -15,6 +15,32 @@ from app.services.enrichment.scoring import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _build_enrichment(
+    cve: str,
+    kev_entry: Optional[KEVEntry],
+    epss_entry: Optional[EPSSData],
+    cvss: Optional[float],
+) -> VulnerabilityEnrichment:
+    """Build a VulnerabilityEnrichment for a single CVE from its data sources."""
+    is_kev = kev_entry is not None
+    kev_ransomware = kev_entry.known_ransomware_use if kev_entry else False
+    epss_score = epss_entry.epss_score if epss_entry else None
+
+    return VulnerabilityEnrichment(
+        cve=cve,
+        epss_score=epss_score,
+        epss_percentile=epss_entry.percentile if epss_entry else None,
+        epss_date=epss_entry.date if epss_entry else None,
+        is_kev=is_kev,
+        kev_date_added=kev_entry.date_added if kev_entry else None,
+        kev_due_date=kev_entry.due_date if kev_entry else None,
+        kev_required_action=kev_entry.required_action if kev_entry else None,
+        kev_ransomware_use=kev_ransomware,
+        exploit_maturity=calculate_exploit_maturity(is_kev, kev_ransomware, epss_score),
+        risk_score=calculate_risk_score(cvss, epss_score, is_kev, kev_ransomware),
+    )
 
 
 class VulnerabilityEnrichmentService:
@@ -102,31 +128,15 @@ class VulnerabilityEnrichmentService:
         kev_catalog, epss_data = await asyncio.gather(kev_task, epss_task)
 
         # Build enrichment for each CVE
-        results = {}
-        for cve in unique_cves:
-            kev_entry = kev_catalog.get(cve)
-            epss_entry = epss_data.get(cve)
-            cvss = cvss_scores.get(cve)
-
-            is_kev = kev_entry is not None
-            kev_ransomware = kev_entry.known_ransomware_use if kev_entry else False
-            epss_score = epss_entry.epss_score if epss_entry else None
-
-            enrichment = VulnerabilityEnrichment(
-                cve=cve,
-                epss_score=epss_score,
-                epss_percentile=epss_entry.percentile if epss_entry else None,
-                epss_date=epss_entry.date if epss_entry else None,
-                is_kev=is_kev,
-                kev_date_added=kev_entry.date_added if kev_entry else None,
-                kev_due_date=kev_entry.due_date if kev_entry else None,
-                kev_required_action=kev_entry.required_action if kev_entry else None,
-                kev_ransomware_use=kev_ransomware,
-                exploit_maturity=calculate_exploit_maturity(is_kev, kev_ransomware, epss_score),
-                risk_score=calculate_risk_score(cvss, epss_score, is_kev, kev_ransomware),
+        results = {
+            cve: _build_enrichment(
+                cve,
+                kev_catalog.get(cve),
+                epss_data.get(cve),
+                cvss_scores.get(cve),
             )
-
-            results[cve] = enrichment
+            for cve in unique_cves
+        }
 
         kev_count = sum(1 for e in results.values() if e.is_kev)
         epss_count = sum(1 for e in results.values() if e.epss_score is not None)
@@ -134,19 +144,16 @@ class VulnerabilityEnrichmentService:
 
         return results
 
-    async def enrich_findings(self, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def enrich_findings(self, findings: List[Dict[str, Any]]) -> None:
         """
         Enrich a list of vulnerability findings with EPSS and KEV data.
-        Modifies findings in-place and returns them.
+        Modifies findings in-place.
 
         Args:
             findings: List of finding dicts with vulnerabilities in details
-
-        Returns:
-            Same list with enrichment data added to each finding
         """
         if not findings:
-            return findings
+            return
 
         # Extract CVE IDs and CVSS scores from all findings
         # Map: CVE -> List of (finding, vuln_index) tuples to update
@@ -197,7 +204,7 @@ class VulnerabilityEnrichmentService:
                         cve_to_findings[alias].append(finding)
 
         if not cve_to_findings:
-            return findings
+            return
 
         ghsa_ids = [vid for vid in cve_to_findings.keys() if vid.startswith("GHSA-")]
         ghsa_resolutions: Dict[str, GHSAData] = {}
@@ -306,8 +313,6 @@ class VulnerabilityEnrichmentService:
                     current_risk = finding["details"].get("risk_score")
                     if current_risk is None or enrichment.risk_score > current_risk:
                         finding["details"]["risk_score"] = enrichment.risk_score
-
-        return findings
 
     # expose the scoring functions for external use if needed, e.g. reachability
     def calculate_adjusted_risk_score(

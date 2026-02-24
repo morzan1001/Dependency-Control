@@ -92,7 +92,51 @@ class AnalysisWorkerManager:
         except Exception as e:
             logger.error(f"Failed to recover pending jobs: {e}")
 
-    async def stop(self, timeout: Optional[float] = None) -> None:
+    def _cancel_background_tasks(self) -> None:
+        """Cancel housekeeping and stale scan tasks."""
+        if self.housekeeping_task:
+            self.housekeeping_task.cancel()
+            logger.info("Housekeeping task cancelled.")
+
+        if self.stale_scan_task:
+            self.stale_scan_task.cancel()
+            logger.info("Stale scan loop cancelled.")
+
+    def _drain_queue(self) -> None:
+        """Drain remaining queue items (they remain pending in DB)."""
+        queue_size = self.queue.qsize()
+        if queue_size == 0:
+            return
+
+        logger.info(
+            f"Leaving {queue_size} items in queue - they remain 'pending' in DB "
+            f"and will be recovered by other pods or on restart."
+        )
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+                self.queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+
+    async def _await_active_scans(self, timeout: int) -> None:
+        """Wait for active scans to complete within timeout."""
+        if not self._active_scans:
+            return
+
+        logger.info(f"Waiting for {len(self._active_scans)} active scan(s) to complete: {self._active_scans}")
+        try:
+            await asyncio.wait_for(self._wait_for_active_scans(), timeout=timeout)
+            logger.info("All active scans completed gracefully.")
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Shutdown timeout ({timeout}s) exceeded. "
+                f"Force-cancelling {len(self._active_scans)} active scan(s): "
+                f"{self._active_scans}. "
+                f"These will be recovered by housekeeping as stuck scans."
+            )
+
+    async def stop(self) -> None:
         """
         Gracefully stops all worker tasks.
 
@@ -101,13 +145,8 @@ class AnalysisWorkerManager:
         3. Waits for workers to finish current scan (with timeout)
         4. Returns unclaimed queue items to DB as pending (they already are)
         5. Force-cancels workers if timeout exceeded
-
-        Args:
-            timeout: Max seconds to wait for graceful shutdown.
-                     Default: DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
         """
-        if timeout is None:
-            timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
+        timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
 
         logger.info(
             f"Initiating graceful shutdown (timeout: {timeout}s, "
@@ -120,43 +159,13 @@ class AnalysisWorkerManager:
         self._shutdown_event.set()
 
         # 2. Stop housekeeping tasks immediately (they're not critical)
-        if self.housekeeping_task:
-            self.housekeeping_task.cancel()
-            logger.info("Housekeeping task cancelled.")
+        self._cancel_background_tasks()
 
-        if self.stale_scan_task:
-            self.stale_scan_task.cancel()
-            logger.info("Stale scan loop cancelled.")
-
-        # 3. Log queue items that will be left behind (they're still pending in DB)
-        queue_size = self.queue.qsize()
-        if queue_size > 0:
-            logger.info(
-                f"Leaving {queue_size} items in queue - they remain 'pending' in DB "
-                f"and will be recovered by other pods or on restart."
-            )
-            # Drain the queue to prevent memory leak (items are already in DB as pending)
-            while not self.queue.empty():
-                try:
-                    self.queue.get_nowait()
-                    self.queue.task_done()
-                except asyncio.QueueEmpty:
-                    break
+        # 3. Drain queue items (they're still pending in DB)
+        self._drain_queue()
 
         # 4. Wait for active scans to complete (with timeout)
-        if self._active_scans:
-            logger.info(f"Waiting for {len(self._active_scans)} active scan(s) to complete: {self._active_scans}")
-            try:
-                # Wait for workers to finish their current work
-                await asyncio.wait_for(self._wait_for_active_scans(), timeout=timeout)
-                logger.info("All active scans completed gracefully.")
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Shutdown timeout ({timeout}s) exceeded. "
-                    f"Force-cancelling {len(self._active_scans)} active scan(s): "
-                    f"{self._active_scans}. "
-                    f"These will be recovered by housekeeping as stuck scans."
-                )
+        await self._await_active_scans(timeout)
 
         # 5. Cancel all worker tasks (they should have exited by now or will be force-stopped)
         for task in self.workers:

@@ -5,16 +5,13 @@ Provides a generic, type-safe base class for all repositories.
 Reduces code duplication and ensures consistent database operations.
 """
 
-from typing import Any, AsyncGenerator, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, AsyncGenerator, Dict, List, Optional, Type
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pydantic import BaseModel
 
-# Type variable for the model class
-T = TypeVar("T", bound=BaseModel)
 
-
-class BaseRepository(Generic[T]):
+class BaseRepository[T: BaseModel]:
     """
     Generic base repository providing common CRUD operations.
 

@@ -208,40 +208,54 @@ class OSVAnalyzer(Analyzer):
             )
         return normalized
 
+    @staticmethod
+    def _cvss_to_severity(cvss_score: float) -> str:
+        """Convert a CVSS score to a severity string."""
+        if cvss_score >= 9.0:
+            return Severity.CRITICAL.value
+        if cvss_score >= 7.0:
+            return Severity.HIGH.value
+        if cvss_score >= 4.0:
+            return Severity.MEDIUM.value
+        return Severity.LOW.value
+
+    def _severity_from_cvss_array(self, severity_array: List[Dict[str, Any]]) -> Optional[str]:
+        """Try to extract severity from CVSS scores in the severity array."""
+        for sev_info in severity_array:
+            sev_type = sev_info.get("type", "")
+            score = sev_info.get("score", "")
+            if "CVSS" not in sev_type or not score:
+                continue
+            cvss_score = self._parse_cvss_score(str(score))
+            if cvss_score is not None:
+                return self._cvss_to_severity(cvss_score)
+        return None
+
+    @staticmethod
+    def _severity_from_map(raw_severity: Optional[str]) -> Optional[str]:
+        """Look up a raw severity string in the OSV severity map."""
+        if not raw_severity:
+            return None
+        sev = raw_severity.upper()
+        return OSV_SEVERITY_MAP.get(sev)
+
     def _extract_severity(self, vuln: Dict[str, Any]) -> str:
         """Extract severity from OSV vulnerability data."""
         # Check database_specific first (e.g., GitHub advisories)
-        db_specific = vuln.get("database_specific", {})
-        if db_specific.get("severity"):
-            sev = db_specific["severity"].upper()
-            if sev in OSV_SEVERITY_MAP:
-                return OSV_SEVERITY_MAP[sev]
+        db_sev = self._severity_from_map(vuln.get("database_specific", {}).get("severity"))
+        if db_sev:
+            return db_sev
 
         # Check severity array (CVSS scores)
-        for sev_info in vuln.get("severity", []):
-            sev_type = sev_info.get("type", "")
-            score = sev_info.get("score", "")
-
-            # Parse CVSS score
-            if "CVSS" in sev_type and score:
-                cvss_score = self._parse_cvss_score(str(score))
-                if cvss_score is not None:
-                    if cvss_score >= 9.0:
-                        return Severity.CRITICAL.value
-                    elif cvss_score >= 7.0:
-                        return Severity.HIGH.value
-                    elif cvss_score >= 4.0:
-                        return Severity.MEDIUM.value
-                    else:
-                        return Severity.LOW.value
+        cvss_sev = self._severity_from_cvss_array(vuln.get("severity", []))
+        if cvss_sev:
+            return cvss_sev
 
         # Check affected entries for severity
         for affected in vuln.get("affected", []):
-            ecosystem_specific = affected.get("ecosystem_specific", {})
-            if ecosystem_specific.get("severity"):
-                sev = ecosystem_specific["severity"].upper()
-                if sev in OSV_SEVERITY_MAP:
-                    return OSV_SEVERITY_MAP[sev]
+            eco_sev = self._severity_from_map(affected.get("ecosystem_specific", {}).get("severity"))
+            if eco_sev:
+                return eco_sev
 
         # Default to MEDIUM if no severity found
         return Severity.MEDIUM.value

@@ -27,7 +27,7 @@ class TestProcessSecretsEmpty:
 
     def test_none_equivalent_empty(self):
         """An empty iterable should also be safe."""
-        assert process_secrets(list()) == []
+        assert process_secrets([]) == []
 
 
 class TestProcessSecretsSingleFinding:

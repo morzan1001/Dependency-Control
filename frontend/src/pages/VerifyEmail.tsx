@@ -12,7 +12,13 @@ export default function VerifyEmail() {
   const token = searchParams.get('token')
   const { mutate: verify, isPending, isSuccess, isError, error, data } = useVerifyEmail()
   
-  const status = isPending ? 'loading' : isSuccess ? 'success' : isError ? 'error' : 'loading'
+  const getStatus = () => {
+    if (isPending) return 'loading'
+    if (isSuccess) return 'success'
+    if (isError) return 'error'
+    return 'loading'
+  }
+  const status = getStatus()
   const message = error ? getErrorMessage(error) : data?.message || ''
 
   useEffect(() => {
@@ -21,8 +27,8 @@ export default function VerifyEmail() {
     }
   }, [token, verify])
 
-  const errorMessage = !token ? 'No verification token provided.' : message
-  const displayStatus = !token ? 'error' : status
+  const errorMessage = token ? message : 'No verification token provided.'
+  const displayStatus = token ? status : 'error'
 
   return (
     <div className="flex h-screen items-center justify-center bg-muted/50">

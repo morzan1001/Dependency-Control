@@ -129,14 +129,12 @@ class SBOMParser:
             SBOMFormat.SYFT: self._parse_syft,
         }
 
-    def detect_format(self, sbom: Dict[str, Any]) -> Tuple[SBOMFormat, Optional[str]]:
-        """Detect the SBOM format and version."""
-
-        # CycloneDX detection
+    @staticmethod
+    def _detect_cyclonedx(sbom: Dict[str, Any]) -> Optional[Tuple[SBOMFormat, Optional[str]]]:
+        """Try to detect CycloneDX format."""
         if sbom.get("bomFormat") == "CycloneDX":
             return SBOMFormat.CYCLONEDX, sbom.get("specVersion")
 
-        # Check for CycloneDX schema
         schema = sbom.get("$schema", "")
         if "cyclonedx" in schema.lower():
             version_match = re.search(r"bom-(\d+\.\d+)", schema)
@@ -144,24 +142,30 @@ class SBOMParser:
             return SBOMFormat.CYCLONEDX, version
 
         # CycloneDX by structure (has components array with purl)
-        if "components" in sbom and isinstance(sbom.get("components"), list):
-            if sbom.get("components") and "purl" in sbom["components"][0]:
-                return SBOMFormat.CYCLONEDX, sbom.get("specVersion")
+        components = sbom.get("components")
+        if isinstance(components, list) and components and "purl" in components[0]:
+            return SBOMFormat.CYCLONEDX, sbom.get("specVersion")
 
-        # SPDX detection
+        return None
+
+    @staticmethod
+    def _detect_spdx(sbom: Dict[str, Any]) -> Optional[Tuple[SBOMFormat, Optional[str]]]:
+        """Try to detect SPDX format."""
         if sbom.get("spdxVersion"):
             return SBOMFormat.SPDX, sbom.get("spdxVersion")
 
         if "SPDX" in sbom.get("$schema", ""):
             return SBOMFormat.SPDX, None
 
-        # Syft JSON detection (has artifacts array)
+        return None
+
+    @staticmethod
+    def _detect_syft(sbom: Dict[str, Any]) -> Optional[Tuple[SBOMFormat, Optional[str]]]:
+        """Try to detect Syft JSON format."""
         if "artifacts" in sbom and isinstance(sbom.get("artifacts"), list):
-            # Check for Syft descriptor
             descriptor = sbom.get("descriptor", {})
             if descriptor.get("name") == "syft":
                 return SBOMFormat.SYFT, descriptor.get("version")
-            # Even without descriptor, artifacts + source is Syft-like
             if "source" in sbom:
                 return SBOMFormat.SYFT, None
 
@@ -172,6 +176,22 @@ class SBOMParser:
             SOURCE_TYPE_FILE,
         ]:
             return SBOMFormat.SYFT, None
+
+        return None
+
+    def detect_format(self, sbom: Dict[str, Any]) -> Tuple[SBOMFormat, Optional[str]]:
+        """Detect the SBOM format and version."""
+        result = self._detect_cyclonedx(sbom)
+        if result:
+            return result
+
+        result = self._detect_spdx(sbom)
+        if result:
+            return result
+
+        result = self._detect_syft(sbom)
+        if result:
+            return result
 
         return SBOMFormat.UNKNOWN, None
 
@@ -336,6 +356,39 @@ class SBOMParser:
 
         return source_type, source_target
 
+    @staticmethod
+    def _extract_purl_type(purl: str) -> Optional[str]:
+        """Extract the package type from a PURL string."""
+        if purl and purl.startswith("pkg:"):
+            purl_parts = purl[4:].split("/", 1)
+            if purl_parts:
+                return purl_parts[0].lower()
+        return None
+
+    _APP_LOCATION_PATTERNS = (
+        "node_modules",
+        "site-packages",
+        ".venv",
+        "vendor",
+        "requirements",
+        "package.json",
+        "go.mod",
+        "cargo.toml",
+        "pom.xml",
+        "build.gradle",
+        "gemfile",
+        ".csproj",
+    )
+
+    @staticmethod
+    def _has_app_location(locations: List[str]) -> bool:
+        """Check if any location looks like an application dependency path."""
+        for loc in locations:
+            loc_lower = loc.lower()
+            if any(pattern in loc_lower for pattern in SBOMParser._APP_LOCATION_PATTERNS):
+                return True
+        return False
+
     def _determine_component_source(
         self,
         purl: str,
@@ -353,50 +406,16 @@ class SBOMParser:
             - "file": From a specific file
             - None: Unknown
         """
-        # Normalize package type from PURL
-        purl_type = None
-        if purl:
-            # Extract type from purl: pkg:TYPE/...
-            if purl.startswith("pkg:"):
-                purl_parts = purl[4:].split("/", 1)
-                if purl_parts:
-                    purl_type = purl_parts[0].lower()
-
+        purl_type = self._extract_purl_type(purl)
         effective_type = (purl_type or pkg_type or "").lower()
 
         # OS packages with layer info are definitely from the container image
         if effective_type in OS_PACKAGE_TYPES:
-            if layer_digest:
-                return SOURCE_TYPE_IMAGE
-            # OS packages without layer info - still likely from image
-            if global_source_type == SOURCE_TYPE_IMAGE:
+            if layer_digest or global_source_type == SOURCE_TYPE_IMAGE:
                 return SOURCE_TYPE_IMAGE
 
         # Application packages are typically from source code, not the base image
         if effective_type in APP_PACKAGE_TYPES:
-            # Check if there's a location that looks like app code
-            for loc in locations:
-                loc_lower = loc.lower()
-                # Common app dependency locations
-                if any(
-                    pattern in loc_lower
-                    for pattern in [
-                        "node_modules",
-                        "site-packages",
-                        ".venv",
-                        "vendor",
-                        "requirements",
-                        "package.json",
-                        "go.mod",
-                        "cargo.toml",
-                        "pom.xml",
-                        "build.gradle",
-                        "gemfile",
-                        ".csproj",
-                    ]
-                ):
-                    return SOURCE_TYPE_APPLICATION
-
             # Even without location hints, app packages are usually from the app
             return SOURCE_TYPE_APPLICATION
 
@@ -993,28 +1012,19 @@ class SBOMParser:
         license_str, _ = self._extract_syft_licenses_full(licenses)
         return license_str
 
-    def _parse_spdx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
-        """Parse SPDX format SBOM."""
+    def _build_spdx_dependency_graph(
+        self, relationships: List[Dict[str, Any]], doc_spdx_id: str
+    ) -> tuple[set, set, Dict[str, list], set]:
+        """
+        Build dependency graph data from SPDX relationships.
 
-        result.tool_name = "spdx"
-        result.format_version = sbom.get("spdxVersion")
-        result.created_at = sbom.get("creationInfo", {}).get("created")
-
-        # SPDX relationships define dependencies
-        # DEPENDS_ON, DEPENDENCY_OF, CONTAINS, etc.
-        relationships = sbom.get("relationships", [])
-
-        # Find the document/root package (usually SPDXID = "SPDXRef-DOCUMENT")
-        doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
-
-        # Build a map of direct dependencies
-        # Direct = packages that the root DESCRIBES or CONTAINS
-        # Also packages that have DEPENDS_ON from root
-        direct_package_ids = set()
-        all_dependency_targets = set()  # All packages that are dependencies of something
-
-        # Build reverse dependency graph: child -> list of parents
+        Returns:
+            Tuple of (direct_package_ids, all_dependency_targets, reverse_deps_graph, packages_with_deps)
+        """
+        direct_package_ids: set = set()
+        all_dependency_targets: set = set()
         reverse_deps_graph: Dict[str, list] = {}
+        packages_with_deps: set = set()
 
         for rel in relationships:
             rel_type = rel.get("relationshipType", "")
@@ -1022,46 +1032,45 @@ class SBOMParser:
             related_id = rel.get("relatedSpdxElement", "")
 
             # Root package relationships - these are direct deps
-            if element_id == doc_spdx_id:
-                if rel_type in ["DESCRIBES", "CONTAINS", "DEPENDS_ON"]:
-                    direct_package_ids.add(related_id)
+            if element_id == doc_spdx_id and rel_type in ["DESCRIBES", "CONTAINS", "DEPENDS_ON"]:
+                direct_package_ids.add(related_id)
 
             # Track all dependency targets (transitive) and build reverse graph
             if rel_type == "DEPENDS_ON":
                 all_dependency_targets.add(related_id)
-                # Build reverse mapping: child -> parents
+                packages_with_deps.add(element_id)
                 if related_id not in reverse_deps_graph:
                     reverse_deps_graph[related_id] = []
                 reverse_deps_graph[related_id].append(element_id)
 
-        # Also check for packages that depend on others (makes them root-level if not depended upon)
-        packages_with_deps = set()
-        for rel in relationships:
-            if rel.get("relationshipType") == "DEPENDS_ON":
-                packages_with_deps.add(rel.get("spdxElementId", ""))
+        return direct_package_ids, all_dependency_targets, reverse_deps_graph, packages_with_deps
 
-        # SPDX uses "packages" instead of components
+    def _parse_spdx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
+        """Parse SPDX format SBOM."""
+
+        result.tool_name = "spdx"
+        result.format_version = sbom.get("spdxVersion")
+        result.created_at = sbom.get("creationInfo", {}).get("created")
+
+        relationships = sbom.get("relationships", [])
+        doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
+
+        direct_package_ids, all_dependency_targets, reverse_deps_graph, packages_with_deps = (
+            self._build_spdx_dependency_graph(relationships, doc_spdx_id)
+        )
+
         packages = sbom.get("packages", [])
-
-        # Determine if we have a dependency graph
-        has_dependency_graph = bool(relationships)
-        inferred = not has_dependency_graph
+        inferred = not bool(relationships)
 
         for pkg in packages:
             pkg_spdx_id = pkg.get("SPDXID", "")
 
-            # Determine if direct:
-            # A package is direct if it's in the direct set, or if it has
-            # dependencies but nothing depends on it (i.e. a root package)
-            is_direct = pkg_spdx_id in direct_package_ids or (
-                pkg_spdx_id in packages_with_deps and pkg_spdx_id not in all_dependency_targets
+            is_direct = (
+                inferred
+                or pkg_spdx_id in direct_package_ids
+                or (pkg_spdx_id in packages_with_deps and pkg_spdx_id not in all_dependency_targets)
             )
 
-            # If no dependency graph, assume all are direct (inferred)
-            if inferred:
-                is_direct = True
-
-            # Get parent components
             parent_components = reverse_deps_graph.get(pkg_spdx_id, [])
 
             parsed = self._parse_spdx_package(pkg, is_direct, inferred, parent_components)

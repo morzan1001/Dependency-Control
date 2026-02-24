@@ -146,6 +146,18 @@ def build_finding_id(
     return f"{prefix}{separator}{separator.join(valid_parts)}"
 
 
+def _find_v3_score(cvss_data: Dict[str, Any], source_priority: List[str]) -> Tuple[Optional[float], Optional[str]]:
+    """Search for a CVSS V3 score across sources in priority order."""
+    for source in source_priority:
+        data = cvss_data.get(source)
+        if not data or "V3Score" not in data:
+            continue
+        v3_score = data.get("V3Score")
+        if v3_score is not None:
+            return float(v3_score), data.get("V3Vector")
+    return None, None
+
+
 def extract_cvss(
     cvss_data: Dict[str, Any],
     prefer_v3: bool = True,
@@ -168,32 +180,23 @@ def extract_cvss(
     # Priority order for sources
     source_priority = ["nvd", "redhat", "ghsa", "bitnami"]
 
-    best_score = None
-    best_vector = None
-    best_version = 0
+    # Check V3 first (preferred) across all sources
+    if prefer_v3:
+        v3_result = _find_v3_score(cvss_data, source_priority)
+        if v3_result[0] is not None:
+            return v3_result
 
+    # Fall back to V2
     for source in source_priority:
         if source not in cvss_data:
             continue
-
         data = cvss_data[source]
-
-        # Check V3 first (preferred)
-        if prefer_v3 and "V3Score" in data:
-            v3_score = data.get("V3Score")
-            if v3_score is not None:
-                # V3 is preferred, take it immediately
-                return float(v3_score), data.get("V3Vector")
-
-        # Check V2 as fallback
-        if "V2Score" in data and best_version < 2:
+        if "V2Score" in data:
             v2_score = data.get("V2Score")
             if v2_score is not None:
-                best_score = float(v2_score)
-                best_vector = data.get("V2Vector")
-                best_version = 2
+                return float(v2_score), data.get("V2Vector")
 
-    return best_score, best_vector
+    return None, None
 
 
 def extract_grype_cvss(

@@ -17,7 +17,7 @@ interface ContextBannersSectionProps {
   finding: Finding
 }
 
-export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
+export function ContextBannersSection({ finding }: Readonly<ContextBannersSectionProps>) {
   const banners: React.ReactNode[] = []
 
   const hasAggregatedQualityIssues =
@@ -136,7 +136,12 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
     const isVeryLowScore = hasValidScore && ctx.overall_score! < 3
 
     if (hasValidScore || ctx.maintenance_risk || (ctx.critical_issues && ctx.critical_issues.length > 0)) {
-      const variant = isVeryLowScore || ctx.maintenance_risk ? 'danger' : isLowScore ? 'warning' : 'info'
+      const getVariant = () => {
+        if (isVeryLowScore || ctx.maintenance_risk) return 'danger' as const
+        if (isLowScore) return 'warning' as const
+        return 'info' as const
+      }
+      const variant = getVariant()
       banners.push(
         <ContextBanner
           key="scorecard"
@@ -179,8 +184,8 @@ export function ContextBannersSection({ finding }: ContextBannersSectionProps) {
                 .filter((issue) => !(ctx.maintenance_risk && issue === 'Maintained'))
                 .filter((issue) => !(ctx.has_vulnerabilities_issue && issue === 'Vulnerabilities'))
                 .slice(0, 3)
-                .map((issue, idx) => (
-                  <Badge key={idx} variant="outline" className="text-xs border-current">
+                .map((issue) => (
+                  <Badge key={issue} variant="outline" className="text-xs border-current">
                     {formatScorecardCriticalIssue(issue)}
                   </Badge>
                 ))}

@@ -22,7 +22,7 @@ interface DependencyNodeProps {
   onSelect?: (node: DependencyTreeNode) => void;
 }
 
-function DependencyNode({ node, level, onSelect }: DependencyNodeProps) {
+function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>) {
   const [isExpanded, setIsExpanded] = useState(false)
   const hasChildren = node.children && node.children.length > 0
   const sourceInfo = getSourceInfo(node.source_type)
@@ -44,8 +44,11 @@ function DependencyNode({ node, level, onSelect }: DependencyNodeProps) {
             "flex items-center gap-2 py-2 px-3 hover:bg-muted rounded-lg cursor-pointer border-l-4",
             node.has_findings ? getSeverityBorder() : "border-l-transparent",
           )}
+          role="treeitem"
+          tabIndex={0}
           style={{ paddingLeft: `${level * 24 + 12}px` }}
           onClick={() => onSelect?.(node)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect?.(node); } }}
         >
           {hasChildren && (
             <Button
@@ -110,8 +113,8 @@ function DependencyNode({ node, level, onSelect }: DependencyNodeProps) {
                     {node.locations && node.locations.length > 0 && (
                       <div className="text-xs text-muted-foreground">
                         <p>Locations:</p>
-                        {node.locations.slice(0, 3).map((loc, i) => (
-                          <p key={i} className="pl-2 truncate">{loc}</p>
+                        {node.locations.slice(0, 3).map((loc) => (
+                          <p key={loc} className="pl-2 truncate">{loc}</p>
                         ))}
                         {node.locations.length > 3 && (
                           <p className="pl-2">+{node.locations.length - 3} more</p>
@@ -155,7 +158,7 @@ interface DependencyTreeProps {
   onSelectNode?: (node: DependencyTreeNode) => void;
 }
 
-export function DependencyTree({ onSelectNode }: DependencyTreeProps) {
+export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showDirectOnly, setShowDirectOnly] = useState(false)
 
@@ -195,79 +198,81 @@ export function DependencyTree({ onSelectNode }: DependencyTreeProps) {
         </div>
       </CardHeader>
       <CardContent>
-        {!selectedProjectId ? (
-          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <Package className="h-12 w-12 mb-4" />
-            <p>Select a project to view its dependency tree</p>
-          </div>
-        ) : isLoadingTree ? (
-          <div className="space-y-2">
-            {new Array(8).fill(0).map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full" />
-            ))}
-          </div>
-        ) : filteredTree && filteredTree.length > 0 ? (
-          <div className="space-y-4">
-            {/* Summary */}
-            <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
-              <div className="flex items-center gap-2">
-                <Shield className="h-5 w-5 text-green-500" />
-                <span className="text-sm font-medium">
-                  {directDeps.length} direct dependencies
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Layers className="h-5 w-5 text-blue-500" />
-                <span className="text-sm font-medium">
-                  {transitiveDeps.length} transitive dependencies
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-destructive" />
-                <span className="text-sm font-medium">
-                  {filteredTree.filter(n => n.has_findings).length} with vulnerabilities
-                </span>
-              </div>
+        {selectedProjectId ? (
+          isLoadingTree ? (
+            <div className="space-y-2">
+              {Array.from({ length: 8 }, (_, i) => (
+                <Skeleton key={`skeleton-${i}`} className="h-10 w-full" />
+              ))}
             </div>
-
-            {/* Direct Dependencies Section */}
-            {directDeps.length > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-muted-foreground mb-2">Direct Dependencies</h4>
-                <div className="border rounded-lg divide-y">
-                  {directDeps.map((node) => (
-                    <DependencyNode
-                      key={node.id}
-                      node={node}
-                      level={0}
-                      onSelect={onSelectNode}
-                    />
-                  ))}
+          ) : filteredTree && filteredTree.length > 0 ? (
+            <div className="space-y-4">
+              {/* Summary */}
+              <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-5 w-5 text-green-500" />
+                  <span className="text-sm font-medium">
+                    {directDeps.length} direct dependencies
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Layers className="h-5 w-5 text-blue-500" />
+                  <span className="text-sm font-medium">
+                    {transitiveDeps.length} transitive dependencies
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-destructive" />
+                  <span className="text-sm font-medium">
+                    {filteredTree.filter(n => n.has_findings).length} with vulnerabilities
+                  </span>
                 </div>
               </div>
-            )}
 
-            {/* Transitive Dependencies Section */}
-            {!showDirectOnly && transitiveDeps.length > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-muted-foreground mb-2">Transitive Dependencies</h4>
-                <div className="border rounded-lg divide-y max-h-[400px] overflow-y-auto">
-                  {transitiveDeps.map((node) => (
-                    <DependencyNode
-                      key={node.id}
-                      node={node}
-                      level={0}
-                      onSelect={onSelectNode}
-                    />
-                  ))}
+              {/* Direct Dependencies Section */}
+              {directDeps.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">Direct Dependencies</h4>
+                  <div className="border rounded-lg divide-y">
+                    {directDeps.map((node) => (
+                      <DependencyNode
+                        key={node.id}
+                        node={node}
+                        level={0}
+                        onSelect={onSelectNode}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+
+              {/* Transitive Dependencies Section */}
+              {!showDirectOnly && transitiveDeps.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-2">Transitive Dependencies</h4>
+                  <div className="border rounded-lg divide-y max-h-[400px] overflow-y-auto">
+                    {transitiveDeps.map((node) => (
+                      <DependencyNode
+                        key={node.id}
+                        node={node}
+                        level={0}
+                        onSelect={onSelectNode}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Package className="h-12 w-12 mb-4" />
+              <p>No dependencies found for this project</p>
+            </div>
+          )
         ) : (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
             <Package className="h-12 w-12 mb-4" />
-            <p>No dependencies found for this project</p>
+            <p>Select a project to view its dependency tree</p>
           </div>
         )}
       </CardContent>

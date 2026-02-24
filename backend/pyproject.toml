@@ -61,6 +61,14 @@ exclude = [".git", "__pycache__", "docs/source/conf.py", "old", "build", "dist"]
 [tool.ruff.lint]
 ignore = ["E203", "W293"]
 
+[tool.coverage.run]
+source = ["app"]
+relative_files = true
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -80,7 +88,7 @@ commands_pre = [["poetry", "install", "--no-root"]]
 
 [tool.tox.env.test]
 description = "Run tests with coverage"
-commands = [["poetry", "run", "pytest", "--cov=app", "--cov-report=term-missing", "--cov-report=html:htmlcov", "-q"]]
+commands = [["poetry", "run", "pytest", "--cov=app", "--cov-branch", "--cov-report=term-missing", "--cov-report=html:htmlcov", "--cov-report=xml:coverage.xml", "-q"]]
 
 [tool.tox.env.lint]
 description = "Run linting with ruff"

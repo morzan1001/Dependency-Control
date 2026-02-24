@@ -18,7 +18,7 @@ from app.repositories.system_settings import SystemSettingsRepository
 router = CustomAPIRouter()
 
 
-@router.get("/slack/callback", responses={**RESP_400})
+@router.get("/slack/callback", responses=RESP_400)
 async def slack_callback(
     code: str,
     db: DatabaseDep,

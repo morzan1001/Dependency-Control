@@ -6,6 +6,9 @@ import { Finding, NestedVulnerability } from "@/types/scan"
 import { AlertTriangle, ExternalLink, Shield, ShieldAlert, ServerCrash } from "lucide-react"
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
+import { useProject } from '@/hooks/queries/use-projects'
+import { useCurrentUser } from '@/hooks/queries/use-users'
+import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
 import { getSeverityBadgeVariant } from '@/lib/finding-utils'
@@ -25,6 +28,64 @@ import {
   getFindingVersion,
 } from './details/finding-details-helpers'
 
+function MatchedSymbolsList({ symbols }: { symbols: string[] }) {
+    return (
+        <div className="flex items-start gap-2 w-full">
+            <span className="font-medium text-muted-foreground shrink-0">Affected Symbols:</span>
+            <div className="flex flex-wrap gap-1">
+                {symbols.slice(0, 5).map((symbol) => (
+                    <Badge key={symbol} variant="outline" className="font-mono text-xs">
+                        {symbol}
+                    </Badge>
+                ))}
+                {symbols.length > 5 && (
+                    <Badge variant="secondary" className="text-[10px]">
+                        +{symbols.length - 5} more
+                    </Badge>
+                )}
+            </div>
+        </div>
+    )
+}
+
+function AliasLink({ alias }: { alias: string }) {
+    const isCve = alias.startsWith('CVE-');
+    const isGhsa = alias.startsWith('GHSA-');
+    const link = isCve
+        ? `https://nvd.nist.gov/vuln/detail/${alias}`
+        : isGhsa
+            ? `https://github.com/advisories/${alias}`
+            : null;
+
+    if (link) {
+        return (
+            <a
+                href={link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-primary hover:underline text-xs"
+                onClick={(e) => e.stopPropagation()}
+            >
+                {alias}
+            </a>
+        );
+    }
+    return <span className="font-mono text-xs">{alias}</span>;
+}
+
+function AliasList({ aliases }: { aliases: string[] }) {
+    return (
+        <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-muted-foreground">Aliases:</span>
+            <div className="flex flex-wrap gap-1">
+                {aliases.map((alias) => (
+                    <AliasLink key={alias} alias={alias} />
+                ))}
+            </div>
+        </div>
+    );
+}
+
 interface FindingDetailsModalProps {
     finding: Finding | null
     isOpen: boolean
@@ -39,8 +100,13 @@ interface FindingDetailsModalProps {
 export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, scanContext, onSelectFinding, onNavigate }: FindingDetailsModalProps) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
     const [selectedVulnId, setSelectedVulnId] = useState<string | null>(null)
-    const { hasPermission } = useAuth()
+    const { hasPermission, permissions } = useAuth()
     const navigate = useNavigate()
+    const { data: project } = useProject(projectId)
+    const { data: currentUser } = useCurrentUser()
+    const canCreateWaiver = project && currentUser
+        ? canCreateProjectWaiver(project, currentUser.id, permissions)
+        : hasPermission('waiver:manage')
     
     if (!finding) return null
 
@@ -77,8 +143,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                         <span className="flex items-center gap-1">
                             <Badge variant="outline">{finding.type}</Badge>
                             {/* Show additional absorbed finding types */}
-                            {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }, idx: number) => (
-                                <FindingTypeBadge key={idx} type={addType.type} />
+                            {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }) => (
+                                <FindingTypeBadge key={addType.type} type={addType.type} />
                             ))}
                         </span>
                     </DialogDescription>
@@ -282,13 +348,13 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                 {/* Unified context banners section */}
                                                 <ContextBannersSection finding={finding} />
                                                 
-                                                {vulns.map((vuln: NestedVulnerability, idx: number) => {
+                                                {vulns.map((vuln: NestedVulnerability) => {
                                                     const vulnId = vuln.id || getFindingId(finding);
                                                     const isCve = vulnId?.startsWith('CVE-');
                                                     const isGhsa = vulnId?.startsWith('GHSA-');
                                                     const resolvedCve = vuln.resolved_cve;
                                                     const githubAdvisoryUrl = vuln.github_advisory_url || finding.details?.github_advisory_url;
-                                                    
+
                                                     // Determine the best link for the vulnerability
                                                     let vulnLink = null;
                                                     if (isCve) {
@@ -296,9 +362,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     } else if (isGhsa) {
                                                         vulnLink = githubAdvisoryUrl || `https://github.com/advisories/${vulnId}`;
                                                     }
-                                                    
+
                                                     return (
-                                                    <div key={idx} className="border rounded-lg p-4 space-y-3">
+                                                    <div key={vulnId} className="border rounded-lg p-4 space-y-3">
                                                         <div className="flex items-center justify-between">
                                                             <div className="flex items-center gap-2">
                                                                 {vulnLink ? (
@@ -332,18 +398,19 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                         </Badge>
                                                                     </a>
                                                                 )}
-                                                                <Badge variant={
-                                                                    (vuln.severity || finding.severity) === 'CRITICAL' ? 'destructive' :
-                                                                    (vuln.severity || finding.severity) === 'HIGH' ? 'destructive' :
-                                                                    (vuln.severity || finding.severity) === 'MEDIUM' ? 'default' : 
-                                                                    'secondary'
-                                                                }>{vuln.severity || finding.severity}</Badge>
+                                                                {(() => {
+                                                                    const sev = vuln.severity || finding.severity
+                                                                    let badgeVariant: 'destructive' | 'default' | 'secondary' = 'secondary'
+                                                                    if (sev === 'CRITICAL' || sev === 'HIGH') badgeVariant = 'destructive'
+                                                                    else if (sev === 'MEDIUM') badgeVariant = 'default'
+                                                                    return <Badge variant={badgeVariant}>{sev}</Badge>
+                                                                })()}
                                                             </div>
                                                             <div className="flex items-center gap-2">
                                                                 <span className="text-xs text-muted-foreground">
                                                                     Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || finding.details?.fixed_version || "None"}</span>
                                                                 </span>
-                                                                {hasPermission('waiver:manage') && (
+                                                                {canCreateWaiver && (
                                                                     <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => handleWaive(vuln.id || getFindingId(finding))}>
                                                                         <ShieldAlert className="h-3 w-3 mr-1" />
                                                                         Waive
@@ -366,12 +433,12 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 const epssScore = vuln.epss_score ?? finding.details?.epss_score ?? 0
                                                                 const epssPercentile = vuln.epss_percentile ?? finding.details?.epss_percentile
                                                                 const epssDate = vuln.epss_date ?? finding.details?.epss_date
+                                                                let epssColorClass = ''
+                                                                if (epssScore >= 0.1) epssColorClass = 'text-severity-critical'
+                                                                else if (epssScore >= 0.01) epssColorClass = 'text-severity-high'
                                                                 return (
                                                                 <div className="flex items-center gap-2">
-                                                                    <span className={`font-medium ${
-                                                                        epssScore >= 0.1 ? 'text-severity-critical' :
-                                                                        epssScore >= 0.01 ? 'text-severity-high' : ''
-                                                                    }`}>
+                                                                    <span className={`font-medium ${epssColorClass}`}>
                                                                         EPSS: {(epssScore * 100).toFixed(2)}%
                                                                     </span>
                                                                     {epssPercentile !== undefined && (
@@ -435,26 +502,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 )
                                                             })()}
                                                             {/* Reachability matched symbols */}
-                                                            {((vuln.reachability?.matched_symbols || finding.details?.reachability?.matched_symbols)?.length ?? 0) > 0 && (() => {
-                                                                const matchedSymbols = vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []
-                                                                return (
-                                                                <div className="flex items-start gap-2 w-full">
-                                                                    <span className="font-medium text-muted-foreground shrink-0">Affected Symbols:</span>
-                                                                    <div className="flex flex-wrap gap-1">
-                                                                        {matchedSymbols.slice(0, 5).map((symbol: string, idx: number) => (
-                                                                            <Badge key={idx} variant="outline" className="font-mono text-xs">
-                                                                                {symbol}
-                                                                            </Badge>
-                                                                        ))}
-                                                                        {matchedSymbols.length > 5 && (
-                                                                            <Badge variant="secondary" className="text-[10px]">
-                                                                                +{matchedSymbols.length - 5} more
-                                                                            </Badge>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                                )
-                                                            })()}
+                                                            {(vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []).length > 0 && (
+                                                                <MatchedSymbolsList symbols={vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []} />
+                                                            )}
                                                             {(vuln.kev_required_action || finding.details?.kev_required_action) && (
                                                                 <div className="flex items-center gap-2 w-full">
                                                                     <span className="font-medium text-muted-foreground">Required Action:</span>
@@ -484,35 +534,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 </div>
                                                             )}
                                                             {((vuln.aliases ?? finding.aliases)?.length ?? 0) > 0 && (
-                                                                <div className="flex items-center gap-2 flex-wrap">
-                                                                    <span className="font-medium text-muted-foreground">Aliases:</span>
-                                                                    <div className="flex flex-wrap gap-1">
-                                                                        {(vuln.aliases ?? finding.aliases ?? []).map((alias: string, aliasIdx: number) => {
-                                                                            const isCve = alias.startsWith('CVE-');
-                                                                            const isGhsa = alias.startsWith('GHSA-');
-                                                                            const link = isCve 
-                                                                                ? `https://nvd.nist.gov/vuln/detail/${alias}`
-                                                                                : isGhsa 
-                                                                                    ? `https://github.com/advisories/${alias}`
-                                                                                    : null;
-                                                                            
-                                                                            return link ? (
-                                                                                <a
-                                                                                    key={aliasIdx}
-                                                                                    href={link}
-                                                                                    target="_blank"
-                                                                                    rel="noopener noreferrer"
-                                                                                    className="font-mono text-primary hover:underline text-xs"
-                                                                                    onClick={(e) => e.stopPropagation()}
-                                                                                >
-                                                                                    {alias}
-                                                                                </a>
-                                                                            ) : (
-                                                                                <span key={aliasIdx} className="font-mono text-xs">{alias}</span>
-                                                                            );
-                                                                        })}
-                                                                    </div>
-                                                                </div>
+                                                                <AliasList aliases={vuln.aliases ?? finding.aliases ?? []} />
                                                             )}
                                                             {(vuln.scanners || finding.scanners) && (
                                                                 <div className="flex items-center gap-2">
@@ -595,7 +617,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
 
                 {!showWaiverForm && (
                     <DialogFooter className="gap-2 sm:gap-0">
-                        {hasPermission('waiver:manage') && (
+                        {canCreateWaiver && (
                             <Button variant="outline" onClick={() => setShowWaiverForm(true)}>
                                 <ShieldAlert className="mr-2 h-4 w-4" />
                                 Create Waiver

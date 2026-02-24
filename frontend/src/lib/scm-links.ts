@@ -8,7 +8,7 @@ function normalizeBaseUrl(url?: string | null): string | null {
 }
 
 function encodeRef(ref: string): string {
-  return encodeURIComponent(ref).replace(/%2F/g, '/')
+  return encodeURIComponent(ref).replaceAll('%2F', '/')
 }
 
 export function detectScmProvider(params: {
@@ -75,6 +75,25 @@ export function buildPipelineUrl(params: {
   return null
 }
 
+function buildLineFragment(
+  provider: ScmProvider | null,
+  startLine?: number | null,
+  endLine?: number | null,
+): string {
+  if (!startLine) return ''
+
+  if (provider === 'github') {
+    const suffix = endLine && endLine !== startLine ? `-L${endLine}` : ''
+    return `#L${startLine}${suffix}`
+  }
+  if (provider === 'gitlab') {
+    const suffix = endLine && endLine !== startLine ? `-${endLine}` : ''
+    return `#L${startLine}${suffix}`
+  }
+
+  return ''
+}
+
 export function buildFileUrl(params: {
   projectUrl?: string | null
   pipelineUrl?: string | null
@@ -93,21 +112,7 @@ export function buildFileUrl(params: {
 
   const provider = detectScmProvider({ projectUrl: base, pipelineUrl: params.pipelineUrl })
   const cleanPath = filePath.replace(/^\.?\//, '')
-
-  let lineFragment = ''
-  if (params.startLine) {
-    if (provider === 'github') {
-      lineFragment = `#L${params.startLine}`
-      if (params.endLine && params.endLine !== params.startLine) {
-        lineFragment += `-L${params.endLine}`
-      }
-    } else if (provider === 'gitlab') {
-      lineFragment = `#L${params.startLine}`
-      if (params.endLine && params.endLine !== params.startLine) {
-        lineFragment += `-${params.endLine}`
-      }
-    }
-  }
+  const lineFragment = buildLineFragment(provider, params.startLine, params.endLine)
 
   if (provider === 'github') {
     return `${base}/blob/${encodeRef(ref)}/${cleanPath}${lineFragment}`

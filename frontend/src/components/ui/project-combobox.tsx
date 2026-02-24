@@ -131,17 +131,19 @@ export function ProjectCombobox({
       {open && (
         <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-lg animate-in fade-in-0 zoom-in-95">
           <div className="max-h-[300px] overflow-y-auto p-1">
-            {isLoading ? (
+            {isLoading && (
               <div className="space-y-1 p-1">
                 {new Array(5).fill(0).map((_, i) => (
                   <Skeleton key={i} className="h-9 w-full" />
                 ))}
               </div>
-            ) : projects.length === 0 ? (
+            )}
+            {!isLoading && projects.length === 0 && (
               <div className="py-6 text-center text-sm text-muted-foreground">
                 {search ? `No projects matching "${search}"` : 'No projects found'}
               </div>
-            ) : (
+            )}
+            {!isLoading && projects.length > 0 && (
               <div className="space-y-0.5">
                 {projects.map((project) => (
                   <button

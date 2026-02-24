@@ -27,6 +27,45 @@ interface ScanHistoryItem {
   created_at: string;
 }
 
+/** Renders an SCM link (branch, commit, etc.) with an optional external link, or plain text if no URL is available. */
+function ScmLink({ href, children }: { href: string | undefined | null; children: React.ReactNode }) {
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-primary hover:underline">
+        {children}
+        <ExternalLink className="h-3 w-3" />
+      </a>
+    )
+  }
+  return <>{children}</>
+}
+
+/** Renders the SBOM tool name extraction logic */
+function extractSbomToolName(sbom: SbomResponse['sbom']): string {
+  if (!sbom?.metadata?.tools) return ''
+  try {
+    if (Array.isArray(sbom.metadata.tools)) {
+      return sbom.metadata.tools.map((t: SbomTool) => t.name || t.vendor).join(', ')
+    }
+    if (sbom.metadata.tools.components) {
+      return sbom.metadata.tools.components.map((c: SbomToolComponent) => c.name).join(', ')
+    }
+  } catch (e) {
+    logger.warn("Failed to extract tool name", e)
+  }
+  return ''
+}
+
+/** Resolves the display name for an SBOM */
+function resolveSbomName(sbomResponse: SbomResponse): string {
+  const fallback = sbomResponse.filename || `SBOM #${sbomResponse.index + 1}`
+  const sbom = sbomResponse.sbom
+  if (!sbom) return fallback
+  if (sbom.metadata?.component?.name) return sbom.metadata.component.name
+  if (sbom.serialNumber) return sbom.serialNumber
+  return fallback
+}
+
 export default function ScanDetails() {
   const { projectId, scanId } = useParams<{ projectId: string, scanId: string }>()
   const navigate = useNavigate()
@@ -60,7 +99,7 @@ export default function ScanDetails() {
       // Get the scrollable container (look for overflow-y-auto class or nearest scrollable parent)
       let scrollContainer = sbomElement.parentElement
       while (scrollContainer && scrollContainer !== document.body) {
-        const overflowY = window.getComputedStyle(scrollContainer).overflowY
+        const overflowY = globalThis.getComputedStyle(scrollContainer).overflowY
         if (overflowY === 'auto' || overflowY === 'scroll') {
           break
         }
@@ -233,28 +272,13 @@ export default function ScanDetails() {
                             <span className="text-sm text-muted-foreground">Branch</span>
                             <div className="flex items-center gap-2">
                                 <GitBranch className="h-4 w-4" />
-                                                                {(() => {
-                                                                    const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
-                                                                    const href = buildBranchUrl({
-                                                                        projectUrl,
-                                                                        pipelineUrl: scan.pipeline_url,
-                                                                        branch: scan.branch,
-                                                                    })
-
-                                                                    return href ? (
-                                                                        <a
-                                                                            href={href}
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            className="flex items-center gap-2 text-primary hover:underline"
-                                                                        >
-                                                                            <span className="font-medium">{scan.branch}</span>
-                                                                            <ExternalLink className="h-3 w-3" />
-                                                                        </a>
-                                                                    ) : (
-                                                                        <span className="font-medium">{scan.branch}</span>
-                                                                    )
-                                                                })()}
+                                <ScmLink href={buildBranchUrl({
+                                    projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
+                                    pipelineUrl: scan.pipeline_url,
+                                    branch: scan.branch,
+                                })}>
+                                    <span className="font-medium">{scan.branch}</span>
+                                </ScmLink>
                             </div>
                         </div>
                         {scan.commit_hash && (
@@ -262,28 +286,13 @@ export default function ScanDetails() {
                                 <span className="text-sm text-muted-foreground">Commit</span>
                                 <div className="flex items-center gap-2">
                                     <GitCommit className="h-4 w-4" />
-                                                                        {(() => {
-                                                                            const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
-                                                                            const href = buildCommitUrl({
-                                                                                projectUrl,
-                                                                                pipelineUrl: scan.pipeline_url,
-                                                                                commitHash: scan.commit_hash,
-                                                                            })
-
-                                                                            return href ? (
-                                                                                <a
-                                                                                    href={href}
-                                                                                    target="_blank"
-                                                                                    rel="noopener noreferrer"
-                                                                                    className="flex items-center gap-2 text-primary hover:underline"
-                                                                                >
-                                                                                    <span className="font-medium font-mono text-xs">{shortCommitHash(scan.commit_hash)}</span>
-                                                                                    <ExternalLink className="h-3 w-3" />
-                                                                                </a>
-                                                                            ) : (
-                                                                                <span className="font-medium font-mono text-xs">{shortCommitHash(scan.commit_hash)}</span>
-                                                                            )
-                                                                        })()}
+                                    <ScmLink href={buildCommitUrl({
+                                        projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
+                                        pipelineUrl: scan.pipeline_url,
+                                        commitHash: scan.commit_hash,
+                                    })}>
+                                        <span className="font-medium font-mono text-xs">{shortCommitHash(scan.commit_hash)}</span>
+                                    </ScmLink>
                                 </div>
                             </div>
                         )}
@@ -319,33 +328,25 @@ export default function ScanDetails() {
                                 </div>
                             </div>
                         )}
-                                                {(() => {
-                                                    const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
-                                                    const pipelineId = scan.pipeline_id ?? scan.metadata?.CI_PIPELINE_ID
-                                                    const href = buildPipelineUrl({
-                                                        projectUrl,
-                                                        pipelineUrl: scan.pipeline_url,
-                                                        pipelineId,
-                                                    })
-
-                                                    if (!href || !pipelineId) return null
-
-                                                    return (
-                            <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Pipeline</span>
-                                <a 
-                                                                        href={href}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-2 text-primary hover:underline"
-                                >
-                                    <PlayCircle className="h-4 w-4" />
-                                                                        <span className="font-medium">#{pipelineId}</span>
-                                    <ExternalLink className="h-3 w-3" />
-                                </a>
-                            </div>
-                                                    )
-                                                })()}
+                        {(() => {
+                            const pipelineId = scan.pipeline_id ?? scan.metadata?.CI_PIPELINE_ID
+                            const href = buildPipelineUrl({
+                                projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
+                                pipelineUrl: scan.pipeline_url,
+                                pipelineId,
+                            })
+                            if (!href || !pipelineId) return null
+                            return (
+                                <div className="flex flex-col space-y-1">
+                                    <span className="text-sm text-muted-foreground">Pipeline</span>
+                                    <a href={href} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-primary hover:underline">
+                                        <PlayCircle className="h-4 w-4" />
+                                        <span className="font-medium">#{pipelineId}</span>
+                                        <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                </div>
+                            )
+                        })()}
                         {scan.metadata?.CI_JOB_ID && scan.metadata?.CI_PROJECT_URL && (
                             <div className="flex flex-col space-y-1">
                                 <span className="text-sm text-muted-foreground">Job</span>
@@ -421,8 +422,8 @@ export default function ScanDetails() {
                                     paddingAngle={5}
                                     dataKey="value"
                                 >
-                                    {severityData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.color} />
+                                    {severityData.map((entry) => (
+                                        <Cell key={`cell-${entry.name}`} fill={entry.color} />
                                     ))}
                                 </Pie>
                                 <Tooltip />
@@ -450,8 +451,8 @@ export default function ScanDetails() {
                                     paddingAngle={5}
                                     dataKey="value"
                                 >
-                                    {categoryData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.color} />
+                                    {categoryData.map((entry) => (
+                                        <Cell key={`cell-${entry.name}`} fill={entry.color} />
                                     ))}
                                 </Pie>
                                 <Tooltip />
@@ -572,24 +573,25 @@ export default function ScanDetails() {
                             Raw SBOMs
                             {isSbomsLoading && <Loader2 className="h-4 w-4 animate-spin" />}
                         </h3>
-                        {isSbomsLoading ? (
+                        {isSbomsLoading && (
                             <div className="grid gap-6">
                                 <Skeleton className="h-[400px]" />
                             </div>
-                        ) : scanSboms && scanSboms.length > 0 ? (
+                        )}
+                        {!isSbomsLoading && scanSboms && scanSboms.length > 0 && (
                             <div className="grid gap-6">
                                 {scanSboms.map((sbomResponse: SbomResponse) => {
                                     const sbom = sbomResponse.sbom;
-                                    const index = sbomResponse.index;
-                                    let toolName = "";
-                                    let sbomName = sbomResponse.filename || `SBOM #${index + 1}`;
-                                    
+                                    const sbomIndex = sbomResponse.index;
+                                    const sbomName = resolveSbomName(sbomResponse);
+                                    const isHighlighted = highlightedSbomIndex === sbomIndex;
+
                                     if (sbomResponse.error) {
                                         return (
                                             <Card
-                                                key={index}
-                                                ref={(el) => { sbomRefs.current[index] = el }}
-                                                className={`transition-all duration-300 border-destructive ${highlightedSbomIndex === index ? 'ring-2 ring-primary ring-offset-2' : ''}`}
+                                                key={`sbom-${sbomIndex}`}
+                                                ref={(el) => { sbomRefs.current[sbomIndex] = el }}
+                                                className={`transition-all duration-300 border-destructive ${isHighlighted ? 'ring-2 ring-primary ring-offset-2' : ''}`}
                                             >
                                                 <CardHeader className="bg-destructive/10 pb-4">
                                                     <CardTitle className="text-lg flex items-center justify-between">
@@ -603,38 +605,22 @@ export default function ScanDetails() {
                                             </Card>
                                         );
                                     }
-                                    
-                                    if (!sbom) return null;
-                                    
-                                    try {
-                                        if (sbom.metadata?.component?.name) {
-                                            sbomName = sbom.metadata.component.name;
-                                        } else if (sbom.serialNumber) {
-                                            sbomName = sbom.serialNumber;
-                                        }
 
-                                        if (sbom.metadata?.tools) {
-                                            if (Array.isArray(sbom.metadata.tools)) {
-                                                toolName = sbom.metadata.tools.map((t: SbomTool) => t.name || t.vendor).join(', ');
-                                            } else if (sbom.metadata.tools.components) {
-                                                toolName = sbom.metadata.tools.components.map((c: SbomToolComponent) => c.name).join(', ');
-                                            }
-                                        }
-                                    } catch (e) {
-                                        logger.warn("Failed to extract tool name", e);
-                                    }
+                                    if (!sbom) return null;
+
+                                    const toolName = extractSbomToolName(sbom);
 
                                     return (
                                         <Card
-                                            key={index}
-                                            ref={(el) => { sbomRefs.current[index] = el }}
-                                            className={`transition-all duration-300 ${highlightedSbomIndex === index ? 'ring-2 ring-primary ring-offset-2' : ''}`}
+                                            key={`sbom-${sbomIndex}`}
+                                            ref={(el) => { sbomRefs.current[sbomIndex] = el }}
+                                            className={`transition-all duration-300 ${isHighlighted ? 'ring-2 ring-primary ring-offset-2' : ''}`}
                                         >
                                             <CardHeader className="bg-muted/50 pb-4">
                                                 <CardTitle className="text-lg flex items-center justify-between">
                                                     <span>{sbomName}</span>
                                                     <div className="flex items-center gap-2">
-                                                        <Badge variant="secondary" className="font-mono">SBOM #{index + 1}</Badge>
+                                                        <Badge variant="secondary" className="font-mono">SBOM #{sbomIndex + 1}</Badge>
                                                         {toolName && (
                                                             <Badge variant="outline">{toolName}</Badge>
                                                         )}
@@ -651,7 +637,8 @@ export default function ScanDetails() {
                                     )
                                 })}
                             </div>
-                        ) : scan.sbom_refs && scan.sbom_refs.length > 0 ? (
+                        )}
+                        {!isSbomsLoading && !scanSboms?.length && scan.sbom_refs && scan.sbom_refs.length > 0 && (
                             <Card>
                                 <CardHeader className="bg-muted/50">
                                     <CardTitle className="text-lg">SBOM References</CardTitle>
@@ -663,7 +650,8 @@ export default function ScanDetails() {
                                     <CodeBlock code={JSON.stringify(scan.sbom_refs, null, 2)} />
                                 </CardContent>
                             </Card>
-                        ) : (
+                        )}
+                        {!isSbomsLoading && !scanSboms?.length && !(scan.sbom_refs && scan.sbom_refs.length > 0) && (
                             <Card>
                                 <CardHeader>
                                     <CardTitle>No SBOMs Available</CardTitle>

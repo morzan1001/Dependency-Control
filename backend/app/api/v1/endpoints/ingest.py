@@ -12,13 +12,13 @@ This module handles ingestion of scan results from various security tools:
 import json
 import logging
 import uuid
+from typing import Annotated, Any, Dict, List
 from datetime import datetime, timezone
-from typing import Annotated, Any, Dict
 
 from fastapi import Depends, HTTPException
 
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_500
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.api import deps
@@ -52,7 +52,7 @@ router = CustomAPIRouter()
     "/ingest/trufflehog",
     summary="Ingest TruffleHog Results",
     status_code=200,
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def ingest_trufflehog(
     data: TruffleHogIngest,
@@ -88,7 +88,7 @@ async def ingest_trufflehog(
     "/ingest/opengrep",
     summary="Ingest OpenGrep Results",
     status_code=200,
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def ingest_opengrep(
     data: OpenGrepIngest,
@@ -113,7 +113,7 @@ async def ingest_opengrep(
     "/ingest/kics",
     summary="Ingest KICS Results",
     status_code=200,
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def ingest_kics(
     data: KicsIngest,
@@ -137,7 +137,7 @@ async def ingest_kics(
     "/ingest/bearer",
     summary="Ingest Bearer Results",
     status_code=200,
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def ingest_bearer(
     data: BearerIngest,
@@ -157,11 +157,118 @@ async def ingest_bearer(
     return FindingsIngestResponse(**response)
 
 
+def _generate_scan_id(project_id: str, pipeline_id: int | str | None, commit_hash: str | None) -> str:
+    """Generate a deterministic or random scan ID based on available pipeline context."""
+    if pipeline_id and commit_hash:
+        scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}"
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+    if pipeline_id:
+        scan_id_seed = f"{project_id}-{pipeline_id}"
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+    return str(uuid.uuid4())
+
+
+def _parsed_dep_to_dependency(parsed_dep: Any, project_id: str, scan_id: str) -> Dependency:
+    """Convert a parsed dependency to a Dependency model."""
+    return Dependency(
+        project_id=project_id,
+        scan_id=scan_id,
+        name=parsed_dep.name,
+        version=parsed_dep.version,
+        purl=parsed_dep.purl,
+        type=parsed_dep.type,
+        license=parsed_dep.license,
+        license_url=parsed_dep.license_url,
+        scope=parsed_dep.scope,
+        direct=parsed_dep.direct,
+        direct_inferred=parsed_dep.direct_inferred,
+        parent_components=parsed_dep.parent_components,
+        source_type=parsed_dep.source_type,
+        source_target=parsed_dep.source_target,
+        layer_digest=parsed_dep.layer_digest,
+        found_by=parsed_dep.found_by,
+        locations=parsed_dep.locations,
+        cpes=parsed_dep.cpes,
+        description=parsed_dep.description,
+        author=parsed_dep.author,
+        publisher=parsed_dep.publisher,
+        group=parsed_dep.group,
+        homepage=parsed_dep.homepage,
+        repository_url=parsed_dep.repository_url,
+        download_url=parsed_dep.download_url,
+        hashes=parsed_dep.hashes,
+        properties=parsed_dep.properties,
+    )
+
+
+async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_id: str) -> Dict[str, Any]:
+    """Upload a single SBOM to GridFS and return the reference dict."""
+    sbom_str = json.dumps(sbom)
+    sbom_bytes = sbom_str.encode("utf-8")
+    filename = f"sbom-{uuid.uuid4()}.json"
+    file_id = await fs.upload_from_stream(
+        filename,
+        sbom_bytes,
+        metadata={"contentType": "application/json", "scan_id": scan_id},
+    )
+    return {
+        "storage": "gridfs",
+        "file_id": str(file_id),
+        "filename": filename,
+        "type": "gridfs_reference",
+        "gridfs_id": str(file_id),
+    }
+
+
+async def _process_sboms(
+    sboms: List[Any], fs: AsyncIOMotorGridFSBucket, project_id: str, scan_id: str
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[str], int, int]:
+    """Process all SBOMs: upload to GridFS and extract dependencies.
+
+    Returns:
+        Tuple of (sbom_refs, dependencies_to_insert, warnings, sboms_processed, sboms_failed)
+    """
+    sbom_refs: List[Dict[str, Any]] = []
+    dependencies_to_insert: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+    sboms_processed = 0
+    sboms_failed = 0
+
+    for idx, sbom in enumerate(sboms):
+        try:
+            ref = await _upload_sbom_to_gridfs(fs, sbom, scan_id)
+            sbom_refs.append(ref)
+        except Exception as e:
+            sboms_failed += 1
+            warnings.append(f"SBOM {idx + 1}: Failed to upload to storage")
+            logger.error(f"Failed to upload SBOM to GridFS: {e}")
+            continue
+
+        try:
+            parsed_sbom = parse_sbom(sbom)
+            logger.info(
+                f"Parsed SBOM: format={parsed_sbom.format.value}, "
+                f"total={parsed_sbom.total_components}, "
+                f"parsed={parsed_sbom.parsed_components}, "
+                f"skipped={parsed_sbom.skipped_components}"
+            )
+            for parsed_dep in parsed_sbom.dependencies:
+                dep = _parsed_dep_to_dependency(parsed_dep, project_id, scan_id)
+                dependencies_to_insert.append(dep.model_dump(by_alias=True))
+            sboms_processed += 1
+        except Exception as e:
+            sboms_failed += 1
+            warnings.append(f"SBOM {idx + 1}: Failed to parse dependencies")
+            logger.error(f"Failed to extract dependencies from SBOM: {e}", exc_info=True)
+
+    return sbom_refs, dependencies_to_insert, warnings, sboms_processed, sboms_failed
+
+
 @router.post(
     "/ingest",
     summary="Ingest SBOM",
     status_code=202,
-    responses={**RESP_AUTH_400, **RESP_500},
+    responses=RESP_AUTH_400_500,
 )
 async def ingest_sbom(
     data: SBOMIngest,
@@ -181,105 +288,13 @@ async def ingest_sbom(
         raise HTTPException(status_code=400, detail="No SBOM provided")
 
     pipeline_url = manager.build_pipeline_url(data)
+    scan_id = _generate_scan_id(str(project.id), data.pipeline_id, data.commit_hash)
 
-    if data.pipeline_id and data.commit_hash:
-        # Deterministic scan_id: Same commit in same pipeline = same scan
-        scan_id_seed = f"{project.id}-{data.pipeline_id}-{data.commit_hash}"
-        scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-    elif data.pipeline_id:
-        # No commit_hash, use pipeline_id only (less precise, but better than random)
-        scan_id_seed = f"{project.id}-{data.pipeline_id}"
-        scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-    else:
-        # No pipeline_id, use random UUID (manual upload scenario)
-        scan_id = str(uuid.uuid4())
-
-    # Initialize GridFS
+    # Initialize GridFS and process all SBOMs
     fs = AsyncIOMotorGridFSBucket(db)
-    sbom_refs = []
-    dependencies_to_insert = []
-    warnings: list[str] = []
-    sboms_processed = 0
-    sboms_failed = 0
-
-    for idx, sbom in enumerate(data.sboms):
-        # Upload to GridFS
-        try:
-            sbom_str = json.dumps(sbom)
-            sbom_bytes = sbom_str.encode("utf-8")
-            # Generate consistent filename UUID
-            filename = f"sbom-{uuid.uuid4()}.json"
-            file_id = await fs.upload_from_stream(
-                filename,
-                sbom_bytes,
-                metadata={"contentType": "application/json", "scan_id": scan_id},
-            )
-            sbom_refs.append(
-                {
-                    "storage": "gridfs",
-                    "file_id": str(file_id),
-                    "filename": filename,  # Use same filename
-                    "type": "gridfs_reference",
-                    "gridfs_id": str(file_id),
-                }
-            )
-        except Exception as e:
-            sboms_failed += 1
-            warning_msg = f"SBOM {idx + 1}: Failed to upload to storage"
-            warnings.append(warning_msg)
-            logger.error(f"Failed to upload SBOM to GridFS: {e}")
-            continue
-
-        # Extract Dependencies
-        try:
-            parsed_sbom = parse_sbom(sbom)
-
-            logger.info(
-                f"Parsed SBOM: format={parsed_sbom.format.value}, "
-                f"total={parsed_sbom.total_components}, "
-                f"parsed={parsed_sbom.parsed_components}, "
-                f"skipped={parsed_sbom.skipped_components}"
-            )
-
-            for parsed_dep in parsed_sbom.dependencies:
-                dep = Dependency(
-                    project_id=str(project.id),
-                    scan_id=scan_id,
-                    name=parsed_dep.name,
-                    version=parsed_dep.version,
-                    purl=parsed_dep.purl,
-                    type=parsed_dep.type,
-                    license=parsed_dep.license,
-                    license_url=parsed_dep.license_url,
-                    scope=parsed_dep.scope,
-                    direct=parsed_dep.direct,
-                    direct_inferred=parsed_dep.direct_inferred,
-                    parent_components=parsed_dep.parent_components,
-                    source_type=parsed_dep.source_type,
-                    source_target=parsed_dep.source_target,
-                    layer_digest=parsed_dep.layer_digest,
-                    found_by=parsed_dep.found_by,
-                    locations=parsed_dep.locations,
-                    cpes=parsed_dep.cpes,
-                    description=parsed_dep.description,
-                    author=parsed_dep.author,
-                    publisher=parsed_dep.publisher,
-                    group=parsed_dep.group,
-                    homepage=parsed_dep.homepage,
-                    repository_url=parsed_dep.repository_url,
-                    download_url=parsed_dep.download_url,
-                    hashes=parsed_dep.hashes,
-                    properties=parsed_dep.properties,
-                )
-                dependencies_to_insert.append(dep.model_dump(by_alias=True))
-
-            sboms_processed += 1
-
-        except Exception as e:
-            sboms_failed += 1
-            warning_msg = f"SBOM {idx + 1}: Failed to parse dependencies"
-            warnings.append(warning_msg)
-            logger.error(f"Failed to extract dependencies from SBOM: {e}", exc_info=True)
+    sbom_refs, dependencies_to_insert, warnings, sboms_processed, sboms_failed = await _process_sboms(
+        data.sboms, fs, str(project.id), scan_id
+    )
 
     # Fail if ALL SBOMs failed to process
     if sboms_failed > 0 and sboms_processed == 0:
@@ -291,11 +306,9 @@ async def ingest_sbom(
     # Bulk insert/update dependencies
     if dependencies_to_insert:
         try:
-            # Delete old dependencies for this scan atomically
             deleted_count = await dep_repo.delete_by_scan(scan_id)
             logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
 
-            # Insert new dependencies with ordered=False to handle duplicates gracefully
             inserted_count = await dep_repo.create_many_raw(dependencies_to_insert)
             logger.info(f"Inserted {inserted_count}/{len(dependencies_to_insert)} dependencies for scan {scan_id}")
 
@@ -336,34 +349,22 @@ async def ingest_sbom(
         },
     }
 
-    # Only set status to pending if not currently processing
-    # This prevents resetting a scan that's actively being analyzed
-    filter_query = {"_id": scan_id}
-
     # Add new SBOM refs (append to existing, or initialize if new)
     if sbom_refs:
         scan_update["$push"] = {"sbom_refs": {"$each": sbom_refs}}
     else:
-        # Only initialize sbom_refs as empty array if no sboms provided
         scan_update["$setOnInsert"]["sbom_refs"] = []
 
     # Atomic upsert
-    await db.scans.update_one(
-        filter_query,
-        scan_update,
-        upsert=True,
-    )
+    await db.scans.update_one({"_id": scan_id}, scan_update, upsert=True)
 
     # If scan was completed, reset to pending for re-analysis
-    # This handles the case where a new SBOM is uploaded for an existing pipeline
-    # Also reset retry_count since this is a legitimate new upload, not a retry
     await db.scans.update_one(
         {"_id": scan_id, "status": "completed"},
         {"$set": {"status": "pending", "retry_count": 0}},
     )
 
     # Register SBOM result and trigger analysis
-    # SBOM is considered the "main" scanner, so it triggers aggregation
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 
     # Build response message
@@ -386,7 +387,7 @@ async def ingest_sbom(
     "/ingest/config",
     summary="Get Project Configuration",
     status_code=200,
-    responses={**RESP_AUTH},
+    responses=RESP_AUTH,
 )
 async def get_project_config(
     project: ProjectIngestDep,

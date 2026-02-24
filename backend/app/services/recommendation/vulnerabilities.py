@@ -151,7 +151,7 @@ def _is_os_package(dep: ModelOrDict) -> bool:
 
 def _analyze_base_image_vulns(
     vulns: List[VulnerabilityInfo],
-    dependencies: List[ModelOrDict],
+    _dependencies: List[ModelOrDict],
     source_target: Optional[str],
 ) -> Optional[Recommendation]:
     """Analyze if a base image update would be beneficial."""
@@ -227,8 +227,8 @@ def _analyze_base_image_vulns(
 
 def _analyze_direct_dependencies(
     vulns: List[VulnerabilityInfo],
-    dep_by_purl: Dict[str, ModelOrDict],
-    dep_by_name_version: Dict[str, ModelOrDict],
+    _dep_by_purl: Dict[str, ModelOrDict],
+    _dep_by_name_version: Dict[str, ModelOrDict],
 ) -> List[Recommendation]:
     """Analyze direct dependency updates with EPSS/KEV/Reachability prioritization."""
 
@@ -384,7 +384,7 @@ def _analyze_direct_dependencies(
 
 
 def _analyze_transitive_dependencies(
-    vulns: List[VulnerabilityInfo], dependencies: List[ModelOrDict]
+    vulns: List[VulnerabilityInfo], _dependencies: List[ModelOrDict]
 ) -> List[Recommendation]:
     """Analyze transitive dependency vulnerabilities with EPSS/KEV/Reachability prioritization."""
 

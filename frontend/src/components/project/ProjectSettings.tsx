@@ -11,6 +11,16 @@ import { Project, ProjectUpdate } from '@/types/project'
 import { User } from '@/types/user'
 import { getErrorMessage } from '@/lib/utils'
 import { useAuth } from '@/context/useAuth'
+import {
+  isProjectOwner,
+  canUpdateProject,
+  canDeleteProject,
+  canRotateApiKey,
+  canTransferOwnership,
+  canEnforceNotifications,
+  canCreateProjectWebhook,
+  canDeleteProjectWebhook,
+} from '@/lib/project-roles'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -54,8 +64,18 @@ interface ProjectSettingsProps {
 
 export function ProjectSettings({ project, projectId, user }: ProjectSettingsProps) {
   const queryClient = useQueryClient()
-  const { hasPermission } = useAuth()
+  const { permissions } = useAuth()
   const navigate = useNavigate()
+
+  const userId = user.id
+  const canUpdate = canUpdateProject(project, userId, permissions)
+  const canDelete = canDeleteProject(project, userId, permissions)
+  const canRotateKey = canRotateApiKey(project, userId, permissions)
+  const canTransfer = canTransferOwnership(project, userId, permissions)
+  const canEnforce = canEnforceNotifications(project, userId, permissions)
+  const canCreateWh = canCreateProjectWebhook(project, userId, permissions)
+  const canDeleteWh = canDeleteProjectWebhook(project, userId, permissions)
+  const isMember = isProjectOwner(project, userId) || !!project.members?.some(m => m.user_id === userId)
   
   const [name, setName] = useState(project.name)
   const [teamId, setTeamId] = useState<string | undefined>(project.team_id || "none")
@@ -458,7 +478,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         })}
                     </div>
                 </div>
-                {hasPermission('project:update') && (
+                {canUpdate && (
                     <Button type="submit" disabled={updateProjectMutation.isPending}>
                         {updateProjectMutation.isPending ? "Saving..." : "Save Changes"}
                     </Button>
@@ -473,7 +493,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             <CardDescription>Configure how you want to be notified about project events.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-            {hasPermission('project:update') && (
+            {canEnforce && (
                 <div className="flex flex-row items-center justify-between rounded-lg border p-4">
                     <div className="space-y-0.5">
                         <Label className="text-base">Enforce Notification Settings</Label>
@@ -488,7 +508,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </div>
             )}
 
-            {enforceNotificationSettings && !hasPermission('project:update') && (
+            {enforceNotificationSettings && !canEnforce && (
                 <div className="flex items-center gap-2 p-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-900">
                     <Info className="h-4 w-4" />
                     <p>Notification settings are currently enforced by the project administrator. You cannot modify them.</p>
@@ -532,7 +552,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     </TableHeader>
                     <TableBody>
                         {['analysis_completed', 'vulnerability_found'].map(event => (
-                            <TableRow key={event} className={enforceNotificationSettings && !hasPermission('project:update') ? 'opacity-60' : ''}>
+                            <TableRow key={event} className={enforceNotificationSettings && !canEnforce ? 'opacity-60' : ''}>
                                 <TableCell>
                                     <div className="font-medium capitalize">{event.replace('_', ' ')}</div>
                                     <div className="text-xs text-muted-foreground">
@@ -551,7 +571,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                                     id={`${event}-${channel}`}
                                                     checked={(notificationPrefs[event] || []).includes(channel)}
                                                     onCheckedChange={() => toggleNotification(event, channel)}
-                                                    disabled={enforceNotificationSettings && !hasPermission('project:update')}
+                                                    disabled={enforceNotificationSettings && !canEnforce}
                                                 />
                                             </div>
                                         </TableCell>
@@ -562,9 +582,9 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     </TableBody>
                 </Table>
             </div>
-            {hasPermission('project:update') && (
-                <Button 
-                    onClick={() => updateNotificationSettingsMutation.mutate({ 
+            {isMember && (
+                <Button
+                    onClick={() => updateNotificationSettingsMutation.mutate({
                         id: project.id,
                         settings: {
                             notification_preferences: notificationPrefs,
@@ -587,11 +607,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
         isLoading={isLoadingWebhooks}
         onCreate={createWebhookMutation.mutateAsync}
         onDelete={handleDeleteWebhook}
-        createPermission="project:update"
-        deletePermission="project:update"
+        createPermission={canCreateWh}
+        deletePermission={canDeleteWh}
       />
 
-      {(hasPermission('project:update') || hasPermission('project:delete')) && (
+      {(canUpdate || canDelete || canRotateKey || canTransfer) && (
         <Card className="border-destructive">
             <CardHeader>
                 <CardTitle className="text-destructive flex items-center gap-2">
@@ -603,7 +623,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                {(project.owner_id === String(user.id) || hasPermission('system:manage')) && (
+                {canTransfer && (
                     <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
                         <div>
                             <div className="font-medium">Transfer Ownership</div>
@@ -618,7 +638,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     </div>
                 )}
 
-                {hasPermission('project:update') && (
+                {canRotateKey && (
                     <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
                         <div>
                             <div className="font-medium">Rotate API Key</div>
@@ -633,7 +653,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     </div>
                 )}
 
-                {hasPermission('project:delete') && (
+                {canDelete && (
                     <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
                         <div>
                             <div className="font-medium">Delete Project</div>

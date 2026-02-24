@@ -173,6 +173,19 @@ class EndOfLifeAnalyzer(Analyzer):
 
         return products
 
+    @staticmethod
+    def _is_eol(eol: Any) -> bool:
+        """Check if an EOL value indicates end-of-life status."""
+        if eol is True:
+            return True
+        if not eol or eol is False:
+            return False
+        try:
+            eol_date = datetime.strptime(str(eol), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            return eol_date < datetime.now(timezone.utc)
+        except ValueError:
+            return False
+
     def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Check if a version matches an EOL cycle."""
         if not version:
@@ -188,20 +201,12 @@ class EndOfLifeAnalyzer(Analyzer):
         for cycle in cycles:
             cycle_version = str(cycle.get("cycle", ""))
 
-            # Check various matching strategies
-            if self._version_matches_cycle(clean_version, cycle_version):
-                eol = cycle.get("eol")
+            if not self._version_matches_cycle(clean_version, cycle_version):
+                continue
 
-                # eol can be: date string, True (already EOL), False (not EOL)
-                if eol is True:
-                    return cycle
-                elif eol and eol is not False:
-                    try:
-                        eol_date = datetime.strptime(str(eol), "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                        if eol_date < datetime.now(timezone.utc):
-                            return cycle
-                    except ValueError:
-                        pass
+            if self._is_eol(cycle.get("eol")):
+                return cycle
+
         return None
 
     def _version_matches_cycle(self, version: str, cycle: str) -> bool:

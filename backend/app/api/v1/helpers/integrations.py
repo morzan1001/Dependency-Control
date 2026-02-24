@@ -26,11 +26,13 @@ class SlackOAuthError(Exception):
         super().__init__(self.message)
 
 
+_SLACK_OAUTH_TIMEOUT = 30.0
+
+
 async def exchange_slack_code_for_token(
     code: str,
     client_id: str,
     client_secret: str,
-    timeout: float = 30.0,
 ) -> Dict[str, Any]:
     """
     Exchange a Slack OAuth code for access and refresh tokens.
@@ -39,7 +41,6 @@ async def exchange_slack_code_for_token(
         code: The OAuth authorization code from Slack callback
         client_id: Slack application client ID
         client_secret: Slack application client secret
-        timeout: Request timeout in seconds
 
     Returns:
         Dict containing token data:
@@ -55,7 +56,7 @@ async def exchange_slack_code_for_token(
         SlackOAuthError: If the token exchange fails
     """
     try:
-        async with InstrumentedAsyncClient("Slack OAuth", timeout=timeout) as client:
+        async with InstrumentedAsyncClient("Slack OAuth", timeout=_SLACK_OAUTH_TIMEOUT) as client:
             response = await client.post(
                 SLACK_OAUTH_URL,
                 data={

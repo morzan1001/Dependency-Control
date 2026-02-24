@@ -2,11 +2,11 @@ import { User, UserUpdate } from '@/types/user';
 import { getErrorMessage } from '@/lib/utils';
 import { useProjects } from '@/hooks/queries/use-projects';
 import { useTeams } from '@/hooks/queries/use-teams';
-import { 
-  useUpdateUser, 
-  useAdminMigrateUser, 
-  useAdminResetPassword, 
-  useAdminDisable2FA 
+import {
+  useUpdateUser,
+  useAdminMigrateUser,
+  useAdminResetPassword,
+  useAdminDisable2FA
 } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -23,6 +23,35 @@ import { toast } from "sonner"
 import { useAuth } from '@/context/useAuth';
 import { useState } from 'react';
 import { UserPermissionsDialog } from './UserPermissionsDialog';
+
+interface AsyncListSectionProps {
+  isLoading: boolean;
+  error: unknown;
+  emptyMessage: string;
+  errorMessage: string;
+  children: React.ReactNode;
+  isEmpty: boolean;
+  skeletonCount?: number;
+}
+
+function AsyncListSection({ isLoading, error, emptyMessage, errorMessage, children, isEmpty, skeletonCount = 3 }: AsyncListSectionProps) {
+  if (isLoading) {
+    return (
+      <div className="space-y-2">
+        {Array.from({ length: skeletonCount }, (_, i) => (
+          <Skeleton key={i} className="h-8 w-full" />
+        ))}
+      </div>
+    );
+  }
+  if (error) {
+    return <div className="text-sm text-destructive">{errorMessage}</div>;
+  }
+  if (isEmpty) {
+    return <div className="text-sm text-muted-foreground">{emptyMessage}</div>;
+  }
+  return <>{children}</>;
+}
 
 interface UserDetailsDialogProps {
   user: User | null;
@@ -105,23 +134,28 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
 
   const getUserProjects = (userId: string) => {
     if (!projects) return [];
-    
+
     // Find teams this user belongs to
-    const userTeamIds = teams 
+    const userTeamIds = teams
       ? teams.filter(t => t.members?.some(m => m.user_id === userId)).map(t => t.id)
       : [];
 
-    return projects.filter(p => 
-      p.owner_id === userId || 
+    return projects.filter(p =>
+      p.owner_id === userId ||
       p.members?.some(m => m.user_id === userId) ||
       (p.team_id && userTeamIds.includes(p.team_id))
     );
   };
-  
+
   const getUserTeams = (userId: string) => {
     if (!teams) return [];
     return teams.filter(t => t.members?.some(m => m.user_id === userId));
   };
+
+  const canUpdateUser = hasPermission('user:update');
+  const userProjects = user ? getUserProjects(user.id) : [];
+  const userTeams = user ? getUserTeams(user.id) : [];
+  const isLocalAuth = user?.auth_provider === 'local';
 
   return (
     <>
@@ -157,10 +191,10 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                           Inactive
                         </span>
                       )}
-                      {hasPermission('user:update') && (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
+                      {canUpdateUser && (
+                        <Button
+                          variant="outline"
+                          size="sm"
                           className="h-6 text-xs ml-2"
                           onClick={handleToggleStatus}
                         >
@@ -176,7 +210,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                     <h3 className="text-lg font-medium flex items-center gap-2">
                     <Shield className="h-5 w-5" /> Permissions
                     </h3>
-                    {hasPermission('user:update') && (
+                    {canUpdateUser && (
                       <Button variant="outline" size="sm" onClick={() => setIsPermissionDialogOpen(true)}>
                           Manage Permissions
                       </Button>
@@ -207,10 +241,10 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                             <div className="text-sm font-medium">Authentication Provider</div>
                             <div className="text-sm text-muted-foreground capitalize">{user.auth_provider || 'local'}</div>
                         </div>
-                        {hasPermission('user:update') && user.auth_provider !== 'local' && (
-                            <Button 
-                                variant="outline" 
-                                size="sm" 
+                        {canUpdateUser && !isLocalAuth && (
+                            <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={() => handleMigrate(user.id)}
                                 disabled={migrateUserMutation.isPending}
                             >
@@ -220,7 +254,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                         )}
                     </div>
 
-                    {user.auth_provider === 'local' && hasPermission('user:update') && (
+                    {isLocalAuth && canUpdateUser && (
                         <div className="flex items-center justify-between pt-2 border-t">
                             <div>
                                 <div className="text-sm font-medium">Password Reset</div>
@@ -244,7 +278,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                         </div>
                     )}
 
-                    {user.totp_enabled && hasPermission('user:update') && (
+                    {user.totp_enabled && canUpdateUser && (
                         <div className="flex items-center justify-between pt-2 border-t">
                             <div>
                                 <div className="text-sm font-medium">Two-Factor Authentication</div>
@@ -268,29 +302,28 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                   <Folder className="h-5 w-5" /> Projects
                 </h3>
                 <div className="border rounded-md p-4">
-                  {isLoadingProjects ? (
-                    <div className="space-y-2">
-                      <Skeleton className="h-8 w-full" />
-                      <Skeleton className="h-8 w-full" />
-                      <Skeleton className="h-8 w-full" />
-                    </div>
-                  ) : errorProjects ? (
-                    <div className="text-sm text-destructive">Failed to load projects.</div>
-                  ) : getUserProjects(user.id).length > 0 ? (
+                  <AsyncListSection
+                    isLoading={isLoadingProjects}
+                    error={errorProjects}
+                    isEmpty={userProjects.length === 0}
+                    errorMessage="Failed to load projects."
+                    emptyMessage="No projects found."
+                  >
                     <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
-                      {getUserProjects(user.id).map(project => (
-                        <li 
-                          key={project.id} 
+                      {userProjects.map(project => (
+                        <li
+                          key={project.id}
+                          role="link"
+                          tabIndex={0}
                           className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
                           onClick={() => navigate(`/projects/${project.id}`)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/projects/${project.id}`); } }}
                         >
                           <span>{project.name}</span>
                         </li>
                       ))}
                     </ul>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">No projects found.</div>
-                  )}
+                  </AsyncListSection>
                 </div>
               </div>
 
@@ -299,28 +332,29 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
                   <UsersIcon className="h-5 w-5" /> Teams
                 </h3>
                 <div className="border rounded-md p-4">
-                  {isLoadingTeams ? (
-                    <div className="space-y-2">
-                      <Skeleton className="h-8 w-full" />
-                      <Skeleton className="h-8 w-full" />
-                    </div>
-                  ) : errorTeams ? (
-                    <div className="text-sm text-destructive">Failed to load teams.</div>
-                  ) : getUserTeams(user.id).length > 0 ? (
+                  <AsyncListSection
+                    isLoading={isLoadingTeams}
+                    error={errorTeams}
+                    isEmpty={userTeams.length === 0}
+                    errorMessage="Failed to load teams."
+                    emptyMessage="No teams found."
+                    skeletonCount={2}
+                  >
                     <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
-                      {getUserTeams(user.id).map(team => (
+                      {userTeams.map(team => (
                         <li
                           key={team.id}
+                          role="link"
+                          tabIndex={0}
                           className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
                           onClick={() => navigate('/teams')}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('/teams'); } }}
                         >
                           <span>{team.name}</span>
                         </li>
                       ))}
                     </ul>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">No teams found.</div>
-                  )}
+                  </AsyncListSection>
                 </div>
               </div>
 

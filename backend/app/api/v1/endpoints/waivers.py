@@ -26,7 +26,7 @@ from app.services.stats import recalculate_all_projects, recalculate_project_sta
 router = CustomAPIRouter()
 
 
-@router.post("/", response_model=WaiverResponse, status_code=201, responses={**RESP_AUTH})
+@router.post("/", response_model=WaiverResponse, status_code=201, responses=RESP_AUTH)
 async def create_waiver(
     waiver_in: WaiverCreate,
     background_tasks: BackgroundTasks,
@@ -58,7 +58,7 @@ async def create_waiver(
     return waiver
 
 
-@router.get("/", response_model=Dict[str, Any], responses={**RESP_AUTH})
+@router.get("/", responses=RESP_AUTH)
 async def list_waivers(
     db: DatabaseDep,
     current_user: CurrentUserDep,
@@ -132,7 +132,7 @@ async def list_waivers(
     return build_pagination_response(items, total, skip, limit)
 
 
-@router.delete("/{waiver_id}", status_code=204, responses={**RESP_AUTH_404})
+@router.delete("/{waiver_id}", status_code=204, responses=RESP_AUTH_404)
 async def delete_waiver(
     waiver_id: str,
     background_tasks: BackgroundTasks,

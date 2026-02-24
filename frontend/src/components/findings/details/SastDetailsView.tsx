@@ -336,13 +336,17 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
 
                 {/* List of individual findings */}
                 <div className="space-y-3">
-                    {sastFindings.map((issue, idx) => {
+                    {sastFindings.map((issue) => {
                         const isExpanded = expandedIssues.has(issue.id)
                         return (
-                             <div key={idx} className="border rounded-lg overflow-hidden bg-card text-card-foreground shadow-sm">
-                                <div 
+                             <div key={issue.id} className="border rounded-lg overflow-hidden bg-card text-card-foreground shadow-sm">
+                                <div
                                     className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50 transition-colors"
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-expanded={isExpanded}
                                     onClick={() => toggleIssue(issue.id)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleIssue(issue.id); } }}
                                 >
                                      <div className="flex items-center gap-3 overflow-hidden">
                                         {isExpanded ? <ChevronDown className="h-4 w-4 flex-shrink-0" /> : <ChevronRight className="h-4 w-4 flex-shrink-0" />}

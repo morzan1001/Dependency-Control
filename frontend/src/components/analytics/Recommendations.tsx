@@ -286,9 +286,13 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
   
   return (
     <Card className="overflow-hidden">
-      <div 
+      <div
         className="p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!expanded); } }}
       >
         <div className="flex items-start gap-4">
           {/* Type Icon */}
@@ -1203,8 +1207,8 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Recomme
               <h3 className="text-lg font-semibold">
                 {data.recommendations.length} Recommendations
               </h3>
-              {data.recommendations.map((rec, index) => (
-                <RecommendationCard key={index} recommendation={rec} />
+              {data.recommendations.map((rec) => (
+                <RecommendationCard key={`${rec.type}-${rec.title}`} recommendation={rec} />
               ))}
             </div>
           ) : (

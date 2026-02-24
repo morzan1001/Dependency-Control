@@ -1,5 +1,8 @@
 import { useUpdateTeamMember, useRemoveTeamMember } from '@/hooks/queries/use-teams';
 import { Team } from '@/types/team';
+import { useAuth } from '@/context/useAuth';
+import { useCurrentUser } from '@/hooks/queries/use-users';
+import { canManageTeamMembers } from '@/lib/team-roles';
 import { Button } from '@/components/ui/button';
 import { UserMinus, Loader2 } from 'lucide-react';
 import {
@@ -37,6 +40,12 @@ interface TeamMembersDialogProps {
 export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogProps) {
   const updateMemberMutation = useUpdateTeamMember();
   const removeMemberMutation = useRemoveTeamMember();
+  const { permissions } = useAuth();
+  const { data: currentUser } = useCurrentUser();
+
+  const canManage = team && currentUser
+    ? canManageTeamMembers(team, currentUser.id, permissions)
+    : false;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -53,70 +62,77 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead>Role</TableHead>
-                  <TableHead className="w-[100px]">Actions</TableHead>
+                  {canManage && <TableHead className="w-[100px]">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {team?.members.map((member) => (
-                  <TableRow key={member.user_id}>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium">{member.username || 'Unknown'}</span>
-                        <span className="text-xs text-muted-foreground">{member.user_id}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Select
-                        value={member.role}
-                        onValueChange={(value) => {
-                            if (team) {
-                                updateMemberMutation.mutate(
-                                  { teamId: team.id, userId: member.user_id, role: value },
-                                  { onSuccess: () => toast.success("Member role updated") }
-                                );
-                            }
-                        }}
-                        disabled={updateMemberMutation.isPending}
-                      >
-                        <SelectTrigger className="w-[120px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TEAM_ROLES.map((role) => (
-                            <SelectItem key={role.value} value={role.value}>
-                              {role.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive"
-                        disabled={removeMemberMutation.isPending}
-                        onClick={() => {
-                            if (team) {
-                                removeMemberMutation.mutate(
-                                  { teamId: team.id, userId: member.user_id },
-                                  { onSuccess: () => toast.success("Member removed") }
-                                );
-                            }
-                        }}
-                      >
-                        {removeMemberMutation.isPending ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <UserMinus className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {team?.members.map((member) => {
+                  const memberIsOwner = member.role === 'owner';
+                  return (
+                    <TableRow key={member.user_id}>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{member.username || 'Unknown'}</span>
+                          <span className="text-xs text-muted-foreground">{member.user_id}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={member.role}
+                          onValueChange={(value) => {
+                              if (team) {
+                                  updateMemberMutation.mutate(
+                                    { teamId: team.id, userId: member.user_id, role: value },
+                                    { onSuccess: () => toast.success("Member role updated") }
+                                  );
+                              }
+                          }}
+                          disabled={!canManage || memberIsOwner || updateMemberMutation.isPending}
+                        >
+                          <SelectTrigger className="w-[120px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TEAM_ROLES.map((role) => (
+                              <SelectItem key={role.value} value={role.value}>
+                                {role.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      {canManage && (
+                        <TableCell>
+                          {!memberIsOwner && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              disabled={removeMemberMutation.isPending}
+                              onClick={() => {
+                                  if (team) {
+                                      removeMemberMutation.mutate(
+                                        { teamId: team.id, userId: member.user_id },
+                                        { onSuccess: () => toast.success("Member removed") }
+                                      );
+                                  }
+                              }}
+                            >
+                              {removeMemberMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <UserMinus className="h-4 w-4" />
+                              )}
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  );
+                })}
                 {team?.members.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={3} className="text-center text-muted-foreground">
+                    <TableCell colSpan={canManage ? 3 : 2} className="text-center text-muted-foreground">
                       No members in this team.
                     </TableCell>
                   </TableRow>

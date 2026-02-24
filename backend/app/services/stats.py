@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -7,6 +8,119 @@ from app.core.constants import CVSS_SEVERITY_SCORES
 from app.models.stats import Stats
 
 logger = logging.getLogger(__name__)
+
+# MongoDB aggregation field references / operators
+MONGO_SEVERITY = "$severity"
+MONGO_COND = "$cond"
+
+# Waiver field mapping: waiver field -> finding query field
+_WAIVER_FIELD_MAP = {
+    "finding_id": "finding_id",
+    "package_name": "component",
+    "package_version": "version",
+    "finding_type": "type",
+}
+
+
+async def _resolve_active_scan_id(
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, deleted_branches: List[str]
+) -> Optional[str]:
+    """Resolve the active scan_id, skipping deleted branches if needed."""
+    if not deleted_branches:
+        return scan_id
+
+    scan_doc = await db.scans.find_one({"_id": scan_id}, {"branch": 1})
+    if not scan_doc or scan_doc.get("branch") not in deleted_branches:
+        return scan_id
+
+    active_scan = await db.scans.find_one(
+        {"project_id": project_id, "branch": {"$nin": deleted_branches}, "status": "completed"},
+        sort=[("created_at", -1)],
+        projection={"_id": 1},
+    )
+    return active_scan["_id"] if active_scan else None
+
+
+def _build_waiver_query(waiver: Dict[str, Any]) -> Dict[str, str]:
+    """Build a finding query dict from a waiver's matching fields."""
+    query: Dict[str, str] = {}
+    for waiver_field, query_field in _WAIVER_FIELD_MAP.items():
+        value = waiver.get(waiver_field)
+        if value:
+            query[query_field] = value
+    return query
+
+
+async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Dict[str, Any]]) -> None:
+    """Apply all waivers for a scan."""
+    for waiver in waivers:
+        query = _build_waiver_query(waiver)
+        vulnerability_id = waiver.get("vulnerability_id")
+
+        if vulnerability_id:
+            await finding_repo.apply_vulnerability_waiver(
+                scan_id=scan_id,
+                vulnerability_id=vulnerability_id,
+                waived=True,
+                waiver_reason=waiver.get("reason"),
+            )
+        else:
+            await finding_repo.apply_finding_waiver(
+                scan_id=scan_id,
+                query=query,
+                waived=True,
+                waiver_reason=waiver.get("reason"),
+            )
+
+
+def _build_stats_pipeline(scan_id: str) -> List[Dict[str, Any]]:
+    """Build the MongoDB aggregation pipeline for stats calculation."""
+    return [
+        {"$match": {"scan_id": scan_id, "waived": False}},
+        {
+            "$project": {
+                "severity": 1,
+                "cvss_score": "$details.cvss_score",
+                "calculated_score": {
+                    "$switch": {
+                        "branches": [
+                            {"case": {"$eq": [MONGO_SEVERITY, sev]}, "then": CVSS_SEVERITY_SCORES[sev]}
+                            for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+                        ],
+                        "default": CVSS_SEVERITY_SCORES["UNKNOWN"],
+                    }
+                },
+            }
+        },
+        {
+            "$group": {
+                "_id": None,
+                "critical": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "CRITICAL"]}, 1, 0]}},
+                "high": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "HIGH"]}, 1, 0]}},
+                "medium": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "MEDIUM"]}, 1, 0]}},
+                "low": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "LOW"]}, 1, 0]}},
+                "info": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "INFO"]}, 1, 0]}},
+                "unknown": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "UNKNOWN"]}, 1, 0]}},
+                "risk_score": {"$sum": {"$toDouble": {"$ifNull": ["$cvss_score", "$calculated_score"]}}},
+            }
+        },
+    ]
+
+
+def _stats_from_result(stats_result: List[Dict[str, Any]]) -> Stats:
+    """Create a Stats object from an aggregation result."""
+    stats = Stats()
+    if not stats_result:
+        return stats
+    res = stats_result[0]
+    stats.critical = res.get("critical", 0)
+    stats.high = res.get("high", 0)
+    stats.medium = res.get("medium", 0)
+    stats.low = res.get("low", 0)
+    stats.info = res.get("info", 0)
+    stats.unknown = res.get("unknown", 0)
+    stats.risk_score = round(res.get("risk_score", 0.0), 1)
+    return stats
 
 
 async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Optional[Stats]:
@@ -25,11 +139,11 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     Returns:
         The calculated Stats object, or None if project not found
     """
-    import os
     from app.repositories import (
         DistributedLocksRepository,
         FindingRepository,
         ProjectRepository,
+        ScanRepository,
         WaiverRepository,
     )
 
@@ -42,27 +156,15 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     if not project or not project.latest_scan_id:
         return None
 
-    scan_id = project.latest_scan_id
-
-    # If project has deleted branches, verify scan is on an active branch
-    if project.deleted_branches:
-        scan_doc = await db.scans.find_one({"_id": scan_id}, {"branch": 1})
-        if scan_doc and scan_doc.get("branch") in project.deleted_branches:
-            active_scan = await db.scans.find_one(
-                {"project_id": project_id, "branch": {"$nin": project.deleted_branches}, "status": "completed"},
-                sort=[("created_at", -1)],
-                projection={"_id": 1},
-            )
-            if not active_scan:
-                return None
-            scan_id = active_scan["_id"]
+    scan_id = await _resolve_active_scan_id(db, project_id, project.latest_scan_id, project.deleted_branches or [])
+    if not scan_id:
+        return None
 
     # Acquire distributed lock to prevent race conditions
     lock_name = f"stats_recalc:{project_id}"
     holder_id = f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
-    lock_ttl = 300  # 5 minutes - should be enough for stats recalculation
 
-    lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, lock_ttl)
+    lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, 300)
     if not lock_acquired:
         logger.warning(
             f"Could not acquire lock for stats recalculation of project {project_id}. "
@@ -76,103 +178,17 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         # 1. Reset waivers for this scan
         await finding_repo.update_many({"scan_id": scan_id}, {"waived": False, "waiver_reason": None})
 
-        # 2. Fetch active waivers via repository
+        # 2. Fetch and apply active waivers
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
+        await _apply_waivers(finding_repo, scan_id, waivers)
 
-        # 3. Apply waivers via FindingRepository
-        for waiver in waivers:
-            query = {}
-            if waiver.get("finding_id"):
-                query["finding_id"] = waiver["finding_id"]
-            if waiver.get("package_name"):
-                query["component"] = waiver["package_name"]
-            if waiver.get("package_version"):
-                query["version"] = waiver["package_version"]
-            if waiver.get("finding_type"):
-                query["type"] = waiver["finding_type"]
-
-            vulnerability_id = waiver.get("vulnerability_id")
-            if vulnerability_id:
-                # Vulnerability-level waiver (uses array_filters)
-                await finding_repo.apply_vulnerability_waiver(
-                    scan_id=scan_id,
-                    vulnerability_id=vulnerability_id,
-                    waived=True,
-                    waiver_reason=waiver.get("reason"),
-                )
-            else:
-                # Finding-level waiver
-                await finding_repo.apply_finding_waiver(
-                    scan_id=scan_id,
-                    query=query,
-                    waived=True,
-                    waiver_reason=waiver.get("reason"),
-                )
-
-        # 4. Calculate stats using CVSS severity scores from constants
-        pipeline: List[Dict[str, Any]] = [
-            {"$match": {"scan_id": scan_id, "waived": False}},
-            {
-                "$project": {
-                    "severity": 1,
-                    "cvss_score": "$details.cvss_score",
-                    "calculated_score": {
-                        "$switch": {
-                            "branches": [
-                                {
-                                    "case": {"$eq": ["$severity", "CRITICAL"]},
-                                    "then": CVSS_SEVERITY_SCORES["CRITICAL"],
-                                },
-                                {
-                                    "case": {"$eq": ["$severity", "HIGH"]},
-                                    "then": CVSS_SEVERITY_SCORES["HIGH"],
-                                },
-                                {
-                                    "case": {"$eq": ["$severity", "MEDIUM"]},
-                                    "then": CVSS_SEVERITY_SCORES["MEDIUM"],
-                                },
-                                {
-                                    "case": {"$eq": ["$severity", "LOW"]},
-                                    "then": CVSS_SEVERITY_SCORES["LOW"],
-                                },
-                            ],
-                            "default": CVSS_SEVERITY_SCORES["UNKNOWN"],
-                        }
-                    },
-                }
-            },
-            {
-                "$group": {
-                    "_id": None,
-                    "critical": {"$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}},
-                    "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
-                    "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
-                    "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
-                    "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
-                    "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
-                    "risk_score": {"$sum": {"$toDouble": {"$ifNull": ["$cvss_score", "$calculated_score"]}}},
-                }
-            },
-        ]
-
+        # 3. Calculate stats
+        pipeline = _build_stats_pipeline(scan_id)
         stats_result = await finding_repo.aggregate(pipeline, limit=1)
+        stats = _stats_from_result(stats_result)
 
-        stats = Stats()
-        if stats_result:
-            res = stats_result[0]
-            stats.critical = res.get("critical", 0)
-            stats.high = res.get("high", 0)
-            stats.medium = res.get("medium", 0)
-            stats.low = res.get("low", 0)
-            stats.info = res.get("info", 0)
-            stats.unknown = res.get("unknown", 0)
-            stats.risk_score = round(res.get("risk_score", 0.0), 1)
-
-        # Calculate ignored count via repository
+        # 4. Calculate ignored count and update Scan and Project
         ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
-
-        # 5. Update Scan and Project via repositories
-        from app.repositories import ScanRepository
 
         scan_repo = ScanRepository(db)
         await scan_repo.update_raw(
@@ -186,7 +202,6 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         return stats
 
     finally:
-        # Only release the lock if we successfully acquired it
         if lock_acquired:
             await lock_repo.release_lock(lock_name)
             logger.debug(f"Released lock {lock_name} for project {project_id}")

@@ -11,7 +11,7 @@ export default function LoginCallback() {
   useEffect(() => {
     if (processedRef.current) return
     
-    const hash = window.location.hash
+    const hash = globalThis.location.hash
     if (!hash) {
       navigate('/login', { state: { error: 'No token provided' }, replace: true })
       return
@@ -23,7 +23,7 @@ export default function LoginCallback() {
 
     if (accessToken && refreshToken) {
       processedRef.current = true
-      window.history.replaceState(null, '', window.location.pathname)
+      globalThis.history.replaceState(null, '', globalThis.location.pathname)
       login(accessToken, refreshToken, true)
     } else {
       navigate('/login', { state: { error: 'Invalid token response' }, replace: true })

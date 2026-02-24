@@ -349,18 +349,32 @@ class ResultAggregator:
 
         return final_findings
 
+    @staticmethod
+    def _cross_link_pair(f1: Finding, f2: Finding) -> None:
+        """Add cross-references between two findings."""
+        if f2.id not in f1.related_findings:
+            f1.related_findings.append(f2.id)
+        if f1.id not in f2.related_findings:
+            f2.related_findings.append(f1.id)
+
+    def _link_finding_group(self, component_findings: List[Finding]) -> None:
+        """Link all findings in a component group to each other and add context."""
+        for i, f1 in enumerate(component_findings):
+            for f2 in component_findings[i + 1 :]:
+                if f1.id == f2.id:
+                    continue
+                self._cross_link_pair(f1, f2)
+                self._add_context_to_vulnerability(f1, f2)
+                self._add_context_to_vulnerability(f2, f1)
+
     def _link_related_findings_by_component(self, findings: List[Finding]) -> None:
         """
         Links ALL findings for the same component together, regardless of type.
         This creates a web of related findings where:
-        - Vulnerability ↔ Outdated ↔ Quality ↔ License ↔ EOL
+        - Vulnerability <-> Outdated <-> Quality <-> License <-> EOL
 
         Also adds contextual info from other finding types to vulnerability findings.
         """
-        # Build a map of all findings by artifact name (normalized)
-        # Key: artifact_name -> List[Finding]
-        # Using artifact name ensures cross-format names like
-        # "org.postgresql:postgresql" and "postgresql" are linked.
         component_map: Dict[str, List[Finding]] = {}
 
         for f in findings:
@@ -371,27 +385,9 @@ class ResultAggregator:
                 component_map[key] = []
             component_map[key].append(f)
 
-        # Process each component group
         for component_findings in component_map.values():
-            if len(component_findings) <= 1:
-                continue  # Nothing to link
-
-            # Link all findings in this component group to each other
-            for i, f1 in enumerate(component_findings):
-                for f2 in component_findings[i + 1 :]:
-                    # Skip if same finding
-                    if f1.id == f2.id:
-                        continue
-
-                    # Add cross-references
-                    if f2.id not in f1.related_findings:
-                        f1.related_findings.append(f2.id)
-                    if f1.id not in f2.related_findings:
-                        f2.related_findings.append(f1.id)
-
-                    # Add contextual info to vulnerability findings
-                    self._add_context_to_vulnerability(f1, f2)
-                    self._add_context_to_vulnerability(f2, f1)
+            if len(component_findings) > 1:
+                self._link_finding_group(component_findings)
 
     def _add_context_to_vulnerability(self, vuln_finding: Finding, other_finding: Finding) -> None:
         """
@@ -852,25 +848,13 @@ class ResultAggregator:
         else:
             self._add_generic_finding(finding, source)
 
-    def _add_vulnerability_finding(self, finding: Finding, source: Optional[str] = None) -> None:
-        # Normalize keys
-        raw_comp = finding.component if finding.component else "unknown"
-        comp_key = self._normalize_component(raw_comp)
-
-        # Normalize version (handle go1.25.4 vs 1.25.4)
-        raw_version = finding.version if finding.version else "unknown"
-        version_key = self._normalize_version(raw_version)
-
-        # Primary key for the AGGREGATED finding (The Package)
-        agg_key = f"{AGG_KEY_VULNERABILITY}:{comp_key}:{version_key}"
-
-        # Combine references and urls (legacy) into single references list, deduplicated
+    def _build_vuln_entry(self, finding: Finding, source: Optional[str]) -> VulnerabilityEntry:
+        """Build a vulnerability entry dict from a finding."""
         refs_from_details = finding.details.get("references", []) or []
         urls_from_details = finding.details.get("urls", []) or []
         combined_refs = list(set(refs_from_details) | set(urls_from_details))
 
-        # Prepare the vulnerability entry for the details list
-        vuln_entry: VulnerabilityEntry = {
+        return {
             "id": finding.id,
             "severity": finding.severity,
             "description": finding.description,
@@ -884,45 +868,44 @@ class ResultAggregator:
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
-            "details": {k: v for k, v in (finding.details or {}).items() if k != "urls"},  # nested details without urls
+            "details": {k: v for k, v in (finding.details or {}).items() if k != "urls"},
         }
 
+    def _merge_vuln_into_existing(
+        self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: Optional[str]
+    ) -> None:
+        """Merge a vulnerability finding into an existing aggregate."""
+        # Update scanners
+        existing.scanners = list(set(existing.scanners + finding.scanners))
+
+        # Update severity (max of all vulns)
+        if get_severity_value(finding.severity) > get_severity_value(existing.severity):
+            existing.severity = finding.severity
+
+        # Merge into vulnerabilities list
+        vuln_list: List[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
+        self._merge_vulnerability_into_list(vuln_list, vuln_entry)
+        existing.details["vulnerabilities"] = vuln_list
+        existing.description = ""
+
+        # Update found_in
+        if source and source not in existing.found_in:
+            existing.found_in.append(source)
+
+        # Update top-level fixed_version
+        fvs = [str(v.get("fixed_version")) for v in vuln_list if v.get("fixed_version")]
+        existing.details["fixed_version"] = self._resolve_fixed_versions(fvs) if fvs else None
+
+    def _add_vulnerability_finding(self, finding: Finding, source: Optional[str] = None) -> None:
+        comp_key = self._normalize_component(finding.component or "unknown")
+        version_key = self._normalize_version(finding.version or "unknown")
+        agg_key = f"{AGG_KEY_VULNERABILITY}:{comp_key}:{version_key}"
+
+        vuln_entry = self._build_vuln_entry(finding, source)
+
         if agg_key in self.findings:
-            existing = self.findings[agg_key]
-
-            # 1. Update Scanners of the aggregate
-            existing.scanners = list(set(existing.scanners + finding.scanners))
-
-            # 2. Update Severity of the aggregate (Max of all vulns)
-            existing_severity_val = get_severity_value(existing.severity)
-            new_severity_val = get_severity_value(finding.severity)
-            if new_severity_val > existing_severity_val:
-                existing.severity = finding.severity
-
-            # 3. Merge into vulnerabilities list
-            vuln_list: List[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
-
-            self._merge_vulnerability_into_list(vuln_list, vuln_entry)
-
-            existing.details["vulnerabilities"] = vuln_list
-            existing.description = ""
-
-            # Update found_in
-            if source and source not in existing.found_in:
-                existing.found_in.append(source)
-
-            # Update top-level fixed_version
-            # Only consider vulnerabilities that actually HAVE a fixed version
-            fvs = [str(v.get("fixed_version")) for v in vuln_list if v.get("fixed_version")]
-
-            if not fvs:
-                existing.details["fixed_version"] = None
-            else:
-                # Calculate the best fixed version(s) covering all vulnerabilities
-                existing.details["fixed_version"] = self._resolve_fixed_versions(fvs)
-
+            self._merge_vuln_into_existing(self.findings[agg_key], finding, vuln_entry, source)
         else:
-            # Create new Aggregate Finding
             agg_details: VulnerabilityAggregatedDetails = {
                 "vulnerabilities": [vuln_entry],
                 "fixed_version": (
@@ -930,18 +913,17 @@ class ResultAggregator:
                 ),
             }
 
-            agg_finding = Finding(
+            self.findings[agg_key] = Finding(
                 id=f"{finding.component}:{finding.version}",
                 type=FindingType.VULNERABILITY,
                 severity=finding.severity,
                 component=finding.component,
                 version=finding.version,
-                description="",  # No description for aggregated findings
+                description="",
                 scanners=finding.scanners,
                 details=agg_details,
                 found_in=[source] if source else [],
             )
-            self.findings[agg_key] = agg_finding
 
     def _add_quality_finding(self, finding: Finding, source: Optional[str] = None) -> None:
         """

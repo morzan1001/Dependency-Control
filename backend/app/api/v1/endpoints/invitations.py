@@ -6,7 +6,7 @@ from typing import Annotated, Any, Dict, List
 from fastapi import BackgroundTasks, Body, Depends, HTTPException, status
 
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_400, RESP_AUTH, RESP_AUTH_400, RESP_404
+from app.api.v1.helpers.responses import RESP_400, RESP_404, RESP_AUTH, RESP_AUTH_400
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -22,7 +22,7 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/system", response_model=List[SystemInvitation], responses={**RESP_AUTH})
+@router.get("/system", response_model=List[SystemInvitation], responses=RESP_AUTH)
 async def read_system_invitations(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
@@ -37,7 +37,7 @@ async def read_system_invitations(
     return invitations
 
 
-@router.post("/system", status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH_400})
+@router.post("/system", status_code=status.HTTP_201_CREATED, responses=RESP_AUTH_400)
 async def create_system_invitation(
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
@@ -93,7 +93,7 @@ async def create_system_invitation(
     return response
 
 
-@router.get("/system/{token}", responses={**RESP_404})
+@router.get("/system/{token}", responses=RESP_404)
 async def validate_system_invitation(token: str, db: DatabaseDep) -> Dict[str, Any]:
     """
     Validate a system invitation token.
@@ -107,7 +107,7 @@ async def validate_system_invitation(token: str, db: DatabaseDep) -> Dict[str, A
     return {"email": invitation["email"]}
 
 
-@router.post("/system/accept", response_model=UserSchema, status_code=status.HTTP_201_CREATED, responses={**RESP_400})
+@router.post("/system/accept", response_model=UserSchema, status_code=status.HTTP_201_CREATED, responses=RESP_400)
 async def accept_system_invitation(
     db: DatabaseDep,
     token: Annotated[str, Body(...)],

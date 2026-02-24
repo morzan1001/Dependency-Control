@@ -53,6 +53,37 @@ async def _get_referenced_scan_ids(db: Any) -> list[str]:
     return list(referenced_ids)
 
 
+def _extract_gridfs_ids_from_refs(sbom_refs: List[Any]) -> List[str]:
+    """Extract GridFS IDs from a list of SBOM references."""
+    ids: List[str] = []
+    for ref in sbom_refs:
+        if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
+            gid = ref.get("gridfs_id")
+            if gid:
+                ids.append(gid)
+    return ids
+
+
+async def _collect_gridfs_ids(db: Any, scan_ids: List[str]) -> List[str]:
+    """Collect all GridFS IDs referenced by the given scans."""
+    gridfs_ids: List[str] = []
+    async for scan_doc in db.scans.find({"_id": {"$in": scan_ids}}, {"sbom_refs": 1}):
+        gridfs_ids.extend(_extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])))
+    return gridfs_ids
+
+
+async def _cleanup_gridfs_files(db: Any, gridfs_ids: List[str]) -> None:
+    """Delete GridFS files by their IDs, ignoring already-deleted files."""
+    if not gridfs_ids:
+        return
+    fs = AsyncIOMotorGridFSBucket(db)
+    for gid in gridfs_ids:
+        try:
+            await fs.delete(ObjectId(gid))
+        except Exception:
+            pass  # File may already be deleted
+
+
 async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: str = "") -> int:
     """
     Delete scans and all associated data (findings, dependencies, GridFS SBOMs, callgraphs).
@@ -69,13 +100,7 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: st
         return 0
 
     # Collect GridFS references before deleting scans
-    gridfs_ids = []
-    async for scan_doc in db.scans.find({"_id": {"$in": scan_ids}}, {"sbom_refs": 1}):
-        for ref in scan_doc.get("sbom_refs", []):
-            if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
-                gid = ref.get("gridfs_id")
-                if gid:
-                    gridfs_ids.append(gid)
+    gridfs_ids = await _collect_gridfs_ids(db, scan_ids)
 
     # Delete all related collections
     await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids}})
@@ -86,13 +111,7 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: st
     result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
 
     # Clean up GridFS files
-    if gridfs_ids:
-        fs = AsyncIOMotorGridFSBucket(db)
-        for gid in gridfs_ids:
-            try:
-                await fs.delete(ObjectId(gid))
-            except Exception:
-                pass  # File may already be deleted
+    await _cleanup_gridfs_files(db, gridfs_ids)
 
     if label:
         logger.info(f"{label}: Deleted {result.deleted_count} scans ({len(gridfs_ids)} GridFS files).")

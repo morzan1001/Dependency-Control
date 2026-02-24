@@ -75,10 +75,13 @@ export function PackageAutocomplete({
                  {suggestions.map((pkg) => (
                     <div
                        key={pkg}
+                       role="option"
+                       tabIndex={0}
                        className={cn(
                           "relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground cursor-pointer"
                        )}
                        onClick={() => handleSelect(pkg)}
+                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelect(pkg); } }}
                     >
                        <span className="flex-1 truncate">{pkg}</span>
                        {pkg === inputValue && <Check className="ml-auto h-4 w-4" />}

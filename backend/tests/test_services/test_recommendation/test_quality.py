@@ -37,7 +37,7 @@ class TestProcessQualityEmpty:
         assert process_quality([]) == []
 
     def test_empty_iterable(self):
-        assert process_quality(list()) == []
+        assert process_quality([]) == []
 
 
 class TestProcessQualityUnmaintained:

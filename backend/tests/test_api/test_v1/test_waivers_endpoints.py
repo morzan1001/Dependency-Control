@@ -10,15 +10,15 @@ from app.models.waiver import Waiver
 
 MODULE = "app.api.v1.endpoints.waivers"
 
-_LIST_DEFAULTS = dict(
-    finding_id=None,
-    package_name=None,
-    search=None,
-    sort_by="created_at",
-    sort_order="desc",
-    skip=0,
-    limit=50,
-)
+_LIST_DEFAULTS = {
+    "finding_id": None,
+    "package_name": None,
+    "search": None,
+    "sort_by": "created_at",
+    "sort_order": "desc",
+    "skip": 0,
+    "limit": 50,
+}
 
 
 def _make_waiver(id="waiver-1", project_id="proj-1", reason="Accepted risk", created_by="admin", **kwargs):

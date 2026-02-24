@@ -73,15 +73,15 @@ export function TableSkeleton({
     <div className={`space-y-3 ${className}`}>
       {showHeader && (
         <div className="flex gap-4 pb-2 border-b">
-          {new Array(columns).fill(0).map((_, i) => (
-            <Skeleton key={i} className="h-4 flex-1" />
+          {Array.from({ length: columns }, (_, i) => (
+            <Skeleton key={`header-col-${i}`} className="h-4 flex-1" />
           ))}
         </div>
       )}
-      {new Array(rows).fill(0).map((_, rowIdx) => (
-        <div key={rowIdx} className="flex gap-4 py-2">
-          {new Array(columns).fill(0).map((_, colIdx) => (
-            <Skeleton key={colIdx} className="h-4 flex-1" />
+      {Array.from({ length: rows }, (_, rowIdx) => (
+        <div key={`row-${rowIdx}`} className="flex gap-4 py-2">
+          {Array.from({ length: columns }, (_, colIdx) => (
+            <Skeleton key={`col-${colIdx}`} className="h-4 flex-1" />
           ))}
         </div>
       ))}

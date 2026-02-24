@@ -27,7 +27,7 @@ class TestIsUrl:
         assert is_url("ftp://example.com") is False
 
     def test_none_like(self):
-        assert is_url(None) is False
+        assert is_url(None) is False  # type: ignore[arg-type]  # Testing None handling
 
     def test_url_with_path(self):
         assert is_url("https://example.com/path/to/resource") is True
@@ -49,7 +49,7 @@ class TestExtractLicenseFromUrl:
         assert extract_license_from_url("") is None
 
     def test_none(self):
-        assert extract_license_from_url(None) is None
+        assert extract_license_from_url(None) is None  # type: ignore[arg-type]  # Testing None handling
 
     def test_case_sensitive_patterns_not_matching_uppercase(self):
         # url.lower() converts MIT to mit, but pattern has uppercase MIT

@@ -103,19 +103,10 @@ def analyze_regressions(
     return recommendations
 
 
-def analyze_recurring_issues(
+def _build_finding_frequency(
     scan_history: List[ModelOrDict],
-) -> List[Recommendation]:
-    """
-    Identify issues that keep appearing across multiple scans.
-    These are candidates for waivers or architectural fixes.
-    """
-    recommendations: List[Recommendation] = []
-
-    if not scan_history:
-        return recommendations
-
-    # Count how often each CVE/finding appears across scans
+) -> Dict[str, Dict[str, Any]]:
+    """Count how often each CVE/finding appears across scans."""
     finding_frequency: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"count": 0, "scans": set(), "info": None})
 
     for scan in scan_history:
@@ -123,69 +114,91 @@ def analyze_recurring_issues(
         findings_summary = get_attr(scan, "findings_summary", []) or []
 
         for f in findings_summary:
-            if get_attr(f, "type") == "vulnerability":
-                details = get_attr(f, "details", {})
-                cve = details.get("cve_id") or get_attr(f, "id")
-                if cve:
-                    finding_frequency[cve]["count"] += 1
-                    finding_frequency[cve]["scans"].add(scan_id)
-                    if not finding_frequency[cve]["info"]:
-                        finding_frequency[cve]["info"] = {
-                            "severity": get_attr(f, "severity"),
-                            "component": get_attr(f, "component"),
-                            "description": get_attr(f, "description", "")[:100],
-                        }
+            if get_attr(f, "type") != "vulnerability":
+                continue
+            details = get_attr(f, "details", {})
+            cve = details.get("cve_id") or get_attr(f, "id")
+            if not cve:
+                continue
+            finding_frequency[cve]["count"] += 1
+            finding_frequency[cve]["scans"].add(scan_id)
+            if not finding_frequency[cve]["info"]:
+                finding_frequency[cve]["info"] = {
+                    "severity": get_attr(f, "severity"),
+                    "component": get_attr(f, "component"),
+                    "description": get_attr(f, "description", "")[:100],
+                }
+
+    return finding_frequency
+
+
+def _count_recurring_by_severity(recurring: List[Dict[str, Any]], severity: str) -> int:
+    """Count recurring issues matching a given severity."""
+    return len([r for r in recurring if r.get("info", {}).get("severity") == severity])
+
+
+def analyze_recurring_issues(
+    scan_history: List[ModelOrDict],
+) -> List[Recommendation]:
+    """
+    Identify issues that keep appearing across multiple scans.
+    These are candidates for waivers or architectural fixes.
+    """
+    if not scan_history:
+        return []
+
+    finding_frequency = _build_finding_frequency(scan_history)
 
     # Find truly recurring issues (appear in N+ scans)
     recurring = [
         {"cve": cve, **data} for cve, data in finding_frequency.items() if data["count"] >= RECURRING_ISSUE_THRESHOLD
     ]
 
-    if recurring:
-        # Sort by frequency and severity
-        recurring.sort(
-            key=lambda x: (
-                x["count"],
-                {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(x.get("info", {}).get("severity", ""), 0),
+    if not recurring:
+        return []
+
+    # Sort by frequency and severity
+    recurring.sort(
+        key=lambda x: (
+            x["count"],
+            {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(x.get("info", {}).get("severity", ""), 0),
+        ),
+        reverse=True,
+    )
+
+    critical_count = _count_recurring_by_severity(recurring, "CRITICAL")
+
+    return [
+        Recommendation(
+            type=RecommendationType.RECURRING_VULNERABILITY,
+            priority=Priority.MEDIUM if critical_count > 0 else Priority.LOW,
+            title=f"{len(recurring)} vulnerabilities keep recurring across scans",
+            description=(
+                f"These vulnerabilities have appeared in {RECURRING_ISSUE_THRESHOLD} "
+                "or more scans without being fixed. Consider creating waivers with "
+                "justification, or addressing the root cause architecturally."
             ),
-            reverse=True,
-        )
-
-        critical_recurring = [r for r in recurring if r.get("info", {}).get("severity") == "CRITICAL"]
-
-        recommendations.append(
-            Recommendation(
-                type=RecommendationType.RECURRING_VULNERABILITY,
-                priority=Priority.MEDIUM if critical_recurring else Priority.LOW,
-                title=f"{len(recurring)} vulnerabilities keep recurring across scans",
-                description=(
-                    f"These vulnerabilities have appeared in {RECURRING_ISSUE_THRESHOLD} "
-                    "or more scans without being fixed. Consider creating waivers with "
-                    "justification, or addressing the root cause architecturally."
-                ),
-                impact={
-                    "critical": len(critical_recurring),
-                    "high": len([r for r in recurring if r.get("info", {}).get("severity") == "HIGH"]),
-                    "medium": len([r for r in recurring if r.get("info", {}).get("severity") == "MEDIUM"]),
-                    "low": len([r for r in recurring if r.get("info", {}).get("severity") == "LOW"]),
-                    "total": len(recurring),
-                },
-                affected_components=[
-                    f"{r['cve']} ({r.get('info', {}).get('component', 'unknown')}) - {r['count']} scans"
-                    for r in recurring[:10]
+            impact={
+                "critical": critical_count,
+                "high": _count_recurring_by_severity(recurring, "HIGH"),
+                "medium": _count_recurring_by_severity(recurring, "MEDIUM"),
+                "low": _count_recurring_by_severity(recurring, "LOW"),
+                "total": len(recurring),
+            },
+            affected_components=[
+                f"{r['cve']} ({r.get('info', {}).get('component', 'unknown')}) - {r['count']} scans"
+                for r in recurring[:10]
+            ],
+            action={
+                "type": "address_recurring",
+                "cves": [r["cve"] for r in recurring[:10]],
+                "suggestions": [
+                    "Create waivers with documented justification for accepted risks",
+                    "Look for alternative packages without these vulnerabilities",
+                    "Consider if the affected functionality can be removed",
+                    "Check if upgrading to a different major version resolves the issues",
                 ],
-                action={
-                    "type": "address_recurring",
-                    "cves": [r["cve"] for r in recurring[:10]],
-                    "suggestions": [
-                        "Create waivers with documented justification for accepted risks",
-                        "Look for alternative packages without these vulnerabilities",
-                        "Consider if the affected functionality can be removed",
-                        "Check if upgrading to a different major version resolves the issues",
-                    ],
-                },
-                effort="high",
-            )
+            },
+            effort="high",
         )
-
-    return recommendations
+    ]

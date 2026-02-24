@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Scan } from '@/types/scan'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
@@ -10,7 +10,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Loader2, Trash2 } from 'lucide-react'
-import { useMemo } from 'react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'

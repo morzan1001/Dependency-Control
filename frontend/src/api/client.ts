@@ -107,7 +107,7 @@ const refreshAccessToken = async (): Promise<string | null> => {
  * Build URLSearchParams from an object, skipping null/undefined/empty values.
  * Arrays are joined with commas.
  */
-export function buildQueryParams(obj: Record<string, unknown>): URLSearchParams {
+export function buildQueryParams(obj: Record<string, string | number | boolean | string[] | undefined | null>): URLSearchParams {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(obj)) {
     if (value === undefined || value === null || value === '') continue;

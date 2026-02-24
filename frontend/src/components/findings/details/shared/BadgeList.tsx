@@ -44,21 +44,20 @@ export function BadgeList({
 
     return (
         <div className="flex flex-wrap gap-2">
-            {items.map((item, idx) => {
+            {items.map((item) => {
                 const isSimple = typeof item === 'string'
-                const label = isSimple 
-                    ? (formatLabel ? formatLabel(item) : item) 
-                    : item.label
-                const url = isSimple 
-                    ? (buildUrl ? buildUrl(item) : undefined) 
-                    : item.url
+                const simpleLabel = formatLabel ? formatLabel(item as string) : (item as string)
+                const label = isSimple ? simpleLabel : item.label
+                const simpleUrl = buildUrl ? buildUrl(item as string) : undefined
+                const url = isSimple ? simpleUrl : item.url
                 const itemVariant = isSimple ? variant : (item.variant || variant)
                 const itemClassName = isSimple ? badgeClassName : (item.className || badgeClassName)
+                const itemKey = isSimple ? (item as string) : item.label
 
                 const badge = (
-                    <Badge 
-                        key={idx} 
-                        variant={itemVariant} 
+                    <Badge
+                        key={itemKey}
+                        variant={itemVariant}
                         className={`${url ? 'hover:bg-muted cursor-pointer' : ''} ${itemClassName}`}
                     >
                         {Icon && <Icon className="h-3 w-3 mr-1" />}
@@ -70,7 +69,7 @@ export function BadgeList({
                 if (url) {
                     return (
                         <a
-                            key={idx}
+                            key={itemKey}
                             href={url}
                             target="_blank"
                             rel="noopener noreferrer"

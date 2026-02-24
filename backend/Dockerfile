@@ -36,23 +36,19 @@ RUN poetry install --no-interaction --no-ansi
 
 # Copy entrypoint script
 COPY backend/docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
-
-# Create a non-root user
-RUN addgroup --system --gid 1000 appgroup && \
-    adduser --system --uid 1000 --gid 1000 --no-create-home appuser
 
 # Set environment variables for tools
 ENV TRIVY_CACHE_DIR=/app/.cache/trivy
 ENV GRYPE_DB_CACHE_DIR=/app/.cache/grype
 ENV HOME=/app
 
-# Create cache directories
-RUN mkdir -p /app/.cache/trivy && \
-    mkdir -p /app/.cache/grype
-
-# Change ownership of the application directory
-RUN chown -R appuser:appgroup /app
+# Set up entrypoint, non-root user, cache directories, and ownership
+RUN chmod +x /docker-entrypoint.sh \
+    && addgroup --system --gid 1000 appgroup \
+    && adduser --system --uid 1000 --gid 1000 --no-create-home appuser \
+    && mkdir -p /app/.cache/trivy \
+    && mkdir -p /app/.cache/grype \
+    && chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser

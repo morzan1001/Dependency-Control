@@ -37,7 +37,7 @@ from app.services.webhooks.webhook_service import webhook_service
 router = CustomAPIRouter()
 
 
-@router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201, responses={**RESP_AUTH})
+@router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201, responses=RESP_AUTH)
 async def create_webhook(
     project_id: str,
     webhook_in: WebhookCreate,
@@ -57,7 +57,7 @@ async def create_webhook(
     return await webhook_repo.create(webhook)
 
 
-@router.get("/project/{project_id}", response_model=Dict[str, Any], responses={**RESP_AUTH})
+@router.get("/project/{project_id}", responses=RESP_AUTH)
 async def list_webhooks(
     project_id: str,
     current_user: CurrentUserDep,
@@ -80,7 +80,7 @@ async def list_webhooks(
     return build_pagination_response(items, total, skip, limit)
 
 
-@router.post("/global/", response_model=WebhookResponse, status_code=201, responses={**RESP_AUTH})
+@router.post("/global/", response_model=WebhookResponse, status_code=201, responses=RESP_AUTH)
 async def create_global_webhook(
     webhook_in: WebhookCreate,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
@@ -98,7 +98,7 @@ async def create_global_webhook(
     return await webhook_repo.create(webhook)
 
 
-@router.get("/global/", response_model=Dict[str, Any], responses={**RESP_AUTH})
+@router.get("/global/", response_model=Dict[str, Any], responses=RESP_AUTH)
 async def list_global_webhooks(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
@@ -118,7 +118,7 @@ async def list_global_webhooks(
     return build_pagination_response(items, total, skip, limit)
 
 
-@router.get("/{webhook_id}", response_model=WebhookResponse, responses={**RESP_AUTH_404})
+@router.get("/{webhook_id}", response_model=WebhookResponse, responses=RESP_AUTH_404)
 async def get_webhook(
     webhook_id: str,
     current_user: CurrentUserDep,
@@ -136,7 +136,7 @@ async def get_webhook(
     return webhook
 
 
-@router.patch("/{webhook_id}", response_model=WebhookResponse, responses={**RESP_AUTH_400_404})
+@router.patch("/{webhook_id}", response_model=WebhookResponse, responses=RESP_AUTH_400_404)
 async def update_webhook(
     webhook_id: str,
     webhook_update: WebhookUpdate,
@@ -164,7 +164,7 @@ async def update_webhook(
     return updated_webhook
 
 
-@router.delete("/{webhook_id}", status_code=204, responses={**RESP_AUTH_404})
+@router.delete("/{webhook_id}", status_code=204, responses=RESP_AUTH_404)
 async def delete_webhook(
     webhook_id: str,
     current_user: CurrentUserDep,
@@ -183,7 +183,7 @@ async def delete_webhook(
     await webhook_repo.delete(webhook_id)
 
 
-@router.post("/{webhook_id}/test", response_model=WebhookTestResponse, responses={**RESP_AUTH_404})
+@router.post("/{webhook_id}/test", response_model=WebhookTestResponse, responses=RESP_AUTH_404)
 async def test_webhook(
     webhook_id: str,
     current_user: CurrentUserDep,

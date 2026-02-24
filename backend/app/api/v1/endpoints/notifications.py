@@ -37,7 +37,7 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/history", response_model=List[BroadcastHistoryItem], responses={**RESP_AUTH})
+@router.get("/history", responses=RESP_AUTH)
 async def get_broadcast_history(
     db: DatabaseDep,
     current_user: Annotated[
@@ -86,7 +86,7 @@ async def get_broadcast_history(
     ]
 
 
-@router.get("/packages/suggest", response_model=List[str], responses={**RESP_AUTH})
+@router.get("/packages/suggest", responses=RESP_AUTH)
 async def suggest_packages(
     db: DatabaseDep,
     current_user: Annotated[
@@ -111,7 +111,7 @@ async def suggest_packages(
     return [r["name"] for r in results]
 
 
-@router.post("/broadcast", response_model=BroadcastResult, responses={**RESP_AUTH_400})
+@router.post("/broadcast", responses=RESP_AUTH_400)
 async def broadcast_message(
     payload: BroadcastRequest,
     background_tasks: BackgroundTasks,

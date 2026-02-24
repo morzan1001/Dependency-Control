@@ -3,6 +3,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useProjectWaivers, useDeleteWaiver, waiverKeys } from '@/hooks/queries/use-waivers'
 import { Waiver } from '@/types/waiver'
 import { useAuth } from '@/context/useAuth'
+import { useProject } from '@/hooks/queries/use-projects'
+import { useCurrentUser } from '@/hooks/queries/use-users'
+import { canDeleteProjectWaiver } from '@/lib/project-roles'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -28,7 +31,12 @@ interface ProjectWaiversProps {
 
 export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
     const queryClient = useQueryClient()
-    const { hasPermission } = useAuth()
+    const { permissions } = useAuth()
+    const { data: project } = useProject(projectId)
+    const { data: currentUser } = useCurrentUser()
+    const canDeleteWaiver = project && currentUser
+        ? canDeleteProjectWaiver(project, currentUser.id, permissions)
+        : false
 
     const [searchInput, setSearchInput] = useState('')
     const [sortBy, setSortBy] = useState('created_at')
@@ -178,7 +186,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                         {waiver.expiration_date ? formatDate(waiver.expiration_date) : "Never"}
                                     </TableCell>
                                     <TableCell>
-                                        {hasPermission('waiver:delete') && (
+                                        {canDeleteWaiver && (
                                             <Button
                                                 variant="ghost"
                                                 size="icon"

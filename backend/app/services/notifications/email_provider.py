@@ -34,6 +34,48 @@ except ImportError as e:
 
 
 class EmailProvider(NotificationProvider):
+    def _build_message(
+        self,
+        emails_from: str,
+        destination: str,
+        subject: str,
+        message: str,
+        html_message: Optional[str],
+        logo_path: Optional[str],
+    ) -> MIMEMultipart:
+        """Build the MIME message, attaching logo if available."""
+        has_logo = bool(logo_path and os.path.exists(logo_path))
+
+        if has_logo:
+            msg = MIMEMultipart("related")
+        else:
+            msg = MIMEMultipart("alternative")
+
+        msg["From"] = emails_from
+        msg["To"] = destination
+        msg["Subject"] = subject
+
+        if has_logo:
+            msg_alternative = MIMEMultipart("alternative")
+            msg.attach(msg_alternative)
+            msg_alternative.attach(MIMEText(message, "plain"))
+            if html_message:
+                msg_alternative.attach(MIMEText(html_message, "html"))
+        else:
+            msg.attach(MIMEText(message, "plain"))
+            if html_message:
+                msg.attach(MIMEText(html_message, "html"))
+
+        return msg
+
+    async def _attach_logo(self, msg: MIMEMultipart, logo_path: str) -> None:
+        """Attach a logo image to the message."""
+        img_data = await asyncio.to_thread(Path(logo_path).read_bytes)
+        image = MIMEImage(img_data)
+        image.add_header("Content-ID", "<logo>")
+        image.add_header("Content-Disposition", "inline", filename="logo.png")
+        msg.attach(image)
+
     async def _send_async(
         self,
         smtp_host: str,
@@ -118,31 +160,17 @@ class EmailProvider(NotificationProvider):
             emails_from = emails_from_email
 
         try:
+            msg = self._build_message(
+                emails_from,
+                destination,
+                subject,
+                message,
+                html_message,
+                logo_path,
+            )
+
             if logo_path and os.path.exists(logo_path):
-                msg = MIMEMultipart("related")
-            else:
-                msg = MIMEMultipart("alternative")
-
-            msg["From"] = emails_from
-            msg["To"] = destination
-            msg["Subject"] = subject
-
-            if logo_path and os.path.exists(logo_path):
-                msg_alternative = MIMEMultipart("alternative")
-                msg.attach(msg_alternative)
-                msg_alternative.attach(MIMEText(message, "plain"))
-                if html_message:
-                    msg_alternative.attach(MIMEText(html_message, "html"))
-
-                img_data = await asyncio.to_thread(Path(logo_path).read_bytes)
-                image = MIMEImage(img_data)
-                image.add_header("Content-ID", "<logo>")
-                image.add_header("Content-Disposition", "inline", filename="logo.png")
-                msg.attach(image)
-            else:
-                msg.attach(MIMEText(message, "plain"))
-                if html_message:
-                    msg.attach(MIMEText(html_message, "html"))
+                await self._attach_logo(msg, logo_path)
 
             # Send email asynchronously using aiosmtplib
             await self._send_async(

@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-@router.get("/summary", responses={**RESP_AUTH})
+@router.get("/summary", responses=RESP_AUTH)
 async def get_analytics_summary(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -131,7 +131,7 @@ async def get_analytics_summary(
     )
 
 
-@router.get("/dependencies/top", responses={**RESP_AUTH})
+@router.get("/dependencies/top", responses=RESP_AUTH)
 async def get_top_dependencies(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -208,7 +208,27 @@ async def get_top_dependencies(
     return enriched
 
 
-@router.get("/projects/{project_id}/dependency-tree", responses={**RESP_AUTH})
+async def _resolve_scan_id(project_id: str, db: DatabaseDep) -> Optional[str]:
+    """Resolve the latest scan ID for a project, preferring active branches."""
+    project_repo = ProjectRepository(db)
+    project = await project_repo.get_by_id(project_id)
+    if not project:
+        return None
+
+    deleted = project.deleted_branches or []
+    if not deleted:
+        return project.latest_scan_id
+
+    # Find latest scan not on a deleted branch
+    scan_doc = await db.scans.find_one(
+        {"project_id": project_id, "branch": {"$nin": deleted}, "status": "completed"},
+        sort=[("created_at", -1)],
+        projection={"_id": 1},
+    )
+    return scan_doc["_id"] if scan_doc else None
+
+
+@router.get("/projects/{project_id}/dependency-tree", responses=RESP_AUTH)
 async def get_dependency_tree(
     project_id: str,
     current_user: CurrentUserDep,
@@ -218,7 +238,6 @@ async def get_dependency_tree(
     """Get dependency tree for a project showing direct and transitive dependencies."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_TREE)
 
-    project_repo = ProjectRepository(db)
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
 
@@ -229,19 +248,7 @@ async def get_dependency_tree(
 
     # Get scan ID (prefer latest scan from active branch)
     if not scan_id:
-        project = await project_repo.get_by_id(project_id)
-        if project:
-            deleted = project.deleted_branches or []
-            if deleted:
-                # Find latest scan not on a deleted branch
-                scan_doc = await db.scans.find_one(
-                    {"project_id": project_id, "branch": {"$nin": deleted}, "status": "completed"},
-                    sort=[("created_at", -1)],
-                    projection={"_id": 1},
-                )
-                scan_id = scan_doc["_id"] if scan_doc else None
-            else:
-                scan_id = project.latest_scan_id
+        scan_id = await _resolve_scan_id(project_id, db)
 
     if not scan_id:
         return []
@@ -300,7 +307,7 @@ async def get_dependency_tree(
     return direct_deps + transitive_deps
 
 
-@router.get("/impact", responses={**RESP_AUTH})
+@router.get("/impact", responses=RESP_AUTH)
 async def get_impact_analysis(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -434,7 +441,67 @@ async def get_impact_analysis(
     return impact_results
 
 
-@router.get("/hotspots", responses={**RESP_AUTH})
+def _format_first_seen(first_seen: Any) -> str:
+    """Format a first_seen value to a string."""
+    if not first_seen:
+        return ""
+    if isinstance(first_seen, datetime):
+        return first_seen.isoformat()
+    return str(first_seen)
+
+
+def _build_hotspot(
+    r: Dict[str, Any],
+    enrichments: Dict[str, Any],
+    dep_type_map: Dict[str, str],
+    project_name_map: Dict[str, str],
+    project_ids: List[str],
+) -> VulnerabilityHotspot:
+    """Build a single VulnerabilityHotspot from an aggregation result."""
+    severity_counts = count_severities(r.get("severities", []))
+    fix_versions = extract_fix_versions(r.get("details_list", []))
+    has_fix = len(fix_versions) > 0
+    dep_type = dep_type_map.get(r["_id"]["component"], "unknown")
+
+    first_seen_str = _format_first_seen(r.get("first_seen"))
+    days_known = calculate_days_known(r.get("first_seen"))
+
+    finding_ids = r.get("finding_ids", [])
+    top_cves = list(dict.fromkeys(fid for fid in finding_ids if fid and fid.startswith("CVE-")))[:5]
+
+    cve_finding_ids = [fid for fid in finding_ids if fid and fid.startswith("CVE-")]
+    enrichment_data = process_cve_enrichments(cve_finding_ids, enrichments)
+    days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
+    priority_reasons = build_hotspot_priority_reasons(enrichment_data, severity_counts, has_fix, days_until_due)
+
+    accessible_affected_projects = [pid for pid in r["project_ids"] if pid in project_ids]
+
+    return VulnerabilityHotspot(
+        component=r["_id"]["component"],
+        version=r["_id"].get("version") or "unknown",
+        type=dep_type,
+        finding_count=r["finding_count"],
+        severity_breakdown=SeverityBreakdown(**severity_counts),
+        affected_projects=[project_name_map.get(pid, "Unknown") for pid in accessible_affected_projects[:10]],
+        first_seen=first_seen_str,
+        max_epss_score=enrichment_data.max_epss,
+        epss_percentile=enrichment_data.max_percentile,
+        has_kev=enrichment_data.has_kev,
+        kev_count=enrichment_data.kev_count,
+        kev_ransomware_use=enrichment_data.kev_ransomware_use,
+        kev_due_date=enrichment_data.kev_due_date,
+        days_until_due=days_until_due,
+        exploit_maturity=enrichment_data.exploit_maturity,
+        max_risk_score=enrichment_data.max_risk,
+        days_known=days_known,
+        has_fix=has_fix,
+        fix_versions=list(fix_versions)[:3],
+        top_cves=top_cves,
+        priority_reasons=priority_reasons,
+    )
+
+
+@router.get("/hotspots", responses=RESP_AUTH)
 async def get_vulnerability_hotspots(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -460,18 +527,13 @@ async def get_vulnerability_hotspots(
     if not scan_ids:
         return []
 
-    # Determine sort direction
     sort_direction = -1 if sort_order == "desc" else 1
-
-    # Map sort fields (for MongoDB aggregation)
     sort_field_map = {
         "finding_count": "finding_count",
         "component": "_id.component",
         "first_seen": "first_seen",
     }
     mongo_sort_field = sort_field_map.get(sort_by, "finding_count")
-
-    # For EPSS/risk sorting, we'll sort after enrichment
     post_sort_by = sort_by if sort_by in ["epss", "risk"] else None
 
     pipeline: List[Dict[str, Any]] = [
@@ -488,7 +550,6 @@ async def get_vulnerability_hotspots(
             }
         },
         {"$sort": {mongo_sort_field: sort_direction}},
-        # Fetch more if we need to sort by enrichment data
         {"$limit": limit * 3 if post_sort_by else skip + limit},
     ]
 
@@ -500,7 +561,6 @@ async def get_vulnerability_hotspots(
     # Collect all CVE IDs for enrichment
     all_cves = list({fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")})
 
-    # Enrich with EPSS/KEV data
     enrichments = {}
     if all_cves:
         try:
@@ -508,78 +568,15 @@ async def get_vulnerability_hotspots(
         except Exception as e:
             logger.warning(f"Failed to enrich CVEs: {e}")
 
-    # Batch fetch dependency types to avoid N+1 queries
+    # Batch fetch dependency types
     component_names = list({r["_id"]["component"] for r in results})
-    # Use find_all() instead of find_many() when using projection
-    # find_many() returns Pydantic models which don't work with partial projections
     deps_by_name = await dep_repo.find_all(
         {"name": {"$in": component_names}},
         projection={"name": 1, "type": 1},
     )
     dep_type_map = {d["name"]: d.get("type", "unknown") for d in deps_by_name}
 
-    hotspots = []
-    for r in results:
-        severity_counts = count_severities(r.get("severities", []))
-        fix_versions = extract_fix_versions(r.get("details_list", []))
-        has_fix = len(fix_versions) > 0
-
-        # Get dependency type from pre-fetched map
-        dep_type = dep_type_map.get(r["_id"]["component"], "unknown")
-
-        # Format first_seen and calculate days known
-        first_seen = r.get("first_seen")
-        first_seen_str = ""
-        if first_seen:
-            if isinstance(first_seen, datetime):
-                first_seen_str = first_seen.isoformat()
-            else:
-                first_seen_str = str(first_seen)
-        days_known = calculate_days_known(first_seen)
-
-        # Collect top CVEs and process enrichment data
-        finding_ids = r.get("finding_ids", [])
-        top_cves = list(dict.fromkeys(fid for fid in finding_ids if fid and fid.startswith("CVE-")))[:5]
-
-        cve_finding_ids = [fid for fid in finding_ids if fid and fid.startswith("CVE-")]
-        enrichment_data = process_cve_enrichments(cve_finding_ids, enrichments)
-        days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
-
-        # Build priority reasons using helper
-        priority_reasons = build_hotspot_priority_reasons(enrichment_data, severity_counts, has_fix, days_until_due)
-
-        # Filter project_ids to only accessible projects
-        # Prevents information disclosure of project names user doesn't have access to
-        accessible_affected_projects = [pid for pid in r["project_ids"] if pid in project_ids]
-
-        hotspots.append(
-            VulnerabilityHotspot(
-                component=r["_id"]["component"],
-                version=r["_id"].get("version") or "unknown",
-                type=dep_type,
-                finding_count=r["finding_count"],
-                severity_breakdown=SeverityBreakdown(**severity_counts),
-                affected_projects=[
-                    project_name_map.get(pid, "Unknown")
-                    for pid in accessible_affected_projects[:10]  # Only accessible projects!
-                ],
-                first_seen=first_seen_str,
-                max_epss_score=enrichment_data.max_epss,
-                epss_percentile=enrichment_data.max_percentile,
-                has_kev=enrichment_data.has_kev,
-                kev_count=enrichment_data.kev_count,
-                kev_ransomware_use=enrichment_data.kev_ransomware_use,
-                kev_due_date=enrichment_data.kev_due_date,
-                days_until_due=days_until_due,
-                exploit_maturity=enrichment_data.exploit_maturity,
-                max_risk_score=enrichment_data.max_risk,
-                days_known=days_known,
-                has_fix=has_fix,
-                fix_versions=list(fix_versions)[:3],
-                top_cves=top_cves,
-                priority_reasons=priority_reasons,
-            )
-        )
+    hotspots = [_build_hotspot(r, enrichments, dep_type_map, project_name_map, project_ids) for r in results]
 
     # Post-sort by enrichment data if needed
     if post_sort_by == "epss":
@@ -592,7 +589,66 @@ async def get_vulnerability_hotspots(
     return hotspots
 
 
-@router.get("/search", responses={**RESP_AUTH})
+def _passes_vuln_filter(
+    dep_project_id: str, dep_name: str, has_vulnerabilities: Optional[bool], vuln_status_map: Dict[str, bool]
+) -> bool:
+    """Check if a dependency passes the vulnerability filter."""
+    if has_vulnerabilities is None:
+        return True
+    key = f"{dep_project_id}:{dep_name}"
+    has_vulns = vuln_status_map.get(key, False)
+    return has_vulnerabilities == has_vulns
+
+
+def _dep_to_search_result(dep: Any, project_name_map: Dict[str, str]) -> DependencySearchResult:
+    """Convert a dependency to a DependencySearchResult."""
+    dep_project_id = get_attr(dep, "project_id")
+    return DependencySearchResult(
+        project_id=dep_project_id,
+        project_name=project_name_map.get(dep_project_id, "Unknown"),
+        package=get_attr(dep, "name"),
+        version=get_attr(dep, "version"),
+        type=get_attr(dep, "type", "unknown"),
+        license=get_attr(dep, "license"),
+        license_url=get_attr(dep, "license_url"),
+        direct=get_attr(dep, "direct", False),
+        purl=get_attr(dep, "purl"),
+        source_type=get_attr(dep, "source_type"),
+        source_target=get_attr(dep, "source_target"),
+        layer_digest=get_attr(dep, "layer_digest"),
+        found_by=get_attr(dep, "found_by"),
+        locations=get_attr(dep, "locations", []),
+        cpes=get_attr(dep, "cpes", []),
+        description=get_attr(dep, "description"),
+        author=get_attr(dep, "author"),
+        publisher=get_attr(dep, "publisher"),
+        group=get_attr(dep, "group"),
+        homepage=get_attr(dep, "homepage"),
+        repository_url=get_attr(dep, "repository_url"),
+        download_url=get_attr(dep, "download_url"),
+        hashes=get_attr(dep, "hashes", {}),
+        properties=get_attr(dep, "properties", {}),
+    )
+
+
+def _build_search_results(
+    dependencies: List[Any],
+    has_vulnerabilities: Optional[bool],
+    vuln_status_map: Dict[str, bool],
+    project_name_map: Dict[str, str],
+) -> List[DependencySearchResult]:
+    """Build filtered search results from dependencies."""
+    results = []
+    for dep in dependencies:
+        dep_project_id = get_attr(dep, "project_id")
+        dep_name = get_attr(dep, "name")
+        if not _passes_vuln_filter(dep_project_id, dep_name, has_vulnerabilities, vuln_status_map):
+            continue
+        results.append(_dep_to_search_result(dep, project_name_map))
+    return results
+
+
+@router.get("/search", responses=RESP_AUTH)
 async def search_dependencies_advanced(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -688,47 +744,7 @@ async def search_dependencies_advanced(
             key = f"{r['_id']['project_id']}:{r['_id']['component']}"
             vuln_status_map[key] = True
 
-    results = []
-    for dep in dependencies:
-        # Check for vulnerabilities if filter is set
-        dep_project_id = get_attr(dep, "project_id")
-        dep_name = get_attr(dep, "name")
-        if has_vulnerabilities is not None:
-            key = f"{dep_project_id}:{dep_name}"
-            has_vulns = vuln_status_map.get(key, False)
-            if has_vulnerabilities and not has_vulns:
-                continue
-            if not has_vulnerabilities and has_vulns:
-                continue
-
-        results.append(
-            DependencySearchResult(
-                project_id=dep_project_id,
-                project_name=project_name_map.get(dep_project_id, "Unknown"),
-                package=dep_name,
-                version=get_attr(dep, "version"),
-                type=get_attr(dep, "type", "unknown"),
-                license=get_attr(dep, "license"),
-                license_url=get_attr(dep, "license_url"),
-                direct=get_attr(dep, "direct", False),
-                purl=get_attr(dep, "purl"),
-                source_type=get_attr(dep, "source_type"),
-                source_target=get_attr(dep, "source_target"),
-                layer_digest=get_attr(dep, "layer_digest"),
-                found_by=get_attr(dep, "found_by"),
-                locations=get_attr(dep, "locations", []),
-                cpes=get_attr(dep, "cpes", []),
-                description=get_attr(dep, "description"),
-                author=get_attr(dep, "author"),
-                publisher=get_attr(dep, "publisher"),
-                group=get_attr(dep, "group"),
-                homepage=get_attr(dep, "homepage"),
-                repository_url=get_attr(dep, "repository_url"),
-                download_url=get_attr(dep, "download_url"),
-                hashes=get_attr(dep, "hashes", {}),
-                properties=get_attr(dep, "properties", {}),
-            )
-        )
+    results = _build_search_results(dependencies, has_vulnerabilities, vuln_status_map, project_name_map)
 
     return DependencySearchResponse(
         items=results,
@@ -749,7 +765,106 @@ def _get_description(vuln: dict, finding: Any) -> str | None:
     return None
 
 
-@router.get("/vulnerability-search", responses={**RESP_AUTH})
+def _aggregate_kev_status(details: Dict[str, Any], nested_vulns: List[Dict[str, Any]]) -> tuple[bool, bool, Any]:
+    """Aggregate KEV status from finding details and nested vulnerabilities.
+
+    Returns:
+        Tuple of (in_kev_status, kev_ransomware, kev_due_date)
+    """
+    in_kev_status = details.get("kev", False)
+    kev_ransomware = details.get("kev_ransomware", False)
+    kev_due_date = details.get("kev_due_date")
+
+    for vuln in nested_vulns:
+        if vuln.get("kev"):
+            in_kev_status = True
+        if vuln.get("kev_ransomware"):
+            kev_ransomware = True
+        if vuln.get("kev_due_date") and (not kev_due_date or vuln["kev_due_date"] < kev_due_date):
+            kev_due_date = vuln["kev_due_date"]
+
+    return in_kev_status, kev_ransomware, kev_due_date
+
+
+def _check_fix_availability(details: Dict[str, Any], nested_vulns: List[Dict[str, Any]]) -> bool:
+    """Check if any fix is available from details or nested vulnerabilities."""
+    if details.get("fixed_version"):
+        return True
+    return any(vuln.get("fixed_version") for vuln in nested_vulns)
+
+
+def _build_direct_vuln_result(
+    finding: Any,
+    details: Dict[str, Any],
+    in_kev_status: bool,
+    kev_ransomware: bool,
+    kev_due_date: Any,
+    project_name_map: Dict[str, str],
+) -> VulnerabilitySearchResult:
+    """Build a VulnerabilitySearchResult for a direct finding match."""
+    return VulnerabilitySearchResult(
+        vulnerability_id=finding.finding_id,
+        aliases=finding.aliases or [],
+        severity=finding.severity or "UNKNOWN",
+        cvss_score=details.get("cvss_score"),
+        epss_score=details.get("epss_score"),
+        epss_percentile=details.get("epss_percentile"),
+        in_kev=in_kev_status,
+        kev_ransomware=kev_ransomware,
+        kev_due_date=kev_due_date,
+        component=finding.component or "",
+        version=finding.version or "",
+        component_type=details.get("type"),
+        purl=details.get("purl"),
+        project_id=finding.project_id or "",
+        project_name=project_name_map.get(finding.project_id or "", "Unknown"),
+        scan_id=finding.scan_id,
+        finding_id=finding.finding_id,
+        finding_type=finding.type or "vulnerability",
+        description=(finding.description[:200] if finding.description else None),
+        fixed_version=details.get("fixed_version"),
+        waived=finding.waived if finding.waived is not None else False,
+        waiver_reason=finding.waiver_reason,
+    )
+
+
+def _build_nested_vuln_result(
+    vuln: Dict[str, Any],
+    finding: Any,
+    details: Dict[str, Any],
+    in_kev_status: bool,
+    kev_ransomware: bool,
+    kev_due_date: Any,
+    project_name_map: Dict[str, str],
+) -> VulnerabilitySearchResult:
+    """Build a VulnerabilitySearchResult for a nested vulnerability match."""
+    return VulnerabilitySearchResult(
+        vulnerability_id=(vuln.get("id") or vuln.get("resolved_cve") or finding.finding_id),
+        aliases=([finding.finding_id] if vuln.get("id") != finding.finding_id else finding.aliases or []),
+        severity=(vuln.get("severity") or finding.severity or "UNKNOWN"),
+        cvss_score=(vuln.get("cvss_score") or details.get("cvss_score")),
+        epss_score=(vuln.get("epss_score") or details.get("epss_score")),
+        epss_percentile=(vuln.get("epss_percentile") or details.get("epss_percentile")),
+        in_kev=vuln.get("kev", False) or in_kev_status,
+        kev_ransomware=(vuln.get("kev_ransomware", False) or kev_ransomware),
+        kev_due_date=vuln.get("kev_due_date") or kev_due_date,
+        component=finding.component or "",
+        version=finding.version or "",
+        component_type=details.get("type"),
+        purl=details.get("purl"),
+        project_id=finding.project_id or "",
+        project_name=project_name_map.get(finding.project_id or "", "Unknown"),
+        scan_id=finding.scan_id,
+        finding_id=finding.finding_id,
+        finding_type=finding.type or "vulnerability",
+        description=_get_description(vuln, finding),
+        fixed_version=(vuln.get("fixed_version") or details.get("fixed_version")),
+        waived=vuln.get("waived", False) or (finding.waived if finding.waived is not None else False),
+        waiver_reason=(vuln.get("waiver_reason") or finding.waiver_reason),
+    )
+
+
+@router.get("/vulnerability-search", responses=RESP_AUTH)
 async def search_vulnerabilities(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -850,115 +965,41 @@ async def search_vulnerabilities(
     )
 
     results = []
+    query_lower = q.lower()
+
     for finding in findings:
         details = finding.details
-
-        # Extract vulnerability info from nested vulnerabilities if present
         nested_vulns = details.get("vulnerabilities", [])
 
-        # Check KEV status
-        in_kev_status = details.get("kev", False)
-        kev_ransomware = details.get("kev_ransomware", False)
-        kev_due_date = details.get("kev_due_date")
-
-        # Check nested vulns for KEV
-        for vuln in nested_vulns:
-            if vuln.get("kev"):
-                in_kev_status = True
-            if vuln.get("kev_ransomware"):
-                kev_ransomware = True
-            if vuln.get("kev_due_date") and (not kev_due_date or vuln["kev_due_date"] < kev_due_date):
-                kev_due_date = vuln["kev_due_date"]
+        in_kev_status, kev_ransomware, kev_due_date = _aggregate_kev_status(details, nested_vulns)
 
         # Apply KEV filter
-        if in_kev is not None:
-            if in_kev and not in_kev_status:
-                continue
-            if not in_kev and in_kev_status:
-                continue
-
-        # Check fix availability
-        has_fix_status = bool(details.get("fixed_version"))
-        for vuln in nested_vulns:
-            if vuln.get("fixed_version"):
-                has_fix_status = True
-                break
+        if in_kev is not None and in_kev != in_kev_status:
+            continue
 
         # Apply fix filter
-        if has_fix is not None:
-            if has_fix and not has_fix_status:
-                continue
-            if not has_fix and has_fix_status:
-                continue
+        has_fix_status = _check_fix_availability(details, nested_vulns)
+        if has_fix is not None and has_fix != has_fix_status:
+            continue
 
-        # Build result - if there are nested vulnerabilities matching the query, include each
-        matched_vulns = []
-        query_lower = q.lower()
+        # Find nested vulnerabilities matching the query
+        matched_vulns = [
+            vuln
+            for vuln in nested_vulns
+            if query_lower in vuln.get("id", "").lower() or query_lower in vuln.get("resolved_cve", "").lower()
+        ]
 
-        # Check if any nested vulnerability matches
-        for vuln in nested_vulns:
-            vuln_id = vuln.get("id", "")
-            resolved_cve = vuln.get("resolved_cve", "")
-            if query_lower in vuln_id.lower() or query_lower in resolved_cve.lower():
-                matched_vulns.append(vuln)
-
-        # If no nested vulns match, this is a direct match on the finding
         if not matched_vulns:
             results.append(
-                VulnerabilitySearchResult(
-                    vulnerability_id=finding.finding_id,
-                    aliases=finding.aliases or [],
-                    severity=finding.severity or "UNKNOWN",
-                    cvss_score=details.get("cvss_score"),
-                    epss_score=details.get("epss_score"),
-                    epss_percentile=details.get("epss_percentile"),
-                    in_kev=in_kev_status,
-                    kev_ransomware=kev_ransomware,
-                    kev_due_date=kev_due_date,
-                    component=finding.component or "",
-                    version=finding.version or "",
-                    component_type=details.get("type"),
-                    purl=details.get("purl"),
-                    project_id=finding.project_id or "",
-                    project_name=project_name_map.get(finding.project_id or "", "Unknown"),
-                    scan_id=finding.scan_id,
-                    finding_id=finding.finding_id,
-                    finding_type=finding.type or "vulnerability",
-                    description=(finding.description[:200] if finding.description else None),
-                    fixed_version=details.get("fixed_version"),
-                    waived=finding.waived if finding.waived is not None else False,
-                    waiver_reason=finding.waiver_reason,
+                _build_direct_vuln_result(
+                    finding, details, in_kev_status, kev_ransomware, kev_due_date, project_name_map
                 )
             )
         else:
-            # Add each matched nested vulnerability as a separate result
             for vuln in matched_vulns:
                 results.append(
-                    VulnerabilitySearchResult(
-                        vulnerability_id=(vuln.get("id") or vuln.get("resolved_cve") or finding.finding_id),
-                        aliases=(
-                            [finding.finding_id] if vuln.get("id") != finding.finding_id else finding.aliases or []
-                        ),
-                        severity=(vuln.get("severity") or finding.severity or "UNKNOWN"),
-                        cvss_score=(vuln.get("cvss_score") or details.get("cvss_score")),
-                        epss_score=(vuln.get("epss_score") or details.get("epss_score")),
-                        epss_percentile=(vuln.get("epss_percentile") or details.get("epss_percentile")),
-                        in_kev=vuln.get("kev", False) or in_kev_status,
-                        kev_ransomware=(vuln.get("kev_ransomware", False) or kev_ransomware),
-                        kev_due_date=vuln.get("kev_due_date") or kev_due_date,
-                        component=finding.component or "",
-                        version=finding.version or "",
-                        component_type=details.get("type"),
-                        purl=details.get("purl"),
-                        project_id=finding.project_id or "",
-                        project_name=project_name_map.get(finding.project_id or "", "Unknown"),
-                        scan_id=finding.scan_id,
-                        finding_id=finding.finding_id,
-                        finding_type=finding.type or "vulnerability",
-                        description=_get_description(vuln, finding),
-                        fixed_version=(vuln.get("fixed_version") or details.get("fixed_version")),
-                        waived=vuln.get("waived", False) or (finding.waived if finding.waived is not None else False),
-                        waiver_reason=(vuln.get("waiver_reason") or finding.waiver_reason),
+                    _build_nested_vuln_result(
+                        vuln, finding, details, in_kev_status, kev_ransomware, kev_due_date, project_name_map
                     )
                 )
 
@@ -977,7 +1018,7 @@ async def search_vulnerabilities(
     )
 
 
-@router.get("/component-findings", responses={**RESP_AUTH})
+@router.get("/component-findings", responses=RESP_AUTH)
 async def get_component_findings(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -1015,7 +1056,38 @@ async def get_component_findings(
     return results
 
 
-@router.get("/dependency-metadata", responses={**RESP_AUTH})
+async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, purl: Optional[str]) -> Dict[str, Any]:
+    """Fetch and extract enrichment info for a dependency by PURL."""
+    result: Dict[str, Any] = {
+        "deps_dev_data": None,
+        "enrichment_sources": [],
+        "license_category": None,
+        "license_risks": [],
+        "license_obligations": [],
+    }
+    if not purl:
+        return result
+
+    enrichment = await enrichment_repo.get_by_purl(purl)
+    if not enrichment:
+        return result
+
+    deps_dev_data = enrichment.get("deps_dev")
+    if deps_dev_data:
+        result["deps_dev_data"] = deps_dev_data
+        result["enrichment_sources"].append("deps_dev")
+
+    license_info = enrichment.get("license_compliance")
+    if license_info:
+        result["enrichment_sources"].append("license_compliance")
+        result["license_category"] = license_info.get("category")
+        result["license_risks"] = license_info.get("risks", [])
+        result["license_obligations"] = license_info.get("obligations", [])
+
+    return result
+
+
+@router.get("/dependency-metadata", responses=RESP_AUTH)
 async def get_dependency_metadata_endpoint(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -1077,29 +1149,9 @@ async def get_dependency_metadata_endpoint(
                 "direct": get_attr(dep, "direct", False),
             }
 
-    # Get enrichment data (deps.dev + license) - single query
-    deps_dev_data = None
-    enrichment_sources = []
-    license_category = None
-    license_risks: List[str] = []
-    license_obligations: List[str] = []
-
+    # Get enrichment data (deps.dev + license)
     dep_purl = get_attr(first_dep, "purl")
-    if dep_purl:
-        enrichment = await enrichment_repo.get_by_purl(dep_purl)
-        if enrichment:
-            # deps.dev data
-            deps_dev_data = enrichment.get("deps_dev")
-            if deps_dev_data:
-                enrichment_sources.append("deps_dev")
-
-            # License compliance data
-            license_info = enrichment.get("license_compliance")
-            if license_info:
-                enrichment_sources.append("license_compliance")
-                license_category = license_info.get("category")
-                license_risks = license_info.get("risks", [])
-                license_obligations = license_info.get("obligations", [])
+    enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
 
     # Helper function to get first non-null value from dependencies
     def first_value(key: str) -> Optional[Any]:
@@ -1110,15 +1162,12 @@ async def get_dependency_metadata_endpoint(
         return None
 
     # Count findings for this component
-    finding_query = {"scan_id": {"$in": scan_ids}, "component": component}
+    finding_query: Dict[str, Any] = {"scan_id": {"$in": scan_ids}, "component": component}
     if version:
         finding_query["version"] = version
 
     finding_count = await finding_repo.count(finding_query)
-
-    # Count vulnerabilities specifically
-    vuln_query = {**finding_query, "type": "vulnerability"}
-    vuln_count = await finding_repo.count(vuln_query)
+    vuln_count = await finding_repo.count({**finding_query, "type": "vulnerability"})
 
     return DependencyMetadata(
         name=get_attr(first_dep, "name", component),
@@ -1134,19 +1183,19 @@ async def get_dependency_metadata_endpoint(
         group=first_value("group"),
         license=first_value("license"),
         license_url=first_value("license_url"),
-        license_category=license_category,
-        license_risks=license_risks,
-        license_obligations=license_obligations,
-        deps_dev=deps_dev_data,
+        license_category=enrichment_info["license_category"],
+        license_risks=enrichment_info["license_risks"],
+        license_obligations=enrichment_info["license_obligations"],
+        deps_dev=enrichment_info["deps_dev_data"],
         project_count=len(affected_projects),
         affected_projects=list(affected_projects.values()),
         total_vulnerability_count=vuln_count,
         total_finding_count=finding_count,
-        enrichment_sources=enrichment_sources,
+        enrichment_sources=enrichment_info["enrichment_sources"],
     )
 
 
-@router.get("/dependency-types", responses={**RESP_AUTH})
+@router.get("/dependency-types", responses=RESP_AUTH)
 async def get_dependency_types(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -1168,7 +1217,7 @@ async def get_dependency_types(
     return await dep_repo.get_distinct_types(scan_ids)
 
 
-@router.get("/projects/{project_id}/recommendations", responses={**RESP_AUTH_404})
+@router.get("/projects/{project_id}/recommendations", responses=RESP_AUTH_404)
 async def get_project_recommendations(
     project_id: str,
     current_user: CurrentUserDep,

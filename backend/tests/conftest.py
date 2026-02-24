@@ -21,6 +21,9 @@ os.environ["DATABASE_NAME"] = "test_dependency_control"
 
 import pytest  # noqa: E402
 
+# Test constants for commonly used PURLs
+TEST_PURL_REQUESTS = "pkg:pypi/requests@2.31.0"
+
 from tests.mocks.gitlab import make_gitlab_instance  # noqa: E402
 from tests.mocks.github import make_github_instance  # noqa: E402
 
@@ -75,7 +78,7 @@ def github_instance_b():
 def sample_purls():
     """Common PURL strings for testing."""
     return {
-        "pypi": "pkg:pypi/requests@2.31.0",
+        "pypi": TEST_PURL_REQUESTS,
         "npm": "pkg:npm/express@4.18.2",
         "npm_scoped": "pkg:npm/%40angular/core@16.0.0",
         "maven": "pkg:maven/org.apache.commons/commons-lang3@3.12.0",
@@ -127,7 +130,7 @@ def cyclonedx_minimal():
                 "type": "library",
                 "name": "requests",
                 "version": "2.31.0",
-                "purl": "pkg:pypi/requests@2.31.0",
+                "purl": TEST_PURL_REQUESTS,
                 "bom-ref": "requests-ref",
             },
             {
@@ -162,7 +165,7 @@ def spdx_minimal():
                     {
                         "referenceCategory": "PACKAGE-MANAGER",
                         "referenceType": "purl",
-                        "referenceLocator": "pkg:pypi/requests@2.31.0",
+                        "referenceLocator": TEST_PURL_REQUESTS,
                     }
                 ],
                 "licenseConcluded": "Apache-2.0",
@@ -190,7 +193,7 @@ def syft_minimal():
                 "id": "artifact-1",
                 "name": "requests",
                 "version": "2.31.0",
-                "purl": "pkg:pypi/requests@2.31.0",
+                "purl": TEST_PURL_REQUESTS,
                 "type": "python",
                 "licenses": [{"value": "Apache-2.0"}],
                 "locations": [{"path": "/app/requirements.txt"}],

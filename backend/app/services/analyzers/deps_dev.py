@@ -309,6 +309,21 @@ class DepsDevAnalyzer(Analyzer):
             logger.debug(f"Error checking {name}@{version} on deps.dev: {e}")
             return None
 
+    @staticmethod
+    def _classify_link_label(label: str) -> str:
+        """Classify a link label into a normalized category name."""
+        if "home" in label or label == "homepage":
+            return "homepage"
+        if "repo" in label or "source" in label or "github" in label or "gitlab" in label:
+            return "repository"
+        if "doc" in label:
+            return "documentation"
+        if "bug" in label or "issue" in label:
+            return "issues"
+        if "changelog" in label or "change" in label:
+            return "changelog"
+        return label
+
     def _extract_metadata(
         self, data: Dict[str, Any], name: str, version: str, system: str, purl: str
     ) -> Dict[str, Any]:
@@ -319,19 +334,7 @@ class DepsDevAnalyzer(Analyzer):
             label = link.get("label", "").lower()
             url = link.get("url", "")
             if url:
-                # Normalize common label names
-                if "home" in label or label == "homepage":
-                    links["homepage"] = url
-                elif "repo" in label or "source" in label or "github" in label or "gitlab" in label:
-                    links["repository"] = url
-                elif "doc" in label:
-                    links["documentation"] = url
-                elif "bug" in label or "issue" in label:
-                    links["issues"] = url
-                elif "changelog" in label or "change" in label:
-                    links["changelog"] = url
-                else:
-                    links[label] = url
+                links[self._classify_link_label(label)] = url
 
         # Build metadata object
         metadata = {

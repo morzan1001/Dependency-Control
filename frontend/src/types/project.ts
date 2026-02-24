@@ -1,10 +1,10 @@
-import { PaginatedResponse, ObjectId } from './common';
-import { EnhancedStats } from './scan';
+import { PaginatedResponse } from './common';
+import type { EnhancedStats } from './scan';
 
-export type { EnhancedStats };
+export type { EnhancedStats } from './scan';
 
 export interface ProjectMember {
-  user_id: ObjectId;
+  user_id: string;
   username?: string;
   role: string;
   notification_preferences?: Record<string, string[]>;
@@ -12,10 +12,10 @@ export interface ProjectMember {
 }
 
 export interface Project {
-  id: ObjectId;
+  id: string;
   name: string;
-  owner_id: ObjectId;
-  team_id?: ObjectId;
+  owner_id: string;
+  team_id?: string;
   team_name?: string;
   members?: ProjectMember[];
   active_analyzers?: string[];
@@ -61,7 +61,7 @@ export interface ProjectUpdate {
 }
 
 export interface ProjectApiKeyResponse {
-  project_id: ObjectId;
+  project_id: string;
   api_key: string;
   note: string;
 }

@@ -11,11 +11,11 @@ WORKERS="${WORKER_COUNT:-1}"
 if [ "$TLS_ENABLED" = "true" ]; then
     # Verify certificates exist
     if [ ! -f "$TLS_CERT_PATH" ]; then
-        echo "ERROR: TLS certificate not found at $TLS_CERT_PATH"
+        echo "ERROR: TLS certificate not found at $TLS_CERT_PATH" >&2
         exit 1
     fi
     if [ ! -f "$TLS_KEY_PATH" ]; then
-        echo "ERROR: TLS key not found at $TLS_KEY_PATH"
+        echo "ERROR: TLS key not found at $TLS_KEY_PATH" >&2
         exit 1
     fi
 

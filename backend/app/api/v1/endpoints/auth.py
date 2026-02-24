@@ -49,13 +49,13 @@ from app.schemas.auth import (
 )
 from app.schemas.token import Token, TokenPayload
 from app.api.v1.helpers.responses import (
-    RESP_400,
-    RESP_401,
-    RESP_403,
-    RESP_404,
+    RESP_400_401_500,
+    RESP_400_403,
+    RESP_400_403_404,
+    RESP_400_404,
+    RESP_400_500,
     RESP_AUTH,
-    RESP_AUTH_400,
-    RESP_500,
+    RESP_AUTH_400_501,
     RESP_501,
 )
 from app.schemas.user import User as UserSchema
@@ -103,7 +103,7 @@ async def _check_rate_limit(key: str, max_attempts: int = 5, window_seconds: int
     "/login/access-token",
     response_model=Token,
     summary="Login to get access token",
-    responses={**RESP_400, **RESP_401, **RESP_500},
+    responses=RESP_400_401_500,
 )
 async def login_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -213,7 +213,7 @@ async def login_access_token(
     "/login/refresh-token",
     response_model=Token,
     summary="Refresh access token",
-    responses={**RESP_400, **RESP_403, **RESP_404},
+    responses=RESP_400_403_404,
 )
 async def refresh_token(
     refresh_token: Annotated[str, Body(embed=True, description="The refresh token obtained during login")],
@@ -282,7 +282,7 @@ async def refresh_token(
     }
 
 
-@router.post("/signup", response_model=UserSchema, summary="Register a new user", responses={**RESP_400, **RESP_403})
+@router.post("/signup", response_model=UserSchema, summary="Register a new user", responses=RESP_400_403)
 async def create_user(
     background_tasks: BackgroundTasks,
     user_in: UserCreate,
@@ -337,7 +337,7 @@ async def create_user(
     return new_user
 
 
-@router.post("/logout", summary="Logout user", responses={**RESP_AUTH})
+@router.post("/logout", summary="Logout user", responses=RESP_AUTH)
 async def logout(
     request: Request,
     current_user: Annotated[User, Depends(deps.get_current_user)],
@@ -387,7 +387,7 @@ async def logout(
 @router.post(
     "/send-verification-email",
     summary="Send verification email",
-    responses={**RESP_AUTH_400, **RESP_501},
+    responses=RESP_AUTH_400_501,
 )
 async def request_verification_email(
     background_tasks: BackgroundTasks,
@@ -416,7 +416,7 @@ async def request_verification_email(
 @router.get(
     "/verify-email",
     summary="Verify email address",
-    responses={**RESP_400, **RESP_404},
+    responses=RESP_400_404,
 )
 async def verify_email(token: str, db: DatabaseDep) -> EmailVerifyResponse:
     """
@@ -455,7 +455,7 @@ async def verify_email(token: str, db: DatabaseDep) -> EmailVerifyResponse:
 @router.post(
     "/resend-verification",
     summary="Resend verification email (Public)",
-    responses={**RESP_501},
+    responses=RESP_501,
 )
 async def resend_verification_email_public(
     background_tasks: BackgroundTasks,
@@ -493,7 +493,7 @@ async def resend_verification_email_public(
     "/login/oidc/authorize",
     summary="Initiate OIDC login",
     description="Redirects the user to the configured OIDC provider for authentication.",
-    responses={**RESP_400, **RESP_500},
+    responses=RESP_400_500,
 )
 async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectResponse:
     """
@@ -544,7 +544,7 @@ async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectRes
     "/login/oidc/callback",
     summary="OIDC callback",
     description="Handles the callback from the OIDC provider after authentication.",
-    responses={**RESP_400, **RESP_500},
+    responses=RESP_400_500,
 )
 async def login_oidc_callback(
     request: Request,
@@ -756,7 +756,7 @@ async def login_oidc_callback(
 @router.post(
     "/forgot-password",
     summary="Request password reset",
-    responses={**RESP_501},
+    responses=RESP_501,
 )
 async def forgot_password(
     request: Request,
@@ -814,7 +814,7 @@ async def forgot_password(
 @router.post(
     "/reset-password",
     summary="Reset password with token",
-    responses={**RESP_400, **RESP_404},
+    responses=RESP_400_404,
 )
 async def reset_password(request: Request, reset_in: UserPasswordReset, db: DatabaseDep) -> PasswordResetResponse:
     """

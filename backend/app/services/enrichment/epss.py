@@ -86,6 +86,27 @@ class EPSSProvider:
         logger.error(f"EPSS API failed after {self._max_retries} attempts: {last_error}")
         return {}
 
+    async def _fetch_and_cache_batches(
+        self, client: InstrumentedAsyncClient, missing_cves: List[str], result: Dict[str, EPSSData]
+    ) -> None:
+        """Fetch missing EPSS data in batches from API and cache results."""
+        for i in range(0, len(missing_cves), self._batch_size):
+            batch = missing_cves[i : i + self._batch_size]
+            batch_results = await self.fetch_epss_batch(client, batch)
+
+            # Cache each result individually in Redis
+            cache_mapping = {}
+            for cve, data in batch_results.items():
+                cache_mapping[CacheKeys.epss(cve)] = data.model_dump()
+                result[cve] = data
+
+            if cache_mapping:
+                await cache_service.mset(cache_mapping, CacheTTL.EPSS_SCORE)
+
+            # Small delay between batches to be nice to the API
+            if i + self._batch_size < len(missing_cves):
+                await asyncio.sleep(0.5)
+
     async def load_epss_scores(self, client: InstrumentedAsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
         """Load EPSS scores for given CVEs, using Redis cache where available."""
         result = {}
@@ -106,22 +127,6 @@ class EPSSProvider:
             logger.debug(
                 f"Fetching EPSS data for {len(missing_cves)} CVEs ({len(cves) - len(missing_cves)} from cache)"
             )
-
-            for i in range(0, len(missing_cves), self._batch_size):
-                batch = missing_cves[i : i + self._batch_size]
-                batch_results = await self.fetch_epss_batch(client, batch)
-
-                # Cache each result individually in Redis
-                cache_mapping = {}
-                for cve, data in batch_results.items():
-                    cache_mapping[CacheKeys.epss(cve)] = data.model_dump()
-                    result[cve] = data
-
-                if cache_mapping:
-                    await cache_service.mset(cache_mapping, CacheTTL.EPSS_SCORE)
-
-                # Small delay between batches to be nice to the API
-                if i + self._batch_size < len(missing_cves):
-                    await asyncio.sleep(0.5)
+            await self._fetch_and_cache_batches(client, missing_cves, result)
 
         return result

@@ -13,6 +13,43 @@ import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
 
+/** Accumulate threat intelligence stats from a scan into the accumulator */
+function accumulateThreatIntel(acc: ThreatIntelligenceStats, ti: ThreatIntelligenceStats) {
+  acc.kev_count += ti.kev_count || 0
+  acc.kev_ransomware_count += ti.kev_ransomware_count || 0
+  acc.high_epss_count += ti.high_epss_count || 0
+  acc.medium_epss_count += ti.medium_epss_count || 0
+  acc.weaponized_count += ti.weaponized_count || 0
+  acc.active_exploitation_count += ti.active_exploitation_count || 0
+  if (ti.max_epss_score != null) {
+    acc.max_epss_score = Math.max(acc.max_epss_score ?? 0, ti.max_epss_score)
+  }
+}
+
+/** Accumulate reachability stats from a scan into the accumulator */
+function accumulateReachability(acc: ReachabilityStats, r: ReachabilityStats) {
+  acc.analyzed_count += r.analyzed_count || 0
+  acc.reachable_count += r.reachable_count || 0
+  acc.likely_reachable_count += r.likely_reachable_count || 0
+  acc.unreachable_count += r.unreachable_count || 0
+  acc.unknown_count += r.unknown_count || 0
+  acc.reachable_critical += r.reachable_critical || 0
+  acc.reachable_high += r.reachable_high || 0
+}
+
+/** Accumulate prioritized counts from a scan into the accumulator */
+function accumulatePrioritized(acc: PrioritizedCounts, p: PrioritizedCounts) {
+  acc.total += p.total || 0
+  acc.critical += p.critical || 0
+  acc.high += p.high || 0
+  acc.medium += p.medium || 0
+  acc.low += p.low || 0
+  acc.actionable_critical += p.actionable_critical || 0
+  acc.actionable_high += p.actionable_high || 0
+  acc.actionable_total += p.actionable_total || 0
+  acc.deprioritized_count += p.deprioritized_count || 0
+}
+
 interface ProjectOverviewProps {
   projectId: string
   selectedBranches: string[]
@@ -110,46 +147,21 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
           if (s.threat_intel) {
               hasThreatIntel = true;
-              const ti = s.threat_intel;
-              threatIntelAcc.kev_count += ti.kev_count || 0;
-              threatIntelAcc.kev_ransomware_count += ti.kev_ransomware_count || 0;
-              threatIntelAcc.high_epss_count += ti.high_epss_count || 0;
-              threatIntelAcc.medium_epss_count += ti.medium_epss_count || 0;
-              threatIntelAcc.weaponized_count += ti.weaponized_count || 0;
-              threatIntelAcc.active_exploitation_count += ti.active_exploitation_count || 0;
-              if (ti.avg_epss_score != null) {
-                  epssScoreSum += ti.avg_epss_score;
+              accumulateThreatIntel(threatIntelAcc, s.threat_intel);
+              if (s.threat_intel.avg_epss_score != null) {
+                  epssScoreSum += s.threat_intel.avg_epss_score;
                   epssScoreCount++;
-              }
-              if (ti.max_epss_score != null) {
-                  threatIntelAcc.max_epss_score = Math.max(threatIntelAcc.max_epss_score ?? 0, ti.max_epss_score);
               }
           }
 
           if (s.reachability) {
               hasReachability = true;
-              const r = s.reachability;
-              reachabilityAcc.analyzed_count += r.analyzed_count || 0;
-              reachabilityAcc.reachable_count += r.reachable_count || 0;
-              reachabilityAcc.likely_reachable_count += r.likely_reachable_count || 0;
-              reachabilityAcc.unreachable_count += r.unreachable_count || 0;
-              reachabilityAcc.unknown_count += r.unknown_count || 0;
-              reachabilityAcc.reachable_critical += r.reachable_critical || 0;
-              reachabilityAcc.reachable_high += r.reachable_high || 0;
+              accumulateReachability(reachabilityAcc, s.reachability);
           }
 
           if (s.prioritized) {
               hasPrioritized = true;
-              const p = s.prioritized;
-              prioritizedAcc.total += p.total || 0;
-              prioritizedAcc.critical += p.critical || 0;
-              prioritizedAcc.high += p.high || 0;
-              prioritizedAcc.medium += p.medium || 0;
-              prioritizedAcc.low += p.low || 0;
-              prioritizedAcc.actionable_critical += p.actionable_critical || 0;
-              prioritizedAcc.actionable_high += p.actionable_high || 0;
-              prioritizedAcc.actionable_total += p.actionable_total || 0;
-              prioritizedAcc.deprioritized_count += p.deprioritized_count || 0;
+              accumulatePrioritized(prioritizedAcc, s.prioritized);
           }
       }
 
@@ -350,8 +362,8 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                     paddingAngle={5}
                     dataKey="value"
                   >
-                    {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    {pieData.map((entry) => (
+                      <Cell key={`cell-${entry.name}`} fill={entry.color} />
                     ))}
                   </Pie>
                   <Tooltip 
@@ -398,7 +410,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       )}
 
       {/* Post-Processor Intelligence (EPSS/KEV, Reachability) - per branch */}
-      {activeBranch && scanResults && scanResults.filter(r => isPostProcessorResult(r.analyzer_name)).length > 0 && (
+      {activeBranch && scanResults && scanResults.some(r => isPostProcessorResult(r.analyzer_name)) && (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-xl font-semibold">Enrichment & Intelligence</h3>

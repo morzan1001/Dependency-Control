@@ -30,7 +30,7 @@ class TestProcessSastEmpty:
         assert process_sast([]) == []
 
     def test_empty_iterable(self):
-        assert process_sast(list()) == []
+        assert process_sast([]) == []
 
 
 class TestProcessSastInjection:

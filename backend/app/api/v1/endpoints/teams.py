@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-@router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH})
+@router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED, responses=RESP_AUTH)
 async def create_team(
     team_in: TeamCreate,
     current_user: Annotated[User, Depends(deps.PermissionChecker("team:create"))],
@@ -62,7 +62,7 @@ async def create_team(
     return team_dict
 
 
-@router.get("/", response_model=List[TeamResponse], responses={**RESP_AUTH})
+@router.get("/", response_model=List[TeamResponse], responses=RESP_AUTH)
 async def read_teams(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -98,7 +98,7 @@ async def read_teams(
     return teams
 
 
-@router.get("/{team_id}", response_model=TeamResponse, responses={**RESP_AUTH_404})
+@router.get("/{team_id}", response_model=TeamResponse, responses=RESP_AUTH_404)
 async def read_team(
     team_id: str,
     current_user: CurrentUserDep,
@@ -119,7 +119,7 @@ async def read_team(
     return result[0]
 
 
-@router.put("/{team_id}", response_model=TeamResponse, responses={**RESP_AUTH_404})
+@router.put("/{team_id}", responses=RESP_AUTH_404)
 async def update_team(
     team_id: str,
     team_in: TeamUpdate,
@@ -141,7 +141,7 @@ async def update_team(
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT, responses={**RESP_AUTH_404})
+@router.delete("/{team_id}", status_code=status.HTTP_204_NO_CONTENT, responses=RESP_AUTH_404)
 async def delete_team(
     team_id: str,
     current_user: CurrentUserDep,
@@ -171,7 +171,7 @@ async def delete_team(
     return None
 
 
-@router.post("/{team_id}/members", response_model=TeamResponse, responses={**RESP_AUTH_400_404})
+@router.post("/{team_id}/members", responses=RESP_AUTH_400_404)
 async def add_team_member(
     team_id: str,
     member_in: TeamMemberAdd,
@@ -209,7 +209,7 @@ async def add_team_member(
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.put("/{team_id}/members/{user_id}", response_model=TeamResponse, responses={**RESP_AUTH_404})
+@router.put("/{team_id}/members/{user_id}", responses=RESP_AUTH_404)
 async def update_team_member(
     team_id: str,
     user_id: str,
@@ -247,7 +247,7 @@ async def update_team_member(
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.delete("/{team_id}/members/{user_id}", response_model=TeamResponse, responses={**RESP_AUTH_400_404})
+@router.delete("/{team_id}/members/{user_id}", responses=RESP_AUTH_400_404)
 async def remove_team_member(
     team_id: str,
     user_id: str,

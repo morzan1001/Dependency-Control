@@ -1,13 +1,11 @@
-import { ObjectId } from './common';
-
 export interface TeamMember {
-  user_id: ObjectId;
+  user_id: string;
   username?: string;
   role: string;
 }
 
 export interface Team {
-  id: ObjectId;
+  id: string;
   name: string;
   description?: string;
   members: TeamMember[];
