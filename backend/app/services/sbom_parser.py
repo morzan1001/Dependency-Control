@@ -468,9 +468,7 @@ class SBOMParser:
             # Use bom-ref or purl to check:
             # A component is direct if it's explicitly listed in direct_refs,
             # or if it's not in anyone's dependsOn (isolated/root-level dependency)
-            if check_ref in direct_refs or (
-                check_ref not in all_transitive_refs and direct_refs
-            ):
+            if check_ref in direct_refs or (check_ref not in all_transitive_refs and direct_refs):
                 direct = True
         else:
             # No dependency graph - mark as inferred
@@ -1056,8 +1054,7 @@ class SBOMParser:
             # A package is direct if it's in the direct set, or if it has
             # dependencies but nothing depends on it (i.e. a root package)
             is_direct = pkg_spdx_id in direct_package_ids or (
-                pkg_spdx_id in packages_with_deps
-                and pkg_spdx_id not in all_dependency_targets
+                pkg_spdx_id in packages_with_deps and pkg_spdx_id not in all_dependency_targets
             )
 
             # If no dependency graph, assume all are direct (inferred)

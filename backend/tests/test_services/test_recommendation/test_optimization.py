@@ -4,8 +4,7 @@ from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.optimization import identify_quick_wins
 
 
-def _vuln(component, severity="HIGH", version="1.0", fixed_version="2.0",
-          is_kev=False, finding_id="CVE-2024-001"):
+def _vuln(component, severity="HIGH", version="1.0", fixed_version="2.0", is_kev=False, finding_id="CVE-2024-001"):
     return {
         "type": "vulnerability",
         "severity": severity,

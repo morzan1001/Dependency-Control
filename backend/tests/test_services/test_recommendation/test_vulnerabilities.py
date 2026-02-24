@@ -178,7 +178,13 @@ class TestGroupedVulnerabilities:
     def test_two_vulns_same_component_grouped(self):
         findings = [
             _make_finding(finding_id="CVE-2024-0001", component="requests", version="1.0.0", fixed_version="1.1.0"),
-            _make_finding(finding_id="CVE-2024-0002", component="requests", version="1.0.0", severity="HIGH", fixed_version="1.2.0"),
+            _make_finding(
+                finding_id="CVE-2024-0002",
+                component="requests",
+                version="1.0.0",
+                severity="HIGH",
+                fixed_version="1.2.0",
+            ),
         ]
         dep = _make_dependency(name="requests", version="1.0.0")
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
@@ -205,10 +211,8 @@ class TestGroupedVulnerabilities:
 
     def test_different_components_not_grouped(self):
         findings = [
-            _make_finding(finding_id="CVE-2024-0001", component="pkg-a", version="1.0.0",
-                          purl="pkg:pypi/pkg-a@1.0.0"),
-            _make_finding(finding_id="CVE-2024-0002", component="pkg-b", version="2.0.0",
-                          purl="pkg:pypi/pkg-b@2.0.0"),
+            _make_finding(finding_id="CVE-2024-0001", component="pkg-a", version="1.0.0", purl="pkg:pypi/pkg-a@1.0.0"),
+            _make_finding(finding_id="CVE-2024-0002", component="pkg-b", version="2.0.0", purl="pkg:pypi/pkg-b@2.0.0"),
         ]
         deps = [
             _make_dependency(name="pkg-a", version="1.0.0", purl="pkg:pypi/pkg-a@1.0.0"),
@@ -245,13 +249,22 @@ class TestBaseImageUpdate:
     def test_deb_packages_trigger_base_image_update(self):
         """3+ OS vulns should trigger a base image update recommendation."""
         findings = [
-            _make_finding(finding_id=f"CVE-2024-000{i}", component=f"libfoo{i}",
-                          severity="HIGH", purl=f"pkg:deb/debian/libfoo{i}@1.0.0")
+            _make_finding(
+                finding_id=f"CVE-2024-000{i}",
+                component=f"libfoo{i}",
+                severity="HIGH",
+                purl=f"pkg:deb/debian/libfoo{i}@1.0.0",
+            )
             for i in range(4)
         ]
         deps = [
-            _make_dependency(name=f"libfoo{i}", purl=f"pkg:deb/debian/libfoo{i}@1.0.0",
-                             direct=False, source_type="image", dep_type="deb")
+            _make_dependency(
+                name=f"libfoo{i}",
+                purl=f"pkg:deb/debian/libfoo{i}@1.0.0",
+                direct=False,
+                source_type="image",
+                dep_type="deb",
+            )
             for i in range(4)
         ]
         dep_by_purl, dep_by_nv = _build_lookup_maps(deps)
@@ -265,12 +278,16 @@ class TestBaseImageUpdate:
     def test_single_critical_os_vuln_triggers_base_image(self):
         """A single critical OS vuln should also trigger base image update."""
         finding = _make_finding(
-            severity="CRITICAL", component="libssl",
+            severity="CRITICAL",
+            component="libssl",
             purl="pkg:deb/debian/libssl@1.0.0",
         )
         dep = _make_dependency(
-            name="libssl", purl="pkg:deb/debian/libssl@1.0.0",
-            direct=False, source_type="image", dep_type="deb",
+            name="libssl",
+            purl="pkg:deb/debian/libssl@1.0.0",
+            direct=False,
+            source_type="image",
+            dep_type="deb",
         )
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
@@ -283,16 +300,20 @@ class TestBaseImageUpdate:
     def test_few_low_severity_os_vulns_no_recommendation(self):
         """Fewer than 3 low-severity OS vulns should NOT trigger base image update."""
         findings = [
-            _make_finding(finding_id="CVE-2024-0001", component="libfoo",
-                          severity="LOW", purl="pkg:deb/debian/libfoo@1.0.0"),
-            _make_finding(finding_id="CVE-2024-0002", component="libbar",
-                          severity="LOW", purl="pkg:deb/debian/libbar@1.0.0"),
+            _make_finding(
+                finding_id="CVE-2024-0001", component="libfoo", severity="LOW", purl="pkg:deb/debian/libfoo@1.0.0"
+            ),
+            _make_finding(
+                finding_id="CVE-2024-0002", component="libbar", severity="LOW", purl="pkg:deb/debian/libbar@1.0.0"
+            ),
         ]
         deps = [
-            _make_dependency(name="libfoo", purl="pkg:deb/debian/libfoo@1.0.0",
-                             direct=False, source_type="image", dep_type="deb"),
-            _make_dependency(name="libbar", purl="pkg:deb/debian/libbar@1.0.0",
-                             direct=False, source_type="image", dep_type="deb"),
+            _make_dependency(
+                name="libfoo", purl="pkg:deb/debian/libfoo@1.0.0", direct=False, source_type="image", dep_type="deb"
+            ),
+            _make_dependency(
+                name="libbar", purl="pkg:deb/debian/libbar@1.0.0", direct=False, source_type="image", dep_type="deb"
+            ),
         ]
         dep_by_purl, dep_by_nv = _build_lookup_maps(deps)
 
@@ -303,13 +324,22 @@ class TestBaseImageUpdate:
 
     def test_rpm_type_recognized_as_os(self):
         findings = [
-            _make_finding(finding_id=f"CVE-2024-000{i}", component=f"rpm-pkg{i}",
-                          severity="MEDIUM", purl=f"pkg:rpm/centos/rpm-pkg{i}@1.0.0")
+            _make_finding(
+                finding_id=f"CVE-2024-000{i}",
+                component=f"rpm-pkg{i}",
+                severity="MEDIUM",
+                purl=f"pkg:rpm/centos/rpm-pkg{i}@1.0.0",
+            )
             for i in range(4)
         ]
         deps = [
-            _make_dependency(name=f"rpm-pkg{i}", purl=f"pkg:rpm/centos/rpm-pkg{i}@1.0.0",
-                             direct=False, source_type="image", dep_type="rpm")
+            _make_dependency(
+                name=f"rpm-pkg{i}",
+                purl=f"pkg:rpm/centos/rpm-pkg{i}@1.0.0",
+                direct=False,
+                source_type="image",
+                dep_type="rpm",
+            )
             for i in range(4)
         ]
         dep_by_purl, dep_by_nv = _build_lookup_maps(deps)
@@ -321,13 +351,22 @@ class TestBaseImageUpdate:
 
     def test_base_image_recommendation_includes_image_name(self):
         findings = [
-            _make_finding(finding_id=f"CVE-2024-000{i}", component=f"libfoo{i}",
-                          severity="HIGH", purl=f"pkg:deb/debian/libfoo{i}@1.0.0")
+            _make_finding(
+                finding_id=f"CVE-2024-000{i}",
+                component=f"libfoo{i}",
+                severity="HIGH",
+                purl=f"pkg:deb/debian/libfoo{i}@1.0.0",
+            )
             for i in range(4)
         ]
         deps = [
-            _make_dependency(name=f"libfoo{i}", purl=f"pkg:deb/debian/libfoo{i}@1.0.0",
-                             direct=False, source_type="image", dep_type="deb")
+            _make_dependency(
+                name=f"libfoo{i}",
+                purl=f"pkg:deb/debian/libfoo{i}@1.0.0",
+                direct=False,
+                source_type="image",
+                dep_type="deb",
+            )
             for i in range(4)
         ]
         dep_by_purl, dep_by_nv = _build_lookup_maps(deps)
@@ -340,13 +379,18 @@ class TestBaseImageUpdate:
     def test_effort_low_for_many_vulns(self):
         """When more than 10 OS vulns, effort should be 'low' (batch fix via image update)."""
         findings = [
-            _make_finding(finding_id=f"CVE-2024-{i:04d}", component=f"lib{i}",
-                          severity="MEDIUM", purl=f"pkg:deb/debian/lib{i}@1.0.0")
+            _make_finding(
+                finding_id=f"CVE-2024-{i:04d}",
+                component=f"lib{i}",
+                severity="MEDIUM",
+                purl=f"pkg:deb/debian/lib{i}@1.0.0",
+            )
             for i in range(15)
         ]
         deps = [
-            _make_dependency(name=f"lib{i}", purl=f"pkg:deb/debian/lib{i}@1.0.0",
-                             direct=False, source_type="image", dep_type="deb")
+            _make_dependency(
+                name=f"lib{i}", purl=f"pkg:deb/debian/lib{i}@1.0.0", direct=False, source_type="image", dep_type="deb"
+            )
             for i in range(15)
         ]
         dep_by_purl, dep_by_nv = _build_lookup_maps(deps)
@@ -362,13 +406,17 @@ class TestTransitiveDependency:
 
     def test_transitive_vuln_with_fix(self):
         finding = _make_finding(
-            component="transitive-pkg", version="0.5.0", fixed_version="0.6.0",
+            component="transitive-pkg",
+            version="0.5.0",
+            fixed_version="0.6.0",
             purl="pkg:pypi/transitive-pkg@0.5.0",
         )
         dep = _make_dependency(
-            name="transitive-pkg", version="0.5.0",
+            name="transitive-pkg",
+            version="0.5.0",
             purl="pkg:pypi/transitive-pkg@0.5.0",
-            direct=False, source_type="application",
+            direct=False,
+            source_type="application",
         )
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
@@ -379,13 +427,17 @@ class TestTransitiveDependency:
 
     def test_transitive_high_effort(self):
         finding = _make_finding(
-            component="deep-dep", version="1.0.0", fixed_version="1.1.0",
+            component="deep-dep",
+            version="1.0.0",
+            fixed_version="1.1.0",
             purl="pkg:pypi/deep-dep@1.0.0",
         )
         dep = _make_dependency(
-            name="deep-dep", version="1.0.0",
+            name="deep-dep",
+            version="1.0.0",
             purl="pkg:pypi/deep-dep@1.0.0",
-            direct=False, source_type="application",
+            direct=False,
+            source_type="application",
         )
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
@@ -396,13 +448,18 @@ class TestTransitiveDependency:
 
     def test_transitive_critical_priority(self):
         finding = _make_finding(
-            severity="CRITICAL", component="transitive-pkg", version="0.5.0",
-            fixed_version="0.6.0", purl="pkg:pypi/transitive-pkg@0.5.0",
+            severity="CRITICAL",
+            component="transitive-pkg",
+            version="0.5.0",
+            fixed_version="0.6.0",
+            purl="pkg:pypi/transitive-pkg@0.5.0",
         )
         dep = _make_dependency(
-            name="transitive-pkg", version="0.5.0",
+            name="transitive-pkg",
+            version="0.5.0",
             purl="pkg:pypi/transitive-pkg@0.5.0",
-            direct=False, source_type="application",
+            direct=False,
+            source_type="application",
         )
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
@@ -413,15 +470,28 @@ class TestTransitiveDependency:
 
     def test_transitive_multiple_vulns_grouped(self):
         findings = [
-            _make_finding(finding_id="CVE-2024-0001", component="t-pkg", version="0.5.0",
-                          fixed_version="0.6.0", purl="pkg:pypi/t-pkg@0.5.0"),
-            _make_finding(finding_id="CVE-2024-0002", component="t-pkg", version="0.5.0",
-                          severity="HIGH", fixed_version="0.7.0", purl="pkg:pypi/t-pkg@0.5.0"),
+            _make_finding(
+                finding_id="CVE-2024-0001",
+                component="t-pkg",
+                version="0.5.0",
+                fixed_version="0.6.0",
+                purl="pkg:pypi/t-pkg@0.5.0",
+            ),
+            _make_finding(
+                finding_id="CVE-2024-0002",
+                component="t-pkg",
+                version="0.5.0",
+                severity="HIGH",
+                fixed_version="0.7.0",
+                purl="pkg:pypi/t-pkg@0.5.0",
+            ),
         ]
         dep = _make_dependency(
-            name="t-pkg", version="0.5.0",
+            name="t-pkg",
+            version="0.5.0",
             purl="pkg:pypi/t-pkg@0.5.0",
-            direct=False, source_type="application",
+            direct=False,
+            source_type="application",
         )
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
@@ -544,12 +614,16 @@ class TestKevVulnerabilities:
 
     def test_kev_transitive_also_critical(self):
         finding = _make_finding(
-            severity="HIGH", is_kev=True, component="trans-kev",
+            severity="HIGH",
+            is_kev=True,
+            component="trans-kev",
             purl="pkg:pypi/trans-kev@1.0.0",
         )
         dep = _make_dependency(
-            name="trans-kev", purl="pkg:pypi/trans-kev@1.0.0",
-            direct=False, source_type="application",
+            name="trans-kev",
+            purl="pkg:pypi/trans-kev@1.0.0",
+            direct=False,
+            source_type="application",
         )
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
@@ -599,12 +673,16 @@ class TestUnreachableDowngrade:
 
     def test_unreachable_transitive_also_downgraded(self):
         finding = _make_finding(
-            severity="CRITICAL", reachable=False,
-            component="trans", purl="pkg:pypi/trans@1.0.0",
+            severity="CRITICAL",
+            reachable=False,
+            component="trans",
+            purl="pkg:pypi/trans@1.0.0",
         )
         dep = _make_dependency(
-            name="trans", purl="pkg:pypi/trans@1.0.0",
-            direct=False, source_type="application",
+            name="trans",
+            purl="pkg:pypi/trans@1.0.0",
+            direct=False,
+            source_type="application",
         )
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
@@ -718,11 +796,13 @@ class TestLookupFallback:
 
     def test_fallback_to_name_version(self):
         finding = _make_finding(
-            component="my-lib", version="2.0.0",
+            component="my-lib",
+            version="2.0.0",
             purl="pkg:pypi/wrong-purl@1.0.0",
         )
         dep = _make_dependency(
-            name="my-lib", version="2.0.0",
+            name="my-lib",
+            version="2.0.0",
             purl="pkg:pypi/my-lib@2.0.0",
         )
         # The finding's purl won't match the dep's purl, but name@version will

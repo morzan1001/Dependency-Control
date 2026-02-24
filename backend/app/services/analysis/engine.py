@@ -35,13 +35,12 @@ from app.services.analysis.stats import (
 )
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
-from app.services.analysis.types import Database, ScanDict
+from app.services.analysis.types import Database
 
 logger = logging.getLogger(__name__)
 
 # Import metrics for detailed analysis tracking
 analysis_scans_total: Optional[Counter] = None
-analysis_findings_total: Optional[Counter] = None
 analysis_errors_total: Optional[Counter] = None
 analysis_sbom_processed_total: Optional[Counter] = None
 analysis_components_parsed_total: Optional[Counter] = None
@@ -66,7 +65,6 @@ try:
         analysis_epss_scores,
         analysis_errors_total,
         analysis_findings_by_type,
-        analysis_findings_total,
         analysis_gridfs_operations_total,
         analysis_kev_vulnerabilities_total,
         analysis_race_conditions_total,
@@ -401,8 +399,13 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     # Filter active waivers
     active_waivers = [
-        w for w in waivers
-        if not (w.get("expiration_date") and (exp := ensure_utc(w["expiration_date"])) is not None and exp < datetime.now(timezone.utc))
+        w
+        for w in waivers
+        if not (
+            w.get("expiration_date")
+            and (exp := ensure_utc(w["expiration_date"])) is not None
+            and exp < datetime.now(timezone.utc)
+        )
     ]
 
     # Save Findings to 'findings' collection

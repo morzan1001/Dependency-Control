@@ -91,9 +91,7 @@ class TestExtractLicenses:
 
     def test_cyclonedx_license_id(self):
         """CycloneDX format with license.id field."""
-        component = {
-            "licenses": [{"license": {"id": "MIT", "url": "https://spdx.org/licenses/MIT"}}]
-        }
+        component = {"licenses": [{"license": {"id": "MIT", "url": "https://spdx.org/licenses/MIT"}}]}
         result = self.analyzer._extract_licenses(component)
         assert len(result) == 1
         assert result[0] == ("MIT", "https://spdx.org/licenses/MIT")

@@ -221,7 +221,9 @@ class InstrumentedAsyncClient:
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]) -> None:
+    async def __aexit__(
+        self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]
+    ) -> None:
         await self.close()
 
     def _record_request(self) -> None:

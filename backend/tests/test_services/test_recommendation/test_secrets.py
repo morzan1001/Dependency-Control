@@ -109,10 +109,7 @@ class TestProcessSecretsMultipleGroupedByDetector:
         assert "Slack Webhook" in secret_types
 
     def test_secret_types_limited_to_five(self):
-        findings = [
-            _secret(detector_type=f"Detector{i}", finding_id=f"s{i}")
-            for i in range(8)
-        ]
+        findings = [_secret(detector_type=f"Detector{i}", finding_id=f"s{i}") for i in range(8)]
         rec = process_secrets(findings)[0]
         assert len(rec.action["secret_types"]) <= 5
 
@@ -138,18 +135,12 @@ class TestProcessSecretsFilesAffected:
         assert len(rec.affected_components) == 1
 
     def test_affected_components_limited_to_twenty(self):
-        findings = [
-            _secret(component=f"src/file{i}.py", finding_id=f"s{i}")
-            for i in range(25)
-        ]
+        findings = [_secret(component=f"src/file{i}.py", finding_id=f"s{i}") for i in range(25)]
         rec = process_secrets(findings)[0]
         assert len(rec.affected_components) <= 20
 
     def test_action_files_limited_to_ten(self):
-        findings = [
-            _secret(component=f"src/file{i}.py", finding_id=f"s{i}")
-            for i in range(15)
-        ]
+        findings = [_secret(component=f"src/file{i}.py", finding_id=f"s{i}") for i in range(15)]
         rec = process_secrets(findings)[0]
         assert len(rec.action["files"]) <= 10
 

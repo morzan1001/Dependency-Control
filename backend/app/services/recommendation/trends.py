@@ -69,9 +69,7 @@ def analyze_regressions(
                     "low": len([f for f in new_vulns if get_attr(f, "severity") == "LOW"]),
                     "total": len(new_vulns),
                 },
-                affected_components=list(
-                    {get_attr(f, "component", "unknown") for f in (new_critical + new_high)[:15]}
-                ),
+                affected_components=list({get_attr(f, "component", "unknown") for f in (new_critical + new_high)[:15]}),
                 action={
                     "type": "investigate_regression",
                     "new_critical_cves": [

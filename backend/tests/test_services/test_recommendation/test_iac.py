@@ -142,9 +142,7 @@ class TestProcessIacAboveThreshold:
         assert len(result) == 1
 
     def test_three_low_generates_recommendation(self):
-        findings = [
-            _iac(severity="LOW", finding_id=f"i{i}") for i in range(3)
-        ]
+        findings = [_iac(severity="LOW", finding_id=f"i{i}") for i in range(3)]
         result = process_iac(findings)
         assert len(result) == 1
 
@@ -161,16 +159,12 @@ class TestProcessIacPriority:
         assert rec.priority == Priority.HIGH
 
     def test_three_medium_gives_medium_priority(self):
-        findings = [
-            _iac(severity="MEDIUM", finding_id=f"i{i}") for i in range(3)
-        ]
+        findings = [_iac(severity="MEDIUM", finding_id=f"i{i}") for i in range(3)]
         rec = process_iac(findings)[0]
         assert rec.priority == Priority.MEDIUM
 
     def test_three_low_gives_low_priority(self):
-        findings = [
-            _iac(severity="LOW", finding_id=f"i{i}") for i in range(3)
-        ]
+        findings = [_iac(severity="LOW", finding_id=f"i{i}") for i in range(3)]
         rec = process_iac(findings)[0]
         assert rec.priority == Priority.LOW
 
@@ -195,10 +189,7 @@ class TestProcessIacCommonIssues:
         assert "Run As Root" in issues
 
     def test_common_issues_limited_to_five(self):
-        findings = [
-            _iac(query_name=f"Issue{i}", finding_id=f"i{i}", severity="HIGH")
-            for i in range(8)
-        ]
+        findings = [_iac(query_name=f"Issue{i}", finding_id=f"i{i}", severity="HIGH") for i in range(8)]
         rec = process_iac(findings)[0]
         assert len(rec.action["common_issues"]) <= 5
 
@@ -285,9 +276,6 @@ class TestProcessIacPlatformFallback:
         assert "infrastructure" in rec.title
 
     def test_affected_components_limited(self):
-        findings = [
-            _iac(component=f"file{i}.yaml", finding_id=f"i{i}", severity="HIGH")
-            for i in range(25)
-        ]
+        findings = [_iac(component=f"file{i}.yaml", finding_id=f"i{i}", severity="HIGH") for i in range(25)]
         rec = process_iac(findings)[0]
         assert len(rec.affected_components) <= 20

@@ -757,9 +757,7 @@ async def search_vulnerabilities(
         str,
         Query(min_length=2, description="Search query for CVE, GHSA, or other vulnerability identifiers"),
     ],
-    severity: Annotated[
-        Optional[str], Query(description="Filter by severity: CRITICAL, HIGH, MEDIUM, LOW")
-    ] = None,
+    severity: Annotated[Optional[str], Query(description="Filter by severity: CRITICAL, HIGH, MEDIUM, LOW")] = None,
     in_kev: Annotated[Optional[bool], Query(description="Filter by CISA KEV inclusion")] = None,
     has_fix: Annotated[Optional[bool], Query(description="Filter by fix availability")] = None,
     finding_type: Annotated[

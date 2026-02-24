@@ -9,9 +9,17 @@ from app.services.recommendation.risks import (
 )
 
 
-def _vuln(component, severity="HIGH", version="1.0", is_kev=False,
-          epss_score=0.0, fixed_version=None, reachable=None,
-          risk_score=None, finding_id="CVE-2024-001"):
+def _vuln(
+    component,
+    severity="HIGH",
+    version="1.0",
+    is_kev=False,
+    epss_score=0.0,
+    fixed_version=None,
+    reachable=None,
+    risk_score=None,
+    finding_id="CVE-2024-001",
+):
     """Build a vulnerability finding dict."""
     details = {
         "is_kev": is_kev,
@@ -329,8 +337,13 @@ class TestDetectCriticalHotspotsEffort:
 class TestDetectCriticalHotspotsSkipsEmptyComponent:
     def test_finding_without_component_skipped(self):
         findings = [
-            {"type": "vulnerability", "severity": "CRITICAL", "component": "",
-             "details": {"is_kev": True}, "id": "CVE-2024-001"},
+            {
+                "type": "vulnerability",
+                "severity": "CRITICAL",
+                "component": "",
+                "details": {"is_kev": True},
+                "id": "CVE-2024-001",
+            },
         ]
         result = detect_critical_hotspots(findings, [])
         assert result == []
@@ -442,10 +455,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
             _quality("pkg", scorecard_score=1.0),
         ]
         result = detect_toxic_dependencies(findings, [])
-        vuln_factor = [
-            rf for rf in result[0].action["risk_factors"]
-            if rf["type"] == "vulnerabilities"
-        ]
+        vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
         assert vuln_factor[0]["severity"] == "CRITICAL"
 
     def test_vuln_risk_factor_labels_high_correctly(self):
@@ -454,10 +464,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
             _quality("pkg", scorecard_score=1.0),
         ]
         result = detect_toxic_dependencies(findings, [])
-        vuln_factor = [
-            rf for rf in result[0].action["risk_factors"]
-            if rf["type"] == "vulnerabilities"
-        ]
+        vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
         assert vuln_factor[0]["severity"] == "HIGH"
 
     def test_vuln_risk_factor_labels_medium_when_no_critical_or_high(self):
@@ -466,10 +473,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
             _quality("pkg", scorecard_score=1.0),
         ]
         result = detect_toxic_dependencies(findings, [])
-        vuln_factor = [
-            rf for rf in result[0].action["risk_factors"]
-            if rf["type"] == "vulnerabilities"
-        ]
+        vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
         assert vuln_factor[0]["severity"] == "MEDIUM"
 
 

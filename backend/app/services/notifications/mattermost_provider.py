@@ -2,7 +2,6 @@ import asyncio
 import logging
 from typing import Any, Optional
 
-import httpx
 from prometheus_client import Counter
 
 from app.core.config import settings

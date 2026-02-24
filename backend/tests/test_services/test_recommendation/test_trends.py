@@ -226,18 +226,12 @@ class TestAnalyzeRecurringIssuesThreshold:
         assert len(result) == 1
 
     def test_cve_in_three_scans_type(self):
-        history = [
-            _scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001")])
-            for i in range(3)
-        ]
+        history = [_scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001")]) for i in range(3)]
         rec = analyze_recurring_issues(history)[0]
         assert rec.type == RecommendationType.RECURRING_VULNERABILITY
 
     def test_cve_in_four_scans_still_one_recommendation(self):
-        history = [
-            _scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001")])
-            for i in range(4)
-        ]
+        history = [_scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001")]) for i in range(4)]
         result = analyze_recurring_issues(history)
         assert len(result) == 1
 
@@ -246,35 +240,29 @@ class TestAnalyzeRecurringIssuesPriority:
     """Priority depends on whether any recurring CVE is CRITICAL."""
 
     def test_critical_recurring_gives_medium_priority(self):
-        history = [
-            _scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", severity="CRITICAL")])
-            for i in range(3)
-        ]
+        history = [_scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", severity="CRITICAL")]) for i in range(3)]
         rec = analyze_recurring_issues(history)[0]
         assert rec.priority == Priority.MEDIUM
 
     def test_high_recurring_gives_low_priority(self):
-        history = [
-            _scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", severity="HIGH")])
-            for i in range(3)
-        ]
+        history = [_scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", severity="HIGH")]) for i in range(3)]
         rec = analyze_recurring_issues(history)[0]
         assert rec.priority == Priority.LOW
 
     def test_medium_recurring_gives_low_priority(self):
-        history = [
-            _scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", severity="MEDIUM")])
-            for i in range(3)
-        ]
+        history = [_scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", severity="MEDIUM")]) for i in range(3)]
         rec = analyze_recurring_issues(history)[0]
         assert rec.priority == Priority.LOW
 
     def test_mixed_critical_and_high_gives_medium_priority(self):
         history = [
-            _scan(f"scan{i}", [
-                _scan_finding(cve_id="CVE-2024-001", severity="CRITICAL"),
-                _scan_finding(cve_id="CVE-2024-002", severity="HIGH"),
-            ])
+            _scan(
+                f"scan{i}",
+                [
+                    _scan_finding(cve_id="CVE-2024-001", severity="CRITICAL"),
+                    _scan_finding(cve_id="CVE-2024-002", severity="HIGH"),
+                ],
+            )
             for i in range(3)
         ]
         rec = analyze_recurring_issues(history)[0]
@@ -285,18 +273,12 @@ class TestAnalyzeRecurringIssuesAffectedComponents:
     """Affected components list should contain CVE and component info."""
 
     def test_affected_components_format(self):
-        history = [
-            _scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", component="lodash")])
-            for i in range(3)
-        ]
+        history = [_scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", component="lodash")]) for i in range(3)]
         rec = analyze_recurring_issues(history)[0]
         assert any("CVE-2024-001" in c and "lodash" in c for c in rec.affected_components)
 
     def test_affected_components_include_scan_count(self):
-        history = [
-            _scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001")])
-            for i in range(3)
-        ]
+        history = [_scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001")]) for i in range(3)]
         rec = analyze_recurring_issues(history)[0]
         assert any("3 scans" in c for c in rec.affected_components)
 
@@ -313,9 +295,6 @@ class TestAnalyzeRecurringIssuesNonVulnSkipped:
             "details": {},
             "description": "License issue",
         }
-        history = [
-            _scan(f"scan{i}", [non_vuln_finding])
-            for i in range(5)
-        ]
+        history = [_scan(f"scan{i}", [non_vuln_finding]) for i in range(5)]
         result = analyze_recurring_issues(history)
         assert len(result) == 0

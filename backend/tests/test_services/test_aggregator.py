@@ -606,7 +606,6 @@ class TestGetFindings:
         assert out_f.id in vuln_f.related_findings
         assert vuln_f.id in out_f.related_findings
 
-
     def test_cross_format_related_findings_linked(self):
         """Quality for 'org.postgresql:postgresql' and Vulnerability for 'postgresql'
         should be linked as related findings via artifact name normalization."""

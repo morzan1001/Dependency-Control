@@ -182,6 +182,7 @@ def get_severity_weight(severity: Optional[str]) -> float:
         return 0.0
     return SEVERITY_WEIGHTS.get(severity.upper(), 0.0)
 
+
 # Common patterns for development dependencies
 DEV_DEPENDENCY_PATTERNS = [
     r"jest",

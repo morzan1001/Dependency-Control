@@ -65,16 +65,12 @@ class TestCallEdge:
 
     def test_default_call_type(self):
         """call_type defaults to 'direct'."""
-        edge = CallEdge(
-            caller="a:f", callee="b:g", file="a.py", line=1
-        )
+        edge = CallEdge(caller="a:f", callee="b:g", file="a.py", line=1)
         assert edge.call_type == "direct"
 
     def test_custom_call_type(self):
         """call_type can be set to async, callback, or conditional."""
-        edge = CallEdge(
-            caller="a:f", callee="b:g", file="a.py", line=1, call_type="async"
-        )
+        edge = CallEdge(caller="a:f", callee="b:g", file="a.py", line=1, call_type="async")
         assert edge.call_type == "async"
 
 

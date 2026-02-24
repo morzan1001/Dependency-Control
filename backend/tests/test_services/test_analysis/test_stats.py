@@ -264,10 +264,7 @@ class TestBuildEpssKevSummaryRisk:
 
     def test_high_risk_cves_limited_to_20(self):
         """No more than 20 high-risk CVEs are returned."""
-        findings = [
-            _make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i)
-            for i in range(25)
-        ]
+        findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(25)]
         result = build_epss_kev_summary(findings)
         assert len(result["high_risk_cves"]) == 20
 
@@ -314,7 +311,12 @@ class TestBuildEpssKevSummaryFindingId:
 
     def test_id_used_as_fallback(self):
         """When finding_id is absent, id is used."""
-        finding = {"id": "CVE-FALLBACK", "component": "pkg", "version": "1.0", "details": {"risk_score": 80.0, "exploit_maturity": "unknown"}}
+        finding = {
+            "id": "CVE-FALLBACK",
+            "component": "pkg",
+            "version": "1.0",
+            "details": {"risk_score": 80.0, "exploit_maturity": "unknown"},
+        }
         result = build_epss_kev_summary([finding])
         assert result["high_risk_cves"][0]["cve"] == "CVE-FALLBACK"
 
@@ -530,7 +532,9 @@ class TestBuildReachabilitySummarySorting:
         """Reachable vulnerabilities are sorted most-severe first."""
         findings = [
             _make_reachable_finding(finding_id="CVE-1", severity="LOW", reachable=True, reachability_level="confirmed"),
-            _make_reachable_finding(finding_id="CVE-2", severity="CRITICAL", reachable=True, reachability_level="confirmed"),
+            _make_reachable_finding(
+                finding_id="CVE-2", severity="CRITICAL", reachable=True, reachability_level="confirmed"
+            ),
             _make_reachable_finding(finding_id="CVE-3", severity="MEDIUM", reachable=True, reachability_level="likely"),
         ]
         result = build_reachability_summary(findings, _make_callgraph(), 3)
@@ -540,8 +544,12 @@ class TestBuildReachabilitySummarySorting:
     def test_unreachable_sorted_by_severity_descending(self):
         """Unreachable vulnerabilities are sorted most-severe first."""
         findings = [
-            _make_reachable_finding(finding_id="CVE-1", severity="LOW", reachable=False, reachability_level="unreachable"),
-            _make_reachable_finding(finding_id="CVE-2", severity="HIGH", reachable=False, reachability_level="unreachable"),
+            _make_reachable_finding(
+                finding_id="CVE-1", severity="LOW", reachable=False, reachability_level="unreachable"
+            ),
+            _make_reachable_finding(
+                finding_id="CVE-2", severity="HIGH", reachable=False, reachability_level="unreachable"
+            ),
         ]
         result = build_reachability_summary(findings, _make_callgraph(), 2)
         severities = [v["severity"] for v in result["unreachable_vulnerabilities"]]

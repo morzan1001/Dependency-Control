@@ -38,8 +38,7 @@ class TestAnalyzeDeepDependencyChainsShallow:
     def test_shallow_transitive_no_warning(self):
         # direct -> child (depth 2), well within default max_dependency_depth=8
         parent = _dep("express", version="4.18.0", direct=True)
-        child = _dep("body-parser", version="1.20.0", direct=False,
-                      parent_components=["pkg:npm/express@4.18.0"])
+        child = _dep("body-parser", version="1.20.0", direct=False, parent_components=["pkg:npm/express@4.18.0"])
         result = analyze_deep_dependency_chains([parent, child], max_dependency_depth=8)
         assert len(result) == 0
 
@@ -54,12 +53,14 @@ class TestAnalyzeDeepDependencyChainsDeep:
         deps.append(_dep("pkg-0", version="1.0", direct=True))
 
         for i in range(1, length):
-            deps.append(_dep(
-                f"pkg-{i}",
-                version="1.0",
-                direct=False,
-                parent_components=[f"pkg:npm/pkg-{i - 1}@1.0"],
-            ))
+            deps.append(
+                _dep(
+                    f"pkg-{i}",
+                    version="1.0",
+                    direct=False,
+                    parent_components=[f"pkg:npm/pkg-{i - 1}@1.0"],
+                )
+            )
         return deps
 
     def test_chain_exceeding_max_depth_produces_recommendation(self):
@@ -95,13 +96,15 @@ class TestAnalyzeDeepDependencyChainsCircular:
     def test_circular_detected(self):
         deps_circular = [
             {
-                "name": "pkg-a", "version": "1.0",
+                "name": "pkg-a",
+                "version": "1.0",
                 "purl": "pkg:npm/pkg-a@1.0",
                 "direct": True,
                 "parent_components": ["pkg:npm/pkg-b@1.0"],
             },
             {
-                "name": "pkg-b", "version": "1.0",
+                "name": "pkg-b",
+                "version": "1.0",
                 "purl": "pkg:npm/pkg-b@1.0",
                 "direct": False,
                 "parent_components": ["pkg:npm/pkg-a@1.0"],
@@ -114,13 +117,15 @@ class TestAnalyzeDeepDependencyChainsCircular:
     def test_circular_priority_medium(self):
         deps_circular = [
             {
-                "name": "pkg-a", "version": "1.0",
+                "name": "pkg-a",
+                "version": "1.0",
                 "purl": "pkg:npm/pkg-a@1.0",
                 "direct": True,
                 "parent_components": ["pkg:npm/pkg-b@1.0"],
             },
             {
-                "name": "pkg-b", "version": "1.0",
+                "name": "pkg-b",
+                "version": "1.0",
                 "purl": "pkg:npm/pkg-b@1.0",
                 "direct": False,
                 "parent_components": ["pkg:npm/pkg-a@1.0"],
@@ -133,13 +138,15 @@ class TestAnalyzeDeepDependencyChainsCircular:
     def test_circular_affected_components(self):
         deps_circular = [
             {
-                "name": "pkg-a", "version": "1.0",
+                "name": "pkg-a",
+                "version": "1.0",
                 "purl": "pkg:npm/pkg-a@1.0",
                 "direct": True,
                 "parent_components": ["pkg:npm/pkg-b@1.0"],
             },
             {
-                "name": "pkg-b", "version": "1.0",
+                "name": "pkg-b",
+                "version": "1.0",
                 "purl": "pkg:npm/pkg-b@1.0",
                 "direct": False,
                 "parent_components": ["pkg:npm/pkg-a@1.0"],
@@ -159,13 +166,15 @@ class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
         # Circular pair
         circular_deps = [
             {
-                "name": "circ-a", "version": "1.0",
+                "name": "circ-a",
+                "version": "1.0",
                 "purl": "pkg:npm/circ-a@1.0",
                 "direct": True,
                 "parent_components": ["pkg:npm/circ-b@1.0"],
             },
             {
-                "name": "circ-b", "version": "1.0",
+                "name": "circ-b",
+                "version": "1.0",
                 "purl": "pkg:npm/circ-b@1.0",
                 "direct": False,
                 "parent_components": ["pkg:npm/circ-a@1.0"],
@@ -177,10 +186,14 @@ class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
             _dep("root", version="1.0", direct=True),
         ]
         for i in range(1, 5):
-            deep_chain.append(_dep(
-                f"deep-{i}", version="1.0", direct=False,
-                parent_components=[f"pkg:npm/{'root' if i == 1 else f'deep-{i-1}'}@1.0"],
-            ))
+            deep_chain.append(
+                _dep(
+                    f"deep-{i}",
+                    version="1.0",
+                    direct=False,
+                    parent_components=[f"pkg:npm/{'root' if i == 1 else f'deep-{i - 1}'}@1.0"],
+                )
+            )
 
         all_deps = circular_deps + deep_chain
         result = analyze_deep_dependency_chains(all_deps, max_dependency_depth=2)

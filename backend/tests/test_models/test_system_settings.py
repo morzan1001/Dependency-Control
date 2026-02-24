@@ -85,9 +85,7 @@ class TestSystemSettingsDefaults:
     def test_default_active_analyzers(self):
         """default_active_analyzers has the expected list."""
         s = SystemSettings()
-        assert s.default_active_analyzers == [
-            "trivy", "osv", "license_compliance", "end_of_life"
-        ]
+        assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
 
     def test_retention_defaults(self):
         """Retention fields have correct defaults."""
@@ -209,8 +207,6 @@ class TestSystemSettingsIdAlias:
             "instance_name": "Legacy",
         }
         s = SystemSettings(**legacy_doc)
-        assert s.default_active_analyzers == [
-            "trivy", "osv", "license_compliance", "end_of_life"
-        ]
+        assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
         assert s.gitlab_oidc_audience is None
         assert s.retention_mode == "project"

@@ -95,10 +95,7 @@ class TestAnalyzeOutdatedDependenciesTransitive:
 
     def test_many_transitive_produces_low_priority(self):
         # 4 transitive outdated, above threshold of 3
-        deps = [
-            _dep(name=f"sub-{i}", version="1.0", latest_version="2.0", direct=False)
-            for i in range(4)
-        ]
+        deps = [_dep(name=f"sub-{i}", version="1.0", latest_version="2.0", direct=False) for i in range(4)]
         result = analyze_outdated_dependencies(deps)
         assert len(result) == 1
         assert result[0].priority == Priority.LOW
@@ -167,18 +164,12 @@ class TestAnalyzeVersionFragmentationSignificant:
         assert len(result) == 1
 
     def test_three_versions_type(self):
-        deps = [
-            _dep(name="lodash", version=f"4.17.{15 + i}")
-            for i in range(3)
-        ]
+        deps = [_dep(name="lodash", version=f"4.17.{15 + i}") for i in range(3)]
         rec = analyze_version_fragmentation(deps)[0]
         assert rec.type == RecommendationType.VERSION_FRAGMENTATION
 
     def test_affected_components_show_version_count(self):
-        deps = [
-            _dep(name="lodash", version=f"4.17.{15 + i}")
-            for i in range(3)
-        ]
+        deps = [_dep(name="lodash", version=f"4.17.{15 + i}") for i in range(3)]
         rec = analyze_version_fragmentation(deps)[0]
         assert any("lodash" in c and "3 versions" in c for c in rec.affected_components)
 

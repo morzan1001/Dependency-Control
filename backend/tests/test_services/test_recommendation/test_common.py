@@ -334,8 +334,14 @@ class TestCalculateScore:
         )
         with_reach = _make_recommendation(
             impact={
-                "critical": 0, "high": 0, "medium": 0, "low": 0, "total": 1,
-                "reachable_count": 2, "reachable_critical": 1, "reachable_high": 1,
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "total": 1,
+                "reachable_count": 2,
+                "reachable_critical": 1,
+                "reachable_high": 1,
             }
         )
         assert calculate_score(with_reach) > calculate_score(without)
@@ -349,7 +355,11 @@ class TestCalculateScore:
         unreachable = _make_recommendation(
             priority=Priority.HIGH,
             impact={
-                "critical": 0, "high": 5, "medium": 0, "low": 0, "total": 5,
+                "critical": 0,
+                "high": 5,
+                "medium": 0,
+                "low": 0,
+                "total": 5,
                 "unreachable_count": 5,
             },
         )
@@ -364,7 +374,11 @@ class TestCalculateScore:
         partial_unreach = _make_recommendation(
             priority=Priority.HIGH,
             impact={
-                "critical": 0, "high": 10, "medium": 0, "low": 0, "total": 10,
+                "critical": 0,
+                "high": 10,
+                "medium": 0,
+                "low": 0,
+                "total": 10,
                 "unreachable_count": 6,
             },
         )
@@ -414,14 +428,24 @@ class TestCalculateScore:
         """Multiple threat intel signals should stack."""
         single = _make_recommendation(
             impact={
-                "critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1,
+                "critical": 1,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "total": 1,
                 "kev_count": 1,
             }
         )
         combined = _make_recommendation(
             impact={
-                "critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1,
-                "kev_count": 1, "high_epss_count": 1, "active_exploitation_count": 1,
+                "critical": 1,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "total": 1,
+                "kev_count": 1,
+                "high_epss_count": 1,
+                "active_exploitation_count": 1,
             }
         )
         assert calculate_score(combined) > calculate_score(single)
@@ -430,7 +454,11 @@ class TestCalculateScore:
         """If total is 0 in impact, should not divide by zero."""
         rec = _make_recommendation(
             impact={
-                "critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0,
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "total": 0,
                 "unreachable_count": 5,
             }
         )

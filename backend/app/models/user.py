@@ -32,9 +32,7 @@ class User(BaseModel):
     # Notification settings
     slack_username: Optional[str] = None
     mattermost_username: Optional[str] = None
-    notification_preferences: Optional[dict[str, list[str]]] = Field(
-        default_factory=dict
-    )
+    notification_preferences: Optional[dict[str, list[str]]] = Field(default_factory=dict)
 
     @field_validator("notification_preferences")
     @classmethod

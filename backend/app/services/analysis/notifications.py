@@ -174,11 +174,7 @@ async def send_scan_notifications(
             project=project,
             event_type="analysis_completed",
             subject=f"Analysis Completed: {project.name}",
-            message=(
-                f"Scan {scan_id} completed.\n"
-                f"Found {len(aggregated_findings)} issues.\n"
-                f"Results:\n{results_text}"
-            ),
+            message=(f"Scan {scan_id} completed.\nFound {len(aggregated_findings)} issues.\nResults:\n{results_text}"),
             db=db,
             html_message=html_content,
         )

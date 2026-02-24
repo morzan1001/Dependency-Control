@@ -122,9 +122,7 @@ class CLIAnalyzer(Analyzer):
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=self.cli_timeout
-            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.cli_timeout)
         except asyncio.TimeoutError:
             process.kill()
             await process.wait()

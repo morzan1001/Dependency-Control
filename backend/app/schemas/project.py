@@ -41,7 +41,9 @@ class ProjectListEnriched(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200, description="The name of the project", examples=["My Awesome App"])
+    name: str = Field(
+        ..., min_length=1, max_length=200, description="The name of the project", examples=["My Awesome App"]
+    )
     team_id: Optional[str] = Field(None, description="ID of the team this project belongs to")
     active_analyzers: List[str] = Field(
         default_factory=lambda: ["trivy", "osv", "license_compliance", "end_of_life"],

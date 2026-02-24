@@ -90,7 +90,9 @@ class HashVerificationAnalyzer(Analyzer):
             },
         }
 
-    async def _verify_component(self, client: InstrumentedAsyncClient, component: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def _verify_component(
+        self, client: InstrumentedAsyncClient, component: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         """Verify a single component's hash against the registry."""
 
         name = component.get("name", "")

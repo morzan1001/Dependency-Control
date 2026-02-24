@@ -236,9 +236,7 @@ def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any])
                     result.kev_due_date = enr.kev_due_date
 
         # Exploit maturity
-        if EXPLOIT_MATURITY_ORDER.get(enr.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(
-            result.exploit_maturity, 0
-        ):
+        if EXPLOIT_MATURITY_ORDER.get(enr.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(result.exploit_maturity, 0):
             result.exploit_maturity = enr.exploit_maturity
 
     return result

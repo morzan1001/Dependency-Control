@@ -2,7 +2,7 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional, cast
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
 

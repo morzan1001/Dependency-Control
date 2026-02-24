@@ -559,7 +559,12 @@ async def update_project(
     raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
-@router.get("/{project_id}/branches", response_model=List[BranchInfo], summary="List project branches", responses={**RESP_AUTH_404})
+@router.get(
+    "/{project_id}/branches",
+    response_model=List[BranchInfo],
+    summary="List project branches",
+    responses={**RESP_AUTH_404},
+)
 async def read_project_branches(
     project_id: str,
     current_user: CurrentUserDep,
@@ -595,7 +600,12 @@ async def read_project_branches(
     return result
 
 
-@router.post("/{project_id}/sync-branches", response_model=List[BranchInfo], summary="Sync branch status from VCS", responses={**RESP_AUTH_404})
+@router.post(
+    "/{project_id}/sync-branches",
+    response_model=List[BranchInfo],
+    summary="Sync branch status from VCS",
+    responses={**RESP_AUTH_404},
+)
 async def sync_project_branches_endpoint(
     project_id: str,
     current_user: CurrentUserDep,
@@ -613,6 +623,7 @@ async def sync_project_branches_endpoint(
         raise HTTPException(status_code=400, detail="Project has no VCS connection configured")
 
     from app.core.housekeeping import sync_project_branches
+
     project_data = await project_repo.get_raw_by_id(project_id)
     if project_data:
         await sync_project_branches(project_data, db)

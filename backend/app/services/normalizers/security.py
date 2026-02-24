@@ -48,7 +48,9 @@ def normalize_malware(aggregator: "ResultAggregator", result: Dict[str, Any], so
         )
 
 
-def normalize_hash_verification(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_hash_verification(
+    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+) -> None:
     """Normalize hash verification results into findings."""
     for item in result.get("hash_issues") or []:
         component = safe_get(item, "component", "unknown")

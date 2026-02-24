@@ -130,7 +130,9 @@ class RecommendationEngine:
         # Use empty lists if None
         findings_list: List[ModelOrDict] = list(findings) if findings else []
         dependencies_list: List[ModelOrDict] = list(dependencies) if dependencies else []
-        previous_findings_list: Optional[List[ModelOrDict]] = list(previous_scan_findings) if previous_scan_findings else None
+        previous_findings_list: Optional[List[ModelOrDict]] = (
+            list(previous_scan_findings) if previous_scan_findings else None
+        )
 
         logger.debug(
             f"Generating recommendations for {len(findings_list)} findings, {len(dependencies_list)} dependencies"

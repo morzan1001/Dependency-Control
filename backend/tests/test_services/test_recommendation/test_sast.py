@@ -132,18 +132,12 @@ class TestProcessSastAboveThreshold:
     """Findings that DO meet the significance threshold."""
 
     def test_three_low_findings_generates_recommendation(self):
-        findings = [
-            _sast(severity="LOW", finding_id=f"s{i}", category="sql-injection")
-            for i in range(3)
-        ]
+        findings = [_sast(severity="LOW", finding_id=f"s{i}", category="sql-injection") for i in range(3)]
         result = process_sast(findings)
         assert len(result) == 1
 
     def test_three_low_findings_priority_low(self):
-        findings = [
-            _sast(severity="LOW", finding_id=f"s{i}", category="sql-injection")
-            for i in range(3)
-        ]
+        findings = [_sast(severity="LOW", finding_id=f"s{i}", category="sql-injection") for i in range(3)]
         rec = process_sast(findings)[0]
         assert rec.priority == Priority.LOW
 
@@ -169,10 +163,7 @@ class TestProcessSastPriority:
 
     def test_medium_severity_only_gives_medium_priority(self):
         """Three MEDIUM findings pass threshold; priority should be MEDIUM."""
-        findings = [
-            _sast(severity="MEDIUM", finding_id=f"s{i}", category="sql-injection")
-            for i in range(3)
-        ]
+        findings = [_sast(severity="MEDIUM", finding_id=f"s{i}", category="sql-injection") for i in range(3)]
         rec = process_sast(findings)[0]
         assert rec.priority == Priority.MEDIUM
 
@@ -212,26 +203,17 @@ class TestProcessSastEffort:
     """Effort is 'medium' for <10 findings, 'high' for >=10."""
 
     def test_effort_medium_below_ten(self):
-        findings = [
-            _sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection")
-            for i in range(5)
-        ]
+        findings = [_sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection") for i in range(5)]
         rec = process_sast(findings)[0]
         assert rec.effort == "medium"
 
     def test_effort_high_at_ten(self):
-        findings = [
-            _sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection")
-            for i in range(10)
-        ]
+        findings = [_sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection") for i in range(10)]
         rec = process_sast(findings)[0]
         assert rec.effort == "high"
 
     def test_effort_high_above_ten(self):
-        findings = [
-            _sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection")
-            for i in range(15)
-        ]
+        findings = [_sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection") for i in range(15)]
         rec = process_sast(findings)[0]
         assert rec.effort == "high"
 

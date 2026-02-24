@@ -95,7 +95,9 @@ async def get_instance(
     return _to_response(instance)
 
 
-@router.post("/", response_model=GitLabInstanceResponse, status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH_400})
+@router.post(
+    "/", response_model=GitLabInstanceResponse, status_code=status.HTTP_201_CREATED, responses={**RESP_AUTH_400}
+)
 async def create_instance(
     instance_data: GitLabInstanceCreate,
     db: DatabaseDep,
@@ -282,8 +284,9 @@ async def delete_instance(
     )
 
 
-
-@router.post("/{instance_id}/test-connection", response_model=GitLabInstanceTestConnectionResponse, responses={**RESP_AUTH_404})
+@router.post(
+    "/{instance_id}/test-connection", response_model=GitLabInstanceTestConnectionResponse, responses={**RESP_AUTH_404}
+)
 async def test_connection(
     instance_id: str,
     db: DatabaseDep,

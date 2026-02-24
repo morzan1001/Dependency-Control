@@ -105,9 +105,7 @@ def identify_quick_wins(
         recommendations.append(
             Recommendation(
                 type=(
-                    RecommendationType.SINGLE_UPDATE_MULTI_FIX
-                    if qw.vuln_count >= 3
-                    else RecommendationType.QUICK_WIN
+                    RecommendationType.SINGLE_UPDATE_MULTI_FIX if qw.vuln_count >= 3 else RecommendationType.QUICK_WIN
                 ),
                 priority=(Priority.HIGH if qw.kev_count > 0 or qw.critical_count > 0 else Priority.MEDIUM),
                 title=f"Quick Win: Update {qw.package}",

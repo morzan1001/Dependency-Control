@@ -29,8 +29,7 @@ def _typosquat_finding(component, similar_to=None):
     }
 
 
-def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False,
-          epss_score=0.0, cve_id="CVE-2024-001"):
+def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False, epss_score=0.0, cve_id="CVE-2024-001"):
     return {
         "type": "vulnerability",
         "severity": severity,

@@ -88,22 +88,19 @@ class TestCorrelateScorceardCriticalUnmaintained:
 
     def test_critical_vuln_unmaintained_produces_recommendation(self):
         vulns = [_vuln_finding(component="pkg", severity="CRITICAL")]
-        quality = [_quality_finding(component="pkg", overall_score=3.0,
-                                    critical_issues=["Maintained"])]
+        quality = [_quality_finding(component="pkg", overall_score=3.0, critical_issues=["Maintained"])]
         result = correlate_scorecard_with_vulnerabilities(vulns, quality)
         assert len(result) == 1
 
     def test_critical_vuln_unmaintained_type(self):
         vulns = [_vuln_finding(component="pkg", severity="CRITICAL")]
-        quality = [_quality_finding(component="pkg", overall_score=3.0,
-                                    critical_issues=["Maintained"])]
+        quality = [_quality_finding(component="pkg", overall_score=3.0, critical_issues=["Maintained"])]
         rec = correlate_scorecard_with_vulnerabilities(vulns, quality)[0]
         assert rec.type == RecommendationType.CRITICAL_RISK
 
     def test_critical_vuln_unmaintained_priority_critical(self):
         vulns = [_vuln_finding(component="pkg", severity="CRITICAL")]
-        quality = [_quality_finding(component="pkg", overall_score=3.0,
-                                    critical_issues=["Maintained"])]
+        quality = [_quality_finding(component="pkg", overall_score=3.0, critical_issues=["Maintained"])]
         rec = correlate_scorecard_with_vulnerabilities(vulns, quality)[0]
         assert rec.priority == Priority.CRITICAL
 
@@ -170,8 +167,7 @@ class TestCorrelateScorceardAffectedComponents:
 
     def test_unmaintained_label_in_components(self):
         vulns = [_vuln_finding(component="pkg", severity="CRITICAL", version="1.0.0")]
-        quality = [_quality_finding(component="pkg", overall_score=2.0,
-                                    critical_issues=["Maintained"])]
+        quality = [_quality_finding(component="pkg", overall_score=2.0, critical_issues=["Maintained"])]
         rec = correlate_scorecard_with_vulnerabilities(vulns, quality)[0]
         assert any("UNMAINTAINED" in c for c in rec.affected_components)
 
@@ -207,37 +203,46 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
     """CVE in 2+ projects (CROSS_PROJECT_MIN_OCCURRENCES = 2)."""
 
     def test_cve_in_two_projects_produces_recommendation(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
-            _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
         assert len(shared_recs) == 1
 
     def test_cve_in_two_projects_type(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
-            _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
         assert shared_recs[0].type == RecommendationType.SHARED_VULNERABILITY
 
     def test_cve_in_two_projects_affected_components(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
-            _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
-        ], total_projects=3)
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
+            ],
+            total_projects=3,
+        )
         result = analyze_cross_project_patterns([], [], data)
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
         assert any("CVE-2024-001" in c and "2/3" in c for c in shared_recs[0].affected_components)
 
     def test_cve_in_only_one_project_not_flagged(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
-            _project(project_id="p2", project_name="App2", cves=["CVE-2024-002"]),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-002"]),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
         assert len(shared_recs) == 0
@@ -247,38 +252,44 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
     """Inconsistent package versions across projects."""
 
     def test_inconsistent_versions_produces_recommendation(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1",
-                     packages=[{"name": "requests", "version": "2.28.0"}]),
-            _project(project_id="p2", project_name="App2",
-                     packages=[{"name": "requests", "version": "2.31.0"}]),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", packages=[{"name": "requests", "version": "2.28.0"}]),
+                _project(project_id="p2", project_name="App2", packages=[{"name": "requests", "version": "2.31.0"}]),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         pattern_recs = [r for r in result if r.type == RecommendationType.CROSS_PROJECT_PATTERN]
         assert len(pattern_recs) == 1
 
     def test_inconsistent_versions_type(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1",
-                     packages=[{"name": "requests", "version": "2.28.0"}]),
-            _project(project_id="p2", project_name="App2",
-                     packages=[{"name": "requests", "version": "2.31.0"}]),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", packages=[{"name": "requests", "version": "2.28.0"}]),
+                _project(project_id="p2", project_name="App2", packages=[{"name": "requests", "version": "2.31.0"}]),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
-        pattern_recs = [r for r in result if r.type == RecommendationType.CROSS_PROJECT_PATTERN
-                        and "inconsistency" in r.title.lower()]
+        pattern_recs = [
+            r
+            for r in result
+            if r.type == RecommendationType.CROSS_PROJECT_PATTERN and "inconsistency" in r.title.lower()
+        ]
         assert len(pattern_recs) == 1
 
     def test_same_versions_no_inconsistency(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1",
-                     packages=[{"name": "requests", "version": "2.31.0"}]),
-            _project(project_id="p2", project_name="App2",
-                     packages=[{"name": "requests", "version": "2.31.0"}]),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", packages=[{"name": "requests", "version": "2.31.0"}]),
+                _project(project_id="p2", project_name="App2", packages=[{"name": "requests", "version": "2.31.0"}]),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
-        pattern_recs = [r for r in result if r.type == RecommendationType.CROSS_PROJECT_PATTERN
-                        and "inconsistency" in r.title.lower()]
+        pattern_recs = [
+            r
+            for r in result
+            if r.type == RecommendationType.CROSS_PROJECT_PATTERN and "inconsistency" in r.title.lower()
+        ]
         assert len(pattern_recs) == 0
 
 
@@ -286,40 +297,48 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
     """Projects with > 5 critical findings trigger prioritization recommendation."""
 
     def test_high_critical_projects_produces_recommendation(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
-            _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
-            _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
+                _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
+                _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         priority_recs = [r for r in result if "Prioritize" in r.title or "prioritize" in r.title.lower()]
         assert len(priority_recs) == 1
 
     def test_high_critical_projects_priority_medium(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
-            _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
-            _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
+                _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
+                _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         priority_recs = [r for r in result if "Prioritize" in r.title or "prioritize" in r.title.lower()]
         assert priority_recs[0].priority == Priority.MEDIUM
 
     def test_no_high_critical_no_prioritize_recommendation(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1", total_critical=3, total_high=2),
-            _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
-            _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", total_critical=3, total_high=2),
+                _project(project_id="p2", project_name="App2", total_critical=2, total_high=1),
+                _project(project_id="p3", project_name="App3", total_critical=1, total_high=0),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         priority_recs = [r for r in result if "Prioritize" in r.title or "prioritize" in r.title.lower()]
         assert len(priority_recs) == 0
 
     def test_fewer_than_three_projects_no_prioritize(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
-            _project(project_id="p2", project_name="App2", total_critical=8, total_high=3),
-        ])
+        data = _cross_project_data(
+            [
+                _project(project_id="p1", project_name="App1", total_critical=10, total_high=5),
+                _project(project_id="p2", project_name="App2", total_critical=8, total_high=3),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         priority_recs = [r for r in result if "Prioritize" in r.title or "prioritize" in r.title.lower()]
         assert len(priority_recs) == 0
@@ -329,14 +348,22 @@ class TestAnalyzeCrossProjectPatternsMultipleRecommendations:
     """Can produce multiple recommendation types at once."""
 
     def test_shared_vuln_and_inconsistent_versions(self):
-        data = _cross_project_data([
-            _project(project_id="p1", project_name="App1",
-                     cves=["CVE-2024-001"],
-                     packages=[{"name": "requests", "version": "2.28.0"}]),
-            _project(project_id="p2", project_name="App2",
-                     cves=["CVE-2024-001"],
-                     packages=[{"name": "requests", "version": "2.31.0"}]),
-        ])
+        data = _cross_project_data(
+            [
+                _project(
+                    project_id="p1",
+                    project_name="App1",
+                    cves=["CVE-2024-001"],
+                    packages=[{"name": "requests", "version": "2.28.0"}],
+                ),
+                _project(
+                    project_id="p2",
+                    project_name="App2",
+                    cves=["CVE-2024-001"],
+                    packages=[{"name": "requests", "version": "2.31.0"}],
+                ),
+            ]
+        )
         result = analyze_cross_project_patterns([], [], data)
         types = {r.type for r in result}
         assert RecommendationType.SHARED_VULNERABILITY in types

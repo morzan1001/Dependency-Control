@@ -310,7 +310,8 @@ async def run_housekeeping() -> None:
 
                 scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
                 await _delete_scans_and_related_data(
-                    db, scan_ids_to_delete,
+                    db,
+                    scan_ids_to_delete,
                     f"Retention {days}d ({len(project_ids)} projects)",
                 )
 
@@ -495,9 +496,7 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
         if deleted:
             current_scan_id = project_data.get("latest_scan_id")
             if current_scan_id:
-                scan_doc = await db.scans.find_one(
-                    {"_id": current_scan_id}, {"branch": 1}
-                )
+                scan_doc = await db.scans.find_one({"_id": current_scan_id}, {"branch": 1})
                 if scan_doc and scan_doc.get("branch") in deleted:
                     # Find latest completed scan on an active branch
                     active_scan = await db.scans.find_one(
@@ -540,10 +539,12 @@ async def sync_branch_status() -> None:
         db = await get_database()
 
         cursor = db.projects.find(
-            {"$or": [
-                {"gitlab_instance_id": {"$exists": True, "$ne": None}},
-                {"github_instance_id": {"$exists": True, "$ne": None}},
-            ]},
+            {
+                "$or": [
+                    {"gitlab_instance_id": {"$exists": True, "$ne": None}},
+                    {"github_instance_id": {"$exists": True, "$ne": None}},
+                ]
+            },
         )
 
         count = 0
@@ -618,9 +619,7 @@ async def housekeeping_loop(
             last_retention_run = datetime.now(timezone.utc)
 
         # Run branch status sync if interval has passed
-        if (datetime.now(timezone.utc) - last_branch_sync) > timedelta(
-            hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS
-        ):
+        if (datetime.now(timezone.utc) - last_branch_sync) > timedelta(hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS):
             await sync_branch_status()
             last_branch_sync = datetime.now(timezone.utc)
 

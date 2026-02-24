@@ -197,9 +197,9 @@ class ProjectRepository:
         limit: int = 1000,
     ) -> List[ProjectWithScanId]:
         """Find projects with scan IDs and deleted branches. Returns Pydantic models."""
-        cursor = self.collection.find(
-            query, {"_id": 1, "name": 1, "latest_scan_id": 1, "deleted_branches": 1}
-        ).limit(limit)
+        cursor = self.collection.find(query, {"_id": 1, "name": 1, "latest_scan_id": 1, "deleted_branches": 1}).limit(
+            limit
+        )
         docs = await cursor.to_list(limit)
         return [ProjectWithScanId(**doc) for doc in docs]
 

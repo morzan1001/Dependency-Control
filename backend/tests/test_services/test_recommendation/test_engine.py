@@ -261,16 +261,19 @@ class TestGenerateRecommendationsEmpty:
     @pytest.mark.asyncio
     async def test_no_findings_with_deps_returns_empty_or_dep_recs(self):
         engine = RecommendationEngine()
-        result = await engine.generate_recommendations(
-            findings=[], dependencies=[_make_dependency()]
-        )
+        result = await engine.generate_recommendations(findings=[], dependencies=[_make_dependency()])
         # Should return empty or only dependency-hygiene recommendations (no vulns)
-        vuln_recs = [r for r in result if r.type in (
-            RecommendationType.DIRECT_DEPENDENCY_UPDATE,
-            RecommendationType.BASE_IMAGE_UPDATE,
-            RecommendationType.TRANSITIVE_FIX_VIA_PARENT,
-            RecommendationType.NO_FIX_AVAILABLE,
-        )]
+        vuln_recs = [
+            r
+            for r in result
+            if r.type
+            in (
+                RecommendationType.DIRECT_DEPENDENCY_UPDATE,
+                RecommendationType.BASE_IMAGE_UPDATE,
+                RecommendationType.TRANSITIVE_FIX_VIA_PARENT,
+                RecommendationType.NO_FIX_AVAILABLE,
+            )
+        ]
         assert len(vuln_recs) == 0
 
 
@@ -283,9 +286,7 @@ class TestGenerateRecommendationsSingleVuln:
         finding = _make_vuln_finding()
         dep = _make_dependency()
 
-        result = await engine.generate_recommendations(
-            findings=[finding], dependencies=[dep]
-        )
+        result = await engine.generate_recommendations(findings=[finding], dependencies=[dep])
 
         assert len(result) >= 1
         # At least one should be vulnerability-related
@@ -305,9 +306,7 @@ class TestGenerateRecommendationsSingleVuln:
         finding = _make_vuln_finding(severity="CRITICAL")
         dep = _make_dependency()
 
-        result = await engine.generate_recommendations(
-            findings=[finding], dependencies=[dep]
-        )
+        result = await engine.generate_recommendations(findings=[finding], dependencies=[dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert len(direct_recs) >= 1
@@ -326,9 +325,7 @@ class TestGenerateRecommendationsMultipleTypes:
         ]
         dep = _make_dependency()
 
-        result = await engine.generate_recommendations(
-            findings=findings, dependencies=[dep]
-        )
+        result = await engine.generate_recommendations(findings=findings, dependencies=[dep])
 
         # Should have at least 2 distinct recommendation types
         rec_types = {r.type for r in result}
@@ -343,9 +340,7 @@ class TestGenerateRecommendationsMultipleTypes:
         ]
         dep = _make_dependency()
 
-        result = await engine.generate_recommendations(
-            findings=findings, dependencies=[dep]
-        )
+        result = await engine.generate_recommendations(findings=findings, dependencies=[dep])
 
         assert len(result) >= 2
 
@@ -361,9 +356,7 @@ class TestGenerateRecommendationsDeduplication:
         finding2 = _make_vuln_finding(finding_id="CVE-2024-0001")
         dep = _make_dependency()
 
-        result = await engine.generate_recommendations(
-            findings=[finding1, finding2], dependencies=[dep]
-        )
+        result = await engine.generate_recommendations(findings=[finding1, finding2], dependencies=[dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         # Should have at most 1 recommendation for this component (grouped by component)
@@ -378,22 +371,26 @@ class TestGenerateRecommendationsSorting:
     async def test_results_sorted_by_score_descending(self):
         engine = RecommendationEngine()
         findings = [
-            _make_vuln_finding(finding_id="CVE-2024-0001", severity="LOW", component="low-pkg",
-                               purl="pkg:pypi/low-pkg@1.0.0"),
-            _make_vuln_finding(finding_id="CVE-2024-0002", severity="CRITICAL", component="critical-pkg",
-                               purl="pkg:pypi/critical-pkg@1.0.0"),
+            _make_vuln_finding(
+                finding_id="CVE-2024-0001", severity="LOW", component="low-pkg", purl="pkg:pypi/low-pkg@1.0.0"
+            ),
+            _make_vuln_finding(
+                finding_id="CVE-2024-0002",
+                severity="CRITICAL",
+                component="critical-pkg",
+                purl="pkg:pypi/critical-pkg@1.0.0",
+            ),
         ]
         deps = [
             _make_dependency(name="low-pkg", purl="pkg:pypi/low-pkg@1.0.0"),
             _make_dependency(name="critical-pkg", purl="pkg:pypi/critical-pkg@1.0.0"),
         ]
 
-        result = await engine.generate_recommendations(
-            findings=findings, dependencies=deps
-        )
+        result = await engine.generate_recommendations(findings=findings, dependencies=deps)
 
         if len(result) >= 2:
             from app.services.recommendation.common import calculate_score
+
             scores = [calculate_score(r) for r in result]
             assert scores == sorted(scores, reverse=True)
 
@@ -406,14 +403,10 @@ class TestGenerateRecommendationsRegression:
         engine = RecommendationEngine()
         # Current findings: many new vulns
         current_findings = [
-            _make_vuln_finding(finding_id=f"CVE-2024-{i:04d}", component=f"pkg-{i}",
-                               purl=f"pkg:pypi/pkg-{i}@1.0.0")
+            _make_vuln_finding(finding_id=f"CVE-2024-{i:04d}", component=f"pkg-{i}", purl=f"pkg:pypi/pkg-{i}@1.0.0")
             for i in range(15)
         ]
-        deps = [
-            _make_dependency(name=f"pkg-{i}", purl=f"pkg:pypi/pkg-{i}@1.0.0")
-            for i in range(15)
-        ]
+        deps = [_make_dependency(name=f"pkg-{i}", purl=f"pkg:pypi/pkg-{i}@1.0.0") for i in range(15)]
         # Empty previous scan = all findings are new
         previous_findings = []
 
@@ -455,9 +448,7 @@ class TestGenerateRecommendationsErrorResilience:
         dep = _make_dependency(name="good-pkg", purl="pkg:pypi/good-pkg@1.0.0")
 
         # Should not raise, even with malformed finding
-        result = await engine.generate_recommendations(
-            findings=[malformed, normal], dependencies=[dep]
-        )
+        result = await engine.generate_recommendations(findings=[malformed, normal], dependencies=[dep])
         assert isinstance(result, list)
 
 
@@ -468,13 +459,19 @@ class TestGenerateRecommendationsSourceTarget:
     async def test_source_target_in_base_image_rec(self):
         engine = RecommendationEngine()
         findings = [
-            _make_vuln_finding(finding_id=f"CVE-2024-000{i}", component=f"libos{i}",
-                               purl=f"pkg:deb/debian/libos{i}@1.0.0")
+            _make_vuln_finding(
+                finding_id=f"CVE-2024-000{i}", component=f"libos{i}", purl=f"pkg:deb/debian/libos{i}@1.0.0"
+            )
             for i in range(5)
         ]
         deps = [
-            _make_dependency(name=f"libos{i}", purl=f"pkg:deb/debian/libos{i}@1.0.0",
-                             direct=False, source_type="image", dep_type="deb")
+            _make_dependency(
+                name=f"libos{i}",
+                purl=f"pkg:deb/debian/libos{i}@1.0.0",
+                direct=False,
+                source_type="image",
+                dep_type="deb",
+            )
             for i in range(5)
         ]
 

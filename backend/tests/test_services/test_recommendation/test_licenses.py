@@ -139,19 +139,13 @@ class TestProcessLicensesGroupedByType:
         assert "SSPL" in licenses
 
     def test_problematic_licenses_limited_to_ten(self):
-        findings = [
-            _license(license_name=f"License-{i}", finding_id=f"l{i}")
-            for i in range(15)
-        ]
+        findings = [_license(license_name=f"License-{i}", finding_id=f"l{i}") for i in range(15)]
         rec = process_licenses(findings)[0]
         assert len(rec.action["problematic_licenses"]) <= 10
 
     def test_description_limited_to_five_license_names(self):
         """Description should show at most 5 license names."""
-        findings = [
-            _license(license_name=f"License-{i}", finding_id=f"l{i}")
-            for i in range(8)
-        ]
+        findings = [_license(license_name=f"License-{i}", finding_id=f"l{i}") for i in range(8)]
         rec = process_licenses(findings)[0]
         # The description joins at most 5 via problematic_licenses[:5]
         # Count occurrences of "License-" in description
@@ -188,10 +182,7 @@ class TestProcessLicensesComponentsTracked:
         assert "2 components" in rec.description
 
     def test_affected_components_limited_to_twenty(self):
-        findings = [
-            _license(component=f"lib-{i}", finding_id=f"l{i}")
-            for i in range(25)
-        ]
+        findings = [_license(component=f"lib-{i}", finding_id=f"l{i}") for i in range(25)]
         rec = process_licenses(findings)[0]
         assert len(rec.affected_components) <= 20
 

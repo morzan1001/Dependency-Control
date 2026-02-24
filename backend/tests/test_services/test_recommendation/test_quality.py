@@ -51,9 +51,7 @@ class TestProcessQualityUnmaintained:
     def test_type_is_supply_chain_risk(self):
         finding = _quality(critical_issues=["Maintained"])
         recs = process_quality([finding])
-        unmaintained_rec = [
-            r for r in recs if "Unmaintained" in r.title
-        ]
+        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title]
         assert len(unmaintained_rec) == 1
         assert unmaintained_rec[0].type == RecommendationType.SUPPLY_CHAIN_RISK
 

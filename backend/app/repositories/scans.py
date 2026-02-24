@@ -141,7 +141,9 @@ class ScanRepository:
         cursor = self.collection.find({"status": "pending"})
         return await cursor.to_list(None)
 
-    async def iterate(self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None) -> AsyncGenerator[Dict[str, Any], None]:
+    async def iterate(
+        self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """Iterate over scans matching query (async generator)."""
         async for doc in self.collection.find(query, projection):
             yield doc

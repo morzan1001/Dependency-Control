@@ -48,7 +48,16 @@ from app.schemas.auth import (
     VerificationEmailResponse,
 )
 from app.schemas.token import Token, TokenPayload
-from app.api.v1.helpers.responses import RESP_400, RESP_401, RESP_403, RESP_404, RESP_AUTH, RESP_AUTH_400, RESP_500, RESP_501
+from app.api.v1.helpers.responses import (
+    RESP_400,
+    RESP_401,
+    RESP_403,
+    RESP_404,
+    RESP_AUTH,
+    RESP_AUTH_400,
+    RESP_500,
+    RESP_501,
+)
 from app.schemas.user import User as UserSchema
 from app.schemas.user import UserCreate, UserPasswordReset
 
@@ -90,7 +99,12 @@ async def _check_rate_limit(key: str, max_attempts: int = 5, window_seconds: int
     await cache_service.set(cache_key, (attempts or 0) + 1, ttl_seconds=window_seconds)
 
 
-@router.post("/login/access-token", response_model=Token, summary="Login to get access token", responses={**RESP_400, **RESP_401, **RESP_500})
+@router.post(
+    "/login/access-token",
+    response_model=Token,
+    summary="Login to get access token",
+    responses={**RESP_400, **RESP_401, **RESP_500},
+)
 async def login_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: DatabaseDep,
@@ -195,7 +209,12 @@ async def login_access_token(
     }
 
 
-@router.post("/login/refresh-token", response_model=Token, summary="Refresh access token", responses={**RESP_400, **RESP_403, **RESP_404})
+@router.post(
+    "/login/refresh-token",
+    response_model=Token,
+    summary="Refresh access token",
+    responses={**RESP_400, **RESP_403, **RESP_404},
+)
 async def refresh_token(
     refresh_token: Annotated[str, Body(embed=True, description="The refresh token obtained during login")],
     db: DatabaseDep,
@@ -751,7 +770,9 @@ async def forgot_password(
 
     SECURITY: Uses constant-time response to prevent timing attacks.
     """
-    await _check_rate_limit(f"forgot_pw:{request.client.host if request.client else 'unknown'}", max_attempts=3, window_seconds=600)
+    await _check_rate_limit(
+        f"forgot_pw:{request.client.host if request.client else 'unknown'}", max_attempts=3, window_seconds=600
+    )
     import asyncio
     import time
 
@@ -795,14 +816,14 @@ async def forgot_password(
     summary="Reset password with token",
     responses={**RESP_400, **RESP_404},
 )
-async def reset_password(
-    request: Request, reset_in: UserPasswordReset, db: DatabaseDep
-) -> PasswordResetResponse:
+async def reset_password(request: Request, reset_in: UserPasswordReset, db: DatabaseDep) -> PasswordResetResponse:
     """
     Reset password using the token received via email.
     Token is one-time use to prevent replay attacks.
     """
-    await _check_rate_limit(f"reset_pw:{request.client.host if request.client else 'unknown'}", max_attempts=5, window_seconds=600)
+    await _check_rate_limit(
+        f"reset_pw:{request.client.host if request.client else 'unknown'}", max_attempts=5, window_seconds=600
+    )
     token_hash = hashlib.sha256(reset_in.token.encode()).hexdigest()
     token_key = f"used_reset_token:{token_hash}"
 
