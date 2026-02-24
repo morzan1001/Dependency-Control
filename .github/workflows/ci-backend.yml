@@ -59,6 +59,8 @@ jobs:
         run: |
           cd backend
           poetry run pytest --cov=app --cov-branch --cov-report=xml:coverage.xml --tb=short -q
+          # Fix source paths for SonarCloud (scanner runs from repo root, not backend/)
+          sed -i 's|<source>app</source>|<source>backend/app</source>|g' coverage.xml
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v6
