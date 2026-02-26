@@ -734,7 +734,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     </SelectTrigger>
                     <SelectContent>
                         {(project.members ?? [])
-                            .filter(m => m.user_id !== project.owner_id)
+                            .filter(m => m.user_id !== project.owner_id && !m.inherited_from)
                             .map(m => (
                                 <SelectItem key={m.user_id} value={m.user_id}>
                                     {m.username || m.user_id} ({m.role})
