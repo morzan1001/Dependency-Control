@@ -2,8 +2,8 @@ apiVersion: v2
 name: dependency-control
 description: A Helm chart for Dependency Control with HA MongoDB, DragonflyDB Cache, and Traefik
 type: application
-version: 1.4.55
-appVersion: "1.4.55"
+version: 1.4.56
+appVersion: "1.4.56"
 icon: file://logo.png
 annotations:
   artifacthub.io/license: MIT
