@@ -31,6 +31,8 @@ class NotificationService:
         message: str,
         system_settings: Optional[SystemSettings] = None,
         html_message: Optional[str] = None,
+        slack_blocks: Optional[List[Dict[str, Any]]] = None,
+        mattermost_props: Optional[Dict[str, Any]] = None,
     ) -> None:
         channels = prefs.get(event_type, [])
         tasks = []
@@ -54,6 +56,7 @@ class NotificationService:
                     subject,
                     message,
                     system_settings=system_settings,
+                    blocks=slack_blocks,
                 )
             )
 
@@ -67,6 +70,7 @@ class NotificationService:
                     subject,
                     message,
                     system_settings=system_settings,
+                    props=mattermost_props,
                 )
             )
 
@@ -85,6 +89,8 @@ class NotificationService:
         message: str,
         db: Any = None,
         html_message: Optional[str] = None,
+        slack_blocks: Optional[List[Dict[str, Any]]] = None,
+        mattermost_props: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Send a notification to a user based on their global preferences.
@@ -105,6 +111,8 @@ class NotificationService:
             message,
             system_settings,
             html_message=html_message,
+            slack_blocks=slack_blocks,
+            mattermost_props=mattermost_props,
         )
 
     async def notify_users(
@@ -116,6 +124,8 @@ class NotificationService:
         db: Any = None,
         forced_channels: Optional[List[str]] = None,
         html_message: Optional[str] = None,
+        slack_blocks: Optional[List[Dict[str, Any]]] = None,
+        mattermost_props: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Send a notification to multiple users.
@@ -139,6 +149,8 @@ class NotificationService:
                     message,
                     system_settings,
                     html_message=html_message,
+                    slack_blocks=slack_blocks,
+                    mattermost_props=mattermost_props,
                 )
             )
 
@@ -157,6 +169,8 @@ class NotificationService:
         db: Any,
         forced_channels: Optional[List[str]] = None,
         html_message: Optional[str] = None,
+        slack_blocks: Optional[List[Dict[str, Any]]] = None,
+        mattermost_props: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Send notifications to project members.
@@ -241,6 +255,8 @@ class NotificationService:
                     message,
                     system_settings,
                     html_message=html_message,
+                    slack_blocks=slack_blocks,
+                    mattermost_props=mattermost_props,
                 )
             )
 

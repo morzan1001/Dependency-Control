@@ -223,8 +223,19 @@ class SlackProvider(NotificationProvider):
             "Content-Type": "application/json",
         }
 
-        # Format the message nicely
-        payload = {"channel": destination, "text": f"*{subject}*\n{message}"}
+        # Build Block Kit payload for rich formatting
+        from app.services.notifications.slack_formatter import build_generic_blocks
+
+        blocks = kwargs.get("blocks")
+        if not blocks:
+            blocks = build_generic_blocks(subject, message)
+
+        # text is the fallback for notifications and accessibility
+        payload: dict[str, Any] = {
+            "channel": destination,
+            "text": f"*{subject}*\n{message}",
+            "blocks": blocks,
+        }
 
         try:
             async with InstrumentedAsyncClient(

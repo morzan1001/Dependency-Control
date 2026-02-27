@@ -180,9 +180,17 @@ class MattermostProvider(NotificationProvider):
                     if resolved_id:
                         channel_id = resolved_id
 
+                # Build rich attachment payload
+                from app.services.notifications.mattermost_formatter import build_generic_props
+
+                props = kwargs.get("props")
+                if not props:
+                    props = build_generic_props(subject, message)
+
                 payload = {
                     "channel_id": channel_id,
-                    "message": f"#### {subject}\n{message}",
+                    "message": "",
+                    "props": props,
                 }
 
                 response = await client.post(f"{base_url}/api/v4/posts", headers=headers, json=payload)

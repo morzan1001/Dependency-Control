@@ -37,6 +37,7 @@ class SystemSettings(BaseModel):
     slack_bot_token: Optional[str] = None
     slack_client_id: Optional[str] = None
     slack_client_secret: Optional[str] = None
+    slack_oauth_scopes: str = "channels:read,chat:write,chat:write.customize,files:write"
     slack_refresh_token: Optional[str] = None
     slack_token_expires_at: Optional[float] = None
     mattermost_bot_token: Optional[str] = None
