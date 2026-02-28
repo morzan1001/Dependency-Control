@@ -48,5 +48,14 @@ export default defineConfig({
         secure: true
       }
     }
-  }
+  },
+  test: {
+    globals: true,
+    environment: 'node',
+    coverage: {
+      provider: 'v8',
+      reporter: ['lcov', 'text'],
+      reportsDirectory: 'coverage',
+    },
+  },
 })
