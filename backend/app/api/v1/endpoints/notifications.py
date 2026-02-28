@@ -31,6 +31,8 @@ from app.schemas.notification import (
     BroadcastResult,
 )
 from app.services.notifications.service import notification_service
+from app.services.notifications.mattermost_formatter import build_advisory_props as mm_advisory_props
+from app.services.notifications.slack_formatter import build_advisory_blocks
 from app.services.notifications.templates import get_announcement_template
 
 router = CustomAPIRouter()
@@ -162,6 +164,16 @@ async def broadcast_message(
                 message=message_html_content,
                 link=frontend_url,
             )
+            announcement_blocks = build_advisory_blocks(
+                subject=payload.subject,
+                message=payload.message,
+                dashboard_link=frontend_url,
+            )
+            announcement_mm_props = mm_advisory_props(
+                subject=payload.subject,
+                message=payload.message,
+                dashboard_link=frontend_url,
+            )
             background_tasks.add_task(
                 notification_service.notify_users,
                 users_to_notify,
@@ -171,6 +183,8 @@ async def broadcast_message(
                 db=db,
                 forced_channels=forced_channels,
                 html_message=html_msg,
+                slack_blocks=announcement_blocks,
+                mattermost_props=announcement_mm_props,
             )
 
     elif payload.target_type == "teams":
@@ -196,6 +210,16 @@ async def broadcast_message(
                     message=message_html_content,
                     link=frontend_url,
                 )
+                team_blocks = build_advisory_blocks(
+                    subject=payload.subject,
+                    message=payload.message,
+                    dashboard_link=frontend_url,
+                )
+                team_mm_props = mm_advisory_props(
+                    subject=payload.subject,
+                    message=payload.message,
+                    dashboard_link=frontend_url,
+                )
                 background_tasks.add_task(
                     notification_service.notify_users,
                     users_to_notify,
@@ -205,6 +229,8 @@ async def broadcast_message(
                     db=db,
                     forced_channels=forced_channels,
                     html_message=html_msg,
+                    slack_blocks=team_blocks,
+                    mattermost_props=team_mm_props,
                 )
 
     elif payload.target_type == "advisory":
@@ -409,6 +435,20 @@ async def broadcast_message(
                 </div>
                 """
 
+                # Build Slack blocks with per-user affected projects
+                advisory_blocks = build_advisory_blocks(
+                    subject=f"ACTION REQUIRED: {payload.subject}",
+                    message=payload.message,
+                    affected_projects=projects_data,
+                    dashboard_link=frontend_url,
+                )
+                advisory_mm = mm_advisory_props(
+                    subject=f"ACTION REQUIRED: {payload.subject}",
+                    message=payload.message,
+                    affected_projects=projects_data,
+                    dashboard_link=frontend_url,
+                )
+
                 # Queue notification for background delivery
                 background_tasks.add_task(
                     notification_service.notify_users,
@@ -419,6 +459,8 @@ async def broadcast_message(
                     db=db,
                     forced_channels=forced_channels,
                     html_message=final_html,
+                    slack_blocks=advisory_blocks,
+                    mattermost_props=advisory_mm,
                 )
 
     # 5. Save History

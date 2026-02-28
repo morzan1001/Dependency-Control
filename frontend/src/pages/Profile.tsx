@@ -1,5 +1,5 @@
 import { useCurrentUser } from '@/hooks/queries/use-users';
-import { useNotificationChannels } from '@/hooks/queries/use-system';
+import { useNotificationChannels, useAppConfig } from '@/hooks/queries/use-system';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserDetailsCard } from '@/components/profile/UserDetailsCard';
 import { PasswordUpdateCard } from '@/components/profile/PasswordUpdateCard';
@@ -10,6 +10,7 @@ export default function ProfilePage() {
   const { data: user, isLoading } = useCurrentUser();
 
   const { data: notificationChannels } = useNotificationChannels();
+  const { data: appConfig } = useAppConfig();
 
   if (isLoading) {
     return (
@@ -29,7 +30,7 @@ export default function ProfilePage() {
       <h1 className="text-3xl font-bold tracking-tight">Profile</h1>
 
       <div className="grid gap-6 md:grid-cols-2">
-        <UserDetailsCard key={user?.id} user={user} notificationChannels={notificationChannels} />
+        <UserDetailsCard key={user?.id} user={user} notificationChannels={notificationChannels} appConfig={appConfig} />
         <div className="space-y-6">
           <PasswordUpdateCard user={user} />
           <TwoFactorAuthCard user={user} />

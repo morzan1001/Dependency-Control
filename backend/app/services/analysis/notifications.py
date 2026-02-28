@@ -11,6 +11,14 @@ from app.core.config import settings
 from app.models.finding import Finding
 from app.models.project import Project
 from app.services.notifications import notification_service
+from app.services.notifications.mattermost_formatter import (
+    build_analysis_completed_props as mm_analysis_props,
+    build_vulnerability_found_props as mm_vulnerability_props,
+)
+from app.services.notifications.slack_formatter import (
+    build_analysis_completed_blocks,
+    build_vulnerability_found_blocks,
+)
 from app.services.notifications.templates import (
     get_analysis_completed_template,
     get_vulnerability_found_template,
@@ -174,6 +182,22 @@ async def send_scan_notifications(
         )
 
         results_text = "\n".join(results_summary) if results_summary else "No analyzer details available."
+        slack_blocks = build_analysis_completed_blocks(
+            project_name=project.name,
+            scan_id=scan_id,
+            total_findings=len(aggregated_findings),
+            severity_counts=severity_counts,
+            results_summary=results_summary,
+            scan_link=scan_link,
+        )
+        mm_props = mm_analysis_props(
+            project_name=project.name,
+            scan_id=scan_id,
+            total_findings=len(aggregated_findings),
+            severity_counts=severity_counts,
+            results_summary=results_summary,
+            scan_link=scan_link,
+        )
         await notification_service.notify_project_members(
             project=project,
             event_type="analysis_completed",
@@ -181,6 +205,8 @@ async def send_scan_notifications(
             message=(f"Scan {scan_id} completed.\nFound {len(aggregated_findings)} issues.\nResults:\n{results_text}"),
             db=db,
             html_message=html_content,
+            slack_blocks=slack_blocks,
+            mattermost_props=mm_props,
         )
     except Exception as e:
         logger.error(f"Failed to send analysis_completed notification: {e}")
@@ -249,6 +275,22 @@ async def send_scan_notifications(
             high_epss_count=len(high_epss_vulns),
         )
 
+        vuln_slack_blocks = build_vulnerability_found_blocks(
+            project_name=project.name,
+            kev_count=len(kev_vulns),
+            high_epss_count=len(high_epss_vulns),
+            critical_count=len(critical_vulns),
+            top_vulns=top_vulns,
+            scan_link=scan_link,
+        )
+        vuln_mm_props = mm_vulnerability_props(
+            project_name=project.name,
+            kev_count=len(kev_vulns),
+            high_epss_count=len(high_epss_vulns),
+            critical_count=len(critical_vulns),
+            top_vulns=top_vulns,
+            scan_link=scan_link,
+        )
         await notification_service.notify_project_members(
             project=project,
             event_type="vulnerability_found",
@@ -256,6 +298,8 @@ async def send_scan_notifications(
             message=message,
             db=db,
             html_message=vuln_html,
+            slack_blocks=vuln_slack_blocks,
+            mattermost_props=vuln_mm_props,
         )
 
         logger.info(

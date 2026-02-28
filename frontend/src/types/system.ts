@@ -28,6 +28,7 @@ export interface SystemSettings {
   slack_bot_token?: string;
   slack_client_id?: string;
   slack_client_secret?: string;
+  slack_oauth_scopes?: string;
   slack_refresh_token?: string;
   slack_token_expires_at?: number;
   mattermost_url?: string;
@@ -59,6 +60,8 @@ export interface AppConfig {
   global_rescan_enabled: boolean;
   global_rescan_interval: number;
   notifications: NotificationChannels;
+  slack_client_id?: string;
+  slack_oauth_scopes?: string;
 }
 
 export interface SettingsTabProps {

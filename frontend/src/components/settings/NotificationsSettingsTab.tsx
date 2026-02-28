@@ -175,13 +175,25 @@ export function NotificationsSettingsTab({
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="slack-client-secret">Client Secret</Label>
-                  <Input 
-                    id="slack-client-secret" 
+                  <Input
+                    id="slack-client-secret"
                     type="password"
                     placeholder="e.g. 8f7d6e5c4b3a2..."
                     value={formData.slack_client_secret || ''}
                     onChange={(e) => handleInputChange('slack_client_secret', e.target.value)}
                   />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="slack-oauth-scopes">OAuth Bot Scopes</Label>
+                  <Input
+                    id="slack-oauth-scopes"
+                    placeholder="channels:read,chat:write,chat:write.customize,files:write"
+                    value={formData.slack_oauth_scopes || ''}
+                    onChange={(e) => handleInputChange('slack_oauth_scopes', e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Comma-separated list of OAuth bot scopes requested during Slack app installation.
+                  </p>
                 </div>
 
                 {formData.slack_client_id && formData.slack_client_secret && (
@@ -213,7 +225,8 @@ export function NotificationsSettingsTab({
                           className="w-full sm:w-auto"
                           onClick={() => {
                             const redirectUri = `${window.location.origin}/api/v1/integrations/slack/callback`;
-                            const targetUrl = `https://slack.com/oauth/v2/authorize?client_id=${formData.slack_client_id}&scope=chat:write&redirect_uri=${encodeURIComponent(redirectUri)}`;
+                            const scopes = formData.slack_oauth_scopes || 'chat:write';
+                            const targetUrl = `https://slack.com/oauth/v2/authorize?client_id=${formData.slack_client_id}&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(redirectUri)}`;
                             window.location.href = targetUrl;
                           }}
                         >
