@@ -203,14 +203,14 @@ def _parsed_dep_to_dependency(parsed_dep: Any, project_id: str, scan_id: str) ->
 
 async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_id: str) -> Dict[str, Any]:
     """Upload a single SBOM to GridFS and return the reference dict."""
-    sbom_str = json.dumps(sbom)
-    sbom_bytes = sbom_str.encode("utf-8")
     filename = f"sbom-{uuid.uuid4()}.json"
+    sbom_bytes = json.dumps(sbom).encode("utf-8")
     file_id = await fs.upload_from_stream(
         filename,
         sbom_bytes,
         metadata={"contentType": "application/json", "scan_id": scan_id},
     )
+    del sbom_bytes
     return {
         "storage": "gridfs",
         "file_id": str(file_id),
@@ -220,19 +220,29 @@ async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_i
     }
 
 
+_DEP_CHUNK_SIZE = 500
+
+
 async def _process_sboms(
-    sboms: List[Any], fs: AsyncIOMotorGridFSBucket, project_id: str, scan_id: str
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[str], int, int]:
+    sboms: List[Any],
+    fs: AsyncIOMotorGridFSBucket,
+    project_id: str,
+    scan_id: str,
+    dep_repo: "DependencyRepository",
+) -> tuple[List[Dict[str, Any]], List[str], int, int, int]:
     """Process all SBOMs: upload to GridFS and extract dependencies.
 
+    Dependencies are inserted in chunks to limit peak memory usage.
+
     Returns:
-        Tuple of (sbom_refs, dependencies_to_insert, warnings, sboms_processed, sboms_failed)
+        Tuple of (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted)
     """
     sbom_refs: List[Dict[str, Any]] = []
-    dependencies_to_insert: List[Dict[str, Any]] = []
     warnings: List[str] = []
     sboms_processed = 0
     sboms_failed = 0
+    total_deps_inserted = 0
+    old_deps_deleted = False
 
     for idx, sbom in enumerate(sboms):
         try:
@@ -252,16 +262,33 @@ async def _process_sboms(
                 f"parsed={parsed_sbom.parsed_components}, "
                 f"skipped={parsed_sbom.skipped_components}"
             )
+
+            # Delete old dependencies once before the first insert
+            if not old_deps_deleted:
+                deleted_count = await dep_repo.delete_by_scan(scan_id)
+                if deleted_count:
+                    logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
+                old_deps_deleted = True
+
+            # Insert dependencies in chunks instead of accumulating all in memory
+            chunk: List[Dict[str, Any]] = []
             for parsed_dep in parsed_sbom.dependencies:
                 dep = _parsed_dep_to_dependency(parsed_dep, project_id, scan_id)
-                dependencies_to_insert.append(dep.model_dump(by_alias=True))
+                chunk.append(dep.model_dump(by_alias=True))
+                if len(chunk) >= _DEP_CHUNK_SIZE:
+                    total_deps_inserted += await dep_repo.create_many_raw(chunk)
+                    chunk.clear()
+            if chunk:
+                total_deps_inserted += await dep_repo.create_many_raw(chunk)
+                chunk.clear()
+
             sboms_processed += 1
         except Exception as e:
             sboms_failed += 1
             warnings.append(f"SBOM {idx + 1}: Failed to parse dependencies")
             logger.error(f"Failed to extract dependencies from SBOM: {e}", exc_info=True)
 
-    return sbom_refs, dependencies_to_insert, warnings, sboms_processed, sboms_failed
+    return sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted
 
 
 @router.post(
@@ -290,11 +317,18 @@ async def ingest_sbom(
     pipeline_url = manager.build_pipeline_url(data)
     scan_id = _generate_scan_id(str(project.id), data.pipeline_id, data.commit_hash)
 
-    # Initialize GridFS and process all SBOMs
+    # Initialize GridFS and process all SBOMs (dependencies inserted in chunks)
     fs = AsyncIOMotorGridFSBucket(db)
-    sbom_refs, dependencies_to_insert, warnings, sboms_processed, sboms_failed = await _process_sboms(
-        data.sboms, fs, str(project.id), scan_id
-    )
+    try:
+        sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted = await _process_sboms(
+            data.sboms, fs, str(project.id), scan_id, dep_repo
+        )
+    except Exception as e:
+        logger.error(f"Failed to process SBOMs: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to store dependencies. Please try again.",
+        )
 
     # Fail if ALL SBOMs failed to process
     if sboms_failed > 0 and sboms_processed == 0:
@@ -303,25 +337,8 @@ async def ingest_sbom(
             detail=f"All {sboms_failed} SBOM(s) failed to process. Check server logs for details.",
         )
 
-    # Bulk insert/update dependencies
-    if dependencies_to_insert:
-        try:
-            deleted_count = await dep_repo.delete_by_scan(scan_id)
-            logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
-
-            inserted_count = await dep_repo.create_many_raw(dependencies_to_insert)
-            logger.info(f"Inserted {inserted_count}/{len(dependencies_to_insert)} dependencies for scan {scan_id}")
-
-            if inserted_count < len(dependencies_to_insert):
-                skipped = len(dependencies_to_insert) - inserted_count
-                logger.warning(f"Skipped {skipped} duplicate dependencies for scan {scan_id}")
-        except Exception as e:
-            warnings.append("Failed to store dependencies")
-            logger.error(f"Failed to insert dependencies: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to store dependencies. Please try again.",
-            )
+    if total_deps_inserted:
+        logger.info(f"Inserted {total_deps_inserted} dependencies for scan {scan_id}")
 
     now = datetime.now(timezone.utc)
 
@@ -378,7 +395,7 @@ async def ingest_sbom(
         message=message,
         sboms_processed=sboms_processed,
         sboms_failed=sboms_failed,
-        dependencies_count=len(dependencies_to_insert),
+        dependencies_count=total_deps_inserted,
         warnings=warnings,
     )
 

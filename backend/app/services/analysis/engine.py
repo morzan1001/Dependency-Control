@@ -39,6 +39,8 @@ from app.services.analysis.types import Database
 
 logger = logging.getLogger(__name__)
 
+_BULK_CHUNK_SIZE = 500
+
 # Import metrics for detailed analysis tracking
 analysis_scans_total: Optional[Counter] = None
 analysis_errors_total: Optional[Counter] = None
@@ -271,6 +273,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                 stream = await fs.open_download_stream(ObjectId(gridfs_id))
                 content: bytes = await stream.read()
                 current_sbom = json.loads(content)
+                del content
                 if analysis_gridfs_operations_total:
                     analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
             except Exception as gridfs_err:
@@ -331,7 +334,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         results_summary.extend(batch_results)
 
         # Explicitly release memory
-        del current_sbom
+        del current_sbom, parsed_components
 
     # 1. Fetch and Aggregate External Results (TruffleHog, OpenGrep, etc.)
     # We mark the time BEFORE loading external results to detect race conditions later
@@ -349,6 +352,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Add external analyzers to results_summary so notifications reflect them
     for ext_name in sorted(external_analyzer_names):
         results_summary.append(f"{ext_name}: Success")
+    del external_results
 
     # Save aggregated findings to the scan document
     aggregated_findings = aggregator.get_findings()
@@ -363,13 +367,17 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Get aggregated dependency enrichments
     dependency_enrichments = aggregator.get_dependency_enrichments()
 
+    # Free the aggregator and all its internal caches (findings, scorecard, license data, enrichments)
+    del aggregator
+
     # Note: project_id was already fetched at the beginning of the function
 
-    # Enrich dependencies with aggregated data
+    # Enrich dependencies with aggregated data (in chunks to limit memory)
     if dependency_enrichments:
         logger.info(f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata")
 
-        bulk_ops = []
+        bulk_ops: List[UpdateOne] = []
+        total_updated = 0
         for key, enrichment_data in dependency_enrichments.items():
             # key format: "name@version"
             parts = key.rsplit("@", 1)
@@ -385,12 +393,25 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                     )
                 )
 
+            if len(bulk_ops) >= _BULK_CHUNK_SIZE:
+                try:
+                    await db.dependencies.bulk_write(bulk_ops, ordered=False)
+                    total_updated += len(bulk_ops)
+                except Exception as e:
+                    logger.error(f"Failed to bulk update dependencies: {e}")
+                bulk_ops.clear()
+
         if bulk_ops:
             try:
                 await db.dependencies.bulk_write(bulk_ops, ordered=False)
-                logger.info(f"Bulk updated {len(bulk_ops)} dependencies.")
+                total_updated += len(bulk_ops)
             except Exception as e:
                 logger.error(f"Failed to bulk update dependencies: {e}")
+
+        logger.info(f"Bulk updated {total_updated} dependencies.")
+
+    # Free enrichment data
+    del dependency_enrichments
 
     # Fetch waivers
     waivers = []
@@ -412,6 +433,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     await finding_repo.delete_many({"scan_id": scan_id})
 
     findings_to_insert: List[Dict[str, Any]] = []
+    vulnerability_findings: List[Dict[str, Any]] = []
     for f in aggregated_findings:
         record: Dict[str, Any] = f.model_dump()
         record["scan_id"] = scan_id
@@ -419,9 +441,11 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         record["finding_id"] = f.id
         record["_id"] = str(uuid.uuid4())
         findings_to_insert.append(record)
+        if record.get("type") == "vulnerability":
+            vulnerability_findings.append(record)
 
-    # Post-Processing: Enrich vulnerability findings
-    vulnerability_findings: List[Dict[str, Any]] = [f for f in findings_to_insert if f.get("type") == "vulnerability"]
+    # Capture count before freeing aggregated_findings later
+    total_findings_count = len(findings_to_insert)
 
     github_token = system_settings.github_token
     if not github_token:
@@ -529,7 +553,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
 
     if findings_to_insert:
-        await finding_repo.create_many_raw(findings_to_insert)
+        for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
+            await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
     # Apply waivers via DB updates
     for waiver in active_waivers:
@@ -581,7 +606,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     latest_run_summary = {
         "scan_id": scan_id,
         "status": "completed",
-        "findings_count": len(aggregated_findings),
+        "findings_count": total_findings_count,
         "stats": stats.model_dump(),
         "completed_at": datetime.now(timezone.utc),
     }
@@ -633,7 +658,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         {
             "$set": {
                 "status": "completed",
-                "findings_count": len(aggregated_findings),
+                "findings_count": total_findings_count,
                 "ignored_count": ignored_count,
                 "stats": stats.model_dump(),
                 "completed_at": datetime.now(timezone.utc),
@@ -684,4 +709,5 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             # Notifications
             await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
 
+    del aggregated_findings
     return True
