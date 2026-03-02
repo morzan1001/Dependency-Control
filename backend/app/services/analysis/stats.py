@@ -177,7 +177,7 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
 
 def build_reachability_summary(
     findings: List[Dict[str, Any]],
-    callgraph: Dict[str, Any],
+    callgraphs: List[Dict[str, Any]],
     enriched_count: int,
 ) -> ReachabilitySummary:
     """
@@ -185,7 +185,7 @@ def build_reachability_summary(
 
     Args:
         findings: List of vulnerability findings that were analyzed
-        callgraph: The callgraph document used for analysis
+        callgraphs: List of callgraph documents used for analysis (one per language)
         enriched_count: Number of findings that were enriched
 
     Returns:
@@ -198,18 +198,22 @@ def build_reachability_summary(
         "unreachable": 0,
     }
 
-    callgraph_info: CallgraphInfo = {
-        "language": callgraph.get("language", "unknown"),
-        "total_modules": len(callgraph.get("module_usage", {})),
-        "total_imports": len(callgraph.get("import_map", {})),
-        "generated_at": _format_datetime(callgraph.get("created_at")),
-    }
+    callgraph_info: List[CallgraphInfo] = [
+        {
+            "language": cg.get("language", "unknown"),
+            "total_modules": len(cg.get("module_usage", {})),
+            "total_imports": len(cg.get("import_map", {})),
+            "generated_at": _format_datetime(cg.get("created_at")),
+        }
+        for cg in callgraphs
+    ]
 
     summary: ReachabilitySummary = {
         "total_vulnerabilities": len(findings),
         "analyzed": enriched_count,
         "reachability_levels": reachability_levels,
         "callgraph_info": callgraph_info,
+        "languages": [cg.get("language", "unknown") for cg in callgraphs],
         "reachable_vulnerabilities": [],
         "unreachable_vulnerabilities": [],
         "timestamp": datetime.now(timezone.utc).isoformat(),

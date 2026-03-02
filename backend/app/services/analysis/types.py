@@ -106,7 +106,8 @@ class ReachabilitySummary(TypedDict):
     total_vulnerabilities: int
     analyzed: int
     reachability_levels: ReachabilityLevelCounts
-    callgraph_info: CallgraphInfo
+    callgraph_info: List[CallgraphInfo]
+    languages: List[str]
     reachable_vulnerabilities: List[VulnerabilityInfo]
     unreachable_vulnerabilities: List[VulnerabilityInfo]
     timestamp: str

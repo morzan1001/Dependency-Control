@@ -48,15 +48,15 @@ class ReachabilityResult(TypedDict, total=False):
     vulnerable_symbols: List[str]
 
 
-async def _fetch_callgraph(
+async def _fetch_callgraphs(
     project_id: str,
     scan_id: str,
     db: AsyncIOMotorDatabase,
-) -> Any:
+) -> List[Any]:
     """
-    Fetch the callgraph for a scan, falling back to pipeline_id match.
+    Fetch all callgraphs for a scan (one per language), falling back to pipeline_id match.
 
-    Returns the callgraph object or None if not found.
+    Returns a list of callgraph objects (may be empty).
     """
     from app.repositories import CallgraphRepository, ScanRepository
 
@@ -64,16 +64,16 @@ async def _fetch_callgraph(
     scan_repo = ScanRepository(db)
 
     # Priority: exact scan_id match > fallback to pipeline_id match
-    callgraph = await callgraph_repo.get_minimal_by_scan(project_id, scan_id)
-    if callgraph:
-        return callgraph
+    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
+    if callgraphs:
+        return callgraphs
 
-    # Fallback: try to find callgraph via pipeline_id
+    # Fallback: try to find callgraphs via pipeline_id
     scan = await scan_repo.get_by_id(scan_id)
     if scan and scan.pipeline_id:
-        return await callgraph_repo.get_minimal_by_pipeline(project_id, scan.pipeline_id)
+        return await callgraph_repo.find_all_minimal_by_pipeline(project_id, scan.pipeline_id)
 
-    return None
+    return []
 
 
 def _enrich_single_finding(
@@ -106,6 +106,56 @@ def _enrich_single_finding(
     return True
 
 
+def _is_package_in_callgraph(
+    component: str,
+    module_usage: Dict[str, Any],
+    import_map: Dict[str, List[str]],
+    language: str,
+) -> bool:
+    """Check whether a package appears in a callgraph's module usage or imports."""
+    normalized = _normalize_component(component, language)
+    usage = module_usage.get(normalized) or module_usage.get(component)
+    return bool(usage or _check_package_in_imports(normalized, import_map))
+
+
+def _enrich_finding_from_callgraphs(
+    finding: Dict[str, Any],
+    callgraphs: List[Any],
+) -> bool:
+    """
+    Try each callgraph for a finding. Returns True if enriched.
+
+    Uses the first callgraph where the package is imported.
+    If no callgraph matches, marks the finding as not reachable.
+    """
+    component = finding.get("component", "")
+    if not component:
+        return False
+
+    for callgraph in callgraphs:
+        module_usage = callgraph.module_usage or {}
+        import_map = callgraph.import_map or {}
+        language = callgraph.language or "unknown"
+
+        if _is_package_in_callgraph(component, module_usage, import_map, language):
+            _enrich_single_finding(finding, module_usage, import_map, language)
+            return True
+
+    # Package not found in any callgraph
+    languages = [cg.language or "unknown" for cg in callgraphs]
+    if "details" not in finding:
+        finding["details"] = {}
+    finding["details"]["reachability"] = {
+        "is_reachable": False,
+        "confidence_score": REACHABILITY_CONFIDENCE_NOT_USED,
+        "analysis_level": REACHABILITY_LEVEL_IMPORT,
+        "matched_symbols": [],
+        "import_locations": [],
+        "message": f"Package '{component}' is not imported in any analyzed source file ({', '.join(languages)}).",
+    }
+    return True
+
+
 async def enrich_findings_with_reachability(
     findings: List[Dict[str, Any]],
     project_id: str,
@@ -114,6 +164,9 @@ async def enrich_findings_with_reachability(
 ) -> int:
     """
     Enrich vulnerability findings with reachability analysis.
+
+    Supports multiple callgraphs (one per language). For each finding,
+    the matching callgraph is used (i.e. the one where the package is imported).
 
     Args:
         findings: List of finding dicts (will be modified in-place)
@@ -135,23 +188,21 @@ async def enrich_findings_with_reachability(
         logger.warning("No scan_id available for reachability enrichment")
         return 0
 
-    callgraph = await _fetch_callgraph(project_id, scan_id, db)
+    callgraphs = await _fetch_callgraphs(project_id, scan_id, db)
 
-    if not callgraph:
+    if not callgraphs:
         logger.debug(f"No callgraph available for scan {scan_id}")
         return 0
 
-    logger.debug(f"Found callgraph for scan {scan_id}")
-
-    # Extract module usage from callgraph
-    module_usage = callgraph.module_usage or {}
-    import_map = callgraph.import_map or {}
-    language = callgraph.language or "unknown"
+    languages = [cg.language or "unknown" for cg in callgraphs]
+    logger.debug(f"Found {len(callgraphs)} callgraph(s) for scan {scan_id}: {languages}")
 
     enriched_count = 0
 
     for finding in findings:
-        if _enrich_single_finding(finding, module_usage, import_map, language):
+        if finding.get("type") != "vulnerability":
+            continue
+        if _enrich_finding_from_callgraphs(finding, callgraphs):
             enriched_count += 1
 
     return enriched_count
@@ -468,10 +519,12 @@ async def run_pending_reachability_for_scan(
                 )
 
         # Store reachability summary in analysis_results for raw data view
-        callgraph = await callgraph_repo.get_minimal_by_scan(project_id, scan_id)
-        if callgraph:
+        callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
+        if callgraphs:
             reachability_summary = _build_reachability_summary_for_pending(
-                findings_dicts, callgraph.model_dump(by_alias=True), enriched_count
+                findings_dicts,
+                [cg.model_dump(by_alias=True) for cg in callgraphs],
+                enriched_count,
             )
             await result_repo.create_raw(
                 {
@@ -506,12 +559,27 @@ async def run_pending_reachability_for_scan(
 
 
 def _build_reachability_summary_for_pending(
-    findings: List[Dict[str, Any]], callgraph: Dict[str, Any], enriched_count: int
+    findings: List[Dict[str, Any]], callgraphs: List[Dict[str, Any]], enriched_count: int
 ) -> Dict[str, Any]:
     """
     Build a summary of reachability analysis for raw data view.
     Used when processing pending reachability after callgraph upload.
+    Supports multiple callgraphs (one per language).
     """
+    callgraph_info = [
+        {
+            "language": cg.get("language", "unknown"),
+            "total_modules": len(cg.get("module_usage", {})),
+            "total_imports": len(cg.get("import_map", {})),
+            "generated_at": (
+                cg["created_at"].isoformat()
+                if hasattr(cg.get("created_at"), "isoformat")
+                else str(cg["created_at"]) if cg.get("created_at") else None
+            ),
+        }
+        for cg in callgraphs
+    ]
+
     summary: Dict[str, Any] = {
         "total_vulnerabilities": len(findings),
         "analyzed": enriched_count,
@@ -521,16 +589,8 @@ def _build_reachability_summary_for_pending(
             "unknown": 0,
             "unreachable": 0,
         },
-        "callgraph_info": {
-            "language": callgraph.get("language", "unknown"),
-            "total_modules": len(callgraph.get("module_usage", {})),
-            "total_imports": len(callgraph.get("import_map", {})),
-            "generated_at": (
-                callgraph.get("created_at", "").isoformat()
-                if hasattr(callgraph.get("created_at", ""), "isoformat")
-                else str(callgraph.get("created_at", ""))
-            ),
-        },
+        "callgraph_info": callgraph_info,
+        "languages": [cg.get("language", "unknown") for cg in callgraphs],
         "reachable_vulnerabilities": [],
         "unreachable_vulnerabilities": [],
         "timestamp": datetime.now(timezone.utc).isoformat(),

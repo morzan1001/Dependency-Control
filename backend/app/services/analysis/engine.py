@@ -494,14 +494,14 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     # Reachability Analysis
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
-        callgraph = await callgraph_repo.get_minimal_by_scan(project_id, scan_id)
+        callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
 
-        if not callgraph:
+        if not callgraphs:
             pipeline_id = scan_doc.pipeline_id if scan_doc else None
             if pipeline_id:
-                callgraph = await callgraph_repo.get_minimal_by_pipeline(project_id, pipeline_id)
+                callgraphs = await callgraph_repo.find_all_minimal_by_pipeline(project_id, pipeline_id)
 
-        if callgraph:
+        if callgraphs:
             try:
                 enriched_count = await enrich_findings_with_reachability(
                     findings=vulnerability_findings,
@@ -510,7 +510,9 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                     scan_id=scan_id,
                 )
                 reachability_summary = build_reachability_summary(
-                    vulnerability_findings, callgraph.model_dump(by_alias=True), enriched_count
+                    vulnerability_findings,
+                    [cg.model_dump(by_alias=True) for cg in callgraphs],
+                    enriched_count,
                 )
                 # Store reachability summary via repository
                 await result_repo.create_raw(

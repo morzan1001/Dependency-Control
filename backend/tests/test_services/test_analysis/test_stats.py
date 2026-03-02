@@ -376,7 +376,7 @@ class TestBuildReachabilitySummaryEmpty:
 
     def test_empty_findings(self):
         """Empty findings list produces zeroed totals."""
-        result = build_reachability_summary([], _make_callgraph(), 0)
+        result = build_reachability_summary([], [_make_callgraph()], 0)
         assert result["total_vulnerabilities"] == 0
         assert result["analyzed"] == 0
         assert result["reachable_vulnerabilities"] == []
@@ -384,7 +384,7 @@ class TestBuildReachabilitySummaryEmpty:
 
     def test_empty_findings_has_timestamp(self):
         """Even an empty summary contains a UTC timestamp."""
-        result = build_reachability_summary([], _make_callgraph(), 0)
+        result = build_reachability_summary([], [_make_callgraph()], 0)
         assert result["timestamp"] is not None
 
 
@@ -394,25 +394,25 @@ class TestBuildReachabilitySummaryLevels:
     def test_confirmed_level(self):
         """Confirmed reachability level is counted."""
         findings = [_make_reachable_finding(reachable=True, reachability_level="confirmed")]
-        result = build_reachability_summary(findings, _make_callgraph(), 1)
+        result = build_reachability_summary(findings, [_make_callgraph()],1)
         assert result["reachability_levels"]["confirmed"] == 1
 
     def test_likely_level(self):
         """Likely reachability level is counted."""
         findings = [_make_reachable_finding(reachable=True, reachability_level="likely")]
-        result = build_reachability_summary(findings, _make_callgraph(), 1)
+        result = build_reachability_summary(findings, [_make_callgraph()],1)
         assert result["reachability_levels"]["likely"] == 1
 
     def test_unknown_level(self):
         """Unknown reachability level is counted."""
         findings = [_make_reachable_finding(reachability_level="unknown")]
-        result = build_reachability_summary(findings, _make_callgraph(), 0)
+        result = build_reachability_summary(findings, [_make_callgraph()],0)
         assert result["reachability_levels"]["unknown"] == 1
 
     def test_unreachable_level(self):
         """Unreachable reachability level is counted."""
         findings = [_make_reachable_finding(reachable=False, reachability_level="unreachable")]
-        result = build_reachability_summary(findings, _make_callgraph(), 1)
+        result = build_reachability_summary(findings, [_make_callgraph()],1)
         assert result["reachability_levels"]["unreachable"] == 1
 
     def test_multiple_levels_counted(self):
@@ -423,7 +423,7 @@ class TestBuildReachabilitySummaryLevels:
             _make_reachable_finding(finding_id="CVE-3", reachable=False, reachability_level="unreachable"),
             _make_reachable_finding(finding_id="CVE-4", reachability_level="unknown"),
         ]
-        result = build_reachability_summary(findings, _make_callgraph(), 3)
+        result = build_reachability_summary(findings, [_make_callgraph()],3)
         levels = result["reachability_levels"]
         assert levels["confirmed"] == 1
         assert levels["likely"] == 1
@@ -437,38 +437,38 @@ class TestBuildReachabilitySummaryCallgraph:
     def test_language_extracted(self):
         """Callgraph language is propagated to the summary."""
         cg = _make_callgraph(language="java")
-        result = build_reachability_summary([], cg, 0)
-        assert result["callgraph_info"]["language"] == "java"
+        result = build_reachability_summary([], [cg], 0)
+        assert result["callgraph_info"][0]["language"] == "java"
 
     def test_module_count(self):
         """Total modules equals the size of module_usage."""
         cg = _make_callgraph(modules={"mod_a": {}, "mod_b": {}})
-        result = build_reachability_summary([], cg, 0)
-        assert result["callgraph_info"]["total_modules"] == 2
+        result = build_reachability_summary([], [cg], 0)
+        assert result["callgraph_info"][0]["total_modules"] == 2
 
     def test_import_count(self):
         """Total imports equals the size of import_map."""
         cg = _make_callgraph(imports={"imp_a": [], "imp_b": [], "imp_c": []})
-        result = build_reachability_summary([], cg, 0)
-        assert result["callgraph_info"]["total_imports"] == 3
+        result = build_reachability_summary([], [cg], 0)
+        assert result["callgraph_info"][0]["total_imports"] == 3
 
     def test_generated_at_from_datetime(self):
         """A datetime created_at is formatted via _format_datetime."""
         dt = datetime(2024, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
         cg = _make_callgraph(created_at=dt)
-        result = build_reachability_summary([], cg, 0)
-        assert result["callgraph_info"]["generated_at"] == dt.isoformat()
+        result = build_reachability_summary([], [cg], 0)
+        assert result["callgraph_info"][0]["generated_at"] == dt.isoformat()
 
     def test_generated_at_none_when_missing(self):
         """Missing created_at yields None for generated_at."""
         cg = _make_callgraph()
-        result = build_reachability_summary([], cg, 0)
-        assert result["callgraph_info"]["generated_at"] is None
+        result = build_reachability_summary([], [cg], 0)
+        assert result["callgraph_info"][0]["generated_at"] is None
 
     def test_missing_language_defaults_to_unknown(self):
         """A callgraph without a language key defaults to 'unknown'."""
-        result = build_reachability_summary([], {"module_usage": {}, "import_map": {}}, 0)
-        assert result["callgraph_info"]["language"] == "unknown"
+        result = build_reachability_summary([], [{"module_usage": {}, "import_map": {}}], 0)
+        assert result["callgraph_info"][0]["language"] == "unknown"
 
 
 class TestBuildReachabilitySummaryPartitioning:
@@ -477,21 +477,21 @@ class TestBuildReachabilitySummaryPartitioning:
     def test_reachable_true_goes_to_reachable_list(self):
         """Findings with reachable=True appear in reachable_vulnerabilities."""
         findings = [_make_reachable_finding(reachable=True, reachability_level="confirmed")]
-        result = build_reachability_summary(findings, _make_callgraph(), 1)
+        result = build_reachability_summary(findings, [_make_callgraph()],1)
         assert len(result["reachable_vulnerabilities"]) == 1
         assert len(result["unreachable_vulnerabilities"]) == 0
 
     def test_reachable_false_goes_to_unreachable_list(self):
         """Findings with reachable=False appear in unreachable_vulnerabilities."""
         findings = [_make_reachable_finding(reachable=False, reachability_level="unreachable")]
-        result = build_reachability_summary(findings, _make_callgraph(), 1)
+        result = build_reachability_summary(findings, [_make_callgraph()],1)
         assert len(result["reachable_vulnerabilities"]) == 0
         assert len(result["unreachable_vulnerabilities"]) == 1
 
     def test_reachable_none_goes_to_neither_list(self):
         """Findings without a reachable value appear in neither list."""
         findings = [_make_reachable_finding(reachability_level="unknown")]
-        result = build_reachability_summary(findings, _make_callgraph(), 0)
+        result = build_reachability_summary(findings, [_make_callgraph()],0)
         assert len(result["reachable_vulnerabilities"]) == 0
         assert len(result["unreachable_vulnerabilities"]) == 0
 
@@ -508,7 +508,7 @@ class TestBuildReachabilitySummaryPartitioning:
                 reachable_functions=["SSL_read"],
             )
         ]
-        result = build_reachability_summary(findings, _make_callgraph(), 1)
+        result = build_reachability_summary(findings, [_make_callgraph()],1)
         vuln = result["reachable_vulnerabilities"][0]
         assert vuln["cve"] == "CVE-2024-5678"
         assert vuln["component"] == "openssl"
@@ -521,7 +521,7 @@ class TestBuildReachabilitySummaryPartitioning:
         """Only the first 5 reachable functions are kept per finding."""
         funcs = [f"func_{i}" for i in range(10)]
         findings = [_make_reachable_finding(reachable=True, reachability_level="confirmed", reachable_functions=funcs)]
-        result = build_reachability_summary(findings, _make_callgraph(), 1)
+        result = build_reachability_summary(findings, [_make_callgraph()],1)
         assert len(result["reachable_vulnerabilities"][0]["reachable_functions"]) == 5
 
 
@@ -537,7 +537,7 @@ class TestBuildReachabilitySummarySorting:
             ),
             _make_reachable_finding(finding_id="CVE-3", severity="MEDIUM", reachable=True, reachability_level="likely"),
         ]
-        result = build_reachability_summary(findings, _make_callgraph(), 3)
+        result = build_reachability_summary(findings, [_make_callgraph()],3)
         severities = [v["severity"] for v in result["reachable_vulnerabilities"]]
         assert severities == ["CRITICAL", "MEDIUM", "LOW"]
 
@@ -551,7 +551,7 @@ class TestBuildReachabilitySummarySorting:
                 finding_id="CVE-2", severity="HIGH", reachable=False, reachability_level="unreachable"
             ),
         ]
-        result = build_reachability_summary(findings, _make_callgraph(), 2)
+        result = build_reachability_summary(findings, [_make_callgraph()],2)
         severities = [v["severity"] for v in result["unreachable_vulnerabilities"]]
         assert severities == ["HIGH", "LOW"]
 
@@ -569,7 +569,7 @@ class TestBuildReachabilitySummaryLimits:
             )
             for i in range(35)
         ]
-        result = build_reachability_summary(findings, _make_callgraph(), 35)
+        result = build_reachability_summary(findings, [_make_callgraph()],35)
         assert len(result["reachable_vulnerabilities"]) == 30
 
     def test_unreachable_limited_to_30(self):
@@ -582,10 +582,10 @@ class TestBuildReachabilitySummaryLimits:
             )
             for i in range(35)
         ]
-        result = build_reachability_summary(findings, _make_callgraph(), 35)
+        result = build_reachability_summary(findings, [_make_callgraph()],35)
         assert len(result["unreachable_vulnerabilities"]) == 30
 
     def test_analyzed_count_passthrough(self):
         """The enriched_count argument is passed through as analyzed."""
-        result = build_reachability_summary([], _make_callgraph(), 42)
+        result = build_reachability_summary([], [_make_callgraph()], 42)
         assert result["analyzed"] == 42

@@ -89,12 +89,13 @@ interface ReachabilitySummary {
     unknown: number;
     unreachable: number;
   };
-  callgraph_info: {
+  callgraph_info: Array<{
     language: string;
     total_modules: number;
     total_imports: number;
-    generated_at: string;
-  };
+    generated_at?: string;
+  }>;
+  languages: string[];
   reachable_vulnerabilities: Array<{
     cve: string;
     component: string;
@@ -495,19 +496,23 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="flex items-center gap-3">
-              <Badge variant="outline" className="capitalize">{data.callgraph_info.language}</Badge>
-              <span className="text-sm text-muted-foreground">Language</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="font-mono text-lg">{data.callgraph_info.total_modules}</span>
-              <span className="text-sm text-muted-foreground">Modules analyzed</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="font-mono text-lg">{data.callgraph_info.total_imports}</span>
-              <span className="text-sm text-muted-foreground">Import mappings</span>
-            </div>
+          <div className="space-y-3">
+            {data.callgraph_info.map((cg) => (
+              <div key={cg.language} className="grid gap-4 md:grid-cols-3">
+                <div className="flex items-center gap-3">
+                  <Badge variant="outline" className="capitalize">{cg.language}</Badge>
+                  <span className="text-sm text-muted-foreground">Language</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-lg">{cg.total_modules}</span>
+                  <span className="text-sm text-muted-foreground">Modules analyzed</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-lg">{cg.total_imports}</span>
+                  <span className="text-sm text-muted-foreground">Import mappings</span>
+                </div>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>

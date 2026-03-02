@@ -5,6 +5,7 @@ set -euo pipefail
 # Configuration & Constants
 SCRIPT_VERSION="1.0.0"
 TEMP_DIR="${TMPDIR:-/tmp}/dep-control-$$"
+AUTH_HEADER=""
 readonly MSG_BUILDING_PAYLOAD="Building payload..."
 
 # Colors for output (disabled if not a terminal)
@@ -132,15 +133,24 @@ get_auth_header() {
 # Configuration Check
 check_scanner_enabled() {
     local scanner_name="$1"
-    
+
     log_info "Checking if $scanner_name is enabled..."
-    
-    local auth_header
-    auth_header="$(get_auth_header)"
-    
-    local config
-    config=$(curl -sS --max-time 30 -H "$auth_header" "${DEP_CONTROL_URL}/api/v1/ingest/config" 2>/dev/null || echo "{}")
-    
+
+    local response http_code config
+    response=$(curl -sS --max-time 30 -H "$AUTH_HEADER" -w "\n%{http_code}" \
+        "${DEP_CONTROL_URL}/api/v1/ingest/config" 2>/dev/null) || {
+        log_warn "Could not reach Dependency Control. Assuming $scanner_name is enabled."
+        return 0
+    }
+
+    http_code=$(echo "$response" | tail -n1)
+    config=$(echo "$response" | sed '$d')
+
+    if [[ "$http_code" -lt 200 ]] || [[ "$http_code" -ge 300 ]]; then
+        log_warn "Config check returned HTTP $http_code. Assuming $scanner_name is enabled."
+        return 0
+    fi
+
     if echo "$config" | jq -e ".active_analyzers | index(\"$scanner_name\")" > /dev/null 2>&1; then
         log_info "Scanner $scanner_name is enabled."
         return 0
@@ -203,16 +213,13 @@ upload_results() {
     local endpoint="$1"
     local payload_file="$2"
     local fail_on_error="${3:-false}"
-    
-    local auth_header
-    auth_header="$(get_auth_header)"
-    
+
     log_info "Uploading results to ${DEP_CONTROL_URL}${endpoint}..."
-    
+
     local response
     response=$(curl -sS --max-time 120 -X POST \
         -H "Content-Type: application/json" \
-        -H "$auth_header" \
+        -H "$AUTH_HEADER" \
         -d @"$payload_file" \
         -w "\n%{http_code}" \
         "${DEP_CONTROL_URL}${endpoint}" 2>/dev/null) || {
@@ -397,168 +404,60 @@ scan_bearer() {
 }
 
 # Scanner: Callgraph (Reachability)
-scan_callgraph() {
-    log_info "=== Callgraph Generation ==="
-    
-    check_scanner_enabled "reachability" || return 0
-    
-    mkdir -p "$TEMP_DIR"
-    
-    # Detect language
-    local lang=""
-    local format=""
-    
-    if [[ -f "package.json" ]]; then
-        if [[ -f "tsconfig.json" ]]; then
-            lang="typescript"
-        else
-            lang="javascript"
-        fi
-    elif [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]]; then
-        lang="python"
-    elif [[ -f "go.mod" ]]; then
-        lang="go"
-    else
-        log_warn "Could not detect project language. Skipping callgraph generation."
-        return 0
-    fi
-    
-    log_info "Detected language: $lang"
-    
-    case "$lang" in
-        javascript|typescript)
-            if ! command -v madge &> /dev/null; then
-                npm install -g madge 2>/dev/null
-            fi
-            
-            local src_dir="."
-            [[ -d "src" ]] && src_dir="src"
-            [[ -d "lib" ]] && src_dir="lib"
 
-            if [[ "$lang" = "typescript" ]]; then
-                madge --json --ts-config tsconfig.json "$src_dir" > "$TEMP_DIR/callgraph.json" 2>/dev/null || \
-                madge --json "$src_dir" > "$TEMP_DIR/callgraph.json" 2>/dev/null || true
-            else
-                madge --json "$src_dir" > "$TEMP_DIR/callgraph.json" 2>/dev/null || true
-            fi
-            format="madge"
-            ;;
-            
-        python)
-            pip install pyan3 --quiet 2>/dev/null || true
-            
-            find . -name "*.py" -not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/node_modules/*" > "$TEMP_DIR/python_files.txt"
-            
-            if [[ -s "$TEMP_DIR/python_files.txt" ]]; then
-                xargs pyan3 --dot --grouped < "$TEMP_DIR/python_files.txt" > "$TEMP_DIR/callgraph.dot" 2>/dev/null || true
-                
-                # Convert DOT to JSON
-                python3 << 'PYTHON_EOF'
-import re
-import json
-import os
-
-temp_dir = os.environ.get('TEMP_DIR', '/tmp')
-
+# Convert a DOT file to JSON (shared by Python and Go generators)
+_dot_to_json() {
+    local dot_file="$1"
+    local json_file="$2"
+    python3 << PYTHON_EOF
+import re, json, sys
 try:
-    with open(f'{temp_dir}/callgraph.dot', 'r') as f:
+    with open('${dot_file}', 'r') as f:
         content = f.read()
-
     edges = []
     nodes = set()
-
-    for match in re.finditer(r'"([^"]+)"\s*->\s*"([^"]+)"', content):
+    for match in re.finditer(r'"([^"]+)"\\s*->\\s*"([^"]+)"', content):
         source, target = match.groups()
         edges.append({'source': source, 'target': target})
         nodes.add(source)
         nodes.add(target)
-
-    result = {'nodes': list(nodes), 'edges': edges}
-
-    with open(f'{temp_dir}/callgraph.json', 'w') as f:
-        json.dump(result, f)
+    with open('${json_file}', 'w') as f:
+        json.dump({'nodes': list(nodes), 'edges': edges}, f)
 except Exception as e:
-    print(f"Error: {e}")
-    with open(f'{temp_dir}/callgraph.json', 'w') as f:
+    print(f"Error converting DOT to JSON: {e}", file=sys.stderr)
+    with open('${json_file}', 'w') as f:
         json.dump({'nodes': [], 'edges': []}, f)
 PYTHON_EOF
-            fi
-            format="pyan"
-            ;;
-            
-        go)
-            go install github.com/ondrajz/go-callvis@latest 2>/dev/null || true
-            
-            local module_name
-            module_name=$(head -1 go.mod | awk '{print $2}')
-            
-            "$(go env GOPATH)/bin/go-callvis" -nostd -format=dot "$module_name" > "$TEMP_DIR/callgraph.dot" 2>/dev/null || true
-            
-            # Convert DOT to JSON (same as Python)
-            python3 << 'PYTHON_EOF'
-import re
-import json
-import os
+}
 
-temp_dir = os.environ.get('TEMP_DIR', '/tmp')
+# Build payload and upload a single callgraph
+_upload_callgraph() {
+    local project_id="$1"
+    local lang="$2"
+    local format="$3"
+    local json_file="$4"
 
-try:
-    with open(f'{temp_dir}/callgraph.dot', 'r') as f:
-        content = f.read()
-
-    edges = []
-    nodes = set()
-
-    for match in re.finditer(r'"([^"]+)"\s*->\s*"([^"]+)"', content):
-        source, target = match.groups()
-        edges.append({'source': source, 'target': target})
-        nodes.add(source)
-        nodes.add(target)
-
-    result = {'nodes': list(nodes), 'edges': edges}
-
-    with open(f'{temp_dir}/callgraph.json', 'w') as f:
-        json.dump(result, f)
-except Exception as e:
-    print(f"Error: {e}")
-    with open(f'{temp_dir}/callgraph.json', 'w') as f:
-        json.dump({'nodes': [], 'edges': []}, f)
-PYTHON_EOF
-            format="generic"
-            ;;
-        *)
-            log_warn "Unsupported language for callgraph: $lang"
-            return 0
-            ;;
-    esac
-
-    if [[ ! -f "$TEMP_DIR/callgraph.json" ]] || [[ ! -s "$TEMP_DIR/callgraph.json" ]]; then
-        log_warn "No callgraph generated. Skipping upload."
-        return 0
+    if [[ ! -f "$json_file" ]] || [[ ! -s "$json_file" ]]; then
+        log_warn "No callgraph generated for $lang. Skipping."
+        return 1
     fi
-    
-    # Get project ID
-    local auth_header
-    auth_header="$(get_auth_header)"
-    
-    local project_info project_id encoded_name
-    encoded_name=$(printf '%s' "$PROJECT_NAME" | jq -sRr @uri)
-    project_info=$(curl -sS -H "$auth_header" "${DEP_CONTROL_URL}/api/v1/projects?name=${encoded_name}" 2>/dev/null)
-    project_id=$(echo "$project_info" | jq -r '.[0]._id // empty')
-    
-    if [[ -z "$project_id" ]]; then
-        log_warn "Project not found in Dependency Control. Skipping callgraph upload."
-        return 0
+
+    # Verify callgraph has actual data (not just empty structures)
+    # madge format: {"file.js": ["dep.js"]} — check for any keys
+    # pyan/generic format: {"nodes": [...], "edges": [...]} — check for non-empty nodes
+    if ! jq -e 'if has("nodes") then (.nodes | length > 0) else (keys | length > 0) end' "$json_file" >/dev/null 2>&1; then
+        log_warn "Callgraph for $lang is empty (no data). Skipping upload."
+        return 1
     fi
-    
-    log_info "$MSG_BUILDING_PAYLOAD"
+
+    log_info "Uploading $lang callgraph..."
     jq -n \
         --arg format "$format" \
         --arg lang "$lang" \
         --argjson pipeline_id "$PIPELINE_ID" \
         --arg branch "$BRANCH" \
         --arg commit "$COMMIT_HASH" \
-        --slurpfile graph "$TEMP_DIR/callgraph.json" \
+        --slurpfile graph "$json_file" \
         '{
             format: $format,
             language: $lang,
@@ -566,9 +465,127 @@ PYTHON_EOF
             branch: $branch,
             commit_hash: $commit,
             data: $graph[0]
-        }' > "$TEMP_DIR/callgraph_payload.json"
-    
-    upload_results "/api/v1/projects/${project_id}/callgraph" "$TEMP_DIR/callgraph_payload.json"
+        }' > "$TEMP_DIR/callgraph_payload_${lang}.json"
+
+    upload_results "/api/v1/projects/${project_id}/callgraph" "$TEMP_DIR/callgraph_payload_${lang}.json"
+}
+
+# Generate callgraph for JavaScript/TypeScript
+_generate_callgraph_js() {
+    local lang="javascript"
+    [[ -f "tsconfig.json" ]] && lang="typescript"
+
+    if ! command -v madge &> /dev/null; then
+        npm install -g madge >/dev/null 2>&1 || true
+    fi
+
+    local src_dir="."
+    [[ -d "lib" ]] && src_dir="lib"
+    [[ -d "src" ]] && src_dir="src"
+
+    if [[ "$lang" = "typescript" ]]; then
+        madge --json --ts-config tsconfig.json "$src_dir" > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || \
+        madge --json "$src_dir" > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || true
+    else
+        madge --json "$src_dir" > "$TEMP_DIR/callgraph_js.json" 2>/dev/null || true
+    fi
+
+    echo "$lang:madge:$TEMP_DIR/callgraph_js.json"
+}
+
+# Generate callgraph for Python
+_generate_callgraph_python() {
+    pip install pyan3 --quiet >/dev/null 2>&1 || true
+
+    find . -name "*.py" -not -path "*/venv/*" -not -path "*/.venv/*" -not -path "*/node_modules/*" > "$TEMP_DIR/python_files.txt"
+
+    if [[ -s "$TEMP_DIR/python_files.txt" ]]; then
+        xargs pyan3 --dot --grouped < "$TEMP_DIR/python_files.txt" > "$TEMP_DIR/callgraph_python.dot" 2>/dev/null || true
+        _dot_to_json "$TEMP_DIR/callgraph_python.dot" "$TEMP_DIR/callgraph_python.json"
+    fi
+
+    echo "python:pyan:$TEMP_DIR/callgraph_python.json"
+}
+
+# Generate callgraph for Go
+_generate_callgraph_go() {
+    go install github.com/ondrajz/go-callvis@latest >/dev/null 2>&1 || true
+
+    local module_name
+    module_name=$(head -1 go.mod | awk '{print $2}')
+
+    "$(go env GOPATH)/bin/go-callvis" -nostd -format=dot "$module_name" > "$TEMP_DIR/callgraph_go.dot" 2>/dev/null || true
+    _dot_to_json "$TEMP_DIR/callgraph_go.dot" "$TEMP_DIR/callgraph_go.json"
+
+    echo "go:generic:$TEMP_DIR/callgraph_go.json"
+}
+
+scan_callgraph() {
+    log_info "=== Callgraph Generation ==="
+
+    check_scanner_enabled "reachability" || return 0
+
+    mkdir -p "$TEMP_DIR"
+
+    # Detect all languages present in the repo
+    local detected=()
+
+    if [[ -f "package.json" ]]; then
+        detected+=("js")
+    fi
+    if [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] || [[ -f "setup.cfg" ]]; then
+        detected+=("python")
+    fi
+    if [[ -f "go.mod" ]]; then
+        detected+=("go")
+    fi
+
+    if [[ ${#detected[@]} -eq 0 ]]; then
+        log_warn "Could not detect any supported language. Skipping callgraph generation."
+        return 0
+    fi
+
+    log_info "Detected languages: ${detected[*]}"
+
+    # Resolve project ID once
+    local project_info project_id encoded_name
+    encoded_name=$(printf '%s' "$PROJECT_NAME" | jq -sRr @uri)
+    project_info=$(curl -sS -H "$AUTH_HEADER" "${DEP_CONTROL_URL}/api/v1/projects?name=${encoded_name}" 2>/dev/null)
+    project_id=$(echo "$project_info" | jq -r '.[0]._id // empty')
+
+    if [[ -z "$project_id" ]]; then
+        log_warn "Project not found in Dependency Control. Skipping callgraph upload."
+        return 0
+    fi
+
+    # Generate and upload callgraph for each detected language
+    local uploaded=0
+
+    for lang_key in "${detected[@]}"; do
+        local result=""
+        case "$lang_key" in
+            js)     result=$(_generate_callgraph_js) ;;
+            python) result=$(_generate_callgraph_python) ;;
+            go)     result=$(_generate_callgraph_go) ;;
+        esac
+
+        if [[ -n "$result" ]]; then
+            local lang format json_file
+            lang=$(echo "$result" | cut -d: -f1)
+            format=$(echo "$result" | cut -d: -f2)
+            json_file=$(echo "$result" | cut -d: -f3-)
+
+            if _upload_callgraph "$project_id" "$lang" "$format" "$json_file"; then
+                uploaded=$((uploaded + 1))
+            fi
+        fi
+    done
+
+    if [[ $uploaded -eq 0 ]]; then
+        log_warn "No callgraphs were uploaded."
+    else
+        log_info "Uploaded $uploaded callgraph(s) for: ${detected[*]}"
+    fi
 }
 
 # Run All Scans
@@ -577,12 +594,12 @@ run_all() {
     
     local failed=0
     
-    scan_sbom || ((failed++))
-    scan_secrets || ((failed++))
-    scan_sast || ((failed++))
-    scan_iac || ((failed++))
-    scan_bearer || ((failed++))
-    scan_callgraph || ((failed++))
+    scan_sbom || failed=$((failed + 1))
+    scan_secrets || failed=$((failed + 1))
+    scan_sast || failed=$((failed + 1))
+    scan_iac || failed=$((failed + 1))
+    scan_bearer || failed=$((failed + 1))
+    scan_callgraph || failed=$((failed + 1))
     
     if [[ $failed -gt 0 ]]; then
         log_warn "$failed scan(s) had issues"
@@ -637,7 +654,8 @@ main() {
     local command="${1:-help}"
     
     # Validate required environment
-    if [[ "$command" != "help" ]] && [[ "$command" != "--help" ]] && [[ "$command" != "-h" ]]; then
+    if [[ "$command" != "help" ]] && [[ "$command" != "--help" ]] && [[ "$command" != "-h" ]] \
+        && [[ "$command" != "version" ]] && [[ "$command" != "--version" ]] && [[ "$command" != "-v" ]]; then
         if [[ -z "${DEP_CONTROL_URL:-}" ]]; then
             log_error "DEP_CONTROL_URL environment variable is required"
             exit 1
@@ -648,6 +666,9 @@ main() {
         
         # Detect CI environment
         detect_ci_environment
+
+        # Authenticate once (reused by all scan functions)
+        AUTH_HEADER="$(get_auth_header)"
     fi
     
     case "$command" in

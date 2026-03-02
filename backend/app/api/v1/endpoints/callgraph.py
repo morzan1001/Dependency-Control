@@ -81,15 +81,15 @@ def _resolve_scan_id(
 
 
 def _build_upsert_filter(
-    project_id: str, scan_id: Optional[str], pipeline_id: Optional[int], warnings: List[str]
+    project_id: str, language: str, scan_id: Optional[str], pipeline_id: Optional[int], warnings: List[str]
 ) -> Tuple[Dict[str, Any], str]:
     """Build the MongoDB upsert filter and a context string for logging."""
     if scan_id:
-        return {"project_id": project_id, "scan_id": scan_id}, f"scan {scan_id}"
+        return {"project_id": project_id, "language": language, "scan_id": scan_id}, f"scan {scan_id} ({language})"
     if pipeline_id:
-        return {"project_id": project_id, "pipeline_id": pipeline_id}, f"pipeline {pipeline_id}"
+        return {"project_id": project_id, "language": language, "pipeline_id": pipeline_id}, f"pipeline {pipeline_id} ({language})"
     warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
-    return {"project_id": project_id, "scan_id": None, "pipeline_id": None}, "project-level (no pipeline context)"
+    return {"project_id": project_id, "language": language, "scan_id": None, "pipeline_id": None}, f"project-level ({language})"
 
 
 def _parse_callgraph(
@@ -159,7 +159,7 @@ async def upload_callgraph(
         analysis_duration_ms=request.analysis_duration_ms,
     )
 
-    upsert_filter, match_context = _build_upsert_filter(project_id, scan_id, request.pipeline_id, warnings)
+    upsert_filter, match_context = _build_upsert_filter(project_id, language, scan_id, request.pipeline_id, warnings)
 
     callgraph_data = callgraph.model_dump(by_alias=True)
     callgraph_id = callgraph_data.pop("_id")
@@ -207,14 +207,20 @@ async def get_callgraph(
     project_id: str,
     db: DatabaseDep,
     current_user: CurrentUserDep,
+    language: Optional[str] = None,
 ) -> CallgraphResponse:
     """
     Get the current callgraph for a project.
+
+    Optionally filter by language (e.g. ?language=python).
     """
     await check_callgraph_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
-    callgraph = await callgraph_repo.get_by_project(project_id)
+    query: Dict[str, Any] = {"project_id": project_id}
+    if language:
+        query["language"] = language
+    callgraph = await callgraph_repo.find_one(query)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found for this project")
 
@@ -227,17 +233,21 @@ async def get_module_usage(
     project_id: str,
     db: DatabaseDep,
     current_user: CurrentUserDep,
+    language: Optional[str] = None,
 ) -> ModuleUsageResponse:
     """
     Get module usage summary from the callgraph.
 
     Returns a list of external modules used in the project,
-    with import counts and locations.
+    with import counts and locations. Optionally filter by language.
     """
     await check_callgraph_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
-    callgraph = await callgraph_repo.get_by_project(project_id)
+    query: Dict[str, Any] = {"project_id": project_id}
+    if language:
+        query["language"] = language
+    callgraph = await callgraph_repo.find_one(query)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found")
 
