@@ -22,6 +22,7 @@ export const projectKeys = {
   details: () => [...projectKeys.all, 'detail'] as const,
   detail: (id: string) => [...projectKeys.details(), id] as const,
   branches: (id: string) => [...projectKeys.detail(id), 'branches'] as const,
+  archives: (id: string, page: number) => [...projectKeys.detail(id), 'archives', page] as const,
 };
 
 export const useProjects = (
@@ -156,3 +157,24 @@ export const useTransferOwnership = () => {
         }
     })
 }
+
+export const useProjectArchives = (projectId: string, page: number = 1, size: number = 20) => {
+    return useQuery({
+        queryKey: projectKeys.archives(projectId, page),
+        queryFn: () => projectApi.getArchives(projectId, page, size),
+        enabled: !!projectId,
+        placeholderData: keepPreviousData,
+    });
+};
+
+export const useRestoreArchive = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ projectId, scanId }: { projectId: string; scanId: string }) =>
+            projectApi.restoreArchive(projectId, scanId),
+        onSuccess: (_, { projectId }) => {
+            queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
+            queryClient.invalidateQueries({ queryKey: [...projectKeys.detail(projectId), 'archives'] });
+        },
+    });
+};

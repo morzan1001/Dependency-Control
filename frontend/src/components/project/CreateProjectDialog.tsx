@@ -39,6 +39,7 @@ export function CreateProjectDialog({
   const [name, setName] = useState("");
   const [teamId, setTeamId] = useState<string | undefined>(undefined);
   const [retentionDays, setRetentionDays] = useState(90);
+  const [retentionAction, setRetentionAction] = useState<string>("delete");
   const [analyzers, setAnalyzers] = useState<string[]>([
     "trivy",
     "osv",
@@ -66,6 +67,7 @@ export function CreateProjectDialog({
         team_id: teamId === "none" ? undefined : teamId,
         active_analyzers: analyzers,
         retention_days: appConfig?.retention_mode === 'global' ? undefined : retentionDays,
+        retention_action: appConfig?.retention_mode === 'global' ? undefined : retentionAction as 'delete' | 'archive' | 'none',
       },
       {
         onSuccess: (data) => {
@@ -88,6 +90,7 @@ export function CreateProjectDialog({
       setName("");
       setTeamId(undefined);
       setRetentionDays(90);
+      setRetentionAction("delete");
       setAnalyzers(["trivy", "osv", "license_compliance", "end_of_life"]);
       setHasCopied(false);
     }, 300);
@@ -211,7 +214,7 @@ export function CreateProjectDialog({
                         </p>
                     </div>
                 ) : (
-                    <>
+                    <div className="space-y-3">
                         <Input
                             id="retention"
                             type="number"
@@ -223,7 +226,23 @@ export function CreateProjectDialog({
                         <p className="text-xs text-muted-foreground">
                             How long to keep scan data for this project.
                         </p>
-                    </>
+                        <div className="space-y-2">
+                            <Label>Retention Action</Label>
+                            <Select value={retentionAction} onValueChange={setRetentionAction}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select action" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="delete">Delete</SelectItem>
+                                    <SelectItem value="archive">Archive to S3</SelectItem>
+                                    <SelectItem value="none">None (Keep Forever)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                                Action when retention period expires.
+                            </p>
+                        </div>
+                    </div>
                 )}
             </div>
 

@@ -80,6 +80,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [name, setName] = useState(project.name)
   const [teamId, setTeamId] = useState<string | undefined>(project.team_id || "none")
   const [retentionDays, setRetentionDays] = useState(project.retention_days || 90)
+  const [retentionAction, setRetentionAction] = useState<string>(project.retention_action || 'delete')
   const [analyzers, setAnalyzers] = useState<string[]>(project.active_analyzers || [])
   const [defaultBranch, setDefaultBranch] = useState<string | undefined>(project.default_branch)
   const [rescanEnabled, setRescanEnabled] = useState<boolean | undefined>(project.rescan_enabled)
@@ -199,6 +200,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       name,
       team_id: teamId === "none" ? null : teamId,
       retention_days: retentionDays,
+      retention_action: retentionAction as 'delete' | 'archive' | 'none',
       active_analyzers: analyzers,
       default_branch: defaultBranch === "none" ? null : defaultBranch,
       rescan_enabled: rescanEnabled,
@@ -283,24 +285,47 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     </p>
                 </div>
                 <div className="grid gap-2">
-                    <Label htmlFor="retention">Retention Period (Days)</Label>
+                    <Label htmlFor="retention">Data Retention</Label>
                     {appConfig?.retention_mode === 'global' ? (
                         <div className="p-3 bg-muted rounded-md text-sm border">
                             <p className="font-medium">Managed Globally</p>
                             <p className="text-muted-foreground mt-1">
-                                {appConfig.global_retention_days && appConfig.global_retention_days > 0 
-                                    ? `Data is retained for ${appConfig.global_retention_days} days.` 
+                                {appConfig.global_retention_days && appConfig.global_retention_days > 0
+                                    ? `Data is retained for ${appConfig.global_retention_days} days (${
+                                        { archive: 'archived to S3', none: 'kept forever', delete: 'deleted' }[appConfig.global_retention_action || 'delete']
+                                      }).`
                                     : "Data retention is disabled (data is kept forever)."}
                             </p>
                         </div>
                     ) : (
-                        <Input 
-                            id="retention" 
-                            type="number" 
-                            min="1"
-                            value={retentionDays} 
-                            onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)} 
-                        />
+                        <div className="border rounded-md p-4 space-y-4">
+                            <div className="grid gap-2">
+                                <Label htmlFor="retention">Retention Period (Days)</Label>
+                                <Input
+                                    id="retention"
+                                    type="number"
+                                    min="1"
+                                    value={retentionDays}
+                                    onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)}
+                                />
+                            </div>
+                            <div className="grid gap-2">
+                                <Label>Retention Action</Label>
+                                <Select value={retentionAction} onValueChange={setRetentionAction}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select action" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="delete">Delete</SelectItem>
+                                        <SelectItem value="archive">Archive to S3</SelectItem>
+                                        <SelectItem value="none">None (Keep Forever)</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <p className="text-xs text-muted-foreground">
+                                    Action to take when scan data exceeds the retention period.
+                                </p>
+                            </div>
+                        </div>
                     )}
                 </div>
                 <div className="grid gap-2">

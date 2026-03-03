@@ -179,6 +179,7 @@ def apply_system_settings_enforcement(
 
     if retention_mode == "global":
         result.pop("retention_days", None)
+        result.pop("retention_action", None)
 
     if rescan_mode == "global":
         result.pop("rescan_enabled", None)

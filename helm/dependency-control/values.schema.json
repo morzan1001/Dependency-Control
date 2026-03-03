@@ -264,6 +264,51 @@
         }
       }
     },
+    "archiving": {
+      "type": "object",
+      "description": "S3-compatible storage for scan data archival",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable S3 archive storage"
+        },
+        "s3": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "description": "S3-compatible endpoint URL"
+            },
+            "bucket": {
+              "type": "string",
+              "minLength": 1,
+              "description": "S3 bucket name for archives"
+            },
+            "region": {
+              "type": "string",
+              "minLength": 1,
+              "description": "S3 region"
+            },
+            "useSSL": {
+              "type": "boolean",
+              "description": "Use SSL/TLS for S3 connections"
+            },
+            "accessKey": {
+              "type": "string",
+              "description": "S3 access key - leave empty if using existingSecret"
+            },
+            "secretKey": {
+              "type": "string",
+              "description": "S3 secret key - leave empty if using existingSecret"
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Name of existing secret with keys: access-key, secret-key"
+            }
+          }
+        }
+      }
+    },
     "monitoring": {
       "type": "object",
       "properties": {

@@ -51,6 +51,24 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio_data:/data
+    networks:
+      - dependencycontrol
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "9001:9001"
+
   backend:
     build:
       context: .
@@ -59,6 +77,8 @@ services:
       mongodb:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     healthcheck:
       test: curl --fail http://localhost:8000/health/live || exit 1
@@ -74,6 +94,12 @@ services:
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
       - REFRESH_TOKEN_EXPIRE_DAYS=7
       - FRONTEND_BASE_URL=https://dependencycontrol.local
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - S3_BUCKET_NAME=dc-archives
+      - S3_REGION=us-east-1
+      - S3_USE_SSL=false
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     labels:
       traefik.enable: "true"
@@ -160,4 +186,5 @@ networks:
 volumes:
   mongodb_data:
   redis_data:
+  minio_data:
   pg_data:

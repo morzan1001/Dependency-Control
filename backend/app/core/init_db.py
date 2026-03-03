@@ -283,6 +283,13 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["project_invitations"].create_index("token", unique=True)
     await database["project_invitations"].create_index("email")
 
+    # Archive Metadata
+    await database["archive_metadata"].create_index("project_id")
+    await database["archive_metadata"].create_index("scan_id", unique=True)
+    await database["archive_metadata"].create_index(
+        [("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
+    )
+
     logger.info("Database indexes created successfully.")
 
 

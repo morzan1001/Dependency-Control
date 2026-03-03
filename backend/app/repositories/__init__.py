@@ -7,6 +7,7 @@ centralizing database operations and reducing code duplication.
 
 from app.repositories.base import BaseRepository
 from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.broadcasts import BroadcastRepository
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependencies import DependencyRepository
@@ -28,6 +29,7 @@ from app.repositories.webhooks import WebhookRepository
 __all__ = [
     "BaseRepository",
     "AnalysisResultRepository",
+    "ArchiveMetadataRepository",
     "BroadcastRepository",
     "CallgraphRepository",
     "DependencyRepository",

@@ -82,5 +82,6 @@ class SystemSettings(BaseModel):
     # Retention
     retention_mode: str = "project"  # "project" or "global"
     global_retention_days: int = 90  # 0 means keep forever
+    global_retention_action: str = "delete"  # "delete", "archive", or "none"
 
     model_config = ConfigDict(populate_by_name=True)

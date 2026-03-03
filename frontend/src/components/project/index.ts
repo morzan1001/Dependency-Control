@@ -1,4 +1,5 @@
 export { CreateProjectDialog } from './CreateProjectDialog'
+export { ProjectArchives } from './ProjectArchives'
 export { ProjectMembers } from './ProjectMembers'
 export { ProjectOverview } from './ProjectOverview'
 export { ProjectScans } from './ProjectScans'

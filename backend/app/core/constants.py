@@ -870,3 +870,23 @@ HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS: int = 24
 
 # Interval (hours) for branch status sync against VCS providers
 HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
+
+# Archive / Retention Action Constants
+RETENTION_ACTION_DELETE = "delete"
+RETENTION_ACTION_ARCHIVE = "archive"
+RETENTION_ACTION_NONE = "none"
+
+RETENTION_ACTIONS = [
+    RETENTION_ACTION_DELETE,
+    RETENTION_ACTION_ARCHIVE,
+    RETENTION_ACTION_NONE,
+]
+
+# Archive S3 path template
+ARCHIVE_PATH_TEMPLATE = "{project_id}/{scan_id}.json.gz"
+
+# Archive bundle version for forward compatibility
+ARCHIVE_BUNDLE_VERSION = 1
+
+# Maximum number of scans to archive per housekeeping cycle (backpressure)
+ARCHIVE_BATCH_SIZE = 50

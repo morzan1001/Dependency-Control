@@ -9,13 +9,17 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import (
+    ARCHIVE_BATCH_SIZE,
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
     HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS,
     HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
+    RETENTION_ACTION_ARCHIVE,
+    RETENTION_ACTION_DELETE,
 )
+from app.core.s3 import is_archive_enabled
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
 from app.repositories.system_settings import SystemSettingsRepository
@@ -254,9 +258,72 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         logger.error(f"Scheduled re-scan check failed: {e}")
 
 
+async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "") -> int:
+    """
+    Archive scans to S3, then delete from MongoDB.
+
+    CRITICAL: Archive MUST succeed before deletion.
+    Scans that fail to archive are skipped (not deleted).
+    """
+    if not scan_ids:
+        return 0
+
+    from app.services.archive import archive_scan
+
+    archived_count = 0
+    failed_ids: List[str] = []
+
+    for scan_id in scan_ids[:ARCHIVE_BATCH_SIZE]:
+        try:
+            metadata = await archive_scan(db, scan_id)
+            if metadata:
+                archived_count += 1
+            else:
+                failed_ids.append(scan_id)
+        except Exception as e:
+            logger.error(f"Failed to archive scan {scan_id}: {e}")
+            failed_ids.append(scan_id)
+
+    if failed_ids:
+        logger.warning(
+            f"{label}: {len(failed_ids)} scan(s) failed to archive and will NOT be deleted."
+        )
+
+    # Only delete scans that were successfully archived
+    successfully_archived = [
+        sid for sid in scan_ids[:ARCHIVE_BATCH_SIZE] if sid not in failed_ids
+    ]
+
+    deleted = await _delete_scans_and_related_data(db, successfully_archived, label)
+
+    if label:
+        logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")
+
+    return archived_count
+
+
+async def _handle_retention_action(
+    db: Any, scan_ids: List[str], action: str, label: str
+) -> None:
+    """Route retention to delete or archive based on the configured action."""
+    if not scan_ids:
+        return
+
+    if action == RETENTION_ACTION_ARCHIVE and is_archive_enabled():
+        await _archive_scans_and_delete(db, scan_ids, label)
+    elif action == RETENTION_ACTION_DELETE:
+        await _delete_scans_and_related_data(db, scan_ids, label)
+    elif action == RETENTION_ACTION_ARCHIVE:
+        logger.warning(
+            f"{label}: Retention action is 'archive' but S3 is not configured. "
+            "Skipping cleanup. Configure S3 or change retention action to 'delete'."
+        )
+
+
 async def run_housekeeping() -> None:
     """
     Periodically cleans up old scan data based on project retention settings.
+    Supports two actions: 'delete' (permanent removal) and 'archive' (move to S3).
     """
     logger.info("Starting housekeeping task...")
 
@@ -270,36 +337,50 @@ async def run_housekeeping() -> None:
         # Determine retention strategy
         if system_settings.retention_mode == "global":
             retention_days = system_settings.global_retention_days
-            if retention_days > 0:
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
-                logger.info(f"Running global housekeeping. Deleting scans older than {cutoff_date}")
+            retention_action = system_settings.global_retention_action
 
-                # Find old scans
-                # IMPORTANT: Don't delete scans that are referenced by rescans (orphaned SBOM protection)
+            if retention_days > 0 and retention_action != "none":
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
+                logger.info(
+                    f"Running global housekeeping (action={retention_action}). "
+                    f"Processing scans older than {cutoff_date}"
+                )
+
+                # IMPORTANT: Don't delete/archive scans referenced by rescans
                 referenced_scan_ids = await _get_referenced_scan_ids(db)
 
                 cursor = db.scans.find(
                     {
                         "created_at": {"$lt": cutoff_date},
-                        # Don't delete scans that have active rescans pointing to them
                         "_id": {"$nin": referenced_scan_ids},
                     },
                     {"_id": 1},
                 )
 
-                scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
-                await _delete_scans_and_related_data(db, scan_ids_to_delete, "Global housekeeping")
+                scan_ids = [str(doc["_id"]) async for doc in cursor]
+                await _handle_retention_action(
+                    db, scan_ids, retention_action, "Global housekeeping"
+                )
 
         else:
-            # Project-specific retention (Optimized: Group by retention_days)
+            # Project-specific retention
             logger.info("Running project-specific housekeeping...")
 
-            # Group projects by retention_days to minimize DB queries
+            # Group projects by (retention_days, retention_action) to minimize DB queries
             pipeline: List[Dict[str, Any]] = [
-                {"$match": {"retention_days": {"$gt": 0}}},  # Ignore keep-forever
+                {"$match": {
+                    "retention_days": {"$gt": 0},
+                    "$or": [
+                        {"retention_action": {"$exists": False}},
+                        {"retention_action": {"$ne": "none"}},
+                    ],
+                }},
                 {
                     "$group": {
-                        "_id": "$retention_days",
+                        "_id": {
+                            "days": "$retention_days",
+                            "action": {"$ifNull": ["$retention_action", "delete"]},
+                        },
                         "project_ids": {"$push": "$_id"},
                     }
                 },
@@ -309,7 +390,8 @@ async def run_housekeeping() -> None:
             referenced_scan_ids = await _get_referenced_scan_ids(db)
 
             async for group in db.projects.aggregate(pipeline):
-                days = group["_id"]
+                days = group["_id"]["days"]
+                action = group["_id"]["action"]
                 project_ids = group["project_ids"]
 
                 if not days or days <= 0:
@@ -321,18 +403,14 @@ async def run_housekeeping() -> None:
                     {
                         "project_id": {"$in": project_ids},
                         "created_at": {"$lt": cutoff_date},
-                        # Don't delete scans that have active rescans pointing to them
                         "_id": {"$nin": referenced_scan_ids},
                     },
                     {"_id": 1},
                 )
 
-                scan_ids_to_delete = [str(doc["_id"]) async for doc in cursor]
-                await _delete_scans_and_related_data(
-                    db,
-                    scan_ids_to_delete,
-                    f"Retention {days}d ({len(project_ids)} projects)",
-                )
+                scan_ids = [str(doc["_id"]) async for doc in cursor]
+                label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
+                await _handle_retention_action(db, scan_ids, action, label)
 
     except Exception as e:
         logger.error(f"Housekeeping task failed: {e}")

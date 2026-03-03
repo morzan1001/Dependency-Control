@@ -97,18 +97,40 @@ export function GeneralSettingsTab({
           </div>
 
           {formData.retention_mode === 'global' && (
-            <div className="grid gap-2">
-              <Label htmlFor="global-retention">Global Retention Period (Days)</Label>
-              <Input 
-                id="global-retention" 
-                type="number"
-                min="0"
-                value={formData.global_retention_days ?? 90} 
-                onChange={(e) => handleInputChange('global_retention_days', Number.parseInt(e.target.value) || 0)}
-              />
-              <p className="text-sm text-muted-foreground">
-                Set to 0 to disable deletion (keep data forever).
-              </p>
+            <div className="space-y-4 border p-4 rounded-md">
+              <div className="grid gap-2">
+                <Label htmlFor="global-retention">Global Retention Period (Days)</Label>
+                <Input
+                  id="global-retention"
+                  type="number"
+                  min="0"
+                  value={formData.global_retention_days ?? 90}
+                  onChange={(e) => handleInputChange('global_retention_days', Number.parseInt(e.target.value) || 0)}
+                />
+                <p className="text-sm text-muted-foreground">
+                  Set to 0 to disable retention actions (keep data forever).
+                </p>
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Retention Action</Label>
+                <Select
+                  value={formData.global_retention_action || 'delete'}
+                  onValueChange={(value) => handleInputChange('global_retention_action', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select action" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="delete">Delete</SelectItem>
+                    <SelectItem value="archive">Archive to S3</SelectItem>
+                    <SelectItem value="none">None (Keep Forever)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  "Delete" permanently removes old scan data. "Archive to S3" compresses and stores data in S3-compatible storage before removing it from the database. "None" keeps data indefinitely.
+                </p>
+              </div>
             </div>
           )}
           

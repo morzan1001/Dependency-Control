@@ -115,6 +115,7 @@ async def get_app_config(
         project_limit_per_user=settings.project_limit_per_user,
         retention_mode=settings.retention_mode,
         global_retention_days=settings.global_retention_days,
+        global_retention_action=settings.global_retention_action,
         rescan_mode=settings.rescan_mode,
         global_rescan_enabled=settings.global_rescan_enabled,
         global_rescan_interval=settings.global_rescan_interval,

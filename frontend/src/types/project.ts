@@ -20,6 +20,7 @@ export interface Project {
   members?: ProjectMember[];
   active_analyzers?: string[];
   retention_days?: number;
+  retention_action?: 'delete' | 'archive' | 'none';
   default_branch?: string;
   enforce_notification_settings?: boolean;
   rescan_enabled?: boolean;
@@ -42,6 +43,7 @@ export interface ProjectCreate {
   team_id?: string;
   active_analyzers?: string[];
   retention_days?: number;
+  retention_action?: 'delete' | 'archive' | 'none';
 }
 
 export interface ProjectUpdate {
@@ -49,6 +51,7 @@ export interface ProjectUpdate {
   team_id?: string | null;
   active_analyzers?: string[];
   retention_days?: number;
+  retention_action?: 'delete' | 'archive' | 'none';
   enforce_notification_settings?: boolean;
   default_branch?: string | null;
   rescan_enabled?: boolean;

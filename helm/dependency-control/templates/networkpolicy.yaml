@@ -457,3 +457,26 @@ spec:
     - protocol: TCP
       port: 53
 {{- end }}
+
+{{- if and .Values.archiving.enabled .Values.networkPolicy.enabled }}
+---
+# Allow Backend to reach S3-compatible storage (e.g., MinIO on port 9000)
+# Note: External S3 (AWS) on port 443 is already covered by backend-egress-internet
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-backend-to-s3
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - protocol: TCP
+      port: 9000
+    - protocol: TCP
+      port: 9001
+{{- end }}

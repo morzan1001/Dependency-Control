@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     # Default: 43200 (12 hours) - helps manage memory growth
     MAX_POD_UPTIME_SECONDS: int = 43200
 
+    # S3 / Archive Storage Settings
+    S3_ENDPOINT_URL: str = ""  # e.g. "http://minio:9000" (empty = archive disabled)
+    S3_ACCESS_KEY: str = ""
+    S3_SECRET_KEY: str = ""
+    S3_BUCKET_NAME: str = "dc-archives"
+    S3_REGION: str = "us-east-1"
+    S3_USE_SSL: bool = False  # True for AWS S3, False for local MinIO
+
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
 
 

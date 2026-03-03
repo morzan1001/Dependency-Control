@@ -228,5 +228,27 @@ spec:
             - name: TLS_KEY_PATH
               value: "/app/certs/tls.key"
             {{- end }}
+            {{- if .Values.archiving.enabled }}
+            # S3-compatible archive storage
+            - name: S3_ENDPOINT_URL
+              value: "{{ .Values.archiving.s3.endpoint }}"
+            - name: S3_BUCKET_NAME
+              value: "{{ .Values.archiving.s3.bucket }}"
+            - name: S3_REGION
+              value: "{{ .Values.archiving.s3.region }}"
+            - name: S3_USE_SSL
+              value: "{{ .Values.archiving.s3.useSSL }}"
+            {{- $s3SecretName := .Values.archiving.s3.existingSecret | default (printf "%s-s3-credentials" (include "dependency-control.fullname" .)) }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s3SecretName }}
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s3SecretName }}
+                  key: secret-key
+            {{- end }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}

@@ -51,6 +51,10 @@ class ProjectCreate(BaseModel):
         examples=[["end_of_life", "os_malware", "trivy"]],
     )
     retention_days: Optional[int] = Field(90, description="Number of days to keep scan history", ge=1)
+    retention_action: Optional[str] = Field(
+        "delete",
+        description="Action when retention period expires: delete, archive, or none",
+    )
 
 
 class ProjectUpdate(BaseModel):
@@ -58,6 +62,10 @@ class ProjectUpdate(BaseModel):
     team_id: Optional[str] = Field(None, description="Transfer project to a team")
     active_analyzers: Optional[List[str]] = Field(None, description="Updated list of active analyzers")
     retention_days: Optional[int] = Field(None, description="Number of days to keep scan history", ge=1)
+    retention_action: Optional[str] = Field(
+        None,
+        description="Action when retention period expires: delete, archive, or none",
+    )
     default_branch: Optional[str] = Field(None, description="Default branch to show in dashboard")
     enforce_notification_settings: Optional[bool] = Field(
         None, description="Enforce owner notification settings for all members"

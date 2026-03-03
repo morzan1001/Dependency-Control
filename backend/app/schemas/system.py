@@ -59,6 +59,7 @@ class SystemSettingsBase(BaseModel):
     # Retention
     retention_mode: str = "project"
     global_retention_days: int = 90
+    global_retention_action: str = "delete"  # "delete", "archive", or "none"
 
     # Periodic Scanning
     rescan_mode: str = "project"  # "project" or "global"
@@ -107,6 +108,7 @@ class AppConfig(BaseModel):
     # Retention settings
     retention_mode: str = "project"
     global_retention_days: int = 90
+    global_retention_action: str = "delete"
 
     # Rescan settings
     rescan_mode: str = "project"

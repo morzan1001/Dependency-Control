@@ -1,5 +1,6 @@
 import { api, buildQueryParams } from '@/api/client';
 import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings, ProjectMember, BranchInfo } from '@/types/project';
+import { ArchiveListResponse, ArchiveRestoreResponse } from '@/types/archive';
 
 export const projectApi = {
   getAll: async (
@@ -77,5 +78,21 @@ export const projectApi = {
   transferOwnership: async (projectId: string, newOwnerId: string): Promise<Project> => {
     const response = await api.post<Project>(`/projects/${projectId}/transfer-ownership`, { new_owner_id: newOwnerId });
     return response.data;
-  }
+  },
+
+  getArchives: async (projectId: string, page: number = 1, size: number = 20): Promise<ArchiveListResponse> => {
+    const params = buildQueryParams({ page, size });
+    const response = await api.get<ArchiveListResponse>(`/projects/${projectId}/archives`, { params });
+    return response.data;
+  },
+
+  restoreArchive: async (projectId: string, scanId: string): Promise<ArchiveRestoreResponse> => {
+    const response = await api.post<ArchiveRestoreResponse>(`/projects/${projectId}/archives/${scanId}/restore`);
+    return response.data;
+  },
+
+  downloadArchive: async (projectId: string, scanId: string): Promise<Blob> => {
+    const response = await api.get(`/projects/${projectId}/archives/${scanId}/download`, { responseType: 'blob' });
+    return response.data;
+  },
 };

@@ -67,6 +67,8 @@ secrets:
       dbPassword: "app/dependency-control/db-password"
       dbEncryptionKey: "app/dependency-control/db-encryption-key"
       dragonflyPassword: "app/dependency-control/dragonfly-password"
+      s3AccessKey: "app/dependency-control/s3-access-key"
+      s3SecretKey: "app/dependency-control/s3-secret-key"
 
 # -----------------------------------------------------------------------------
 # Certificate Manager (Sub-Chart)
@@ -492,6 +494,26 @@ networkPolicy:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: traefik
+
+# -----------------------------------------------------------------------------
+# Archiving (S3-compatible storage for scan data archival)
+# -----------------------------------------------------------------------------
+archiving:
+  enabled: false
+  s3:
+    # S3-compatible endpoint URL
+    # Examples: "https://minio.minio-system.svc.cluster.local:9000" (in-cluster MinIO)
+    #           "https://s3.amazonaws.com" (AWS S3)
+    endpoint: ""
+    bucket: "dc-archives"
+    region: "us-east-1"
+    useSSL: true
+    # Credentials - leave empty if using an existing secret or external-secrets
+    accessKey: ""
+    secretKey: ""
+    # Use an existing Kubernetes secret instead of creating one
+    # The secret must contain keys: access-key, secret-key
+    existingSecret: ""
 
 # -----------------------------------------------------------------------------
 # Monitoring & Observability

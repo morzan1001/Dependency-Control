@@ -12,6 +12,7 @@ from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.api import health
 from app.api.v1.endpoints import (
     analytics,
+    archives,
     auth,
     callgraph,
     github_instances,
@@ -90,6 +91,16 @@ async def startup_event() -> None:
             await connect_to_mongo()
             await init_db()  # Creates indexes + initial admin user
 
+            # Initialize S3 bucket for archive storage (if configured)
+            from app.core.s3 import ensure_bucket_exists, is_archive_enabled
+
+            if is_archive_enabled():
+                try:
+                    await ensure_bucket_exists()
+                    logger.info("S3 archive storage initialized.")
+                except Exception as e:
+                    logger.warning(f"S3 archive storage not available: {e}")
+
             await worker_manager.start()
             logger.info("Application startup complete.")
             break
@@ -151,6 +162,7 @@ app.include_router(
     tags=["notifications"],
 )
 app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
+app.include_router(archives.router, prefix=f"{settings.API_V1_STR}/projects", tags=["archives"])
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 

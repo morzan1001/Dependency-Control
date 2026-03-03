@@ -43,6 +43,7 @@ class Project(BaseModel):
     last_scan_at: Optional[datetime] = None
     latest_scan_id: Optional[str] = None
     retention_days: int = 90  # Default retention period in days
+    retention_action: str = "delete"  # "delete", "archive", or "none"
     default_branch: Optional[str] = None
     enforce_notification_settings: bool = False
     # GitLab Integration (Multi-Instance Support)

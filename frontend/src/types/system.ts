@@ -22,6 +22,7 @@ export interface SystemSettings {
   oidc_scopes?: string;
   retention_mode: 'global' | 'project';
   global_retention_days: number;
+  global_retention_action: 'delete' | 'archive' | 'none';
   rescan_mode: 'global' | 'project';
   global_rescan_enabled: boolean;
   global_rescan_interval: number;
@@ -56,6 +57,7 @@ export interface AppConfig {
   project_limit_per_user: number;
   retention_mode: 'global' | 'project';
   global_retention_days: number;
+  global_retention_action: 'delete' | 'archive' | 'none';
   rescan_mode: 'global' | 'project';
   global_rescan_enabled: boolean;
   global_rescan_interval: number;
