@@ -12,7 +12,6 @@ from pymongo import UpdateOne
 
 from prometheus_client import Counter, Histogram
 
-from app.core import ensure_utc
 from app.models.project import Project, Scan
 from app.repositories import (
     AnalysisResultRepository,
@@ -82,15 +81,15 @@ except ImportError:
     pass
 
 
-def _get_waiver_type(waiver: dict) -> str:
+def _get_waiver_type(waiver: "Waiver") -> str:
     """Determine the type of a waiver based on its fields."""
-    if waiver.get("finding_id"):
+    if waiver.finding_id:
         return "finding_id"
-    if waiver.get("package_name"):
+    if waiver.package_name:
         return "package"
-    if waiver.get("finding_type"):
+    if waiver.finding_type:
         return "type"
-    if waiver.get("vulnerability_id"):
+    if waiver.vulnerability_id:
         return "vulnerability_id"
     return "other"
 
@@ -413,21 +412,14 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Free enrichment data
     del dependency_enrichments
 
-    # Fetch waivers
-    waivers = []
-    if project_id:
-        waivers = await db.waivers.find({"project_id": project_id}).to_list(length=None)
+    # Fetch active waivers via repository (handles expiration filtering)
+    from app.models.waiver import Waiver
+    from app.repositories import WaiverRepository
 
-    # Filter active waivers
-    active_waivers = [
-        w
-        for w in waivers
-        if not (
-            w.get("expiration_date")
-            and (exp := ensure_utc(w["expiration_date"])) is not None
-            and exp < datetime.now(timezone.utc)
-        )
-    ]
+    active_waivers: List[Waiver] = []
+    if project_id:
+        waiver_repo = WaiverRepository(db)
+        active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
 
     # Save Findings to 'findings' collection
     await finding_repo.delete_many({"scan_id": scan_id})
@@ -563,27 +555,26 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     for waiver in active_waivers:
         query: Dict[str, Any] = {"scan_id": scan_id}
-        scope = waiver.get("scope", "finding")
+        scope = waiver.scope or "finding"
 
-        if waiver.get("finding_id"):
+        if waiver.finding_id:
             query["finding_id"] = _resolve_finding_id_query(
-                waiver["finding_id"], scope, waiver.get("package_name", ""),
+                waiver.finding_id, scope, waiver.package_name or "",
             )
-        if waiver.get("package_name") and scope != "rule":
-            query["component"] = waiver["package_name"]
-        if waiver.get("package_version") and waiver["package_version"] != "Unknown":
-            query["version"] = waiver["package_version"]
-        if waiver.get("finding_type"):
-            query["type"] = waiver["finding_type"]
+        if waiver.package_name and scope != "rule":
+            query["component"] = waiver.package_name
+        if waiver.package_version and waiver.package_version != "Unknown":
+            query["version"] = waiver.package_version
+        if waiver.finding_type:
+            query["type"] = waiver.finding_type
 
-        vulnerability_id = waiver.get("vulnerability_id")
-        if vulnerability_id:
+        if waiver.vulnerability_id:
             # Use custom repository method with array_filters support
             await finding_repo.apply_vulnerability_waiver(
                 scan_id=scan_id,
-                vulnerability_id=vulnerability_id,
+                vulnerability_id=waiver.vulnerability_id,
                 waived=True,
-                waiver_reason=waiver.get("reason"),
+                waiver_reason=waiver.reason,
             )
         else:
             # Use custom repository method for finding-level waivers
@@ -591,7 +582,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
                 scan_id=scan_id,
                 query={k: v for k, v in query.items() if k != "scan_id"},
                 waived=True,
-                waiver_reason=waiver.get("reason"),
+                waiver_reason=waiver.reason,
             )
 
     ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})

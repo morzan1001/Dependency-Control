@@ -102,7 +102,7 @@ class WaiverRepository:
         """Count waivers matching query."""
         return await self.collection.count_documents(query or {})
 
-    async def find_active_for_project(self, project_id: str, include_global: bool = True) -> List[Dict[str, Any]]:
+    async def find_active_for_project(self, project_id: str, include_global: bool = True) -> List[Waiver]:
         """
         Find all active (non-expired) waivers for a project.
 
@@ -114,7 +114,7 @@ class WaiverRepository:
             include_global: Whether to include global waivers (default: True)
 
         Returns:
-            List of waiver documents (raw dicts for performance)
+            List of validated Waiver model instances.
         """
         from datetime import datetime, timezone
 
@@ -155,7 +155,8 @@ class WaiverRepository:
             }
 
         cursor = self.collection.find(query)
-        return await cursor.to_list(length=10000)
+        docs = await cursor.to_list(length=10000)
+        return [Waiver(**doc) for doc in docs]
 
     async def find_by_finding(self, project_id: str, finding_id: str) -> Optional[Waiver]:
         """Find waiver for a specific finding.

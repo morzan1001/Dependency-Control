@@ -7,6 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import CVSS_SEVERITY_SCORES
 from app.models.stats import Stats
+from app.models.waiver import Waiver
 
 logger = logging.getLogger(__name__)
 
@@ -96,13 +97,20 @@ def _resolve_finding_id_query(
     return finding_id
 
 
-def _build_waiver_query(waiver: Dict[str, Any]) -> Dict[str, Union[str, Dict[str, str]]]:
+def _build_waiver_query(waiver: Waiver) -> Dict[str, Union[str, Dict[str, str]]]:
     """Build a finding query dict from a waiver's matching fields."""
-    scope = waiver.get("scope", "finding")
+    scope = waiver.scope or "finding"
     query: Dict[str, Union[str, Dict[str, str]]] = {}
 
+    waiver_values = {
+        "finding_id": waiver.finding_id,
+        "package_name": waiver.package_name,
+        "package_version": waiver.package_version,
+        "finding_type": waiver.finding_type,
+    }
+
     for waiver_field, query_field in _WAIVER_FIELD_MAP.items():
-        value = waiver.get(waiver_field)
+        value = waiver_values.get(waiver_field)
         if not value or value == "Unknown":
             continue
 
@@ -112,7 +120,7 @@ def _build_waiver_query(waiver: Dict[str, Any]) -> Dict[str, Union[str, Dict[str
 
         if waiver_field == "finding_id" and scope in ("file", "rule"):
             query[query_field] = _resolve_finding_id_query(
-                value, scope, waiver.get("package_name", ""),
+                value, scope, waiver.package_name or "",
             )
         else:
             query[query_field] = value
@@ -120,25 +128,24 @@ def _build_waiver_query(waiver: Dict[str, Any]) -> Dict[str, Union[str, Dict[str
     return query
 
 
-async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Dict[str, Any]]) -> None:
+async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver]) -> None:
     """Apply all waivers for a scan."""
     for waiver in waivers:
         query = _build_waiver_query(waiver)
-        vulnerability_id = waiver.get("vulnerability_id")
 
-        if vulnerability_id:
+        if waiver.vulnerability_id:
             await finding_repo.apply_vulnerability_waiver(
                 scan_id=scan_id,
-                vulnerability_id=vulnerability_id,
+                vulnerability_id=waiver.vulnerability_id,
                 waived=True,
-                waiver_reason=waiver.get("reason"),
+                waiver_reason=waiver.reason,
             )
         else:
             await finding_repo.apply_finding_waiver(
                 scan_id=scan_id,
                 query=query,
                 waived=True,
-                waiver_reason=waiver.get("reason"),
+                waiver_reason=waiver.reason,
             )
 
 

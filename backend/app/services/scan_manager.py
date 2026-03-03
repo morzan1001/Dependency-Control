@@ -20,6 +20,7 @@ from app.core.worker import worker_manager
 from app.models.finding import Finding
 from app.models.project import Project
 from app.models.stats import Stats
+from app.models.waiver import Waiver
 from app.schemas.ingest import BaseIngest, ScanContext
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ class ScanManager:
     def __init__(self, db: AsyncIOMotorDatabase, project: Project):
         self.db = db
         self.project = project
-        self._waivers_cache: Optional[List[Dict]] = None
+        self._waivers_cache: Optional[List[Waiver]] = None
         self._waivers_cache_time: Optional[datetime] = None
         self._cache_ttl_minutes = 5  # Cache TTL in minutes
 
@@ -125,7 +126,7 @@ class ScanManager:
 
         return ScanContext(scan_id=scan_id, is_new=is_new, pipeline_url=pipeline_url)
 
-    async def _get_waivers(self) -> List[Dict]:
+    async def _get_waivers(self) -> List[Waiver]:
         """
         Fetch and cache active waivers for this project.
         Cache is invalidated after TTL expires.
@@ -152,36 +153,35 @@ class ScanManager:
         return self._waivers_cache
 
     @staticmethod
-    def _finding_id_matches(finding: Finding, waiver: Dict[str, Any]) -> bool:
+    def _finding_id_matches(finding: Finding, waiver: Waiver) -> bool:
         """Check if a finding's ID matches a waiver's finding_id considering scope."""
         from app.services.stats import _extract_rule_prefix, _strip_line_number
 
-        waiver_fid = waiver.get("finding_id")
-        if not waiver_fid or not finding.id:
+        if not waiver.finding_id or not finding.id:
             return False
 
-        scope = waiver.get("scope", "finding")
+        scope = waiver.scope or "finding"
         if scope == "rule":
-            waiver_rule = _extract_rule_prefix(waiver_fid, waiver.get("package_name", ""))
+            waiver_rule = _extract_rule_prefix(waiver.finding_id, waiver.package_name or "")
             finding_rule = _extract_rule_prefix(finding.id, finding.component)
             return bool(waiver_rule and finding_rule and waiver_rule == finding_rule)
         if scope == "file":
-            prefix = _strip_line_number(waiver_fid)
+            prefix = _strip_line_number(waiver.finding_id)
             finding_prefix = _strip_line_number(finding.id)
             return bool(prefix and finding_prefix and prefix == finding_prefix)
-        return waiver_fid == finding.id
+        return waiver.finding_id == finding.id
 
-    def _finding_matches_waiver(self, finding: Finding, waiver: Dict[str, Any]) -> bool:
+    def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
         """Check if a finding matches a waiver."""
         if self._finding_id_matches(finding, waiver):
             return True
 
         # Match by finding type
-        if waiver.get("finding_type") and waiver["finding_type"] == finding.type:
+        if waiver.finding_type and waiver.finding_type == finding.type:
             return True
 
         # Match by component/package name
-        if waiver.get("package_name") and waiver["package_name"] == finding.component:
+        if waiver.package_name and waiver.package_name == finding.component:
             return True
 
         return False
