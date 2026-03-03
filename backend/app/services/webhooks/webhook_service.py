@@ -495,9 +495,7 @@ class WebhookService:
 
         # Global webhooks (both project_id and team_id are None)
         webhooks.extend(
-            await self._fetch_webhooks_by_query(
-                db, {**base_conditions, "project_id": None, "team_id": None}, "global"
-            )
+            await self._fetch_webhooks_by_query(db, {**base_conditions, "project_id": None, "team_id": None}, "global")
         )
 
         return webhooks

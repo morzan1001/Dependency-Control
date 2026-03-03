@@ -114,9 +114,7 @@ def build_analysis_completed_blocks(
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Analyzers ({len(results_summary)})*\n{results_text}"[
-                        :_SECTION_TEXT_MAX_LENGTH
-                    ],
+                    "text": f"*Analyzers ({len(results_summary)})*\n{results_text}"[:_SECTION_TEXT_MAX_LENGTH],
                 },
             }
         )
@@ -190,9 +188,7 @@ def build_vulnerability_found_blocks(
         fields.append({"type": "mrkdwn", "text": f"\u26a0\ufe0f *KEV Vulnerabilities:* {kev_count}"})
     if high_epss_count:
         fields.append({"type": "mrkdwn", "text": f"\U0001f4c8 *High EPSS (>10%):* {high_epss_count}"})
-    fields.append(
-        {"type": "mrkdwn", "text": f"{_SEVERITY_EMOJI['CRITICAL']} *Critical/High:* {critical_count}"}
-    )
+    fields.append({"type": "mrkdwn", "text": f"{_SEVERITY_EMOJI['CRITICAL']} *Critical/High:* {critical_count}"})
 
     blocks.append({"type": "section", "fields": fields[:_MAX_FIELDS]})
 
@@ -204,9 +200,7 @@ def build_vulnerability_found_blocks(
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": ("*Top Priority Vulnerabilities*\n" + "\n".join(vuln_lines))[
-                        :_SECTION_TEXT_MAX_LENGTH
-                    ],
+                    "text": ("*Top Priority Vulnerabilities*\n" + "\n".join(vuln_lines))[:_SECTION_TEXT_MAX_LENGTH],
                 },
             }
         )

@@ -285,14 +285,10 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
             failed_ids.append(scan_id)
 
     if failed_ids:
-        logger.warning(
-            f"{label}: {len(failed_ids)} scan(s) failed to archive and will NOT be deleted."
-        )
+        logger.warning(f"{label}: {len(failed_ids)} scan(s) failed to archive and will NOT be deleted.")
 
     # Only delete scans that were successfully archived
-    successfully_archived = [
-        sid for sid in scan_ids[:ARCHIVE_BATCH_SIZE] if sid not in failed_ids
-    ]
+    successfully_archived = [sid for sid in scan_ids[:ARCHIVE_BATCH_SIZE] if sid not in failed_ids]
 
     deleted = await _delete_scans_and_related_data(db, successfully_archived, label)
 
@@ -302,9 +298,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
     return archived_count
 
 
-async def _handle_retention_action(
-    db: Any, scan_ids: List[str], action: str, label: str
-) -> None:
+async def _handle_retention_action(db: Any, scan_ids: List[str], action: str, label: str) -> None:
     """Route retention to delete or archive based on the configured action."""
     if not scan_ids:
         return
@@ -359,9 +353,7 @@ async def run_housekeeping() -> None:
                 )
 
                 scan_ids = [str(doc["_id"]) async for doc in cursor]
-                await _handle_retention_action(
-                    db, scan_ids, retention_action, "Global housekeeping"
-                )
+                await _handle_retention_action(db, scan_ids, retention_action, "Global housekeeping")
 
         else:
             # Project-specific retention
@@ -369,13 +361,15 @@ async def run_housekeeping() -> None:
 
             # Group projects by (retention_days, retention_action) to minimize DB queries
             pipeline: List[Dict[str, Any]] = [
-                {"$match": {
-                    "retention_days": {"$gt": 0},
-                    "$or": [
-                        {"retention_action": {"$exists": False}},
-                        {"retention_action": {"$ne": "none"}},
-                    ],
-                }},
+                {
+                    "$match": {
+                        "retention_days": {"$gt": 0},
+                        "$or": [
+                            {"retention_action": {"$exists": False}},
+                            {"retention_action": {"$ne": "none"}},
+                        ],
+                    }
+                },
                 {
                     "$group": {
                         "_id": {

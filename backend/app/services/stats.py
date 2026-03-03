@@ -83,7 +83,9 @@ async def _resolve_active_scan_id(
 
 
 def _resolve_finding_id_query(
-    finding_id: str, scope: str, component: str,
+    finding_id: str,
+    scope: str,
+    component: str,
 ) -> str | Dict[str, str]:
     """Resolve the MongoDB query value for ``finding_id`` based on waiver scope."""
     if scope == "file":
@@ -120,7 +122,9 @@ def _build_waiver_query(waiver: Waiver) -> Dict[str, Union[str, Dict[str, str]]]
 
         if waiver_field == "finding_id" and scope in ("file", "rule"):
             query[query_field] = _resolve_finding_id_query(
-                value, scope, waiver.package_name or "",
+                value,
+                scope,
+                waiver.package_name or "",
             )
         else:
             query[query_field] = value

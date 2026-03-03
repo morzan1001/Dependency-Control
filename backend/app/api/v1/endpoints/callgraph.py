@@ -87,9 +87,18 @@ def _build_upsert_filter(
     if scan_id:
         return {"project_id": project_id, "language": language, "scan_id": scan_id}, f"scan {scan_id} ({language})"
     if pipeline_id:
-        return {"project_id": project_id, "language": language, "pipeline_id": pipeline_id}, f"pipeline {pipeline_id} ({language})"
+        return {
+            "project_id": project_id,
+            "language": language,
+            "pipeline_id": pipeline_id,
+        }, f"pipeline {pipeline_id} ({language})"
     warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
-    return {"project_id": project_id, "language": language, "scan_id": None, "pipeline_id": None}, f"project-level ({language})"
+    return {
+        "project_id": project_id,
+        "language": language,
+        "scan_id": None,
+        "pipeline_id": None,
+    }, f"project-level ({language})"
 
 
 def _parse_callgraph(

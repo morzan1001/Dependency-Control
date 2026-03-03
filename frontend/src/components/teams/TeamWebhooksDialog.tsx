@@ -1,6 +1,6 @@
 import { useTeamWebhooks, useCreateTeamWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks';
 import { WebhookManager } from '@/components/WebhookManager';
-import { WebhookCreate } from '@/types/webhook';
+import { Webhook, WebhookCreate } from '@/types/webhook';
 import {
   Dialog,
   DialogContent,
@@ -24,7 +24,7 @@ export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreat
   const deleteMutation = useDeleteWebhook();
 
   const handleCreate = async (data: WebhookCreate) => {
-    if (!teamId) return {} as any;
+    if (!teamId) return {} as Webhook;
     return createMutation.mutateAsync({ teamId, data });
   };
 

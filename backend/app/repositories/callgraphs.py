@@ -36,9 +36,7 @@ class CallgraphRepository(BaseRepository[Callgraph]):
 
     async def get_minimal_by_scan(self, project_id: str, scan_id: str) -> Optional[CallgraphMinimal]:
         """Get callgraph with minimal fields by project and scan ID (performance optimized)."""
-        data = await self.collection.find_one(
-            {"project_id": project_id, "scan_id": scan_id}, _MINIMAL_PROJECTION
-        )
+        data = await self.collection.find_one({"project_id": project_id, "scan_id": scan_id}, _MINIMAL_PROJECTION)
         return CallgraphMinimal(**data) if data else None
 
     async def get_by_pipeline(self, project_id: str, pipeline_id: int) -> Optional[Callgraph]:
@@ -56,16 +54,12 @@ class CallgraphRepository(BaseRepository[Callgraph]):
 
     async def find_all_minimal_by_scan(self, project_id: str, scan_id: str) -> List[CallgraphMinimal]:
         """Get all callgraphs (all languages) with minimal fields for a scan."""
-        cursor = self.collection.find(
-            {"project_id": project_id, "scan_id": scan_id}, _MINIMAL_PROJECTION
-        )
+        cursor = self.collection.find({"project_id": project_id, "scan_id": scan_id}, _MINIMAL_PROJECTION)
         return [CallgraphMinimal(**doc) async for doc in cursor]
 
     async def find_all_minimal_by_pipeline(self, project_id: str, pipeline_id: int) -> List[CallgraphMinimal]:
         """Get all callgraphs (all languages) with minimal fields for a pipeline."""
-        cursor = self.collection.find(
-            {"project_id": project_id, "pipeline_id": pipeline_id}, _MINIMAL_PROJECTION
-        )
+        cursor = self.collection.find({"project_id": project_id, "pipeline_id": pipeline_id}, _MINIMAL_PROJECTION)
         return [CallgraphMinimal(**doc) async for doc in cursor]
 
     async def find_all_minimal_by_project(self, project_id: str) -> List[CallgraphMinimal]:

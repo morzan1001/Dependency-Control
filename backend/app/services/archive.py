@@ -40,9 +40,12 @@ def _serialize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
             result[key] = _serialize_doc(value)
         elif isinstance(value, list):
             result[key] = [
-                _serialize_doc(item) if isinstance(item, dict)
-                else str(item) if isinstance(item, ObjectId)
-                else item.isoformat() if isinstance(item, datetime)
+                _serialize_doc(item)
+                if isinstance(item, dict)
+                else str(item)
+                if isinstance(item, ObjectId)
+                else item.isoformat()
+                if isinstance(item, datetime)
                 else item
                 for item in value
             ]
@@ -77,11 +80,13 @@ async def _load_gridfs_sboms(
         try:
             grid_out = await fs.open_download_stream(ObjectId(gid))
             content: bytes = await grid_out.read()
-            sboms.append({
-                "gridfs_id": gid,
-                "filename": grid_out.filename,
-                "data": json.loads(content),
-            })
+            sboms.append(
+                {
+                    "gridfs_id": gid,
+                    "filename": grid_out.filename,
+                    "data": json.loads(content),
+                }
+            )
         except Exception as e:
             logger.warning(f"Failed to load GridFS file {gid}: {e}")
 
@@ -181,12 +186,8 @@ async def archive_scan(
         original_size_bytes=len(json_bytes),
         compressed_size_bytes=len(compressed),
         findings_count=len(findings),
-        critical_findings_count=sum(
-            1 for f in findings if f.get("severity") == "CRITICAL"
-        ),
-        high_findings_count=sum(
-            1 for f in findings if f.get("severity") == "HIGH"
-        ),
+        critical_findings_count=sum(1 for f in findings if f.get("severity") == "CRITICAL"),
+        high_findings_count=sum(1 for f in findings if f.get("severity") == "HIGH"),
         dependencies_count=len(dependencies),
         sbom_filenames=[s["filename"] for s in gridfs_sboms if s.get("filename")],
     )
@@ -194,8 +195,7 @@ async def archive_scan(
     await repo.create(metadata)
 
     logger.info(
-        f"Archived scan {scan_id} to s3://{settings.S3_BUCKET_NAME}/{s3_key} "
-        f"({len(compressed)} bytes compressed)"
+        f"Archived scan {scan_id} to s3://{settings.S3_BUCKET_NAME}/{s3_key} ({len(compressed)} bytes compressed)"
     )
 
     return metadata
@@ -305,9 +305,7 @@ async def restore_scan(
 
     await repo.delete_by_scan_id(scan_id)
 
-    logger.info(
-        f"Restored scan {scan_id} from archive. Collections: {collections_restored}"
-    )
+    logger.info(f"Restored scan {scan_id} from archive. Collections: {collections_restored}")
 
     return ArchiveRestoreResponse(
         scan_id=scan_id,

@@ -13,6 +13,7 @@ from pymongo import UpdateOne
 from prometheus_client import Counter, Histogram
 
 from app.models.project import Project, Scan
+from app.models.waiver import Waiver
 from app.repositories import (
     AnalysisResultRepository,
     CallgraphRepository,
@@ -81,7 +82,7 @@ except ImportError:
     pass
 
 
-def _get_waiver_type(waiver: "Waiver") -> str:
+def _get_waiver_type(waiver: Waiver) -> str:
     """Determine the type of a waiver based on its fields."""
     if waiver.finding_id:
         return "finding_id"
@@ -413,7 +414,6 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     del dependency_enrichments
 
     # Fetch active waivers via repository (handles expiration filtering)
-    from app.models.waiver import Waiver
     from app.repositories import WaiverRepository
 
     active_waivers: List[Waiver] = []
@@ -559,7 +559,9 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
         if waiver.finding_id:
             query["finding_id"] = _resolve_finding_id_query(
-                waiver.finding_id, scope, waiver.package_name or "",
+                waiver.finding_id,
+                scope,
+                waiver.package_name or "",
             )
         if waiver.package_name and scope != "rule":
             query["component"] = waiver.package_name

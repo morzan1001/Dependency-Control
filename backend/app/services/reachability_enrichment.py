@@ -574,7 +574,9 @@ def _build_reachability_summary_for_pending(
             "generated_at": (
                 cg["created_at"].isoformat()
                 if hasattr(cg.get("created_at"), "isoformat")
-                else str(cg["created_at"]) if cg.get("created_at") else None
+                else str(cg["created_at"])
+                if cg.get("created_at")
+                else None
             ),
         }
         for cg in callgraphs

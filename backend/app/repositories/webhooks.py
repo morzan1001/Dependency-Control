@@ -116,9 +116,7 @@ class WebhookRepository:
         """Count global webhooks (both project_id and team_id are None)."""
         return await self.collection.count_documents({"project_id": None, "team_id": None})
 
-    async def find_active_for_project(
-        self, project_id: str, team_id: Optional[str] = None
-    ) -> List[Webhook]:
+    async def find_active_for_project(self, project_id: str, team_id: Optional[str] = None) -> List[Webhook]:
         """Find all active webhooks for a project (including team and global ones)."""
         or_conditions = [
             {"project_id": project_id, "is_active": True},

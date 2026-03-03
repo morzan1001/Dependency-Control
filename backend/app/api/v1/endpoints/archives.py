@@ -72,12 +72,14 @@ async def list_archives(
 
     repo = ArchiveMetadataRepository(db)
     skip = (page - 1) * size
-    total = await repo.count_by_project(
-        project_id, branch=branch, date_from=date_from, date_to=date_to
-    )
+    total = await repo.count_by_project(project_id, branch=branch, date_from=date_from, date_to=date_to)
     archives = await repo.find_by_project(
-        project_id, skip=skip, limit=size,
-        branch=branch, date_from=date_from, date_to=date_to,
+        project_id,
+        skip=skip,
+        limit=size,
+        branch=branch,
+        date_from=date_from,
+        date_to=date_to,
     )
 
     items = [
@@ -281,20 +283,25 @@ async def list_all_archives(
     repo = ArchiveMetadataRepository(db)
     skip = (page - 1) * size
     total = await repo.count_all(
-        branch=branch, date_from=date_from, date_to=date_to, project_id=project_id,
+        branch=branch,
+        date_from=date_from,
+        date_to=date_to,
+        project_id=project_id,
     )
     archives = await repo.find_all(
-        skip=skip, limit=size,
-        branch=branch, date_from=date_from, date_to=date_to, project_id=project_id,
+        skip=skip,
+        limit=size,
+        branch=branch,
+        date_from=date_from,
+        date_to=date_to,
+        project_id=project_id,
     )
 
     # Batch-lookup project names
     unique_project_ids = list({a.project_id for a in archives})
     project_names: dict = {}
     if unique_project_ids:
-        cursor = db.projects.find(
-            {"_id": {"$in": unique_project_ids}}, {"_id": 1, "name": 1}
-        )
+        cursor = db.projects.find({"_id": {"$in": unique_project_ids}}, {"_id": 1, "name": 1})
         async for doc in cursor:
             project_names[doc["_id"]] = doc.get("name", doc["_id"])
 
