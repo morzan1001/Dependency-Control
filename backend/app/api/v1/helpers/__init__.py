@@ -94,6 +94,8 @@ from app.api.v1.helpers.users import (
     is_2fa_setup_mode,
 )
 from app.api.v1.helpers.webhooks import (
+    check_team_webhook_create_permission,
+    check_team_webhook_list_permission,
     check_webhook_create_permission,
     check_webhook_list_permission,
     check_webhook_permission,
@@ -182,6 +184,8 @@ __all__ = [
     "get_user_or_404",
     "is_2fa_setup_mode",
     # Webhook helpers
+    "check_team_webhook_create_permission",
+    "check_team_webhook_list_permission",
     "check_webhook_create_permission",
     "check_webhook_list_permission",
     "check_webhook_permission",

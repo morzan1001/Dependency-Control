@@ -248,6 +248,9 @@ class TestDeleteTeam:
         mock_proj_repo = MagicMock()
         mock_proj_repo.update_many = AsyncMock(return_value=2)
 
+        mock_db = MagicMock()
+        mock_db.webhooks.delete_many = AsyncMock(return_value=MagicMock(deleted_count=0))
+
         with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
                 # Patched at source: delete_team uses a function-level import
@@ -256,7 +259,7 @@ class TestDeleteTeam:
                         delete_team(
                             team_id="team-1",
                             current_user=admin_user,
-                            db=MagicMock(),
+                            db=mock_db,
                         )
                     )
 
@@ -511,6 +514,9 @@ class TestDeleteTeamPermissions:
         mock_proj_repo = MagicMock()
         mock_proj_repo.update_many = AsyncMock(return_value=0)
 
+        mock_db = MagicMock()
+        mock_db.webhooks.delete_many = AsyncMock(return_value=MagicMock(deleted_count=0))
+
         # check_team_access is NOT called when has_permission("team:delete") is True
         with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock) as mock_access:
             with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
@@ -520,7 +526,7 @@ class TestDeleteTeamPermissions:
                         delete_team(
                             team_id="team-1",
                             current_user=admin_user,
-                            db=MagicMock(),
+                            db=mock_db,
                         )
                     )
 

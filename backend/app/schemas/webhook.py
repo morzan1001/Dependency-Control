@@ -65,6 +65,7 @@ class WebhookResponse(BaseModel):
 
     id: str
     project_id: Optional[str] = None
+    team_id: Optional[str] = None
     url: str
     events: List[str]
     headers: Optional[Dict[str, str]] = None

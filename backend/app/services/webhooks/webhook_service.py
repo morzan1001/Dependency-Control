@@ -418,11 +418,37 @@ class WebhookService:
         )
         return False
 
+    async def _fetch_webhooks_by_query(
+        self, db: AsyncIOMotorDatabase, query: Dict[str, Any], label: str
+    ) -> List["Webhook"]:
+        """
+        Fetch and parse webhooks matching a MongoDB query.
+
+        Args:
+            db: Database connection
+            query: MongoDB query dict
+            label: Label for error logging (e.g. "project", "team", "global")
+
+        Returns:
+            List of parsed Webhook objects
+        """
+        from app.models.webhook import Webhook
+
+        results: List[Webhook] = []
+        cursor = db.webhooks.find(query)
+        async for webhook_data in cursor:
+            try:
+                results.append(Webhook(**webhook_data))
+            except Exception as e:
+                logger.error(f"Failed to parse {label} webhook data: {e}")
+        return results
+
     async def _get_webhooks_for_event(
         self, db: AsyncIOMotorDatabase, project_id: Optional[str], event_type: str
-    ) -> List[Webhook]:
+    ) -> List["Webhook"]:
         """
         Fetch all active webhooks for a given event type and project.
+        Includes project-specific, team-level, and global webhooks.
         Filters out webhooks in circuit breaker state.
 
         Args:
@@ -434,16 +460,13 @@ class WebhookService:
             List of matching webhooks (excluding those in circuit breaker state)
         """
         from datetime import datetime, timezone
-        from app.models.webhook import Webhook
 
-        webhooks: List[Webhook] = []
         now = datetime.now(timezone.utc)
 
         # Base query with circuit breaker filter
-        base_conditions = {
+        base_conditions: Dict[str, Any] = {
             "is_active": True,
             "events": event_type,
-            # Exclude webhooks in circuit breaker state
             "$or": [
                 {"circuit_breaker_until": {"$exists": False}},
                 {"circuit_breaker_until": None},
@@ -451,24 +474,31 @@ class WebhookService:
             ],
         }
 
-        # Project-specific webhooks
-        if project_id:
-            project_query = {**base_conditions, "project_id": project_id}
-            cursor = db.webhooks.find(project_query)
-            async for webhook_data in cursor:
-                try:
-                    webhooks.append(Webhook(**webhook_data))
-                except Exception as e:
-                    logger.error(f"Failed to parse webhook data: {e}")
+        webhooks: List["Webhook"] = []
 
-        # Global webhooks (project_id is None)
-        global_query = {**base_conditions, "project_id": None}
-        cursor = db.webhooks.find(global_query)
-        async for webhook_data in cursor:
+        if project_id:
+            # Project-specific webhooks
+            webhooks.extend(
+                await self._fetch_webhooks_by_query(db, {**base_conditions, "project_id": project_id}, "project")
+            )
+
+            # Team webhooks: look up the project's team_id
             try:
-                webhooks.append(Webhook(**webhook_data))
+                project_doc = await db.projects.find_one({"_id": project_id}, {"team_id": 1})
+                team_id = project_doc.get("team_id") if project_doc else None
+                if team_id:
+                    webhooks.extend(
+                        await self._fetch_webhooks_by_query(db, {**base_conditions, "team_id": team_id}, "team")
+                    )
             except Exception as e:
-                logger.error(f"Failed to parse global webhook data: {e}")
+                logger.error(f"Failed to look up team webhooks for project {project_id}: {e}")
+
+        # Global webhooks (both project_id and team_id are None)
+        webhooks.extend(
+            await self._fetch_webhooks_by_query(
+                db, {**base_conditions, "project_id": None, "team_id": None}, "global"
+            )
+        )
 
         return webhooks
 

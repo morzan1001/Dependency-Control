@@ -249,6 +249,14 @@ spec:
                 secretKeyRef:
                   name: {{ $s3SecretName }}
                   key: secret-key
+            {{- if .Values.archiving.encryption.enabled }}
+            {{- $encSecretName := .Values.archiving.encryption.existingSecret | default (printf "%s-archive-encryption" (include "dependency-control.fullname" .)) }}
+            - name: ARCHIVE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $encSecretName }}
+                  key: encryption-key
+            {{- end }}
             {{- end }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}

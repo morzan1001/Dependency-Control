@@ -85,3 +85,13 @@ export function canManageTeamMembers(
   return isTeamAdmin(team, userId, globalPermissions)
     || globalPermissions.includes('team:update');
 }
+
+/** Manage team webhooks: team admin OR global webhook:create */
+export function canManageTeamWebhooks(
+  team: Team,
+  userId: string,
+  globalPermissions: string[]
+): boolean {
+  return isTeamAdmin(team, userId, globalPermissions)
+    || globalPermissions.includes('webhook:create');
+}

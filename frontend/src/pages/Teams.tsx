@@ -12,6 +12,9 @@ import { EditTeamDialog } from '@/components/teams/EditTeamDialog';
 import { TeamMembersDialog } from '@/components/teams/TeamMembersDialog';
 import { AddMemberDialog } from '@/components/teams/AddMemberDialog';
 import { DeleteTeamDialog } from '@/components/teams/DeleteTeamDialog';
+import { TeamWebhooksDialog } from '@/components/teams/TeamWebhooksDialog';
+import { useCurrentUser } from '@/hooks/queries/use-users';
+import { canManageTeamWebhooks } from '@/lib/team-roles';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import {
   Select,
@@ -22,15 +25,18 @@ import {
 } from "@/components/ui/select"
 
 export default function TeamsPage() {
-  const { hasPermission } = useAuth();
-  
+  const { hasPermission, permissions } = useAuth();
+  const { data: currentUser } = useCurrentUser();
+
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isManageMembersOpen, setIsManageMembersOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [isWebhooksOpen, setIsWebhooksOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [selectedTeamIdForAddMember, setSelectedTeamIdForAddMember] = useState<string | null>(null);
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
+  const [webhookTeam, setWebhookTeam] = useState<Team | null>(null);
   const { search, setSearch, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
     usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' });
 
@@ -55,6 +61,11 @@ export default function TeamsPage() {
       setTeamToDelete(teamId);
       setIsDeleteConfirmOpen(true);
   }
+
+  const openWebhooksDialog = (team: Team) => {
+    setWebhookTeam(team);
+    setIsWebhooksOpen(true);
+  };
 
   if (isLoading) {
     return (
@@ -111,13 +122,14 @@ export default function TeamsPage() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {teams?.map((team: Team) => (
-          <TeamCard 
-            key={team.id} 
+          <TeamCard
+            key={team.id}
             team={team}
             onEdit={openEditDialog}
             onManageMembers={openManageMembersDialog}
             onAddMember={openAddMemberDialog}
             onDelete={handleDeleteClick}
+            onManageWebhooks={openWebhooksDialog}
           />
         ))}
       </div>
@@ -141,10 +153,19 @@ export default function TeamsPage() {
         onClose={() => setIsAddMemberOpen(false)} 
       />
 
-      <DeleteTeamDialog 
-        teamId={teamToDelete} 
-        isOpen={isDeleteConfirmOpen} 
-        onClose={() => setIsDeleteConfirmOpen(false)} 
+      <DeleteTeamDialog
+        teamId={teamToDelete}
+        isOpen={isDeleteConfirmOpen}
+        onClose={() => setIsDeleteConfirmOpen(false)}
+      />
+
+      <TeamWebhooksDialog
+        teamId={webhookTeam?.id || null}
+        teamName={webhookTeam?.name || ''}
+        isOpen={isWebhooksOpen}
+        onClose={() => setIsWebhooksOpen(false)}
+        canCreate={webhookTeam && currentUser ? canManageTeamWebhooks(webhookTeam, currentUser.id, permissions) : false}
+        canDelete={webhookTeam && currentUser ? canManageTeamWebhooks(webhookTeam, currentUser.id, permissions) : false}
       />
     </div>
   );

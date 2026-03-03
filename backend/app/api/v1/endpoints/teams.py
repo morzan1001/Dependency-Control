@@ -166,6 +166,11 @@ async def delete_team(
     if updated_count > 0:
         logger.info(f"Team {team_id} deleted: unassigned from {updated_count} project(s)")
 
+    # CASCADE: Delete all team webhooks
+    webhook_result = await db.webhooks.delete_many({"team_id": team_id})
+    if webhook_result.deleted_count > 0:
+        logger.info(f"Team {team_id} deleted: removed {webhook_result.deleted_count} webhook(s)")
+
     team_repo = TeamRepository(db)
     await team_repo.delete(team_id)
     return None

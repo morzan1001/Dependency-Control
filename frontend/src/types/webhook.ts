@@ -1,6 +1,7 @@
 export interface Webhook {
   id: string;
   project_id?: string;
+  team_id?: string;
   url: string;
   events: string[];
   secret?: string;

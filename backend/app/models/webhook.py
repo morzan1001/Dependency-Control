@@ -19,9 +19,15 @@ class Webhook(BaseModel):
     """
     Webhook configuration for event notifications.
 
+    Supports three scopes:
+        - Project webhooks: project_id is set, team_id is None
+        - Team webhooks: team_id is set, project_id is None
+        - Global webhooks: both project_id and team_id are None
+
     Attributes:
         id: Unique identifier (MongoDB _id)
-        project_id: Associated project ID, None for global webhooks
+        project_id: Associated project ID, None for team/global webhooks
+        team_id: Associated team ID, None for project/global webhooks
         url: Target URL for webhook delivery
         events: List of event types to subscribe to
         secret: Optional secret for HMAC signature verification (not returned in API responses)
@@ -38,6 +44,7 @@ class Webhook(BaseModel):
         serialization_alias="_id",
     )
     project_id: Optional[str] = None
+    team_id: Optional[str] = None
     url: str
     events: List[str]
     secret: Optional[str] = None

@@ -57,6 +57,19 @@ class WebhookRepository:
         docs = await cursor.to_list(limit)
         return [Webhook(**doc) for doc in docs]
 
+    async def find_by_team(
+        self,
+        team_id: str,
+        skip: int = 0,
+        limit: int = 100,
+        sort_by: str = "created_at",
+        sort_order: int = -1,
+    ) -> List[Webhook]:
+        """Find webhooks for a team."""
+        cursor = self.collection.find({"team_id": team_id}).sort(sort_by, sort_order).skip(skip).limit(limit)
+        docs = await cursor.to_list(limit)
+        return [Webhook(**doc) for doc in docs]
+
     async def find_global(
         self,
         skip: int = 0,
@@ -64,8 +77,13 @@ class WebhookRepository:
         sort_by: str = "created_at",
         sort_order: int = -1,
     ) -> List[Webhook]:
-        """Find global webhooks (project_id is None)."""
-        cursor = self.collection.find({"project_id": None}).sort(sort_by, sort_order).skip(skip).limit(limit)
+        """Find global webhooks (both project_id and team_id are None)."""
+        cursor = (
+            self.collection.find({"project_id": None, "team_id": None})
+            .sort(sort_by, sort_order)
+            .skip(skip)
+            .limit(limit)
+        )
         docs = await cursor.to_list(limit)
         return [Webhook(**doc) for doc in docs]
 
@@ -90,32 +108,48 @@ class WebhookRepository:
         """Count webhooks for a project."""
         return await self.collection.count_documents({"project_id": project_id})
 
-    async def count_global(self) -> int:
-        """Count global webhooks."""
-        return await self.collection.count_documents({"project_id": None})
+    async def count_by_team(self, team_id: str) -> int:
+        """Count webhooks for a team."""
+        return await self.collection.count_documents({"team_id": team_id})
 
-    async def find_active_for_project(self, project_id: str) -> List[Webhook]:
-        """Find all active webhooks for a project (including global ones)."""
-        query = {
-            "$or": [
-                {"project_id": project_id, "is_active": True},
-                {"project_id": None, "is_active": True},
-            ]
-        }
+    async def count_global(self) -> int:
+        """Count global webhooks (both project_id and team_id are None)."""
+        return await self.collection.count_documents({"project_id": None, "team_id": None})
+
+    async def find_active_for_project(
+        self, project_id: str, team_id: Optional[str] = None
+    ) -> List[Webhook]:
+        """Find all active webhooks for a project (including team and global ones)."""
+        or_conditions = [
+            {"project_id": project_id, "is_active": True},
+            {"project_id": None, "team_id": None, "is_active": True},
+        ]
+        if team_id:
+            or_conditions.append({"team_id": team_id, "is_active": True})
+        query = {"$or": or_conditions}
         cursor = self.collection.find(query)
         docs = await cursor.to_list(None)
         return [Webhook(**doc) for doc in docs]
 
-    async def find_by_event(self, project_id: Optional[str], event_type: str) -> List[Webhook]:
+    async def find_by_event(
+        self, project_id: Optional[str], event_type: str, team_id: Optional[str] = None
+    ) -> List[Webhook]:
         """Find webhooks subscribed to a specific event type."""
         query: Dict[str, Any] = {"events": event_type, "is_active": True}
 
         if project_id:
-            # Include project-specific and global webhooks
-            query["$or"] = [{"project_id": project_id}, {"project_id": None}]
+            # Include project-specific, team, and global webhooks
+            or_conditions: List[Dict[str, Any]] = [
+                {"project_id": project_id},
+                {"project_id": None, "team_id": None},
+            ]
+            if team_id:
+                or_conditions.append({"team_id": team_id})
+            query["$or"] = or_conditions
         else:
             # Only global webhooks
             query["project_id"] = None
+            query["team_id"] = None
 
         cursor = self.collection.find(query)
         docs = await cursor.to_list(None)

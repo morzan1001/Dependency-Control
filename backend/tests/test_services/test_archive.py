@@ -495,3 +495,139 @@ class TestRestoreScan:
         assert result is not None
         assert result["scan_id"] == "scan-1"
         mock_repo.delete_by_scan_id.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# archive_scan with encryption
+# ---------------------------------------------------------------------------
+
+class TestArchiveScanEncryption:
+    def test_archives_with_encryption(self):
+        scan_doc = _make_scan_doc()
+        db = _make_mock_db(scan_doc=scan_doc)
+
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
+        mock_repo.create = AsyncMock(side_effect=lambda m: m)
+
+        with (
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock) as mock_upload,
+            patch(f"{MODULE}.settings") as mock_settings,
+            patch(f"{MODULE}.is_encryption_enabled", return_value=True),
+            patch(f"{MODULE}.encrypt", return_value=b"encrypted-data") as mock_encrypt,
+        ):
+            mock_settings.S3_BUCKET_NAME = "dc-archives"
+            result = asyncio.run(archive_scan(db, "scan-1"))
+
+        assert result is not None
+        mock_encrypt.assert_called_once()
+        # Upload should receive the encrypted data, not raw compressed
+        uploaded_data = mock_upload.call_args[0][1]
+        assert uploaded_data == b"encrypted-data"
+
+    def test_archives_without_encryption(self):
+        scan_doc = _make_scan_doc()
+        db = _make_mock_db(scan_doc=scan_doc)
+
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
+        mock_repo.create = AsyncMock(side_effect=lambda m: m)
+
+        with (
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock) as mock_upload,
+            patch(f"{MODULE}.settings") as mock_settings,
+            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
+            patch(f"{MODULE}.encrypt") as mock_encrypt,
+        ):
+            mock_settings.S3_BUCKET_NAME = "dc-archives"
+            result = asyncio.run(archive_scan(db, "scan-1"))
+
+        assert result is not None
+        mock_encrypt.assert_not_called()
+        # Upload should receive raw gzip data
+        uploaded_data = mock_upload.call_args[0][1]
+        decompressed = gzip.decompress(uploaded_data)
+        bundle = json.loads(decompressed)
+        assert bundle["scan_id"] == "scan-1"
+
+
+# ---------------------------------------------------------------------------
+# restore_scan with encryption
+# ---------------------------------------------------------------------------
+
+class TestRestoreScanEncryption:
+    def test_restores_encrypted_archive(self):
+        metadata = _make_archive_metadata()
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
+
+        bundle = {
+            "version": 1,
+            "scan": {"_id": "scan-1", "project_id": "proj-1"},
+            "findings": [],
+            "finding_records": [],
+            "dependencies": [],
+            "analysis_results": [],
+            "callgraphs": [],
+            "gridfs_sboms": [],
+        }
+        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
+
+        db = MagicMock()
+        db.scans.find_one = AsyncMock(return_value=None)
+        db.scans.insert_one = AsyncMock()
+
+        with (
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=b"encrypted-blob"),
+            patch(f"{MODULE}.delete_object", new_callable=AsyncMock),
+            patch(f"{MODULE}.is_encryption_enabled", return_value=True),
+            patch(f"{MODULE}.decrypt", return_value=compressed) as mock_decrypt,
+        ):
+            result = asyncio.run(restore_scan(db, "scan-1"))
+
+        assert result is not None
+        mock_decrypt.assert_called_once_with(b"encrypted-blob")
+        assert result["scan_id"] == "scan-1"
+
+    def test_restores_without_encryption(self):
+        metadata = _make_archive_metadata()
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
+
+        bundle = {
+            "version": 1,
+            "scan": {"_id": "scan-1", "project_id": "proj-1"},
+            "findings": [],
+            "finding_records": [],
+            "dependencies": [],
+            "analysis_results": [],
+            "callgraphs": [],
+            "gridfs_sboms": [],
+        }
+        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
+
+        db = MagicMock()
+        db.scans.find_one = AsyncMock(return_value=None)
+        db.scans.insert_one = AsyncMock()
+
+        with (
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=compressed),
+            patch(f"{MODULE}.delete_object", new_callable=AsyncMock),
+            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
+            patch(f"{MODULE}.decrypt") as mock_decrypt,
+        ):
+            result = asyncio.run(restore_scan(db, "scan-1"))
+
+        assert result is not None
+        mock_decrypt.assert_not_called()
+        assert result["scan_id"] == "scan-1"

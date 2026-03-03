@@ -514,6 +514,14 @@ archiving:
     # Use an existing Kubernetes secret instead of creating one
     # The secret must contain keys: access-key, secret-key
     existingSecret: ""
+  # Client-side encryption for archives at rest
+  encryption:
+    enabled: false
+    # Encryption key (hex-encoded 32 bytes or any string → SHA-256 hashed)
+    # Leave empty if using existingSecret or external-secrets
+    key: ""
+    # Use an existing Kubernetes secret with key: encryption-key
+    existingSecret: ""
 
 # -----------------------------------------------------------------------------
 # Monitoring & Observability

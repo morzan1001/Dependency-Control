@@ -6,6 +6,7 @@ export const webhookKeys = {
   all: ['webhooks'] as const,
   global: () => [...webhookKeys.all, 'global'] as const,
   project: (projectId: string) => [...webhookKeys.all, 'project', projectId] as const,
+  team: (teamId: string) => [...webhookKeys.all, 'team', teamId] as const,
 };
 
 export const useGlobalWebhooks = () => {
@@ -40,6 +41,25 @@ export const useCreateProjectWebhook = () => {
       webhookApi.createProject(projectId, data),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: webhookKeys.project(variables.projectId) });
+    },
+  });
+};
+
+export const useTeamWebhooks = (teamId: string) => {
+  return useQuery({
+    queryKey: webhookKeys.team(teamId),
+    queryFn: () => webhookApi.getTeam(teamId),
+    enabled: !!teamId,
+  });
+};
+
+export const useCreateTeamWebhook = () => {
+  const queryClient = useQueryClient();
+  return useMutation<Webhook, Error, { teamId: string; data: WebhookCreate }>({
+    mutationFn: ({ teamId, data }) =>
+      webhookApi.createTeam(teamId, data),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: webhookKeys.team(variables.teamId) });
     },
   });
 };

@@ -8,7 +8,8 @@ from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.projects import check_project_access
-from app.core.constants import PROJECT_ROLE_ADMIN
+from app.api.v1.helpers.teams import check_team_access
+from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_ROLE_ADMIN
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.models.webhook import Webhook
@@ -70,6 +71,15 @@ async def check_webhook_permission(
         else:
             # Fall back to requiring project admin role
             await check_project_access(webhook.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
+    elif webhook.team_id:
+        # Team webhook: user needs either:
+        # 1. The specific permission (e.g., webhook:read) AND team membership, OR
+        # 2. Team admin+ role
+        has_perm = has_permission(current_user.permissions, required_permission)
+        if has_perm:
+            await check_team_access(webhook.team_id, current_user, db)
+        else:
+            await check_team_access(webhook.team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
     else:
         # Global webhook: requires system:manage
         if not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
@@ -132,3 +142,57 @@ async def check_webhook_create_permission(
     else:
         # No webhook:create permission, must be project admin
         await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
+
+
+async def check_team_webhook_list_permission(
+    team_id: str,
+    current_user: User,
+    db: AsyncIOMotorDatabase,
+) -> None:
+    """
+    Check if user has permission to list webhooks for a team.
+
+    Users need either:
+    - webhook:read permission AND team membership, OR
+    - Team admin+ role
+
+    Args:
+        team_id: The team ID to check access for
+        current_user: Current authenticated user
+        db: Database connection
+
+    Raises:
+        HTTPException: 403/404 if user lacks permissions or team not found
+    """
+    has_read_perm = has_permission(current_user.permissions, Permissions.WEBHOOK_READ)
+    if has_read_perm:
+        await check_team_access(team_id, current_user, db)
+    else:
+        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
+
+
+async def check_team_webhook_create_permission(
+    team_id: str,
+    current_user: User,
+    db: AsyncIOMotorDatabase,
+) -> None:
+    """
+    Check if user has permission to create webhooks for a team.
+
+    Users need either:
+    - webhook:create permission AND team membership, OR
+    - Team admin+ role
+
+    Args:
+        team_id: The team ID to check access for
+        current_user: Current authenticated user
+        db: Database connection
+
+    Raises:
+        HTTPException: 403/404 if user lacks permissions or team not found
+    """
+    has_create_perm = has_permission(current_user.permissions, Permissions.WEBHOOK_CREATE)
+    if has_create_perm:
+        await check_team_access(team_id, current_user, db)
+    else:
+        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)

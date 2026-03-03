@@ -22,6 +22,16 @@ export const webhookApi = {
     return response.data;
   },
 
+  getTeam: async (teamId: string): Promise<Webhook[]> => {
+    const response = await api.get<{ items: Webhook[] }>(`/webhooks/team/${teamId}`);
+    return response.data.items || [];
+  },
+
+  createTeam: async (teamId: string, data: WebhookCreate): Promise<Webhook> => {
+    const response = await api.post<Webhook>(`/webhooks/team/${teamId}`, data);
+    return response.data;
+  },
+
   delete: async (id: string): Promise<void> => {
     await api.delete(`/webhooks/${id}`);
   }

@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     S3_REGION: str = "us-east-1"
     S3_USE_SSL: bool = False  # True for AWS S3, False for local MinIO
 
+    # Archive Encryption (empty = archives not encrypted)
+    ARCHIVE_ENCRYPTION_KEY: str = ""
+
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
 
 

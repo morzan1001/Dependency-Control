@@ -1,10 +1,10 @@
 import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
 import { useCurrentUser } from '@/hooks/queries/use-users';
-import { canUpdateTeam, canDeleteTeam, canManageTeamMembers } from '@/lib/team-roles';
+import { canUpdateTeam, canDeleteTeam, canManageTeamMembers, canManageTeamWebhooks } from '@/lib/team-roles';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { UserPlus, Trash2, Edit } from 'lucide-react';
+import { UserPlus, Trash2, Edit, Bell } from 'lucide-react';
 
 interface TeamCardProps {
   team: Team;
@@ -12,15 +12,17 @@ interface TeamCardProps {
   onManageMembers: (team: Team) => void;
   onAddMember: (teamId: string) => void;
   onDelete: (teamId: string) => void;
+  onManageWebhooks: (team: Team) => void;
 }
 
-export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete }: TeamCardProps) {
+export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete, onManageWebhooks }: TeamCardProps) {
   const { permissions } = useAuth();
   const { data: currentUser } = useCurrentUser();
 
   const canEdit = currentUser ? canUpdateTeam(team, currentUser.id, permissions) : false;
   const canRemove = currentUser ? canDeleteTeam(team, currentUser.id, permissions) : false;
   const canManageMembers = currentUser ? canManageTeamMembers(team, currentUser.id, permissions) : false;
+  const canWebhooks = currentUser ? canManageTeamWebhooks(team, currentUser.id, permissions) : false;
 
   return (
     <Card
@@ -32,6 +34,19 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete 
           {team.name}
         </CardTitle>
         <div className="flex items-center gap-1">
+            {canWebhooks && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  onManageWebhooks(team);
+                }}
+              >
+                  <Bell className="h-4 w-4" />
+              </Button>
+            )}
             {canEdit && (
               <Button
                 variant="ghost"

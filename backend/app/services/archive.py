@@ -16,6 +16,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
 from app.core.constants import ARCHIVE_BUNDLE_VERSION, ARCHIVE_PATH_TEMPLATE
+from app.core.encryption import decrypt, encrypt, is_encryption_enabled
 from app.core.s3 import delete_object, download_bytes, is_archive_enabled, upload_bytes
 from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
@@ -74,7 +75,7 @@ async def _load_gridfs_sboms(
     for gid in gridfs_ids:
         try:
             grid_out = await fs.open_download_stream(ObjectId(gid))
-            content = await grid_out.read()
+            content: bytes = await grid_out.read()
             sboms.append({
                 "gridfs_id": gid,
                 "filename": grid_out.filename,
@@ -153,11 +154,14 @@ async def archive_scan(
     json_bytes = json.dumps(bundle, default=str).encode("utf-8")
     compressed = gzip.compress(json_bytes, compresslevel=6)
 
+    # 5b. Encrypt if configured
+    upload_data = encrypt(compressed) if is_encryption_enabled() else compressed
+
     # 6. Upload to S3
     s3_key = ARCHIVE_PATH_TEMPLATE.format(project_id=project_id, scan_id=scan_id)
 
     try:
-        await upload_bytes(s3_key, compressed)
+        await upload_bytes(s3_key, upload_data)
     except Exception as e:
         logger.error(f"Failed to upload archive for scan {scan_id}: {e}")
         return None
@@ -216,10 +220,13 @@ async def restore_scan(
 
     # 1. Download from S3
     try:
-        compressed = await download_bytes(metadata.s3_key)
+        raw_data = await download_bytes(metadata.s3_key)
     except Exception as e:
         logger.error(f"Failed to download archive for scan {scan_id}: {e}")
         return None
+
+    # 1b. Decrypt if encryption is configured
+    compressed = decrypt(raw_data) if is_encryption_enabled() else raw_data
 
     # 2. Decompress and parse
     json_bytes = gzip.decompress(compressed)

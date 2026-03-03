@@ -9,7 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Optional
 
-from aiobotocore.session import AioSession, get_session
+from aiobotocore.session import AioSession, get_session  # type: ignore[import-untyped]
 
 from app.core.config import settings
 
@@ -90,7 +90,8 @@ async def download_bytes(key: str) -> bytes:
             Key=key,
         )
         async with response["Body"] as stream:
-            return await stream.read()
+            data: bytes = await stream.read()
+            return data
 
 
 async def delete_object(key: str) -> None:

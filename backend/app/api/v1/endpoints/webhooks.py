@@ -16,6 +16,8 @@ from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.v1.helpers import (
     build_pagination_response,
+    check_team_webhook_create_permission,
+    check_team_webhook_list_permission,
     check_webhook_create_permission,
     check_webhook_list_permission,
     check_webhook_permission,
@@ -113,6 +115,50 @@ async def list_global_webhooks(
     webhook_repo = WebhookRepository(db)
     total = await webhook_repo.count_global()
     webhooks = await webhook_repo.find_global(skip=skip, limit=limit)
+
+    items = [w.model_dump() for w in webhooks]
+    return build_pagination_response(items, total, skip, limit)
+
+
+@router.post("/team/{team_id}", response_model=WebhookResponse, status_code=201, responses=RESP_AUTH)
+async def create_team_webhook(
+    team_id: str,
+    webhook_in: WebhookCreate,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> Webhook:
+    """
+    Create a webhook for a team.
+
+    Team webhooks are triggered for all projects belonging to the team.
+    Requires 'webhook:create' permission with team membership, or team admin+ role.
+    """
+    await check_team_webhook_create_permission(team_id, current_user, db)
+
+    webhook_repo = WebhookRepository(db)
+    webhook = Webhook(team_id=team_id, **webhook_in.model_dump())
+
+    return await webhook_repo.create(webhook)
+
+
+@router.get("/team/{team_id}", responses=RESP_AUTH)
+async def list_team_webhooks(
+    team_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
+    limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
+) -> Dict[str, Any]:
+    """
+    List all webhooks for a team with pagination.
+
+    Requires 'webhook:read' permission with team membership, or team admin+ role.
+    """
+    await check_team_webhook_list_permission(team_id, current_user, db)
+
+    webhook_repo = WebhookRepository(db)
+    total = await webhook_repo.count_by_team(team_id)
+    webhooks = await webhook_repo.find_by_team(team_id, skip=skip, limit=limit)
 
     items = [w.model_dump() for w in webhooks]
     return build_pagination_response(items, total, skip, limit)
