@@ -49,11 +49,11 @@ export default function Dashboard() {
   const totalPages = projectsData?.pages || 0
 
   // Virtual Scroll Setup
-  const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
-  
+  const { parentRef, scrollContainer, tableOffsetRef } = useScrollContainer()
+
   const scrollObserver = useMemo(
-    () => createScrollObserver(scrollContainer, tableOffset),
-    [scrollContainer, tableOffset]
+    () => createScrollObserver(scrollContainer, tableOffsetRef),
+    [scrollContainer, tableOffsetRef]
   )
 
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -64,6 +64,8 @@ export default function Dashboard() {
     overscan: 5,
     observeElementOffset: scrollObserver,
   })
+
+  const virtualItems = rowVirtualizer.getVirtualItems()
 
   const stats = [
     {
@@ -270,12 +272,12 @@ export default function Dashboard() {
                             ))
                         ) : (
                             <>
-                                {rowVirtualizer.getVirtualItems().length > 0 && (
-                                    <tr style={{ height: `${rowVirtualizer.getVirtualItems()[0].start}px` }}>
+                                {virtualItems.length > 0 && (
+                                    <tr style={{ height: `${virtualItems[0].start}px` }}>
                                         <td colSpan={6} />
                                     </tr>
                                 )}
-                                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                                {virtualItems.map((virtualRow) => {
                                     const project = projectList[virtualRow.index]
                                     return (
                                         <tr 
@@ -310,8 +312,8 @@ export default function Dashboard() {
                                         </tr>
                                     )
                                 })}
-                                {rowVirtualizer.getVirtualItems().length > 0 && (
-                                    <tr style={{ height: `${rowVirtualizer.getTotalSize() - rowVirtualizer.getVirtualItems()[rowVirtualizer.getVirtualItems().length - 1].end}px` }}>
+                                {virtualItems.length > 0 && (
+                                    <tr style={{ height: `${rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end}px` }}>
                                         <td colSpan={6} />
                                     </tr>
                                 )}

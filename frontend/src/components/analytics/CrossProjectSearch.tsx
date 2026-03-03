@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { analyticsApi } from '@/api/analytics'
 import { AdvancedSearchResult } from '@/types/analytics'
@@ -38,7 +38,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const [selectedProject, setSelectedProject] = useState<string>('__all__')
   const [showFilters, setShowFilters] = useState(false)
 
-  const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
+  const { parentRef, scrollContainer, tableOffsetRef } = useScrollContainer()
   const debouncedQuery = useDebounce(query, 300)
 
   const { data: types } = useDependencyTypes()
@@ -64,11 +64,10 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
       })
     },
     initialPageParam: 0,
-    getNextPageParam: (lastPage) => {
-      const nextSkip = lastPage.page * lastPage.size
-      return nextSkip < lastPage.total ? nextSkip : undefined
+    getNextPageParam: (lastPage, allPages) => {
+      const totalLoaded = allPages.reduce((sum, page) => sum + page.items.length, 0)
+      return totalLoaded < lastPage.total ? totalLoaded : undefined
     },
-    placeholderData: keepPreviousData,
     enabled: debouncedQuery.length >= 2,
   })
 
@@ -76,8 +75,8 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const totalCount = data?.pages[0]?.total ?? 0
 
   const scrollObserver = useMemo(
-    () => createScrollObserver(scrollContainer, tableOffset),
-    [scrollContainer, tableOffset]
+    () => createScrollObserver(scrollContainer, tableOffsetRef),
+    [scrollContainer, tableOffsetRef]
   )
 
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -87,6 +86,11 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
     estimateSize: () => 52,
     overscan: VIRTUAL_SCROLL_OVERSCAN,
     observeElementOffset: scrollObserver,
+    getItemKey: (index) => {
+      if (index >= allResults.length) return `loader-${index}`
+      const item = allResults[index]
+      return item ? `${item.project_id}-${item.package}-${item.version}` : `row-${index}`
+    },
   })
 
   const virtualItems = rowVirtualizer.getVirtualItems()

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
 import { Finding, NestedVulnerability } from "@/types/scan"
 import { AlertTriangle, ExternalLink, Shield, ShieldAlert, ServerCrash } from "lucide-react"
+import ReactMarkdown from 'react-markdown'
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
 import { useProject } from '@/hooks/queries/use-projects'
@@ -418,9 +419,11 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 )}
                                                             </div>
                                                         </div>
-                                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                                                            {vuln.description || (finding.details?.vulnerabilities ? "" : finding.description) || "No description available."}
-                                                        </p>
+                                                        <div className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground">
+                                                            <ReactMarkdown>
+                                                                {vuln.description || (finding.details?.vulnerabilities ? "" : finding.description) || "No description available."}
+                                                            </ReactMarkdown>
+                                                        </div>
                                                         
                                                         <div className="flex flex-wrap gap-4 text-xs">
                                                             {(vuln.cvss_score || finding.details?.cvss_score) && (

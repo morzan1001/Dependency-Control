@@ -277,6 +277,57 @@ analysis_aggregation_duration_seconds = Histogram(
     buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120),
 )
 
+# ---------------------------------------------------------------------------
+# Archive Metrics
+# ---------------------------------------------------------------------------
+
+archive_operations_total = Counter(
+    "archive_operations_total",
+    "Total archive operations by type and status",
+    ["operation", "status"],
+)
+
+archive_operation_duration_seconds = Histogram(
+    "archive_operation_duration_seconds",
+    "Archive operation duration in seconds by type",
+    ["operation"],
+    buckets=(0.5, 1, 2, 5, 10, 30, 60, 120, 300),
+)
+
+archive_bundle_original_bytes = Histogram(
+    "archive_bundle_original_bytes",
+    "Archive bundle size before compression in bytes",
+    buckets=(10000, 100000, 1000000, 10000000, 50000000, 100000000, 500000000),
+)
+
+archive_bundle_compressed_bytes = Histogram(
+    "archive_bundle_compressed_bytes",
+    "Archive bundle size after compression in bytes",
+    buckets=(1000, 10000, 100000, 1000000, 10000000, 50000000, 100000000),
+)
+
+archive_count_total = Gauge(
+    "archive_count_total",
+    "Total number of archived scans currently in S3",
+)
+
+archive_stored_bytes_total = Gauge(
+    "archive_stored_bytes_total",
+    "Total compressed bytes stored across all archives in S3",
+)
+
+archive_housekeeping_batch_total = Counter(
+    "archive_housekeeping_batch_total",
+    "Total housekeeping archive batches by status",
+    ["status"],
+)
+
+archive_housekeeping_scans_processed = Counter(
+    "archive_housekeeping_scans_processed",
+    "Total scans processed by housekeeping archival",
+    ["status"],
+)
+
 external_api_requests_total = Counter(
     "external_api_requests_total",
     "Total external API requests by service",
@@ -424,9 +475,16 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             status = response.status_code
 
-            # Track response size
-            if hasattr(response, "body"):
-                http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(len(response.body))
+            # Track response size via Content-Length header
+            # (response.body is unavailable on StreamingResponse from call_next)
+            resp_content_length = response.headers.get("content-length")
+            if resp_content_length:
+                try:
+                    http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(
+                        int(resp_content_length)
+                    )
+                except ValueError:
+                    pass
 
         except Exception as e:
             status = 500
@@ -553,3 +611,26 @@ async def update_db_stats(database: Any) -> None:
         )
     except Exception as e:
         logger.warning(f"Failed to update database statistics metrics: {e}")
+
+
+async def update_archive_stats(database: Any) -> None:
+    """Update archive statistics gauge metrics via aggregation pipeline."""
+    try:
+        pipeline = [
+            {
+                "$group": {
+                    "_id": None,
+                    "count": {"$sum": 1},
+                    "total_bytes": {"$sum": {"$ifNull": ["$compressed_size_bytes", 0]}},
+                }
+            }
+        ]
+        result = await database["archive_metadata"].aggregate(pipeline).to_list(1)
+        if result:
+            archive_count_total.set(result[0]["count"])
+            archive_stored_bytes_total.set(result[0]["total_bytes"])
+        else:
+            archive_count_total.set(0)
+            archive_stored_bytes_total.set(0)
+    except Exception as e:
+        logger.warning(f"Failed to update archive statistics metrics: {e}")

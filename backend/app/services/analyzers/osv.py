@@ -11,6 +11,7 @@ from app.core.constants import (
     ANALYZER_TIMEOUTS,
     OSV_BATCH_API_URL,
 )
+from app.core.metrics import external_api_rate_limit_hits_total
 from app.models.finding import Severity
 
 from .base import Analyzer
@@ -126,6 +127,7 @@ class OSVAnalyzer(Analyzer):
                             await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
 
                     elif response.status_code == 429:
+                        external_api_rate_limit_hits_total.labels(service="OSV API").inc()
                         logger.warning("OSV API rate limit hit, waiting...")
                         await asyncio.sleep(5)
                     else:

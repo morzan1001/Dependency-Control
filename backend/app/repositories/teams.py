@@ -9,10 +9,12 @@ from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.metrics import track_db_operation
 from app.models.team import Team
 
 
 _MEMBERS_USER_ID = "members.user_id"
+_COL = "teams"
 
 
 class TeamRepository:
@@ -24,7 +26,8 @@ class TeamRepository:
 
     async def get_by_id(self, team_id: str) -> Optional[Team]:
         """Get team by ID."""
-        data = await self.collection.find_one({"_id": team_id})
+        with track_db_operation(_COL, "find_one"):
+            data = await self.collection.find_one({"_id": team_id})
         if data:
             return Team(**data)
         return None

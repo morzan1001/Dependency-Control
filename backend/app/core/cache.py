@@ -16,12 +16,13 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import redis.asyncio as redis
 from redis.asyncio.connection import ConnectionPool
 
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 from app.core.config import settings
 
@@ -34,6 +35,8 @@ REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 # Import metrics for cache monitoring
 cache_hits_total: Optional[Counter] = None
 cache_misses_total: Optional[Counter] = None
+cache_operations_total: Optional[Counter] = None
+cache_operation_duration_seconds: Optional[Histogram] = None
 cache_keys_total: Optional[Gauge] = None
 cache_connected_clients: Optional[Gauge] = None
 cache_size_bytes: Optional[Gauge] = None
@@ -44,6 +47,8 @@ try:
         cache_hits_total,
         cache_keys_total,
         cache_misses_total,
+        cache_operation_duration_seconds,
+        cache_operations_total,
         cache_size_bytes,
     )
 except ImportError:
@@ -237,6 +242,7 @@ class CacheService:
             if not (self._should_retry_connection() and await self._try_reconnect()):
                 return None
 
+        _start = time.time()
         try:
             client = await self.get_client()
             data = await client.get(self._make_key(key))
@@ -258,6 +264,11 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache get error for {key}: {e}")
             return None
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="get").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="get").observe(time.time() - _start)
 
     async def set(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> bool:
         """
@@ -278,6 +289,7 @@ class CacheService:
         if ttl_seconds is None:
             ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
 
+        _start = time.time()
         try:
             client = await self.get_client()
             serialized = json.dumps(value, default=str)
@@ -294,6 +306,11 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache set error for {key}: {e}")
             return False
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="set").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="set").observe(time.time() - _start)
 
     async def delete(self, key: str) -> bool:
         """Delete a key from cache."""
@@ -301,6 +318,7 @@ class CacheService:
             if not (self._should_retry_connection() and await self._try_reconnect()):
                 return False
 
+        _start = time.time()
         try:
             client = await self.get_client()
             await client.delete(self._make_key(key))
@@ -313,6 +331,11 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache delete error for {key}: {e}")
             return False
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="delete").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="delete").observe(time.time() - _start)
 
     async def mget(self, keys: List[str]) -> Dict[str, Any]:
         """
@@ -327,6 +350,7 @@ class CacheService:
         if not self._available or not keys:
             return dict.fromkeys(keys)
 
+        _start = time.time()
         try:
             client = await self.get_client()
             prefixed_keys = [self._make_key(k) for k in keys]
@@ -348,6 +372,11 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache mget error: {e}")
             return dict.fromkeys(keys)
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="mget").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="mget").observe(time.time() - _start)
 
     async def mset(self, mapping: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
         """
@@ -366,6 +395,7 @@ class CacheService:
         if ttl_seconds is None:
             ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
 
+        _start = time.time()
         try:
             client = await self.get_client()
             pipe = client.pipeline()
@@ -379,6 +409,11 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Cache mset error: {e}")
             return False
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="mset").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="mset").observe(time.time() - _start)
 
     async def get_or_fetch(
         self,

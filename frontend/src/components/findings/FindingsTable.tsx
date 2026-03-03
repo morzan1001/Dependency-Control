@@ -1,4 +1,4 @@
-import { useInfiniteQuery, keepPreviousData } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useMemo, useState } from 'react'
 import { scanApi } from '@/api/scans'
@@ -30,7 +30,7 @@ interface FindingsTableProps {
 }
 
 export function FindingsTable({ scanId, projectId, category, search, scanContext }: FindingsTableProps) {
-    const { parentRef, scrollContainer, tableOffset } = useScrollContainer()
+    const { parentRef, scrollContainer, tableOffsetRef } = useScrollContainer()
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [sortBy, setSortBy] = useState("severity")
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
@@ -56,11 +56,10 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
             return res;
         },
         initialPageParam: 0,
-        getNextPageParam: (lastPage) => {
-            const nextSkip = (lastPage.page * lastPage.size);
-            return nextSkip < lastPage.total ? nextSkip : undefined;
+        getNextPageParam: (lastPage, allPages) => {
+            const totalLoaded = allPages.reduce((sum, page) => sum + page.items.length, 0);
+            return totalLoaded < lastPage.total ? totalLoaded : undefined;
         },
-        placeholderData: keepPreviousData,
     })
 
     const allRows = data ? data.pages.flatMap((d) => d.items) : []
@@ -68,8 +67,8 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
     // Memoize the scroll observer so TanStack Virtual doesn't re-subscribe on every render.
     // Re-subscribing tears down and recreates the scroll listener, which can desync scroll position.
     const scrollObserver = useMemo(
-        () => createScrollObserver(scrollContainer, tableOffset),
-        [scrollContainer, tableOffset]
+        () => createScrollObserver(scrollContainer, tableOffsetRef),
+        [scrollContainer, tableOffsetRef]
     )
 
     // eslint-disable-next-line react-hooks/incompatible-library
@@ -79,6 +78,10 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
         estimateSize: () => 60,
         overscan: VIRTUAL_SCROLL_OVERSCAN,
         observeElementOffset: scrollObserver,
+        getItemKey: (index) => {
+            if (index >= allRows.length) return `loader-${index}`
+            return allRows[index]?.id ?? `row-${index}`
+        },
     })
 
     const virtualItems = rowVirtualizer.getVirtualItems()
@@ -189,12 +192,12 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {rowVirtualizer.getVirtualItems().length > 0 && (
-                            <tr style={{ height: `${rowVirtualizer.getVirtualItems()[0].start}px` }}>
+                        {virtualItems.length > 0 && (
+                            <tr style={{ height: `${virtualItems[0].start}px` }}>
                                 <td colSpan={6} />
                             </tr>
                         )}
-                        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                        {virtualItems.map((virtualRow) => {
                             const isLoaderRow = virtualRow.index > allRows.length - 1
                             const finding = allRows[virtualRow.index]
                             const sourceInfo = isLoaderRow ? null : getSourceInfo(finding?.source_type)
@@ -333,8 +336,8 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
                                 </TableRow>
                             )
                         })}
-                        {rowVirtualizer.getVirtualItems().length > 0 && (
-                            <tr style={{ height: `${rowVirtualizer.getTotalSize() - rowVirtualizer.getVirtualItems()[rowVirtualizer.getVirtualItems().length - 1].end}px` }}>
+                        {virtualItems.length > 0 && (
+                            <tr style={{ height: `${rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end}px` }}>
                                 <td colSpan={6} />
                             </tr>
                         )}

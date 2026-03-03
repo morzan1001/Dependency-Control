@@ -23,7 +23,12 @@ from app.core.s3 import is_archive_enabled
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
 from app.repositories.system_settings import SystemSettingsRepository
-from app.core.metrics import update_db_stats
+from app.core.metrics import (
+    archive_housekeeping_batch_total,
+    archive_housekeeping_scans_processed,
+    update_archive_stats,
+    update_db_stats,
+)
 from app.core.cache import update_cache_stats
 
 if TYPE_CHECKING:
@@ -278,14 +283,20 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
             metadata = await archive_scan(db, scan_id)
             if metadata:
                 archived_count += 1
+                archive_housekeeping_scans_processed.labels(status="archived").inc()
             else:
                 failed_ids.append(scan_id)
+                archive_housekeeping_scans_processed.labels(status="failed").inc()
         except Exception as e:
             logger.error(f"Failed to archive scan {scan_id}: {e}")
             failed_ids.append(scan_id)
+            archive_housekeeping_scans_processed.labels(status="failed").inc()
 
     if failed_ids:
         logger.warning(f"{label}: {len(failed_ids)} scan(s) failed to archive and will NOT be deleted.")
+        archive_housekeeping_batch_total.labels(status="partial_failure").inc()
+    else:
+        archive_housekeeping_batch_total.labels(status="success").inc()
 
     # Only delete scans that were successfully archived
     successfully_archived = [sid for sid in scan_ids[:ARCHIVE_BATCH_SIZE] if sid not in failed_ids]
@@ -697,6 +708,13 @@ async def housekeeping_loop(
             await update_db_stats(db)
         except Exception as e:
             logger.error(f"Failed to update database statistics: {e}")
+
+        # Update archive statistics metrics
+        try:
+            db = await get_database()
+            await update_archive_stats(db)
+        except Exception as e:
+            logger.error(f"Failed to update archive statistics: {e}")
 
         # Update cache statistics metrics
         try:

@@ -5,6 +5,7 @@ Provides endpoints for listing, downloading, restoring, and managing archived sc
 """
 
 import math
+import time
 from datetime import datetime
 from typing import List, Optional
 
@@ -18,6 +19,7 @@ from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.permissions import Permissions, has_permission
 from app.core.encryption import decrypt, is_encryption_enabled
+from app.core.metrics import archive_operation_duration_seconds, archive_operations_total
 from app.core.s3 import download_bytes, is_archive_enabled
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.schemas.archive import (
@@ -188,13 +190,19 @@ async def download_archive(
     if not metadata or metadata.project_id != project_id:
         raise HTTPException(status_code=404, detail="Archive not found for this project")
 
+    start_time = time.monotonic()
     try:
         data = await download_bytes(metadata.s3_key)
     except Exception:
+        archive_operations_total.labels(operation="download", status="failure").inc()
         raise HTTPException(status_code=500, detail="Failed to download archive from storage")
 
     if is_encryption_enabled():
         data = decrypt(data)
+
+    duration = time.monotonic() - start_time
+    archive_operations_total.labels(operation="download", status="success").inc()
+    archive_operation_duration_seconds.labels(operation="download").observe(duration)
 
     return StreamingResponse(
         iter([data]),

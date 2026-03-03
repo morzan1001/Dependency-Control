@@ -8,6 +8,7 @@ Each scan is archived as a single compressed JSON bundle (.json.gz).
 import gzip
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +19,12 @@ from app.core.config import settings
 from app.core.constants import ARCHIVE_BUNDLE_VERSION, ARCHIVE_PATH_TEMPLATE
 from app.core.encryption import decrypt, encrypt, is_encryption_enabled
 from app.core.s3 import delete_object, download_bytes, is_archive_enabled, upload_bytes
+from app.core.metrics import (
+    archive_bundle_compressed_bytes,
+    archive_bundle_original_bytes,
+    archive_operation_duration_seconds,
+    archive_operations_total,
+)
 from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.schemas.archive import ArchiveRestoreResponse
@@ -115,6 +122,8 @@ async def archive_scan(
         logger.warning("Archive requested but S3 is not configured.")
         return None
 
+    start_time = time.monotonic()
+
     # Check if already archived
     repo = ArchiveMetadataRepository(db)
     existing = await repo.find_by_scan_id(scan_id)
@@ -126,6 +135,7 @@ async def archive_scan(
     scan_doc = await db.scans.find_one({"_id": scan_id})
     if not scan_doc:
         logger.error(f"Scan {scan_id} not found for archiving.")
+        archive_operations_total.labels(operation="archive", status="failure").inc()
         return None
 
     project_id = scan_doc["project_id"]
@@ -160,6 +170,9 @@ async def archive_scan(
     json_bytes = json.dumps(bundle, default=str).encode("utf-8")
     compressed = gzip.compress(json_bytes, compresslevel=6)
 
+    archive_bundle_original_bytes.observe(len(json_bytes))
+    archive_bundle_compressed_bytes.observe(len(compressed))
+
     # 5b. Encrypt if configured
     upload_data = encrypt(compressed) if is_encryption_enabled() else compressed
 
@@ -170,6 +183,7 @@ async def archive_scan(
         await upload_bytes(s3_key, upload_data)
     except Exception as e:
         logger.error(f"Failed to upload archive for scan {scan_id}: {e}")
+        archive_operations_total.labels(operation="archive", status="failure").inc()
         return None
 
     # 7. Create archive metadata record
@@ -193,6 +207,10 @@ async def archive_scan(
     )
 
     await repo.create(metadata)
+
+    duration = time.monotonic() - start_time
+    archive_operations_total.labels(operation="archive", status="success").inc()
+    archive_operation_duration_seconds.labels(operation="archive").observe(duration)
 
     logger.info(
         f"Archived scan {scan_id} to s3://{settings.S3_BUCKET_NAME}/{s3_key} ({len(compressed)} bytes compressed)"
@@ -221,11 +239,14 @@ async def restore_scan(
     if not is_archive_enabled():
         return None
 
+    start_time = time.monotonic()
+
     repo = ArchiveMetadataRepository(db)
     metadata = await repo.find_by_scan_id(scan_id)
 
     if not metadata:
         logger.error(f"No archive metadata found for scan {scan_id}")
+        archive_operations_total.labels(operation="restore", status="failure").inc()
         return None
 
     # 1. Download from S3
@@ -233,6 +254,7 @@ async def restore_scan(
         raw_data = await download_bytes(metadata.s3_key)
     except Exception as e:
         logger.error(f"Failed to download archive for scan {scan_id}: {e}")
+        archive_operations_total.labels(operation="restore", status="failure").inc()
         return None
 
     # 1b. Decrypt if encryption is configured
@@ -250,6 +272,7 @@ async def restore_scan(
         existing = await db.scans.find_one({"_id": scan_doc["_id"]})
         if existing:
             logger.warning(f"Scan {scan_id} already exists in MongoDB. Skipping restore.")
+            archive_operations_total.labels(operation="restore", status="failure").inc()
             return None
 
         scan_doc["pinned"] = True
@@ -304,6 +327,10 @@ async def restore_scan(
         logger.warning(f"Failed to delete S3 archive after restore: {e}")
 
     await repo.delete_by_scan_id(scan_id)
+
+    duration = time.monotonic() - start_time
+    archive_operations_total.labels(operation="restore", status="success").inc()
+    archive_operation_duration_seconds.labels(operation="restore").observe(duration)
 
     logger.info(f"Restored scan {scan_id} from archive. Collections: {collections_restored}")
 

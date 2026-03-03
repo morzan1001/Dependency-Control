@@ -9,8 +9,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
+from app.core.metrics import track_db_operation
 from app.models.project import Project
 from app.schemas.projections import ProjectIdOnly, ProjectMinimal, ProjectWithScanId
+
+_COL = "projects"
 
 
 class ProjectRepository:
@@ -22,7 +25,8 @@ class ProjectRepository:
 
     async def get_by_id(self, project_id: str) -> Optional[Project]:
         """Get project by ID."""
-        data = await self.collection.find_one({"_id": project_id})
+        with track_db_operation(_COL, "find_one"):
+            data = await self.collection.find_one({"_id": project_id})
         if data:
             return Project(**data)
         return None
@@ -145,26 +149,31 @@ class ProjectRepository:
 
     async def create(self, project: Project) -> Project:
         """Create a new project."""
-        await self.collection.insert_one(project.model_dump(by_alias=True))
+        with track_db_operation(_COL, "insert_one"):
+            await self.collection.insert_one(project.model_dump(by_alias=True))
         return project
 
     async def create_raw(self, project_data: Dict[str, Any]) -> None:
         """Create a new project from raw data."""
-        await self.collection.insert_one(project_data)
+        with track_db_operation(_COL, "insert_one"):
+            await self.collection.insert_one(project_data)
 
     async def update(self, project_id: str, update_data: Dict[str, Any]) -> Optional[Project]:
         """Update project by ID."""
         if update_data:
-            await self.collection.update_one({"_id": project_id}, {"$set": update_data})
+            with track_db_operation(_COL, "update_one"):
+                await self.collection.update_one({"_id": project_id}, {"$set": update_data})
         return await self.get_by_id(project_id)
 
     async def update_raw(self, project_id: str, update_ops: Dict[str, Any]) -> None:
         """Update project with raw MongoDB operations."""
-        await self.collection.update_one({"_id": project_id}, update_ops)
+        with track_db_operation(_COL, "update_one"):
+            await self.collection.update_one({"_id": project_id}, update_ops)
 
     async def delete(self, project_id: str) -> bool:
         """Delete project by ID."""
-        result = await self.collection.delete_one({"_id": project_id})
+        with track_db_operation(_COL, "delete_one"):
+            result = await self.collection.delete_one({"_id": project_id})
         return result.deleted_count > 0
 
     async def find_many(
@@ -177,8 +186,9 @@ class ProjectRepository:
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Project]:
         """Find multiple projects with pagination. Returns Pydantic models."""
-        cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
-        docs = await cursor.to_list(limit)
+        with track_db_operation(_COL, "find"):
+            cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
+            docs = await cursor.to_list(limit)
         return [Project(**doc) for doc in docs]
 
     async def find_many_ids(
@@ -224,15 +234,18 @@ class ProjectRepository:
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
         """Count projects matching query."""
-        return await self.collection.count_documents(query or {})
+        with track_db_operation(_COL, "count"):
+            return await self.collection.count_documents(query or {})
 
     async def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Run aggregation pipeline."""
-        return await self.collection.aggregate(pipeline).to_list(None)
+        with track_db_operation(_COL, "aggregate"):
+            return await self.collection.aggregate(pipeline).to_list(None)
 
     async def update_many(self, query: Dict[str, Any], update_data: Dict[str, Any]) -> int:
         """Update multiple projects matching query."""
-        result = await self.collection.update_many(query, {"$set": update_data})
+        with track_db_operation(_COL, "update_many"):
+            result = await self.collection.update_many(query, {"$set": update_data})
         return result.modified_count
 
     async def add_member(self, project_id: str, member_data: Dict[str, Any]) -> None:

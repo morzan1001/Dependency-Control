@@ -57,6 +57,7 @@ analysis_race_conditions_total: Optional[Counter] = None
 analysis_rescan_operations_total: Optional[Counter] = None
 analysis_aggregation_duration_seconds: Optional[Histogram] = None
 analysis_findings_by_type: Optional[Counter] = None
+analysis_findings_total: Optional[Counter] = None
 analysis_duration_seconds: Optional[Histogram] = None
 
 try:
@@ -67,6 +68,7 @@ try:
         analysis_epss_scores,
         analysis_errors_total,
         analysis_findings_by_type,
+        analysis_findings_total,
         analysis_gridfs_operations_total,
         analysis_kev_vulnerabilities_total,
         analysis_race_conditions_total,
@@ -358,11 +360,15 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     aggregated_findings = aggregator.get_findings()
 
     # Track findings metrics
-    if analysis_findings_by_type:
-        for finding in aggregated_findings:
-            finding_type = finding.type if hasattr(finding, "type") else "unknown"
-            severity = finding.severity if hasattr(finding, "severity") else "unknown"
+    for finding in aggregated_findings:
+        finding_type = finding.type if hasattr(finding, "type") else "unknown"
+        severity = finding.severity if hasattr(finding, "severity") else "unknown"
+        if analysis_findings_by_type:
             analysis_findings_by_type.labels(type=finding_type, severity=severity).inc()
+        if analysis_findings_total:
+            scanners = finding.scanners if hasattr(finding, "scanners") else []
+            for analyzer in scanners:
+                analysis_findings_total.labels(analyzer=analyzer, severity=severity).inc()
 
     # Get aggregated dependency enrichments
     dependency_enrichments = aggregator.get_dependency_enrichments()

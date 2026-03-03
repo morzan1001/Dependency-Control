@@ -7,6 +7,7 @@ import httpx
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, EPSS_API_URL
+from app.core.metrics import external_api_rate_limit_hits_total
 from app.schemas.enrichment import EPSSData
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ class EPSSProvider:
             except httpx.HTTPStatusError as e:
                 last_error = f"HTTP {e.response.status_code}"
                 if e.response.status_code == 429:  # Rate limited
+                    external_api_rate_limit_hits_total.labels(service="EPSS API").inc()
                     wait_time = self._retry_delay * (2**attempt)  # Exponential backoff
                     logger.warning(f"EPSS API rate limited, waiting {wait_time}s")
                     await asyncio.sleep(wait_time)
