@@ -1,10 +1,12 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WAIVER_STATUSES
 from app.models.types import PyObjectId
+
+WAIVER_SCOPES = ("finding", "file", "rule")
 
 
 class WaiverCreate(BaseModel):
@@ -20,9 +22,25 @@ class WaiverCreate(BaseModel):
     package_name: Optional[str] = None
     package_version: Optional[str] = None
     finding_type: Optional[str] = None
+    scope: Literal["finding", "file", "rule"] = Field(
+        "finding",
+        description="'finding' = exact match, 'file' = same rule in same file, 'rule' = same rule project-wide",
+    )
+    rule_id: Optional[str] = Field(
+        None,
+        description="Scanner rule ID (e.g. 'javascript_lang_insufficiently_random_values'). Auto-populated from finding_id.",
+    )
     reason: str
     status: str = WAIVER_STATUS_ACCEPTED_RISK
     expiration_date: Optional[datetime] = None
+
+    @field_validator("package_version", mode="before")
+    @classmethod
+    def normalize_package_version(cls, v: Optional[str]) -> Optional[str]:
+        """Normalize placeholder values to None so waiver queries don't mismatch."""
+        if v in ("Unknown", "UNKNOWN", "unknown", ""):
+            return None
+        return v
 
     @field_validator("status")
     @classmethod

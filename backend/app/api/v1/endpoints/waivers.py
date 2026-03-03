@@ -44,6 +44,16 @@ async def create_waiver(
         if not has_permission(current_user.permissions, Permissions.WAIVER_MANAGE):
             raise HTTPException(status_code=403, detail="Only admins can create global waivers")
 
+    # Auto-populate rule_id for rule-scope waivers
+    if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:
+        from app.services.stats import _extract_rule_prefix
+
+        rule_prefix = _extract_rule_prefix(waiver_in.finding_id, waiver_in.package_name)
+        if rule_prefix:
+            # Strip scanner prefix (e.g. "BEARER-rule_name" → "rule_name")
+            parts = rule_prefix.split("-", 1)
+            waiver_in.rule_id = parts[1] if len(parts) > 1 else rule_prefix
+
     waiver_repo = WaiverRepository(db)
     waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
 

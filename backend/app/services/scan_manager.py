@@ -151,10 +151,29 @@ class ScanManager:
 
         return self._waivers_cache
 
+    @staticmethod
+    def _finding_id_matches(finding: Finding, waiver: Dict[str, Any]) -> bool:
+        """Check if a finding's ID matches a waiver's finding_id considering scope."""
+        from app.services.stats import _extract_rule_prefix, _strip_line_number
+
+        waiver_fid = waiver.get("finding_id")
+        if not waiver_fid or not finding.id:
+            return False
+
+        scope = waiver.get("scope", "finding")
+        if scope == "rule":
+            waiver_rule = _extract_rule_prefix(waiver_fid, waiver.get("package_name", ""))
+            finding_rule = _extract_rule_prefix(finding.id, finding.component)
+            return bool(waiver_rule and finding_rule and waiver_rule == finding_rule)
+        if scope == "file":
+            prefix = _strip_line_number(waiver_fid)
+            finding_prefix = _strip_line_number(finding.id)
+            return bool(prefix and finding_prefix and prefix == finding_prefix)
+        return waiver_fid == finding.id
+
     def _finding_matches_waiver(self, finding: Finding, waiver: Dict[str, Any]) -> bool:
         """Check if a finding matches a waiver."""
-        # Match by finding ID
-        if waiver.get("finding_id") and waiver["finding_id"] == finding.id:
+        if self._finding_id_matches(finding, waiver):
             return True
 
         # Match by finding type

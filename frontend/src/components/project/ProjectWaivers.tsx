@@ -20,6 +20,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import { Badge } from '@/components/ui/badge'
 import { ArrowUp, ArrowDown, Trash2, Loader2 } from 'lucide-react'
 import { toast } from "sonner"
 import { useDebounce } from '@/hooks/use-debounce'
@@ -176,7 +177,16 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                         <TableBody>
                             {allWaivers.map((waiver: Waiver) => (
                                 <TableRow key={waiver.id}>
-                                    <TableCell className="font-mono">{waiver.finding_id || "Any"}</TableCell>
+                                    <TableCell className="font-mono">
+                                        <div className="flex items-center gap-1.5">
+                                            {waiver.finding_id || "Any"}
+                                            {waiver.scope === 'file' && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Entire file</Badge>}
+                                            {waiver.scope === 'rule' && <Badge variant="default" className="text-[10px] px-1.5 py-0">All files</Badge>}
+                                        </div>
+                                        {waiver.scope === 'rule' && waiver.rule_id && (
+                                            <span className="text-[11px] text-muted-foreground">Rule: {waiver.rule_id}</span>
+                                        )}
+                                    </TableCell>
                                     <TableCell>
                                         {waiver.package_name}
                                         {waiver.package_version && <span className="text-muted-foreground ml-1">v{waiver.package_version}</span>}

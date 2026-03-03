@@ -124,3 +124,29 @@ class TestPresets:
         # Ensure consistency between Permissions class and ALL_PERMISSIONS list
         perm_attrs = [v for k, v in vars(Permissions).items() if not k.startswith("_") and isinstance(v, str)]
         assert set(perm_attrs) == set(ALL_PERMISSIONS)
+
+    # Archive permission tests
+    def test_admin_has_all_archive_permissions(self):
+        archive_perms = [
+            Permissions.ARCHIVE_READ,
+            Permissions.ARCHIVE_RESTORE,
+            Permissions.ARCHIVE_DOWNLOAD,
+            Permissions.ARCHIVE_READ_ALL,
+        ]
+        assert all(p in PRESET_ADMIN for p in archive_perms)
+
+    def test_user_has_archive_read_and_download(self):
+        assert Permissions.ARCHIVE_READ in PRESET_USER
+        assert Permissions.ARCHIVE_DOWNLOAD in PRESET_USER
+
+    def test_user_cannot_restore_archives(self):
+        assert Permissions.ARCHIVE_RESTORE not in PRESET_USER
+
+    def test_user_cannot_read_all_archives(self):
+        assert Permissions.ARCHIVE_READ_ALL not in PRESET_USER
+
+    def test_viewer_has_archive_read_only(self):
+        assert Permissions.ARCHIVE_READ in PRESET_VIEWER
+        assert Permissions.ARCHIVE_RESTORE not in PRESET_VIEWER
+        assert Permissions.ARCHIVE_DOWNLOAD not in PRESET_VIEWER
+        assert Permissions.ARCHIVE_READ_ALL not in PRESET_VIEWER

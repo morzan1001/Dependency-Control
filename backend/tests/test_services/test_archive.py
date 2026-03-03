@@ -274,6 +274,50 @@ class TestArchiveScan:
         assert result is None
         mock_repo.create.assert_not_called()
 
+    def test_populates_extended_metadata_fields(self):
+        scan_doc = _make_scan_doc(sbom_refs=[
+            {"type": "gridfs_reference", "gridfs_id": "gfs-1"},
+        ])
+        findings = [
+            {"_id": "f-1", "scan_id": "scan-1", "severity": "CRITICAL"},
+            {"_id": "f-2", "scan_id": "scan-1", "severity": "HIGH"},
+            {"_id": "f-3", "scan_id": "scan-1", "severity": "HIGH"},
+            {"_id": "f-4", "scan_id": "scan-1", "severity": "MEDIUM"},
+        ]
+        dependencies = [
+            {"_id": "d-1", "scan_id": "scan-1", "purl": "pkg:pypi/requests@2.31.0"},
+            {"_id": "d-2", "scan_id": "scan-1", "purl": "pkg:pypi/flask@3.0.0"},
+        ]
+
+        db = _make_mock_db(
+            scan_doc=scan_doc,
+            findings=findings,
+            dependencies=dependencies,
+        )
+
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
+        mock_repo.create = AsyncMock(side_effect=lambda m: m)
+
+        mock_sbom_data = [{"gridfs_id": "gfs-1", "filename": "sbom.json", "data": {"bomFormat": "CycloneDX"}}]
+
+        with (
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock),
+            patch(f"{MODULE}._load_gridfs_sboms", new_callable=AsyncMock, return_value=mock_sbom_data),
+            patch(f"{MODULE}.settings") as mock_settings,
+        ):
+            mock_settings.S3_BUCKET_NAME = "dc-archives"
+            result = asyncio.run(archive_scan(db, "scan-1"))
+
+        assert result is not None
+        assert result.findings_count == 4
+        assert result.critical_findings_count == 1
+        assert result.high_findings_count == 2
+        assert result.dependencies_count == 2
+        assert result.sbom_filenames == ["sbom.json"]
+
     def test_includes_gridfs_sboms_in_bundle(self):
         scan_doc = _make_scan_doc(sbom_refs=[
             {"type": "gridfs_reference", "gridfs_id": "gfs-1"},
@@ -407,12 +451,12 @@ class TestRestoreScan:
             result = asyncio.run(restore_scan(db, "scan-1"))
 
         assert result is not None
-        assert result["scan_id"] == "scan-1"
-        assert result["project_id"] == "proj-1"
-        assert "scans" in result["collections_restored"]
-        assert "findings" in result["collections_restored"]
-        assert "finding_records" in result["collections_restored"]
-        assert "dependencies" in result["collections_restored"]
+        assert result.scan_id == "scan-1"
+        assert result.project_id == "proj-1"
+        assert "scans" in result.collections_restored
+        assert "findings" in result.collections_restored
+        assert "finding_records" in result.collections_restored
+        assert "dependencies" in result.collections_restored
 
         db.scans.insert_one.assert_called_once()
         db.findings.insert_many.assert_called_once()
@@ -420,6 +464,41 @@ class TestRestoreScan:
         db.dependencies.insert_many.assert_called_once()
         mock_delete_s3.assert_called_once_with("proj-1/scan-1.json.gz")
         mock_repo.delete_by_scan_id.assert_called_once_with("scan-1")
+
+    def test_restored_scan_is_pinned(self):
+        metadata = _make_archive_metadata()
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
+
+        bundle = {
+            "version": 1,
+            "scan": {"_id": "scan-1", "project_id": "proj-1", "status": "completed"},
+            "findings": [],
+            "finding_records": [],
+            "dependencies": [],
+            "analysis_results": [],
+            "callgraphs": [],
+            "gridfs_sboms": [],
+        }
+        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
+
+        db = MagicMock()
+        db.scans.find_one = AsyncMock(return_value=None)
+        db.scans.insert_one = AsyncMock()
+
+        with (
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=compressed),
+            patch(f"{MODULE}.delete_object", new_callable=AsyncMock),
+        ):
+            result = asyncio.run(restore_scan(db, "scan-1"))
+
+        assert result is not None
+        # Verify the scan doc was inserted with pinned=True
+        inserted_doc = db.scans.insert_one.call_args[0][0]
+        assert inserted_doc["pinned"] is True
 
     def test_restore_handles_gridfs_sboms(self):
         metadata = _make_archive_metadata()
@@ -458,7 +537,7 @@ class TestRestoreScan:
             result = asyncio.run(restore_scan(db, "scan-1"))
 
         assert result is not None
-        assert "gridfs_sboms" in result["collections_restored"]
+        assert "gridfs_sboms" in result.collections_restored
         mock_fs.upload_from_stream_with_id.assert_called_once()
 
     def test_restore_continues_if_s3_delete_fails(self):
@@ -493,7 +572,7 @@ class TestRestoreScan:
 
         # Restore should still succeed even if S3 cleanup fails
         assert result is not None
-        assert result["scan_id"] == "scan-1"
+        assert result.scan_id == "scan-1"
         mock_repo.delete_by_scan_id.assert_called_once()
 
 
@@ -594,7 +673,7 @@ class TestRestoreScanEncryption:
 
         assert result is not None
         mock_decrypt.assert_called_once_with(b"encrypted-blob")
-        assert result["scan_id"] == "scan-1"
+        assert result.scan_id == "scan-1"
 
     def test_restores_without_encryption(self):
         metadata = _make_archive_metadata()
@@ -630,4 +709,4 @@ class TestRestoreScanEncryption:
 
         assert result is not None
         mock_decrypt.assert_not_called()
-        assert result["scan_id"] == "scan-1"
+        assert result.scan_id == "scan-1"

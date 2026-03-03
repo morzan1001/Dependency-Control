@@ -23,6 +23,8 @@ class Waiver(BaseModel):
     package_version: Optional[str] = None  # e.g. "2.26.0"
     finding_type: Optional[FindingType] = None  # e.g. "vulnerability", "license", "malware", "eol"
     vulnerability_id: Optional[str] = None  # e.g. "CVE-2021-23337"
+    scope: str = "finding"  # "finding" = exact, "file" = same rule+file, "rule" = same rule project-wide
+    rule_id: Optional[str] = None  # e.g. "javascript_lang_insufficiently_random_values"
 
     reason: str
     status: str = WAIVER_STATUS_ACCEPTED_RISK

@@ -1,31 +1,14 @@
 import { useState, useMemo } from 'react'
-import { projectApi } from '@/api/projects'
-import { useProjectArchives, useRestoreArchive, useArchiveBranches } from '@/hooks/queries/use-projects'
-import { useAuth } from '@/context/useAuth'
+import { Link } from 'react-router-dom'
+import { useAdminArchives } from '@/hooks/queries/use-archives'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, Archive, RotateCcw, Download, GitBranch, GitCommit, AlertTriangle, Package, FileText } from 'lucide-react'
-import { toast } from "sonner"
-import { getErrorMessage, formatDateTime, shortCommitHash } from '@/lib/utils'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { ChevronLeft, ChevronRight, Archive, GitBranch, GitCommit, Package, FileText } from 'lucide-react'
+import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import {
   Tooltip,
   TooltipContent,
@@ -33,10 +16,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import type { ArchiveFilters } from '@/types/archive'
-
-interface ProjectArchivesProps {
-  projectId: string
-}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -46,67 +25,22 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
-export function ProjectArchives({ projectId }: ProjectArchivesProps) {
+export default function ArchivesPage() {
   const [page, setPage] = useState(1)
-  const [restoreScanId, setRestoreScanId] = useState<string | null>(null)
-  const [branchFilter, setBranchFilter] = useState<string>('')
-  const [dateFrom, setDateFrom] = useState<string>('')
-  const [dateTo, setDateTo] = useState<string>('')
+  const [branchFilter, setBranchFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const size = 20
 
-  const { hasPermission } = useAuth()
-  const canRestore = hasPermission('archive:restore')
-  const canDownload = hasPermission('archive:download')
-
-  const filters: ArchiveFilters | undefined = useMemo(() => {
-    const f: ArchiveFilters = {}
+  const filters: (ArchiveFilters & { project_id?: string }) | undefined = useMemo(() => {
+    const f: ArchiveFilters & { project_id?: string } = {}
     if (branchFilter) f.branch = branchFilter
     if (dateFrom) f.date_from = new Date(dateFrom).toISOString()
     if (dateTo) f.date_to = new Date(dateTo + 'T23:59:59').toISOString()
     return Object.keys(f).length > 0 ? f : undefined
   }, [branchFilter, dateFrom, dateTo])
 
-  const { data, isLoading } = useProjectArchives(projectId, page, size, filters)
-  const { data: branches } = useArchiveBranches(projectId)
-  const restoreMutation = useRestoreArchive()
-
-  const handleRestore = () => {
-    if (!restoreScanId) return
-    restoreMutation.mutate(
-      { projectId, scanId: restoreScanId },
-      {
-        onSuccess: (result) => {
-          toast.success("Archive restored", {
-            description: `${result.message} The scan is now pinned and protected from housekeeping.`,
-          })
-          setRestoreScanId(null)
-        },
-        onError: (error) => {
-          toast.error("Restore failed", {
-            description: getErrorMessage(error),
-          })
-        },
-      }
-    )
-  }
-
-  const handleDownload = async (scanId: string) => {
-    try {
-      const blob = await projectApi.downloadArchive(projectId, scanId)
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `archive-${scanId}.json.gz`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      a.remove()
-    } catch (error) {
-      toast.error("Download failed", {
-        description: getErrorMessage(error),
-      })
-    }
-  }
+  const { data, isLoading } = useAdminArchives(page, size, filters)
 
   const clearFilters = () => {
     setBranchFilter('')
@@ -117,63 +51,42 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
 
   const hasActiveFilters = branchFilter || dateFrom || dateTo
 
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Archives</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {[...Array(3)].map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  const archives = data?.items || []
-  const totalPages = data?.pages || 1
-
   return (
-    <>
+    <div className="container mx-auto py-10 space-y-8">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Archives</h1>
+        <p className="text-muted-foreground">
+          Overview of all archived scans across all projects.
+        </p>
+      </div>
+
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Archive className="h-5 w-5" />
-                Archives
-              </CardTitle>
-              <CardDescription>
-                Archived scan data stored in S3. You can restore or download archived scans.
-              </CardDescription>
-            </div>
-          </div>
+          <CardTitle className="flex items-center gap-2">
+            <Archive className="h-5 w-5" />
+            All Archived Scans
+          </CardTitle>
+          <CardDescription>
+            Browse archived scan data across all projects. Navigate to a project to restore or download archives.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {/* Filters */}
           <div className="flex flex-wrap items-end gap-3 mb-4">
-            <div className="w-48">
-              <label htmlFor="archive-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>
-              <Select value={branchFilter} onValueChange={(v) => { setBranchFilter(v === '_all' ? '' : v); setPage(1) }}>
-                <SelectTrigger id="archive-branch-filter">
-                  <SelectValue placeholder="All branches" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_all">All branches</SelectItem>
-                  {(branches || []).map((b) => (
-                    <SelectItem key={b} value={b}>{b}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div>
+              <label htmlFor="admin-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>
+              <Input
+                id="admin-branch-filter"
+                placeholder="Filter by branch..."
+                value={branchFilter}
+                onChange={(e) => { setBranchFilter(e.target.value); setPage(1) }}
+                className="w-48"
+              />
             </div>
             <div>
-              <label htmlFor="archive-date-from" className="text-xs font-medium text-muted-foreground mb-1 block">From</label>
+              <label htmlFor="admin-date-from" className="text-xs font-medium text-muted-foreground mb-1 block">From</label>
               <Input
-                id="archive-date-from"
+                id="admin-date-from"
                 type="date"
                 value={dateFrom}
                 onChange={(e) => { setDateFrom(e.target.value); setPage(1) }}
@@ -181,9 +94,9 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
               />
             </div>
             <div>
-              <label htmlFor="archive-date-to" className="text-xs font-medium text-muted-foreground mb-1 block">To</label>
+              <label htmlFor="admin-date-to" className="text-xs font-medium text-muted-foreground mb-1 block">To</label>
               <Input
-                id="archive-date-to"
+                id="admin-date-to"
                 type="date"
                 value={dateTo}
                 onChange={(e) => { setDateTo(e.target.value); setPage(1) }}
@@ -197,14 +110,20 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
             )}
           </div>
 
-          {archives.length === 0 ? (
+          {isLoading ? (
+            <div className="space-y-2">
+              {[...Array(5)].map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
+          ) : (data?.items || []).length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Archive className="h-12 w-12 mx-auto mb-3 opacity-30" />
               <p>No archived scans found.</p>
               <p className="text-sm mt-1">
                 {hasActiveFilters
                   ? 'Try adjusting your filters.'
-                  : 'Scans will appear here when data retention archiving is enabled.'}
+                  : 'Archives will appear here when data retention archiving is active.'}
               </p>
             </div>
           ) : (
@@ -212,6 +131,7 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>Project</TableHead>
                     <TableHead>Branch</TableHead>
                     <TableHead>Commit</TableHead>
                     <TableHead>Scan Date</TableHead>
@@ -219,12 +139,20 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
                     <TableHead>Deps</TableHead>
                     <TableHead>SBOMs</TableHead>
                     <TableHead>Size</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead>Archived At</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {archives.map((archive) => (
+                  {(data?.items || []).map((archive) => (
                     <TableRow key={archive.id}>
+                      <TableCell>
+                        <Link
+                          to={`/projects/${archive.project_id}`}
+                          className="text-sm font-medium text-primary hover:underline"
+                        >
+                          {archive.project_name || archive.project_id}
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1.5">
                           <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
@@ -289,39 +217,18 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
                       <TableCell className="text-sm">
                         {formatBytes(archive.compressed_size_bytes)}
                       </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          {canDownload && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title="Download archive"
-                              onClick={() => handleDownload(archive.scan_id)}
-                            >
-                              <Download className="h-4 w-4" />
-                            </Button>
-                          )}
-                          {canRestore && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title="Restore to database (pinned)"
-                              onClick={() => setRestoreScanId(archive.scan_id)}
-                            >
-                              <RotateCcw className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
+                      <TableCell className="text-sm">
+                        {formatDateTime(archive.archived_at)}
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
 
-              {totalPages > 1 && (
+              {(data?.pages || 1) > 1 && (
                 <div className="flex items-center justify-between pt-4">
                   <p className="text-sm text-muted-foreground">
-                    Page {page} of {totalPages} ({data?.total} total)
+                    Page {page} of {data?.pages} ({data?.total} total)
                   </p>
                   <div className="flex items-center gap-2">
                     <Button
@@ -335,8 +242,8 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                      disabled={page >= totalPages}
+                      onClick={() => setPage(p => Math.min(data?.pages || 1, p + 1))}
+                      disabled={page >= (data?.pages || 1)}
                     >
                       <ChevronRight className="h-4 w-4" />
                     </Button>
@@ -347,32 +254,6 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
           )}
         </CardContent>
       </Card>
-
-      <Dialog open={!!restoreScanId} onOpenChange={(open) => !open && setRestoreScanId(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Restore Archive</DialogTitle>
-            <DialogDescription>
-              This will restore the archived scan data back into the database and remove it from S3 storage.
-              The restored scan will be <strong>pinned</strong> to prevent housekeeping from re-archiving it.
-              You can unpin it later to allow normal retention processing.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950 rounded-md text-sm text-amber-800 dark:text-amber-200">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-            <span>The scan and all related data (findings, dependencies, analysis results) will be available again.</span>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRestoreScanId(null)}>Cancel</Button>
-            <Button
-              onClick={handleRestore}
-              disabled={restoreMutation.isPending}
-            >
-              {restoreMutation.isPending ? "Restoring..." : "Restore"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+    </div>
   )
 }

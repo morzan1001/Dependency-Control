@@ -20,6 +20,7 @@ from app.core.encryption import decrypt, encrypt, is_encryption_enabled
 from app.core.s3 import delete_object, download_bytes, is_archive_enabled, upload_bytes
 from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
+from app.schemas.archive import ArchiveRestoreResponse
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,15 @@ async def archive_scan(
         scan_status=scan_doc.get("status"),
         original_size_bytes=len(json_bytes),
         compressed_size_bytes=len(compressed),
+        findings_count=len(findings),
+        critical_findings_count=sum(
+            1 for f in findings if f.get("severity") == "CRITICAL"
+        ),
+        high_findings_count=sum(
+            1 for f in findings if f.get("severity") == "HIGH"
+        ),
+        dependencies_count=len(dependencies),
+        sbom_filenames=[s["filename"] for s in gridfs_sboms if s.get("filename")],
     )
 
     await repo.create(metadata)
@@ -194,7 +204,7 @@ async def archive_scan(
 async def restore_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> Optional[ArchiveRestoreResponse]:
     """
     Restore a scan and all related data from S3 archive back to MongoDB.
 
@@ -242,6 +252,7 @@ async def restore_scan(
             logger.warning(f"Scan {scan_id} already exists in MongoDB. Skipping restore.")
             return None
 
+        scan_doc["pinned"] = True
         await db.scans.insert_one(scan_doc)
         collections_restored.append("scans")
 
@@ -298,8 +309,8 @@ async def restore_scan(
         f"Restored scan {scan_id} from archive. Collections: {collections_restored}"
     )
 
-    return {
-        "scan_id": scan_id,
-        "project_id": metadata.project_id,
-        "collections_restored": collections_restored,
-    }
+    return ArchiveRestoreResponse(
+        scan_id=scan_id,
+        project_id=metadata.project_id,
+        collections_restored=collections_restored,
+    )

@@ -1,6 +1,7 @@
 import logging
 import os
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Union
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -22,6 +23,45 @@ _WAIVER_FIELD_MAP = {
 }
 
 
+def _strip_line_number(finding_id: str) -> Optional[str]:
+    """Strip the trailing line number from a SAST finding ID to get the file-level prefix.
+
+    SAST finding IDs end with ``-<line_number>``.  Stripping that suffix
+    lets us match all findings for the same rule + file regardless of line.
+
+    Example:
+        ``BEARER-rule_id-src/file.js-102`` → ``BEARER-rule_id-src/file.js``
+    """
+    parts = finding_id.rsplit("-", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0]
+    return None
+
+
+def _extract_rule_prefix(finding_id: str, component: str) -> Optional[str]:
+    """Extract the scanner+rule prefix from a SAST/IAC finding ID.
+
+    Given ``finding_id = {SCANNER}-{rule_id}-{file_path}-{line}``
+    and ``component = {file_path}``, returns ``{SCANNER}-{rule_id}``.
+
+    Used by "rule" scope waivers to match all findings for the same rule
+    across all files in a project.
+
+    Example:
+        ``_extract_rule_prefix(
+            "BEARER-javascript_lang_insufficiently_random_values-src/file.js-102",
+            "src/file.js",
+        )`` → ``"BEARER-javascript_lang_insufficiently_random_values"``
+    """
+    file_prefix = _strip_line_number(finding_id)
+    if not file_prefix:
+        return None
+    suffix = f"-{component}"
+    if file_prefix.endswith(suffix):
+        return file_prefix[: -len(suffix)]
+    return None
+
+
 async def _resolve_active_scan_id(
     db: AsyncIOMotorDatabase, project_id: str, scan_id: str, deleted_branches: List[str]
 ) -> Optional[str]:
@@ -41,13 +81,42 @@ async def _resolve_active_scan_id(
     return active_scan["_id"] if active_scan else None
 
 
-def _build_waiver_query(waiver: Dict[str, Any]) -> Dict[str, str]:
+def _resolve_finding_id_query(
+    finding_id: str, scope: str, component: str,
+) -> str | Dict[str, str]:
+    """Resolve the MongoDB query value for ``finding_id`` based on waiver scope."""
+    if scope == "file":
+        prefix = _strip_line_number(finding_id)
+        if prefix:
+            return {"$regex": f"^{re.escape(prefix)}-\\d+$"}
+    elif scope == "rule":
+        rule_prefix = _extract_rule_prefix(finding_id, component)
+        if rule_prefix:
+            return {"$regex": f"^{re.escape(rule_prefix)}-"}
+    return finding_id
+
+
+def _build_waiver_query(waiver: Dict[str, Any]) -> Dict[str, Union[str, Dict[str, str]]]:
     """Build a finding query dict from a waiver's matching fields."""
-    query: Dict[str, str] = {}
+    scope = waiver.get("scope", "finding")
+    query: Dict[str, Union[str, Dict[str, str]]] = {}
+
     for waiver_field, query_field in _WAIVER_FIELD_MAP.items():
         value = waiver.get(waiver_field)
-        if value:
+        if not value or value == "Unknown":
+            continue
+
+        # Rule-scope waivers must NOT filter by component (match all files)
+        if waiver_field == "package_name" and scope == "rule":
+            continue
+
+        if waiver_field == "finding_id" and scope in ("file", "rule"):
+            query[query_field] = _resolve_finding_id_query(
+                value, scope, waiver.get("package_name", ""),
+            )
+        else:
             query[query_field] = value
+
     return query
 
 

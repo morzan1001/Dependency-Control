@@ -1,5 +1,7 @@
 import { FindingType } from './scan';
 
+export type WaiverScope = 'finding' | 'file' | 'rule';
+
 export interface WaiverCreate {
   project_id?: string;
   finding_id?: string;
@@ -7,6 +9,8 @@ export interface WaiverCreate {
   package_name?: string;
   package_version?: string;
   finding_type?: FindingType;
+  scope?: WaiverScope;
+  rule_id?: string;
   reason: string;
   expiration_date?: string;
 }
@@ -18,6 +22,8 @@ export interface Waiver {
   package_name?: string;
   package_version?: string;
   finding_type?: FindingType;
+  scope?: WaiverScope;
+  rule_id?: string;
   reason: string;
   expiration_date?: string;
   created_at: string;

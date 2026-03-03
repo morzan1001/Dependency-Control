@@ -52,6 +52,11 @@ class Permissions:
     WEBHOOK_UPDATE = "webhook:update"
     WEBHOOK_DELETE = "webhook:delete"
 
+    ARCHIVE_READ = "archive:read"
+    ARCHIVE_RESTORE = "archive:restore"
+    ARCHIVE_DOWNLOAD = "archive:download"
+    ARCHIVE_READ_ALL = "archive:read_all"
+
 
 # All permissions in the system (excluding internal/special permissions like auth:setup_2fa)
 ALL_PERMISSIONS: List[str] = [
@@ -96,6 +101,11 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.WEBHOOK_READ,
     Permissions.WEBHOOK_UPDATE,
     Permissions.WEBHOOK_DELETE,
+    # Archives
+    Permissions.ARCHIVE_READ,
+    Permissions.ARCHIVE_RESTORE,
+    Permissions.ARCHIVE_DOWNLOAD,
+    Permissions.ARCHIVE_READ_ALL,
 ]
 
 # Admin: All permissions
@@ -122,6 +132,9 @@ PRESET_USER: List[str] = [
     Permissions.ANALYTICS_RECOMMENDATIONS,
     # Waivers - can view own waivers
     Permissions.WAIVER_READ,
+    # Archives - can view and download archives for accessible projects
+    Permissions.ARCHIVE_READ,
+    Permissions.ARCHIVE_DOWNLOAD,
     # Webhooks - managed via project roles (admin), no global override needed
 ]
 
@@ -138,6 +151,8 @@ PRESET_VIEWER: List[str] = [
     Permissions.ANALYTICS_SUMMARY,
     # Waivers - can view waivers
     Permissions.WAIVER_READ,
+    # Archives - can view archives
+    Permissions.ARCHIVE_READ,
 ]
 
 PERMISSION_GROUPS = [
@@ -359,6 +374,33 @@ PERMISSION_GROUPS = [
                 "id": Permissions.WEBHOOK_DELETE,
                 "name": "Delete Webhooks",
                 "description": "Delete webhooks",
+            },
+        ],
+    },
+    {
+        "id": "archive",
+        "name": "Archives",
+        "description": "Permissions for managing scan archives",
+        "permissions": [
+            {
+                "id": Permissions.ARCHIVE_READ,
+                "name": "Read Archives",
+                "description": "View archived scans for accessible projects",
+            },
+            {
+                "id": Permissions.ARCHIVE_RESTORE,
+                "name": "Restore Archives",
+                "description": "Restore archived scans back to the database",
+            },
+            {
+                "id": Permissions.ARCHIVE_DOWNLOAD,
+                "name": "Download Archives",
+                "description": "Download archived scan bundles",
+            },
+            {
+                "id": Permissions.ARCHIVE_READ_ALL,
+                "name": "Read All Archives",
+                "description": "View archives across all projects",
             },
         ],
     },

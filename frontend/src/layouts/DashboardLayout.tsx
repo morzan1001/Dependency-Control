@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context'
@@ -49,6 +49,12 @@ export default function DashboardLayout() {
       label: 'Users',
       icon: UserCog,
       show: hasPermission('user:read_all')
+    },
+    {
+      href: '/archives',
+      label: 'Archives',
+      icon: Archive,
+      show: hasPermission('archive:read_all')
     },
     {
       href: '/broadcasts',

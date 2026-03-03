@@ -248,6 +248,41 @@ class TestRunHousekeepingArchive:
         # but the condition `retention_action != "none"` in run_housekeeping prevents it
         mock_handle.assert_not_called()
 
+    def test_global_mode_excludes_pinned_scans(self):
+        from app.core.housekeeping import run_housekeeping
+
+        mock_settings = MagicMock()
+        mock_settings.retention_mode = "global"
+        mock_settings.global_retention_days = 30
+        mock_settings.global_retention_action = "archive"
+
+        mock_repo = MagicMock()
+        mock_repo.get = AsyncMock(return_value=mock_settings)
+
+        mock_scan_doc = {"_id": "scan-1"}
+        mock_cursor = MagicMock()
+
+        async def async_iter():
+            yield mock_scan_doc
+
+        mock_cursor.__aiter__ = lambda self: async_iter()
+        mock_db = MagicMock()
+        mock_db.scans.find = MagicMock(return_value=mock_cursor)
+
+        with (
+            patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
+            patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
+            patch(f"{MODULE}._get_referenced_scan_ids", new_callable=AsyncMock, return_value=[]),
+            patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock),
+        ):
+            asyncio.run(run_housekeeping())
+
+        # Verify the query includes "pinned": {"$ne": True}
+        find_call = mock_db.scans.find.call_args
+        query = find_call[0][0]
+        assert "pinned" in query
+        assert query["pinned"] == {"$ne": True}
+
     def test_global_mode_zero_retention_days_skips(self):
         from app.core.housekeeping import run_housekeeping
 

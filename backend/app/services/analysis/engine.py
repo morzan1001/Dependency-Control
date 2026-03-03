@@ -559,13 +559,19 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
     # Apply waivers via DB updates
+    from app.services.stats import _resolve_finding_id_query
+
     for waiver in active_waivers:
-        query = {"scan_id": scan_id}
+        query: Dict[str, Any] = {"scan_id": scan_id}
+        scope = waiver.get("scope", "finding")
+
         if waiver.get("finding_id"):
-            query["finding_id"] = waiver["finding_id"]
-        if waiver.get("package_name"):
+            query["finding_id"] = _resolve_finding_id_query(
+                waiver["finding_id"], scope, waiver.get("package_name", ""),
+            )
+        if waiver.get("package_name") and scope != "rule":
             query["component"] = waiver["package_name"]
-        if waiver.get("package_version"):
+        if waiver.get("package_version") and waiver["package_version"] != "Unknown":
             query["version"] = waiver["package_version"]
         if waiver.get("finding_type"):
             query["type"] = waiver["finding_type"]

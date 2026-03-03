@@ -37,6 +37,13 @@ class ArchiveMetadata(BaseModel):
     original_size_bytes: Optional[int] = None
     compressed_size_bytes: Optional[int] = None
 
+    # Content summary (for listing without downloading)
+    findings_count: int = 0
+    critical_findings_count: int = 0
+    high_findings_count: int = 0
+    dependencies_count: int = 0
+    sbom_filenames: List[str] = Field(default_factory=list)
+
     # Collections included in the archive bundle
     collections_included: List[str] = Field(
         default_factory=lambda: [

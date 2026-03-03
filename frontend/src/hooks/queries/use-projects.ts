@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { projectApi } from '@/api/projects';
 import { ProjectCreate, ProjectUpdate, ProjectNotificationSettings } from '@/types/project';
+import type { ArchiveFilters } from '@/types/archive';
 import type { ApiError } from '@/api/client';
 import { DROPDOWN_PAGE_SIZE } from '@/lib/constants';
 
@@ -22,7 +23,8 @@ export const projectKeys = {
   details: () => [...projectKeys.all, 'detail'] as const,
   detail: (id: string) => [...projectKeys.details(), id] as const,
   branches: (id: string) => [...projectKeys.detail(id), 'branches'] as const,
-  archives: (id: string, page: number) => [...projectKeys.detail(id), 'archives', page] as const,
+  archives: (id: string, page: number, filters?: ArchiveFilters) => [...projectKeys.detail(id), 'archives', page, filters] as const,
+  archiveBranches: (id: string) => [...projectKeys.detail(id), 'archive-branches'] as const,
 };
 
 export const useProjects = (
@@ -158,12 +160,21 @@ export const useTransferOwnership = () => {
     })
 }
 
-export const useProjectArchives = (projectId: string, page: number = 1, size: number = 20) => {
+export const useProjectArchives = (projectId: string, page: number = 1, size: number = 20, filters?: ArchiveFilters) => {
     return useQuery({
-        queryKey: projectKeys.archives(projectId, page),
-        queryFn: () => projectApi.getArchives(projectId, page, size),
+        queryKey: projectKeys.archives(projectId, page, filters),
+        queryFn: () => projectApi.getArchives(projectId, page, size, filters),
         enabled: !!projectId,
         placeholderData: keepPreviousData,
+    });
+};
+
+export const useArchiveBranches = (projectId: string) => {
+    return useQuery({
+        queryKey: projectKeys.archiveBranches(projectId),
+        queryFn: () => projectApi.getArchiveBranches(projectId),
+        enabled: !!projectId,
+        staleTime: 5 * 60 * 1000,
     });
 };
 
@@ -175,6 +186,28 @@ export const useRestoreArchive = () => {
         onSuccess: (_, { projectId }) => {
             queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
             queryClient.invalidateQueries({ queryKey: [...projectKeys.detail(projectId), 'archives'] });
+        },
+    });
+};
+
+export const usePinScan = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ projectId, scanId }: { projectId: string; scanId: string }) =>
+            projectApi.pinScan(projectId, scanId),
+        onSuccess: (_, { projectId }) => {
+            queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
+        },
+    });
+};
+
+export const useUnpinScan = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ projectId, scanId }: { projectId: string; scanId: string }) =>
+            projectApi.unpinScan(projectId, scanId),
+        onSuccess: (_, { projectId }) => {
+            queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
         },
     });
 };

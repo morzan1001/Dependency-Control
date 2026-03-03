@@ -19,6 +19,7 @@ import SystemSettings from './pages/SystemSettings'
 import Broadcasts from './pages/Broadcasts'
 import SearchPage from './pages/Search'
 import AnalyticsPage from './pages/Analytics'
+import ArchivesPage from './pages/Archives'
 import DashboardLayout from './layouts/DashboardLayout'
 import { AuthProvider, RequirePermission, useAuth } from './context'
 import { Toaster } from "@/components/ui/sonner"
@@ -183,6 +184,11 @@ function AppRoutes() {
         <Route path="/broadcasts" element={
           <RequirePermission permission={['notifications:broadcast', 'system:manage']}>
             <Broadcasts />
+          </RequirePermission>
+        } />
+        <Route path="/archives" element={
+          <RequirePermission permission="archive:read_all">
+            <ArchivesPage />
           </RequirePermission>
         } />
         {/* Add other routes here */}

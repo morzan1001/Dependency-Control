@@ -1,6 +1,6 @@
 import { api, buildQueryParams } from '@/api/client';
 import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings, ProjectMember, BranchInfo } from '@/types/project';
-import { ArchiveListResponse, ArchiveRestoreResponse } from '@/types/archive';
+import { ArchiveListResponse, ArchiveRestoreResponse, ArchiveFilters } from '@/types/archive';
 
 export const projectApi = {
   getAll: async (
@@ -80,9 +80,24 @@ export const projectApi = {
     return response.data;
   },
 
-  getArchives: async (projectId: string, page: number = 1, size: number = 20): Promise<ArchiveListResponse> => {
-    const params = buildQueryParams({ page, size });
+  getArchives: async (
+    projectId: string,
+    page: number = 1,
+    size: number = 20,
+    filters?: ArchiveFilters,
+  ): Promise<ArchiveListResponse> => {
+    const params = buildQueryParams({
+      page, size,
+      branch: filters?.branch,
+      date_from: filters?.date_from,
+      date_to: filters?.date_to,
+    });
     const response = await api.get<ArchiveListResponse>(`/projects/${projectId}/archives`, { params });
+    return response.data;
+  },
+
+  getArchiveBranches: async (projectId: string): Promise<string[]> => {
+    const response = await api.get<string[]>(`/projects/${projectId}/archives/branches`);
     return response.data;
   },
 
@@ -93,6 +108,16 @@ export const projectApi = {
 
   downloadArchive: async (projectId: string, scanId: string): Promise<Blob> => {
     const response = await api.get(`/projects/${projectId}/archives/${scanId}/download`, { responseType: 'blob' });
+    return response.data;
+  },
+
+  pinScan: async (projectId: string, scanId: string): Promise<{ scan_id: string; pinned: boolean }> => {
+    const response = await api.post<{ scan_id: string; pinned: boolean }>(`/projects/${projectId}/scans/${scanId}/pin`);
+    return response.data;
+  },
+
+  unpinScan: async (projectId: string, scanId: string): Promise<{ scan_id: string; pinned: boolean }> => {
+    const response = await api.post<{ scan_id: string; pinned: boolean }>(`/projects/${projectId}/scans/${scanId}/unpin`);
     return response.data;
   },
 };

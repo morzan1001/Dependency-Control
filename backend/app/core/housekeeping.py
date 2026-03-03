@@ -353,6 +353,7 @@ async def run_housekeeping() -> None:
                     {
                         "created_at": {"$lt": cutoff_date},
                         "_id": {"$nin": referenced_scan_ids},
+                        "pinned": {"$ne": True},
                     },
                     {"_id": 1},
                 )
@@ -404,6 +405,7 @@ async def run_housekeeping() -> None:
                         "project_id": {"$in": project_ids},
                         "created_at": {"$lt": cutoff_date},
                         "_id": {"$nin": referenced_scan_ids},
+                        "pinned": {"$ne": True},
                     },
                     {"_id": 1},
                 )

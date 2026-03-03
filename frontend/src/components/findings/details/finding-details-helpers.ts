@@ -2,5 +2,5 @@ import type { Finding } from '@/types/scan'
 
 export const getFindingTitle = (finding: Finding) => finding.id || 'Finding Details'
 export const getFindingPackage = (finding: Finding) => finding.component || 'Unknown'
-export const getFindingVersion = (finding: Finding) => finding.version || 'Unknown'
+export const getFindingVersion = (finding: Finding) => finding.version || undefined
 export const getFindingId = (finding: Finding) => finding.id
