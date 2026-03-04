@@ -20,6 +20,7 @@ import Broadcasts from './pages/Broadcasts'
 import SearchPage from './pages/Search'
 import AnalyticsPage from './pages/Analytics'
 import ArchivesPage from './pages/Archives'
+import GlobalWaivers from './pages/GlobalWaivers'
 import DashboardLayout from './layouts/DashboardLayout'
 import { AuthProvider, RequirePermission, useAuth } from './context'
 import { Toaster } from "@/components/ui/sonner"
@@ -189,6 +190,11 @@ function AppRoutes() {
         <Route path="/archives" element={
           <RequirePermission permission="archive:read_all">
             <ArchivesPage />
+          </RequirePermission>
+        } />
+        <Route path="/waivers" element={
+          <RequirePermission permission="waiver:manage">
+            <GlobalWaivers />
           </RequirePermission>
         } />
         {/* Add other routes here */}

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select"
 import { AlertTriangle } from "lucide-react"
 import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from "@/lib/constants"
+import { useAppConfig } from "@/hooks/queries/use-system"
 import { SettingsTabProps } from "@/types/system"
 
 const DEFAULT_ANALYZERS = ["trivy", "osv", "license_compliance", "end_of_life"];
@@ -24,6 +25,7 @@ export function GeneralSettingsTab({
   hasPermission,
   isPending,
 }: SettingsTabProps) {
+  const { data: appConfig } = useAppConfig()
   const analyzers = formData.default_active_analyzers ?? DEFAULT_ANALYZERS;
 
   const toggleAnalyzer = (analyzerId: string) => {
@@ -123,12 +125,14 @@ export function GeneralSettingsTab({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="delete">Delete</SelectItem>
-                    <SelectItem value="archive">Archive to S3</SelectItem>
+                    {appConfig?.archive_enabled && (
+                      <SelectItem value="archive">Archive to S3</SelectItem>
+                    )}
                     <SelectItem value="none">None (Keep Forever)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-sm text-muted-foreground">
-                  "Delete" permanently removes old scan data. "Archive to S3" compresses and stores data in S3-compatible storage before removing it from the database. "None" keeps data indefinitely.
+                  "Delete" permanently removes old scan data.{appConfig?.archive_enabled && ' "Archive to S3" compresses and stores data in S3-compatible storage before removing it from the database.'} "None" keeps data indefinitely.
                 </p>
               </div>
             </div>

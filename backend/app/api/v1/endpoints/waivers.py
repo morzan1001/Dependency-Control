@@ -20,7 +20,7 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.waiver import Waiver
 from app.repositories import WaiverRepository
-from app.schemas.waiver import WaiverCreate, WaiverResponse
+from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.stats import recalculate_all_projects, recalculate_project_stats
 
 router = CustomAPIRouter()
@@ -73,6 +73,7 @@ async def list_waivers(
     db: DatabaseDep,
     current_user: CurrentUserDep,
     project_id: Optional[str] = None,
+    global_only: Annotated[bool, Query(description="Only return global waivers (project_id=None)")] = False,
     finding_id: Optional[str] = None,
     package_name: Optional[str] = None,
     search: Annotated[Optional[str], Query(description="Search in package name, reason, or finding ID")] = None,
@@ -93,7 +94,12 @@ async def list_waivers(
     if not (has_read_all or has_read_own):
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    if project_id:
+    if global_only:
+        # Only return global waivers (requires waiver:manage or waiver:read_all)
+        if not (has_read_all or has_permission(current_user.permissions, Permissions.WAIVER_MANAGE)):
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+        query["project_id"] = None
+    elif project_id:
         # Check access to specific project
         await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
         query["project_id"] = project_id
@@ -140,6 +146,49 @@ async def list_waivers(
 
     items = [Waiver(**w).model_dump() for w in waivers]
     return build_pagination_response(items, total, skip, limit)
+
+
+@router.patch("/{waiver_id}", response_model=WaiverResponse, responses=RESP_AUTH_404)
+async def update_waiver(
+    waiver_id: str,
+    waiver_in: WaiverUpdate,
+    background_tasks: BackgroundTasks,
+    db: DatabaseDep,
+    current_user: CurrentUserDep,
+) -> Waiver:
+    """
+    Update a waiver (reason, status, expiration_date).
+
+    For project waivers: requires editor role on the project.
+    For global waivers: requires waiver:manage permission.
+    """
+    waiver_repo = WaiverRepository(db)
+    waiver = await waiver_repo.get_by_id(waiver_id)
+    if not waiver:
+        raise HTTPException(status_code=404, detail="Waiver not found")
+
+    if waiver.project_id:
+        await check_project_access(waiver.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
+    else:
+        if not has_permission(current_user.permissions, Permissions.WAIVER_MANAGE):
+            raise HTTPException(status_code=403, detail="Only admins can update global waivers")
+
+    update_data = waiver_in.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    updated = await waiver_repo.update(waiver_id, update_data)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Waiver not found")
+
+    # Trigger stats recalculation if status changed (affects waived/unwaived state)
+    if "status" in update_data:
+        if updated.project_id:
+            background_tasks.add_task(recalculate_project_stats, updated.project_id, db)
+        else:
+            background_tasks.add_task(recalculate_all_projects, db)
+
+    return updated
 
 
 @router.delete("/{waiver_id}", status_code=204, responses=RESP_AUTH_404)

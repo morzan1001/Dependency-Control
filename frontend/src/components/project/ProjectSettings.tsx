@@ -317,7 +317,9 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                     </SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="delete">Delete</SelectItem>
-                                        <SelectItem value="archive">Archive to S3</SelectItem>
+                                        {appConfig?.archive_enabled && (
+                                            <SelectItem value="archive">Archive to S3</SelectItem>
+                                        )}
                                         <SelectItem value="none">None (Keep Forever)</SelectItem>
                                     </SelectContent>
                                 </Select>

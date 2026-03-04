@@ -2,6 +2,8 @@ import { FindingType } from './scan';
 
 export type WaiverScope = 'finding' | 'file' | 'rule';
 
+export type WaiverStatus = 'accepted_risk' | 'false_positive';
+
 export interface WaiverCreate {
   project_id?: string;
   finding_id?: string;
@@ -12,7 +14,14 @@ export interface WaiverCreate {
   scope?: WaiverScope;
   rule_id?: string;
   reason: string;
+  status?: WaiverStatus;
   expiration_date?: string;
+}
+
+export interface WaiverUpdate {
+  reason?: string;
+  status?: WaiverStatus;
+  expiration_date?: string | null;
 }
 
 export interface Waiver {
@@ -25,6 +34,7 @@ export interface Waiver {
   scope?: WaiverScope;
   rule_id?: string;
   reason: string;
+  status?: WaiverStatus;
   expiration_date?: string;
   created_at: string;
   created_by: string;
@@ -41,6 +51,7 @@ export interface WaiversPaginatedResponse {
 
 export interface WaiversQueryParams {
   project_id?: string;
+  global_only?: boolean;
   finding_id?: string;
   package_name?: string;
   search?: string;

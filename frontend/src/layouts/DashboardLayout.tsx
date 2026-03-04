@@ -1,8 +1,9 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context'
+import { useAppConfig } from '@/hooks/queries/use-system'
 import { ANALYTICS_PERMISSIONS } from '@/lib/constants'
 
 interface NavItem {
@@ -15,6 +16,7 @@ interface NavItem {
 export default function DashboardLayout() {
   const location = useLocation()
   const { logout, hasPermission } = useAuth()
+  const { data: appConfig } = useAppConfig()
 
   const hasAnyPermission = (permissions: readonly string[]) =>
     permissions.some(p => hasPermission(p))
@@ -54,7 +56,13 @@ export default function DashboardLayout() {
       href: '/archives',
       label: 'Archives',
       icon: Archive,
-      show: hasPermission('archive:read_all')
+      show: hasPermission('archive:read_all') && appConfig?.archive_enabled === true
+    },
+    {
+      href: '/waivers',
+      label: 'Waivers',
+      icon: ShieldAlert,
+      show: hasPermission('waiver:manage')
     },
     {
       href: '/broadcasts',

@@ -33,22 +33,26 @@ export default function TeamsPage() {
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isWebhooksOpen, setIsWebhooksOpen] = useState(false);
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedTeamIdForAddMember, setSelectedTeamIdForAddMember] = useState<string | null>(null);
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
-  const [webhookTeam, setWebhookTeam] = useState<Team | null>(null);
+  const [webhookTeamId, setWebhookTeamId] = useState<string | null>(null);
   const { search, setSearch, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
     usePaginationState({ defaultSort: 'name', defaultOrder: 'asc' });
 
   const { data: teams, isLoading, error } = useTeams(debouncedSearch, sortBy, sortOrder);
 
+  // Derive team objects from fresh query data instead of stale state snapshots
+  const selectedTeam = teams?.find(t => t.id === selectedTeamId) ?? null;
+  const webhookTeam = teams?.find(t => t.id === webhookTeamId) ?? null;
+
   const openEditDialog = (team: Team) => {
-    setSelectedTeam(team);
+    setSelectedTeamId(team.id);
     setIsEditOpen(true);
   };
 
   const openManageMembersDialog = (team: Team) => {
-    setSelectedTeam(team);
+    setSelectedTeamId(team.id);
     setIsManageMembersOpen(true);
   };
 
@@ -63,7 +67,7 @@ export default function TeamsPage() {
   }
 
   const openWebhooksDialog = (team: Team) => {
-    setWebhookTeam(team);
+    setWebhookTeamId(team.id);
     setIsWebhooksOpen(true);
   };
 

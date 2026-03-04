@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useCreateWaiver, waiverKeys } from '@/hooks/queries/use-waivers'
-import { WaiverScope } from '@/types/waiver'
+import { WaiverScope, WaiverStatus } from '@/types/waiver'
 import { Finding } from '@/types/scan'
 import { getFindingId, getFindingPackage, getFindingVersion } from './finding-details-helpers'
 
@@ -36,6 +37,7 @@ export function WaiverForm({
   const [reason, setReason] = useState('')
   const [date, setDate] = useState('')
   const [scope, setScope] = useState<WaiverScope>('finding')
+  const [status, setStatus] = useState<WaiverStatus>('accepted_risk')
   const queryClient = useQueryClient()
 
   const createWaiverMutation = useCreateWaiver()
@@ -57,6 +59,7 @@ export function WaiverForm({
       scope,
       rule_id: scope === 'rule' ? ruleId : undefined,
       reason,
+      status,
       expiration_date: date ? new Date(date).toISOString() : undefined,
     }, {
         onSuccess: () => {
@@ -128,6 +131,19 @@ export function WaiverForm({
           </RadioGroup>
         </div>
       )}
+
+      <div className="space-y-2">
+        <Label>Status</Label>
+        <Select value={status} onValueChange={(v) => setStatus(v as WaiverStatus)}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="accepted_risk">Accepted Risk</SelectItem>
+            <SelectItem value="false_positive">False Positive</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       <div className="space-y-2 flex flex-col">
         <Label>Expiration Date (Optional)</Label>

@@ -5,7 +5,8 @@ import { Waiver } from '@/types/waiver'
 import { useAuth } from '@/context/useAuth'
 import { useProject } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
-import { canDeleteProjectWaiver } from '@/lib/project-roles'
+import { canDeleteProjectWaiver, canCreateProjectWaiver } from '@/lib/project-roles'
+import { EditWaiverDialog } from '@/components/waivers/EditWaiverDialog'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -21,7 +22,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from '@/components/ui/badge'
-import { ArrowUp, ArrowDown, Trash2, Loader2 } from 'lucide-react'
+import { ArrowUp, ArrowDown, Pencil, Trash2, Loader2 } from 'lucide-react'
 import { toast } from "sonner"
 import { useDebounce } from '@/hooks/use-debounce'
 import { DEBOUNCE_DELAY_MS } from '@/lib/constants'
@@ -38,12 +39,17 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
     const canDeleteWaiver = project && currentUser
         ? canDeleteProjectWaiver(project, currentUser.id, permissions)
         : false
+    const canEditWaiver = project && currentUser
+        ? canCreateProjectWaiver(project, currentUser.id, permissions)
+        : false
 
     const [searchInput, setSearchInput] = useState('')
     const [sortBy, setSortBy] = useState('created_at')
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
     const [waiverToDelete, setWaiverToDelete] = useState<Waiver | null>(null)
+    const [editDialogOpen, setEditDialogOpen] = useState(false)
+    const [waiverToEdit, setWaiverToEdit] = useState<Waiver | null>(null)
 
     const loadMoreRef = useRef<HTMLTableRowElement>(null)
 
@@ -165,13 +171,16 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                 <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('package_name')}>
                                     <div className="flex items-center gap-1">Package {renderSortIcon('package_name')}</div>
                                 </TableHead>
+                                <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
+                                    <div className="flex items-center gap-1">Status {renderSortIcon('status')}</div>
+                                </TableHead>
                                 <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('reason')}>
                                     <div className="flex items-center gap-1">Reason {renderSortIcon('reason')}</div>
                                 </TableHead>
                                 <TableHead className="cursor-pointer hover:text-foreground" onClick={() => handleSort('expires')}>
                                     <div className="flex items-center gap-1">Expires {renderSortIcon('expires')}</div>
                                 </TableHead>
-                                <TableHead className="w-[80px]">Actions</TableHead>
+                                <TableHead className="w-[100px]">Actions</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -191,32 +200,51 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                         {waiver.package_name}
                                         {waiver.package_version && <span className="text-muted-foreground ml-1">v{waiver.package_version}</span>}
                                     </TableCell>
+                                    <TableCell>
+                                        <Badge variant={waiver.status === 'false_positive' ? 'outline' : 'secondary'}>
+                                            {waiver.status === 'false_positive' ? 'False Positive' : 'Accepted Risk'}
+                                        </Badge>
+                                    </TableCell>
                                     <TableCell className="max-w-[300px] truncate" title={waiver.reason}>{waiver.reason}</TableCell>
                                     <TableCell>
                                         {waiver.expiration_date ? formatDate(waiver.expiration_date) : "Never"}
                                     </TableCell>
                                     <TableCell>
-                                        {canDeleteWaiver && (
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                                onClick={() => {
-                                                    setWaiverToDelete(waiver)
-                                                    setDeleteDialogOpen(true)
-                                                }}
-                                                disabled={deleteWaiverMutation.isPending}
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                        )}
+                                        <div className="flex items-center gap-1">
+                                            {canEditWaiver && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    onClick={() => {
+                                                        setWaiverToEdit(waiver)
+                                                        setEditDialogOpen(true)
+                                                    }}
+                                                >
+                                                    <Pencil className="h-4 w-4" />
+                                                </Button>
+                                            )}
+                                            {canDeleteWaiver && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                                    onClick={() => {
+                                                        setWaiverToDelete(waiver)
+                                                        setDeleteDialogOpen(true)
+                                                    }}
+                                                    disabled={deleteWaiverMutation.isPending}
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            )}
+                                        </div>
                                     </TableCell>
                                 </TableRow>
                             ))}
                             {/* Infinite scroll trigger row */}
                             {hasNextPage && (
                                 <TableRow ref={loadMoreRef}>
-                                    <TableCell colSpan={5} className="text-center py-4">
+                                    <TableCell colSpan={6} className="text-center py-4">
                                         {isFetchingNextPage ? (
                                             <div className="flex items-center justify-center gap-2">
                                                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -230,7 +258,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                             )}
                             {allWaivers.length === 0 && !isLoading && (
                                 <TableRow>
-                                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                                    <TableCell colSpan={6} className="text-center text-muted-foreground">
                                         No active waivers found.
                                     </TableCell>
                                 </TableRow>
@@ -270,6 +298,12 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <EditWaiverDialog
+                waiver={waiverToEdit}
+                open={editDialogOpen}
+                onOpenChange={setEditDialogOpen}
+            />
         </Card>
     )
 }

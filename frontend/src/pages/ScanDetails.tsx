@@ -465,7 +465,7 @@ export default function ScanDetails() {
       </div>
 
             <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-        <TabsList>
+        <TabsList className="sticky top-0 z-40 bg-muted">
             <TabsTrigger value="overview">All Findings</TabsTrigger>
             {showSecurity && <TabsTrigger value="security">Security</TabsTrigger>}
             {showSecrets && <TabsTrigger value="secrets">Secrets</TabsTrigger>}
@@ -477,36 +477,36 @@ export default function ScanDetails() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-            <FindingsTable scanId={scanId!} projectId={projectId!} scanContext={scanContext} />
+            <FindingsTable scanId={scanId!} projectId={projectId!} scanContext={scanContext} stickyHeaderTop={40} />
         </TabsContent>
 
         {showSecurity && (
             <TabsContent value="security" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} stickyHeaderTop={40} />
             </TabsContent>
         )}
 
         {showSecrets && (
             <TabsContent value="secrets" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={40} />
             </TabsContent>
         )}
 
         {showSast && (
             <TabsContent value="sast" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} stickyHeaderTop={40} />
             </TabsContent>
         )}
 
         {showCompliance && (
             <TabsContent value="compliance" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="compliance" scanContext={scanContext} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="compliance" scanContext={scanContext} stickyHeaderTop={40} />
             </TabsContent>
         )}
 
         {showQuality && (
             <TabsContent value="quality" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} stickyHeaderTop={40} />
             </TabsContent>
         )}
 

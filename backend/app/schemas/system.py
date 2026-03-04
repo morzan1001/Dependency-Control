@@ -102,6 +102,9 @@ class AppConfig(BaseModel):
     Contains only non-sensitive data needed by various frontend components.
     """
 
+    # Feature flags
+    archive_enabled: bool = False
+
     # Limits
     project_limit_per_user: int = 0
 

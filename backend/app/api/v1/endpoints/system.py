@@ -8,6 +8,7 @@ from app.api.v1.helpers.responses import RESP_AUTH
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.v1.helpers import get_available_channels
+from app.core.s3 import is_archive_enabled
 from app.core.constants import (
     NOTIFICATION_CHANNEL_EMAIL,
     NOTIFICATION_CHANNEL_MATTERMOST,
@@ -112,6 +113,7 @@ async def get_app_config(
     )
 
     return AppConfig(
+        archive_enabled=is_archive_enabled(),
         project_limit_per_user=settings.project_limit_per_user,
         retention_mode=settings.retention_mode,
         global_retention_days=settings.global_retention_days,

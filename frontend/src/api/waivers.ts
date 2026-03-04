@@ -1,9 +1,14 @@
 import { api } from '@/api/client';
-import { Waiver, WaiverCreate, WaiversPaginatedResponse, WaiversQueryParams } from '@/types/waiver';
+import { Waiver, WaiverCreate, WaiverUpdate, WaiversPaginatedResponse, WaiversQueryParams } from '@/types/waiver';
 
 export const waiverApi = {
     create: async (data: WaiverCreate) => {
         const response = await api.post<Waiver>('/waivers/', data);
+        return response.data;
+    },
+
+    update: async (waiverId: string, data: WaiverUpdate) => {
+        const response = await api.patch<Waiver>(`/waivers/${waiverId}`, data);
         return response.data;
     },
 

@@ -1,10 +1,12 @@
-import { useLayoutEffect, useState, useRef, RefObject } from 'react'
+import { useLayoutEffect, useState, useRef, useCallback, RefObject } from 'react'
 import { logger } from '@/lib/logger'
 
 interface ScrollContainerResult {
   parentRef: RefObject<HTMLDivElement | null>
   scrollContainer: HTMLElement | null
   tableOffsetRef: RefObject<number>
+  /** Scroll the container so the table top is at the viewport top. */
+  scrollToTable: () => void
 }
 
 /**
@@ -44,14 +46,32 @@ export function useScrollContainer(): ScrollContainerResult {
 
     updateOffset()
 
+    // Watch for layout changes above the table (async content loading, cards resizing, etc.)
+    // ResizeObserver on the container's scrollable content area catches height changes.
+    const resizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(updateOffset)
+    })
+    // Observe the direct child of the scroll container (the content wrapper)
+    const contentWrapper = container.firstElementChild
+    if (contentWrapper) {
+      resizeObserver.observe(contentWrapper)
+    }
+
     window.addEventListener('resize', updateOffset)
 
     return () => {
       window.removeEventListener('resize', updateOffset)
+      resizeObserver.disconnect()
     }
   }, [])
 
-  return { parentRef, scrollContainer, tableOffsetRef }
+  const scrollToTable = useCallback(() => {
+    if (scrollContainer) {
+      scrollContainer.scrollTo({ top: tableOffsetRef.current, behavior: 'instant' })
+    }
+  }, [scrollContainer])
+
+  return { parentRef, scrollContainer, tableOffsetRef, scrollToTable }
 }
 
 /**

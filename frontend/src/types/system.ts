@@ -54,6 +54,7 @@ export interface NotificationChannels {
 }
 
 export interface AppConfig {
+  archive_enabled: boolean;
   project_limit_per_user: number;
   retention_mode: 'global' | 'project';
   global_retention_days: number;
