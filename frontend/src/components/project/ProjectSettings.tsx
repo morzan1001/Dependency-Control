@@ -431,18 +431,29 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                         </p>
                                     </div>
 
-                                    <div className="flex items-center justify-between">
-                                        <div className="space-y-0.5">
-                                            <Label className="text-base">Merge Request Decoration</Label>
-                                            <p className="text-sm text-muted-foreground">
-                                                Post scan results as comments on GitLab Merge Requests.
-                                            </p>
-                                        </div>
-                                        <Switch
-                                            checked={gitlabMrCommentsEnabled}
-                                            onCheckedChange={setGitlabMrCommentsEnabled}
-                                        />
-                                    </div>
+                                    {(() => {
+                                        const selectedInstance = gitlabInstances?.items.find(i => i.id === gitlabInstanceId);
+                                        const hasToken = selectedInstance?.token_configured ?? false;
+                                        return (
+                                            <div className="flex items-center justify-between">
+                                                <div className="space-y-0.5">
+                                                    <Label className={`text-base ${!hasToken ? "text-muted-foreground" : ""}`}>
+                                                        Merge Request Decoration
+                                                    </Label>
+                                                    <p className="text-sm text-muted-foreground">
+                                                        {hasToken
+                                                            ? "Post scan results as comments on GitLab Merge Requests."
+                                                            : "Requires an access token on the GitLab instance."}
+                                                    </p>
+                                                </div>
+                                                <Switch
+                                                    checked={gitlabMrCommentsEnabled && hasToken}
+                                                    disabled={!hasToken}
+                                                    onCheckedChange={setGitlabMrCommentsEnabled}
+                                                />
+                                            </div>
+                                        );
+                                    })()}
                                 </>
                             )}
                         </div>

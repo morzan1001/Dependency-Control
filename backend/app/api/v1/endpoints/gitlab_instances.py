@@ -139,21 +139,24 @@ async def create_instance(
         created_at=datetime.now(timezone.utc),
     )
 
-    # Test connection before saving
-    gitlab_service = GitLabService(new_instance)
-    try:
-        async with gitlab_service._api_client() as client:
-            response = await client.get(f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers())
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Failed to connect to GitLab instance: HTTP {response.status_code}",
+    # Test connection before saving (only if token is provided)
+    if new_instance.access_token:
+        gitlab_service = GitLabService(new_instance)
+        try:
+            async with gitlab_service._api_client() as client:
+                response = await client.get(
+                    f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers()
                 )
-    except Exception as e:
-        logger.error(f"Connection test failed for {instance_data.url}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {str(e)}"
-        )
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Failed to connect to GitLab instance: HTTP {response.status_code}",
+                    )
+        except Exception as e:
+            logger.error(f"Connection test failed for {instance_data.url}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {str(e)}"
+            )
 
     # Save to database
     created_instance = await instance_repo.create(new_instance)
@@ -209,6 +212,15 @@ async def update_instance(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Another instance with name '{update_dict['name']}' already exists",
             )
+
+    # Validate that sync_teams requires an access token
+    will_have_token = update_dict.get("access_token", instance.access_token)
+    will_sync_teams = update_dict.get("sync_teams", instance.sync_teams)
+    if will_sync_teams and not will_have_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An access token is required to enable team syncing",
+        )
 
     # Add last_modified metadata
     update_dict["last_modified_at"] = datetime.now(timezone.utc)

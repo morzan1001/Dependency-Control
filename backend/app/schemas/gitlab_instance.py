@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GitLabInstanceBase(BaseModel):
@@ -20,7 +20,13 @@ class GitLabInstanceBase(BaseModel):
 class GitLabInstanceCreate(GitLabInstanceBase):
     """Schema for creating a new GitLab instance."""
 
-    access_token: str = Field(..., description="Personal or Group Access Token with 'api' scope")
+    access_token: Optional[str] = Field(None, description="Personal or Group Access Token with 'api' scope")
+
+    @model_validator(mode="after")
+    def validate_token_dependent_features(self) -> "GitLabInstanceCreate":
+        if self.sync_teams and not self.access_token:
+            raise ValueError("An access token is required to enable team syncing")
+        return self
 
 
 class GitLabInstanceUpdate(BaseModel):

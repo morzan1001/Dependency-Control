@@ -555,6 +555,20 @@ async def update_project(
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
 
+    # Validate MR decoration requires a token on the linked GitLab instance
+    mr_enabled = update_data.get("gitlab_mr_comments_enabled", project.gitlab_mr_comments_enabled)
+    instance_id = update_data.get("gitlab_instance_id", project.gitlab_instance_id)
+    if mr_enabled and instance_id:
+        from app.repositories.gitlab_instances import GitLabInstanceRepository
+
+        instance_repo = GitLabInstanceRepository(db)
+        gitlab_instance = await instance_repo.get_by_id(instance_id)
+        if gitlab_instance and not gitlab_instance.access_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot enable MR decoration: the linked GitLab instance has no access token configured",
+            )
+
     # Apply system settings enforcement
     system_settings = await deps.get_system_settings(db)
     update_data = apply_system_settings_enforcement(

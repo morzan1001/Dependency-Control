@@ -111,6 +111,12 @@ async def decorate_gitlab_mr(
             )
             return
 
+        if not gitlab_instance.access_token:
+            logger.info(
+                f"GitLab instance '{gitlab_instance.name}' has no access token, skipping MR decoration for project {project.id}"
+            )
+            return
+
         # Create instance-specific GitLab service
         gitlab_service = GitLabService(gitlab_instance)
 

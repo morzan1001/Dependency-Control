@@ -26,7 +26,7 @@ export interface GitLabInstanceCreate {
   description?: string;
   is_active?: boolean;
   is_default?: boolean;
-  access_token: string;
+  access_token?: string;
   oidc_audience?: string;
   auto_create_projects?: boolean;
   sync_teams?: boolean;

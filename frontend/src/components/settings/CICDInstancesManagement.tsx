@@ -380,7 +380,7 @@ export function CICDInstancesManagement() {
 
   const isCreateDisabled = () => {
     if (isCreatePending || !formData.name || !formData.url) return true;
-    if (formData.type === "gitlab" && !formData.access_token) return true;
+    if (formData.type === "gitlab" && formData.sync_teams && !formData.access_token) return true;
     return false;
   };
 
@@ -704,11 +704,7 @@ function InstanceForm({
       {/* Access Token */}
       <div className="grid gap-2">
         <Label htmlFor="ci-access-token">
-          Access Token {(() => {
-            if (isEdit) return "(leave empty to keep current)"
-            if (formData.type === "gitlab") return "*"
-            return ""
-          })()}
+          Access Token {isEdit ? "(leave empty to keep current)" : ""}
         </Label>
         <Input
           id="ci-access-token"
@@ -719,7 +715,7 @@ function InstanceForm({
         />
         <p className="text-sm text-muted-foreground">
           {formData.type === "gitlab"
-            ? "Personal or Group Access Token with 'api' scope for MR comments and team sync."
+            ? "Personal or Group Access Token with 'api' scope. Required for MR decoration and team sync. Optional if only using OIDC."
             : "Personal Access Token with 'repo' scope for branch tracking and API operations. Also used as fallback for GHSA lookups if no global GitHub token is configured."}
         </p>
       </div>
@@ -784,14 +780,17 @@ function InstanceForm({
         {formData.type === "gitlab" && (
           <div className="flex items-center justify-between">
             <div>
-              <Label htmlFor="ci-sync-teams">Sync Teams</Label>
+              <Label htmlFor="ci-sync-teams" className={!formData.access_token && !isEdit ? "text-muted-foreground" : ""}>Sync Teams</Label>
               <p className="text-xs text-muted-foreground">
-                Sync GitLab group members to local teams
+                {!formData.access_token && !isEdit
+                  ? "Requires an access token"
+                  : "Sync GitLab group members to local teams"}
               </p>
             </div>
             <Switch
               id="ci-sync-teams"
               checked={formData.sync_teams}
+              disabled={!formData.access_token && !isEdit}
               onCheckedChange={(checked) =>
                 setFormData((prev) => ({ ...prev, sync_teams: checked }))
               }
