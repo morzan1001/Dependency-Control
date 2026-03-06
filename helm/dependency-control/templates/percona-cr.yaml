@@ -161,5 +161,17 @@ spec:
       roles:
         - name: readWrite
           db: {{ .Values.database.auth.database }}
+    {{- range .Values.database.extraUsers }}
+    - name: {{ .name }}
+      db: {{ .db }}
+      passwordSecretRef:
+        name: {{ .passwordSecretRef.name }}
+        key: {{ .passwordSecretRef.key }}
+      roles:
+        {{- range .roles }}
+        - name: {{ .name }}
+          db: {{ .db }}
+        {{- end }}
+    {{- end }}
 {{- end }}
 

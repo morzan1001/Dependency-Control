@@ -149,7 +149,7 @@ export function WebhookManager({
                   ))}
                 </div>
               </div>
-              <Button onClick={handleCreate} className="w-full">Create Webhook</Button>
+              <Button onClick={handleCreate} className="w-full" disabled={!newWebhook.url || newWebhook.events.length === 0}>Create Webhook</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -175,7 +175,7 @@ export function WebhookManager({
             ) : (
               webhooks.map(webhook => (
                 <TableRow key={webhook.id}>
-                  <TableCell className="font-mono text-xs">{webhook.url}</TableCell>
+                  <TableCell className="font-mono text-xs truncate max-w-0" title={webhook.url}>{webhook.url}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {(webhook.events || []).map(e => (
