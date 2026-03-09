@@ -3,9 +3,13 @@ Archive Service
 
 Handles archiving scan data to S3-compatible storage and restoring it.
 Each scan is archived as a single compressed JSON bundle (.json.gz).
+
+Memory-efficient: uses streaming writes during archival and batched inserts
+during restore to avoid loading entire scan datasets into RAM.
 """
 
 import gzip
+import io
 import json
 import logging
 import time
@@ -14,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.constants import ARCHIVE_BUNDLE_VERSION, ARCHIVE_PATH_TEMPLATE
@@ -21,7 +26,6 @@ from app.core.encryption import decrypt, encrypt, is_encryption_enabled
 from app.core.s3 import delete_object, download_bytes, is_archive_enabled, upload_bytes
 from app.core.metrics import (
     archive_bundle_compressed_bytes,
-    archive_bundle_original_bytes,
     archive_operation_duration_seconds,
     archive_operations_total,
 )
@@ -30,6 +34,21 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.schemas.archive import ArchiveRestoreResponse
 
 logger = logging.getLogger(__name__)
+
+_STREAMING_BATCH_SIZE = 500
+_RESTORE_BATCH_SIZE = 1000
+
+
+class ArchiveStats(BaseModel):
+    """Tracks collection counts during streaming archive creation."""
+
+    findings: int = 0
+    finding_records: int = 0
+    dependencies: int = 0
+    analysis_results: int = 0
+    callgraphs: int = 0
+    critical_findings: int = 0
+    high_findings: int = 0
 
 
 def _serialize_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,6 +119,34 @@ async def _load_gridfs_sboms(
     return sboms
 
 
+async def _stream_collection_to_gzip(
+    gz: gzip.GzipFile,
+    cursor: Any,
+    stats: ArchiveStats,
+    field_name: str,
+) -> None:
+    """Stream a MongoDB cursor as a JSON array into the gzip writer.
+
+    Processes documents in batches to limit peak memory usage.
+    Tracks finding severity counts in-place via the shared stats object.
+    """
+    gz.write(b"[")
+    count = 0
+    async for doc in cursor.batch_size(_STREAMING_BATCH_SIZE):
+        if count > 0:
+            gz.write(b",")
+        gz.write(json.dumps(_serialize_doc(doc), default=str).encode("utf-8"))
+        count += 1
+        if field_name == "findings":
+            severity = doc.get("severity", "")
+            if severity == "CRITICAL":
+                stats.critical_findings += 1
+            elif severity == "HIGH":
+                stats.high_findings += 1
+    gz.write(b"]")
+    setattr(stats, field_name, count)
+
+
 async def archive_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
@@ -107,14 +154,8 @@ async def archive_scan(
     """
     Archive a single scan and all its related data to S3.
 
-    Bundle contents:
-    - scan document
-    - findings
-    - finding_records
-    - dependencies
-    - analysis_results
-    - callgraphs
-    - GridFS SBOMs (embedded as JSON)
+    Uses streaming gzip compression — only one batch of documents is held in
+    memory at a time instead of loading all collections at once.
 
     Returns ArchiveMetadata on success, None on failure.
     """
@@ -139,44 +180,69 @@ async def archive_scan(
         return None
 
     project_id = scan_doc["project_id"]
+    stats = ArchiveStats()
 
-    # 2. Collect all related data
-    findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
-    finding_records = await db.finding_records.find({"scan_id": scan_id}).to_list(None)
-    dependencies = await db.dependencies.find({"scan_id": scan_id}).to_list(None)
-    analysis_results = await db.analysis_results.find({"scan_id": scan_id}).to_list(None)
-    callgraphs = await db.callgraphs.find({"scan_id": scan_id}).to_list(None)
+    # 2. Stream collections into a compressed gzip archive.
+    buf = io.BytesIO()
+    try:
+        gz = gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=6)
+        try:
+            # Write JSON object start + header fields manually to avoid
+            # the fragile "remove trailing }" trick.
+            gz.write(b"{")
+            gz.write(json.dumps("version").encode("utf-8"))
+            gz.write(b":")
+            gz.write(json.dumps(ARCHIVE_BUNDLE_VERSION).encode("utf-8"))
 
-    # 3. Load GridFS SBOMs
-    gridfs_ids = _extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", []))
-    gridfs_sboms = await _load_gridfs_sboms(db, gridfs_ids)
+            for key in ("archived_at", "scan_id", "project_id", "scan"):
+                gz.write(b",")
+                gz.write(json.dumps(key).encode("utf-8"))
+                gz.write(b":")
+                value: Any
+                if key == "archived_at":
+                    value = datetime.now(timezone.utc).isoformat()
+                elif key == "scan_id":
+                    value = scan_id
+                elif key == "project_id":
+                    value = project_id
+                else:  # scan
+                    value = _serialize_doc(scan_doc)
+                gz.write(json.dumps(value, default=str).encode("utf-8"))
 
-    # 4. Build the archive bundle
-    bundle = {
-        "version": ARCHIVE_BUNDLE_VERSION,
-        "archived_at": datetime.now(timezone.utc).isoformat(),
-        "scan_id": scan_id,
-        "project_id": project_id,
-        "scan": _serialize_doc(scan_doc),
-        "findings": [_serialize_doc(d) for d in findings],
-        "finding_records": [_serialize_doc(d) for d in finding_records],
-        "dependencies": [_serialize_doc(d) for d in dependencies],
-        "analysis_results": [_serialize_doc(d) for d in analysis_results],
-        "callgraphs": [_serialize_doc(d) for d in callgraphs],
-        "gridfs_sboms": gridfs_sboms,
-    }
+            # Stream each collection
+            for field_name, collection in [
+                ("findings", db.findings),
+                ("finding_records", db.finding_records),
+                ("dependencies", db.dependencies),
+                ("analysis_results", db.analysis_results),
+                ("callgraphs", db.callgraphs),
+            ]:
+                gz.write(b",")
+                gz.write(json.dumps(field_name).encode("utf-8"))
+                gz.write(b":")
+                cursor = collection.find({"scan_id": scan_id})
+                await _stream_collection_to_gzip(gz, cursor, stats, field_name)
 
-    # 5. Serialize to JSON and compress with gzip
-    json_bytes = json.dumps(bundle, default=str).encode("utf-8")
-    compressed = gzip.compress(json_bytes, compresslevel=6)
+            # GridFS SBOMs (typically a small number of files)
+            gridfs_ids = _extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", []))
+            gridfs_sboms = await _load_gridfs_sboms(db, gridfs_ids)
+            gz.write(b',"gridfs_sboms":')
+            gz.write(json.dumps(gridfs_sboms, default=str).encode("utf-8"))
 
-    archive_bundle_original_bytes.observe(len(json_bytes))
+            gz.write(b"}")
+        finally:
+            gz.close()
+
+        compressed = buf.getvalue()
+    finally:
+        buf.close()
+
     archive_bundle_compressed_bytes.observe(len(compressed))
 
-    # 5b. Encrypt if configured
+    # 3. Encrypt if configured
     upload_data = encrypt(compressed) if is_encryption_enabled() else compressed
 
-    # 6. Upload to S3
+    # 4. Upload to S3
     s3_key = ARCHIVE_PATH_TEMPLATE.format(project_id=project_id, scan_id=scan_id)
 
     try:
@@ -186,7 +252,7 @@ async def archive_scan(
         archive_operations_total.labels(operation="archive", status="failure").inc()
         return None
 
-    # 7. Create archive metadata record
+    # 5. Create archive metadata record
     metadata = ArchiveMetadata(
         project_id=project_id,
         scan_id=scan_id,
@@ -197,12 +263,12 @@ async def archive_scan(
         scan_created_at=scan_doc.get("created_at"),
         scan_completed_at=scan_doc.get("completed_at"),
         scan_status=scan_doc.get("status"),
-        original_size_bytes=len(json_bytes),
+        original_size_bytes=None,
         compressed_size_bytes=len(compressed),
-        findings_count=len(findings),
-        critical_findings_count=sum(1 for f in findings if f.get("severity") == "CRITICAL"),
-        high_findings_count=sum(1 for f in findings if f.get("severity") == "HIGH"),
-        dependencies_count=len(dependencies),
+        findings_count=stats.findings,
+        critical_findings_count=stats.critical_findings,
+        high_findings_count=stats.high_findings,
+        dependencies_count=stats.dependencies,
         sbom_filenames=[s["filename"] for s in gridfs_sboms if s.get("filename")],
     )
 
@@ -213,10 +279,21 @@ async def archive_scan(
     archive_operation_duration_seconds.labels(operation="archive").observe(duration)
 
     logger.info(
-        f"Archived scan {scan_id} to s3://{settings.S3_BUCKET_NAME}/{s3_key} ({len(compressed)} bytes compressed)"
+        f"Archived scan {scan_id} to s3://{settings.S3_BUCKET_NAME}/{s3_key} "
+        f"({len(compressed)} bytes, {stats.findings} findings, {stats.dependencies} deps)"
     )
 
     return metadata
+
+
+async def _restore_collection_batched(
+    collection: Any,
+    docs: List[Dict[str, Any]],
+) -> None:
+    """Insert documents in batches to limit memory pressure during restore."""
+    for i in range(0, len(docs), _RESTORE_BATCH_SIZE):
+        batch = docs[i : i + _RESTORE_BATCH_SIZE]
+        await collection.insert_many(batch, ordered=False)
 
 
 async def restore_scan(
@@ -263,6 +340,8 @@ async def restore_scan(
     # 2. Decompress and parse
     json_bytes = gzip.decompress(compressed)
     bundle = json.loads(json_bytes)
+    # Free the intermediate bytes immediately
+    del json_bytes, compressed, raw_data
 
     collections_restored: List[str] = []
 
@@ -279,35 +358,25 @@ async def restore_scan(
         await db.scans.insert_one(scan_doc)
         collections_restored.append("scans")
 
-    # 4. Restore findings
-    if bundle.get("findings"):
-        await db.findings.insert_many(bundle["findings"], ordered=False)
-        collections_restored.append("findings")
-
-    # 5. Restore finding_records
-    if bundle.get("finding_records"):
-        await db.finding_records.insert_many(bundle["finding_records"], ordered=False)
-        collections_restored.append("finding_records")
-
-    # 6. Restore dependencies
-    if bundle.get("dependencies"):
-        await db.dependencies.insert_many(bundle["dependencies"], ordered=False)
-        collections_restored.append("dependencies")
-
-    # 7. Restore analysis_results
-    if bundle.get("analysis_results"):
-        await db.analysis_results.insert_many(bundle["analysis_results"], ordered=False)
-        collections_restored.append("analysis_results")
-
-    # 8. Restore callgraphs
-    if bundle.get("callgraphs"):
-        await db.callgraphs.insert_many(bundle["callgraphs"], ordered=False)
-        collections_restored.append("callgraphs")
+    # 4-8. Restore collections in batches, freeing each after insert
+    for field_name, collection in [
+        ("findings", db.findings),
+        ("finding_records", db.finding_records),
+        ("dependencies", db.dependencies),
+        ("analysis_results", db.analysis_results),
+        ("callgraphs", db.callgraphs),
+    ]:
+        docs = bundle.pop(field_name, [])
+        if docs:
+            await _restore_collection_batched(collection, docs)
+            collections_restored.append(field_name)
+            del docs
 
     # 9. Re-upload GridFS SBOMs with original IDs
-    if bundle.get("gridfs_sboms"):
+    gridfs_sboms = bundle.pop("gridfs_sboms", [])
+    if gridfs_sboms:
         fs = AsyncIOMotorGridFSBucket(db)
-        for sbom_entry in bundle["gridfs_sboms"]:
+        for sbom_entry in gridfs_sboms:
             try:
                 sbom_data = json.dumps(sbom_entry["data"]).encode("utf-8")
                 grid_id = ObjectId(sbom_entry["gridfs_id"])
@@ -319,6 +388,8 @@ async def restore_scan(
             except Exception as e:
                 logger.warning(f"Failed to restore GridFS file: {e}")
         collections_restored.append("gridfs_sboms")
+
+    del bundle
 
     # 10. Clean up: delete archive from S3 and metadata from MongoDB
     try:

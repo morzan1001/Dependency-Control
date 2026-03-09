@@ -7,6 +7,7 @@ import asyncio
 import gzip
 import json
 from datetime import datetime, timezone
+from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -58,46 +59,61 @@ def _make_archive_metadata(**overrides):
     return ArchiveMetadata(**defaults)
 
 
+class _AsyncCursorMock:
+    """Mock for a Motor async cursor that supports batch_size() and async iteration."""
+
+    def __init__(self, docs: List[Dict[str, Any]]):
+        self._docs = docs
+        self._index = 0
+
+    def batch_size(self, _size: int) -> "_AsyncCursorMock":
+        """batch_size() returns the cursor itself (chainable)."""
+        return self
+
+    def __aiter__(self) -> "_AsyncCursorMock":
+        self._index = 0
+        return self
+
+    async def __anext__(self) -> Dict[str, Any]:
+        if self._index >= len(self._docs):
+            raise StopAsyncIteration
+        doc = self._docs[self._index]
+        self._index += 1
+        return doc
+
+    # Keep to_list for any remaining callers (e.g. restore tests)
+    async def to_list(self, _length=None) -> List[Dict[str, Any]]:
+        return list(self._docs)
+
+
 def _make_mock_db(scan_doc=None, findings=None, finding_records=None,
                   dependencies=None, analysis_results=None, callgraphs=None):
-    """Create a mock database with collection mocks."""
+    """Create a mock database with collection mocks supporting async iteration."""
     db = MagicMock()
 
     # scans
     db.scans.find_one = AsyncMock(return_value=scan_doc)
-    scans_cursor = MagicMock()
-    scans_cursor.to_list = AsyncMock(return_value=[scan_doc] if scan_doc else [])
-    db.scans.find = MagicMock(return_value=scans_cursor)
+    db.scans.find = MagicMock(return_value=_AsyncCursorMock([scan_doc] if scan_doc else []))
     db.scans.insert_one = AsyncMock()
 
     # findings
-    findings_cursor = MagicMock()
-    findings_cursor.to_list = AsyncMock(return_value=findings or [])
-    db.findings.find = MagicMock(return_value=findings_cursor)
+    db.findings.find = MagicMock(return_value=_AsyncCursorMock(findings or []))
     db.findings.insert_many = AsyncMock()
 
     # finding_records
-    fr_cursor = MagicMock()
-    fr_cursor.to_list = AsyncMock(return_value=finding_records or [])
-    db.finding_records.find = MagicMock(return_value=fr_cursor)
+    db.finding_records.find = MagicMock(return_value=_AsyncCursorMock(finding_records or []))
     db.finding_records.insert_many = AsyncMock()
 
     # dependencies
-    deps_cursor = MagicMock()
-    deps_cursor.to_list = AsyncMock(return_value=dependencies or [])
-    db.dependencies.find = MagicMock(return_value=deps_cursor)
+    db.dependencies.find = MagicMock(return_value=_AsyncCursorMock(dependencies or []))
     db.dependencies.insert_many = AsyncMock()
 
     # analysis_results
-    ar_cursor = MagicMock()
-    ar_cursor.to_list = AsyncMock(return_value=analysis_results or [])
-    db.analysis_results.find = MagicMock(return_value=ar_cursor)
+    db.analysis_results.find = MagicMock(return_value=_AsyncCursorMock(analysis_results or []))
     db.analysis_results.insert_many = AsyncMock()
 
     # callgraphs
-    cg_cursor = MagicMock()
-    cg_cursor.to_list = AsyncMock(return_value=callgraphs or [])
-    db.callgraphs.find = MagicMock(return_value=cg_cursor)
+    db.callgraphs.find = MagicMock(return_value=_AsyncCursorMock(callgraphs or []))
     db.callgraphs.insert_many = AsyncMock()
 
     return db
