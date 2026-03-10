@@ -151,7 +151,7 @@ class GitLabService:
         endpoint: str,
         params: Optional[Dict[str, Any]] = None,
         max_pages: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> Optional[List[Dict[str, Any]]]:
         """
         Make paginated GET requests to the GitLab API.
 
@@ -163,10 +163,10 @@ class GitLabService:
             max_pages: Maximum number of pages to fetch (default 10, ~1000 items)
 
         Returns:
-            Combined list of all items from all pages
+            Combined list of all items from all pages, or None on failure
         """
         if not self.instance.access_token:
-            return []
+            return None
 
         all_items: List[Dict[str, Any]] = []
         page = 1
@@ -188,7 +188,7 @@ class GitLabService:
 
                     if response.status_code != 200:
                         logger.error(f"GitLab API GET {endpoint} page {page} failed: {response.status_code}")
-                        break
+                        return None
 
                     items = response.json()
                     if not items:
@@ -209,6 +209,7 @@ class GitLabService:
 
         except Exception as e:
             logger.error(f"GitLab API paginated GET {endpoint} failed: {e}")
+            return None
 
         return all_items
 
@@ -303,9 +304,11 @@ class GitLabService:
             provider_name="GitLab",
         )
 
-    async def list_branches(self, project_id: int) -> List[str]:
-        """Fetches all branch names from a GitLab project."""
+    async def list_branches(self, project_id: int) -> Optional[List[str]]:
+        """Fetches all branch names from a GitLab project. Returns None on API failure."""
         branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches")
+        if branches is None:
+            return None
         return [b["name"] for b in branches]
 
     async def get_project_details(self, project_id: int) -> Optional[GitLabProjectDetails]:
@@ -341,7 +344,7 @@ class GitLabService:
         Uses pagination to fetch all notes (not just first page).
         """
         notes = await self._api_get_paginated(f"/projects/{project_id}/merge_requests/{mr_iid}/notes")
-        return [GitLabNote(**n) for n in notes]
+        return [GitLabNote(**n) for n in notes] if notes else []
 
     async def update_merge_request_comment(self, project_id: int, mr_iid: int, note_id: int, body: str) -> bool:
         """Updates an existing comment on a merge request."""

@@ -271,7 +271,9 @@ async def remove_team_member(
         raise HTTPException(status_code=404, detail="User not in team")
 
     if target_role == TEAM_ROLE_OWNER:
-        raise HTTPException(status_code=400, detail="Cannot remove team owner")
+        if user_id == current_user.id:
+            raise HTTPException(status_code=400, detail="Cannot remove yourself as owner")
+        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_OWNER)
 
     await team_repo.update_raw(
         team_id,

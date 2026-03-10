@@ -2,7 +2,7 @@ import { useUpdateTeamMember, useRemoveTeamMember } from '@/hooks/queries/use-te
 import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
 import { useCurrentUser } from '@/hooks/queries/use-users';
-import { canManageTeamMembers } from '@/lib/team-roles';
+import { canManageTeamMembers, isTeamOwner } from '@/lib/team-roles';
 import { Button } from '@/components/ui/button';
 import { UserMinus, Loader2 } from 'lucide-react';
 import {
@@ -47,6 +47,10 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
     ? canManageTeamMembers(team, currentUser.id, permissions)
     : false;
 
+  const currentUserIsOwner = team && currentUser
+    ? isTeamOwner(team, currentUser.id)
+    : false;
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl">
@@ -68,6 +72,8 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
               <TableBody>
                 {team?.members.map((member) => {
                   const memberIsOwner = member.role === 'owner';
+                  const isSelf = member.user_id === currentUser?.id;
+                  const canEditRole = canManage && (!memberIsOwner || currentUserIsOwner) && !isSelf;
                   return (
                     <TableRow key={member.user_id}>
                       <TableCell>
@@ -87,7 +93,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                                   );
                               }
                           }}
-                          disabled={!canManage || memberIsOwner || updateMemberMutation.isPending}
+                          disabled={!canEditRole || updateMemberMutation.isPending}
                         >
                           <SelectTrigger className="w-[120px]">
                             <SelectValue />
@@ -103,7 +109,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                       </TableCell>
                       {canManage && (
                         <TableCell>
-                          {!memberIsOwner && (
+                          {!isSelf && (!memberIsOwner || currentUserIsOwner) && (
                             <Button
                               variant="ghost"
                               size="icon"

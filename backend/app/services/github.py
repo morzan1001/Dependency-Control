@@ -77,10 +77,14 @@ class GitHubService:
         endpoint: str,
         params: Optional[Dict[str, Any]] = None,
         max_pages: int = 10,
-    ) -> List[Dict[str, Any]]:
-        """Paginated GET using GitHub's Link header pagination."""
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Paginated GET using GitHub's Link header pagination.
+
+        Returns:
+            Combined list of all items from all pages, or None on failure
+        """
         if not self.instance.access_token:
-            return []
+            return None
 
         all_items: List[Dict[str, Any]] = []
         page = 1
@@ -97,8 +101,8 @@ class GitHubService:
                     )
 
                     if response.status_code != 200:
-                        logger.error(f"GitHub API GET {endpoint} page {page} failed: {response.status_code}")
-                        break
+                        logger.error(f"GitHub API GET {endpoint} failed: {response.status_code}")
+                        return None
 
                     items = response.json()
                     if not items:
@@ -115,12 +119,15 @@ class GitHubService:
 
         except Exception as e:
             logger.error(f"GitHub API paginated GET {endpoint} failed: {e}")
+            return None
 
         return all_items
 
-    async def list_branches(self, owner: str, repo: str) -> List[str]:
-        """Fetches all branch names from a GitHub repository."""
+    async def list_branches(self, owner: str, repo: str) -> Optional[List[str]]:
+        """Fetches all branch names from a GitHub repository. Returns None on API failure."""
         branches = await self._api_get_paginated(f"/repos/{owner}/{repo}/branches")
+        if branches is None:
+            return None
         return [b["name"] for b in branches]
 
     async def _get_jwks_uri(self) -> Optional[str]:

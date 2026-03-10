@@ -5,32 +5,36 @@ from app.services.aggregator import ResultAggregator
 
 
 class TestParseVersionKey:
-    """Tests for _parse_version_key - converts version strings to comparable tuples."""
+    """Tests for _parse_version_key - converts version strings to comparable tuples.
+
+    Each element is a (type_flag, value) pair: (0, int) for numeric, (1, str) for text.
+    Mixed alphanumeric tokens like 'rc1' are split into separate elements.
+    """
 
     def setup_method(self):
         self.agg = ResultAggregator()
 
     def test_simple_semver(self):
-        assert self.agg._parse_version_key("1.2.3") == (1, 2, 3)
+        assert self.agg._parse_version_key("1.2.3") == ((0, 1), (0, 2), (0, 3))
 
     def test_v_prefix_stripped(self):
-        assert self.agg._parse_version_key("v1.2.3") == (1, 2, 3)
+        assert self.agg._parse_version_key("v1.2.3") == ((0, 1), (0, 2), (0, 3))
 
     def test_uppercase_v_prefix(self):
-        assert self.agg._parse_version_key("V1.2.3") == (1, 2, 3)
+        assert self.agg._parse_version_key("V1.2.3") == ((0, 1), (0, 2), (0, 3))
 
     def test_prerelease_label(self):
         result = self.agg._parse_version_key("1.2.3-beta")
-        assert result == (1, 2, 3, "beta")
+        assert result == ((0, 1), (0, 2), (0, 3), (1, "beta"))
 
     def test_prerelease_with_number(self):
         result = self.agg._parse_version_key("1.2.3-rc1")
-        # "rc1" is alphanumeric, so it stays as one token (not split further)
-        assert result == (1, 2, 3, "rc1")
+        # "rc1" is now split into "rc" + "1" for safe comparison
+        assert result == ((0, 1), (0, 2), (0, 3), (1, "rc"), (0, 1))
 
-    def test_numeric_parts_are_ints(self):
+    def test_numeric_parts_have_int_values(self):
         result = self.agg._parse_version_key("10.20.30")
-        assert all(isinstance(p, int) for p in result)
+        assert all(flag == 0 and isinstance(val, int) for flag, val in result)
 
     def test_comparison_works_correctly(self):
         """Higher versions should compare as greater."""
@@ -47,7 +51,26 @@ class TestParseVersionKey:
         assert self.agg._parse_version_key("") == ()
 
     def test_single_number(self):
-        assert self.agg._parse_version_key("42") == (42,)
+        assert self.agg._parse_version_key("42") == ((0, 42),)
+
+    def test_mixed_alphanumeric_comparison_safe(self):
+        """Comparing '3.0.0a1' with '3.0.0' must not raise TypeError."""
+        v1 = self.agg._parse_version_key("3.0.0")
+        v2 = self.agg._parse_version_key("3.0.0a1")
+        # Should not raise - this was the bug
+        assert (v2 > v1) or (v2 <= v1)
+
+    def test_prerelease_vs_release_comparison_safe(self):
+        """Comparing versions with and without pre-release tags must not crash."""
+        v1 = self.agg._parse_version_key("1.2.3")
+        v2 = self.agg._parse_version_key("1.2.3rc1")
+        assert (v1 > v2) or (v1 <= v2)
+
+    def test_go_incompatible_suffix_safe(self):
+        """Go versions like '0.6.0+incompatible' must compare safely."""
+        v1 = self.agg._parse_version_key("0.6.0+incompatible")
+        v2 = self.agg._parse_version_key("0.7.0")
+        assert v2 > v1
 
 
 class TestNormalizeVersion:
@@ -185,6 +208,16 @@ class TestCalculateAggregatedFixedVersion:
     def test_v_prefix_handled(self):
         """Version strings with v prefix should be parsed correctly."""
         result = self.agg._calculate_aggregated_fixed_version(["v1.2.3"])
+        assert result is not None
+
+    def test_mixed_prerelease_versions_no_crash(self):
+        """Versions with alphanumeric parts like '3.0.0a1' must not crash."""
+        result = self.agg._calculate_aggregated_fixed_version(["3.0.0a1", "3.0.1"])
+        assert result is not None
+
+    def test_rc_versions_no_crash(self):
+        """RC versions compared with release versions must not crash."""
+        result = self.agg._calculate_aggregated_fixed_version(["1.2.3rc1, 2.0.0", "1.2.4, 2.0.1"])
         assert result is not None
 
 

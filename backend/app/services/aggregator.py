@@ -505,22 +505,32 @@ class ResultAggregator:
                             "which may indicate maintenance or security concerns.".format(score)
                         )
 
-    def _parse_version_key(self, v: str) -> Tuple[Union[int, str], ...]:
-        """Helper to parse version string into a comparable tuple."""
+    def _parse_version_key(self, v: str) -> Tuple[Tuple[int, Union[int, str]], ...]:
+        """Helper to parse version string into a comparable tuple.
+
+        Each element is a (type_flag, value) pair where type_flag=0 for numeric
+        parts and type_flag=1 for string parts. This ensures safe cross-type
+        comparison: numbers always sort before strings at the same position.
+
+        Mixed alphanumeric tokens like "0a1" are further split into
+        ("0", "a", "1") so that numeric and string parts never share a position.
+        """
         # Remove common prefixes
         v = v.lower()
         if v.startswith("v"):
             v = v[1:]
 
         # Split by non-alphanumeric characters
-        parts: List[Union[int, str]] = []
+        parts: List[Tuple[int, Union[int, str]]] = []
         for part in re.split(r"[^a-z0-9]+", v):
             if not part:
                 continue
-            if part.isdigit():
-                parts.append(int(part))
-            else:
-                parts.append(part)
+            # Further split mixed alphanumeric tokens (e.g. "0a1" -> "0", "a", "1")
+            for subpart in re.findall(r"[a-z]+|\d+", part):
+                if subpart.isdigit():
+                    parts.append((0, int(subpart)))
+                else:
+                    parts.append((1, subpart))
         return tuple(parts)
 
     def _calculate_aggregated_fixed_version(self, fixed_versions_list: List[str]) -> Optional[str]:
@@ -545,9 +555,9 @@ class ResultAggregator:
                     if not parsed:
                         continue
 
-                    # Use first element as major version bucket key
+                    # Use first element's value as major version bucket key
                     # If it's a string (e.g. 'release'), it goes to its own bucket
-                    major = parsed[0] if len(parsed) > 0 else 0
+                    major = parsed[0][1] if len(parsed) > 0 else 0
 
                     if major not in major_buckets:
                         major_buckets[major] = {}

@@ -582,7 +582,7 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
                 if len(parts) == 2:
                     vcs_branches = await gh_service.list_branches(parts[0], parts[1])
 
-        if vcs_branches is None:
+        if not vcs_branches:
             return
 
         # Get branches we know from scans
