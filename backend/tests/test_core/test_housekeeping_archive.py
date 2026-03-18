@@ -5,7 +5,6 @@ _handle_retention_action, and run_housekeeping with archive mode.
 """
 
 import asyncio
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.housekeeping import (
@@ -49,7 +48,7 @@ class TestArchiveScansAndDelete:
 
         with (
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=1) as mock_delete,
+            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=1),
         ):
             result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
 

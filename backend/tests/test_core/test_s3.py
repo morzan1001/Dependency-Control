@@ -4,7 +4,7 @@ Tests the async S3 client functions with mocked aiobotocore session.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app.core.s3 import (
     delete_object,

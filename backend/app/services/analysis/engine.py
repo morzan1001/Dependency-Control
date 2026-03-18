@@ -367,8 +367,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             analysis_findings_by_type.labels(type=finding_type, severity=severity).inc()
         if analysis_findings_total:
             scanners = finding.scanners if hasattr(finding, "scanners") else []
-            for analyzer in scanners:
-                analysis_findings_total.labels(analyzer=analyzer, severity=severity).inc()
+            for scanner_name in scanners:
+                analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
 
     # Get aggregated dependency enrichments
     dependency_enrichments = aggregator.get_dependency_enrichments()

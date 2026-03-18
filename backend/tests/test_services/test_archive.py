@@ -10,8 +10,6 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from app.models.archive import ArchiveMetadata
 from app.services.archive import (
     _extract_gridfs_ids_from_refs,

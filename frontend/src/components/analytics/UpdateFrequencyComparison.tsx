@@ -145,7 +145,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
                   borderColor: 'hsl(var(--border))',
                 }}
                 itemStyle={{ color: 'hsl(var(--foreground))' }}
-                formatter={(value: number) =>
+                formatter={(value) =>
                   metric === 'coverage' ? `${value}%` : value
                 }
                 labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ''}
@@ -310,7 +310,7 @@ export function UpdateFrequencyComparison() {
       )}
 
       {/* Results */}
-      {data?.projects.length > 0 && (
+      {data && data.projects.length > 0 && (
         <>
           <ComparisonSummaryCards data={data} />
           <ComparisonChart projects={data.projects} />

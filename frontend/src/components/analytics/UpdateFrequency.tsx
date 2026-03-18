@@ -195,7 +195,7 @@ function GranularityChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) 
                 innerRadius={60}
                 outerRadius={90}
                 dataKey="value"
-                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
               >
                 {pieData.map((entry) => (
                   <Cell key={`cell-${entry.name}`} fill={entry.color} />

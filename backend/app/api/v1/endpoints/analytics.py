@@ -1508,21 +1508,23 @@ async def get_update_frequency_comparison(
     if team_id:
         query["team_id"] = team_id
 
-    projects_raw = await project_repo.find_many_raw(
+    projects_raw = await project_repo.find_all(
         query,
         projection={"_id": 1, "name": 1, "team_id": 1},
-        limit=100,
     )
 
     # Resolve team names if needed
     if projects_raw:
-        team_ids = list({p.get("team_id") for p in projects_raw if p.get("team_id")})
+        team_ids: List[str] = [
+            str(p["team_id"]) for p in projects_raw if p.get("team_id")
+        ]
+        unique_team_ids = list(set(team_ids))
         team_names: Dict[str, str] = {}
-        if team_ids:
+        if unique_team_ids:
             from app.repositories import TeamRepository
 
             team_repo = TeamRepository(db)
-            for tid in team_ids:
+            for tid in unique_team_ids:
                 team = await team_repo.get_raw_by_id(tid)
                 if team:
                     team_names[tid] = team.get("name", "")

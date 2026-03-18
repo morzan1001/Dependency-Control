@@ -3,7 +3,6 @@
 Tests AES-256-GCM encrypt/decrypt and key derivation.
 """
 
-import os
 from unittest.mock import patch
 
 import pytest
