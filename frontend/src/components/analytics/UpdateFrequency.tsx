@@ -5,7 +5,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ProjectCombobox } from '@/components/ui/project-combobox'
 import {
-  BarChart,
   Bar,
   XAxis,
   YAxis,
@@ -57,7 +56,7 @@ const trendConfig = {
   deteriorating: { icon: TrendingDown, color: 'text-red-500', label: 'Deteriorating' },
 }
 
-function SummaryCards({ data }: { data: UpdateFrequencyMetrics }) {
+function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
   const trend = trendConfig[data.trend_direction] || trendConfig.stable
   const TrendIcon = trend.icon
 
@@ -118,7 +117,7 @@ function SummaryCards({ data }: { data: UpdateFrequencyMetrics }) {
   )
 }
 
-function TimelineChart({ data }: { data: UpdateFrequencyMetrics }) {
+function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
   const chartData = data.scan_timeline.map((entry) => ({
     ...entry,
     date: formatDate(entry.date, { month: 'short', day: 'numeric' }),
@@ -169,7 +168,7 @@ function TimelineChart({ data }: { data: UpdateFrequencyMetrics }) {
   )
 }
 
-function GranularityChart({ data }: { data: UpdateFrequencyMetrics }) {
+function GranularityChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
   const pieData = [
     { name: 'Patch', value: data.patch_updates, color: updateTypeColors.patch },
     { name: 'Minor', value: data.minor_updates, color: updateTypeColors.minor },
@@ -217,7 +216,7 @@ function GranularityChart({ data }: { data: UpdateFrequencyMetrics }) {
   )
 }
 
-function SlowPackagesTable({ data }: { data: UpdateFrequencyMetrics }) {
+function SlowPackagesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
   if (data.slowest_packages.length === 0) return null
 
   return (
@@ -262,7 +261,7 @@ function SlowPackagesTable({ data }: { data: UpdateFrequencyMetrics }) {
   )
 }
 
-function RecentUpdatesTable({ data }: { data: UpdateFrequencyMetrics }) {
+function RecentUpdatesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
   if (data.recent_updates.length === 0) return null
 
   return (

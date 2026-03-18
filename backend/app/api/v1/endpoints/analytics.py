@@ -1488,9 +1488,7 @@ async def get_update_frequency_comparison(
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     # Check cache
-    cache_key = CacheKeys.update_frequency_comparison(
-        current_user.id, team_id or "all"
-    )
+    cache_key = CacheKeys.update_frequency_comparison(current_user.id, team_id or "all")
     cached = await cache_service.get(cache_key)
     if cached:
         return UpdateFrequencyComparison(**cached)

@@ -54,9 +54,7 @@ class TestExistsByUrl:
 
         asyncio.run(repo.exists_by_url("https://token.actions.githubusercontent.com/"))
 
-        collection.find_one.assert_called_once_with(
-            {"url": "https://token.actions.githubusercontent.com"}, {"_id": 1}
-        )
+        collection.find_one.assert_called_once_with({"url": "https://token.actions.githubusercontent.com"}, {"_id": 1})
 
     def test_returns_true_when_exists(self):
         collection = create_mock_collection(find_one={"_id": "some-id"})
@@ -114,9 +112,7 @@ class TestExistsByName:
 
         asyncio.run(repo.exists_by_name("GitHub.com", exclude_id="some-id"))
 
-        collection.find_one.assert_called_once_with(
-            {"name": "GitHub.com", "_id": {"$ne": "some-id"}}, {"_id": 1}
-        )
+        collection.find_one.assert_called_once_with({"name": "GitHub.com", "_id": {"$ne": "some-id"}}, {"_id": 1})
 
 
 class TestCRUD:

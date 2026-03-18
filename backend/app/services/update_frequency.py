@@ -225,9 +225,7 @@ def _compute_trend(
             parts.append(f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}")
         return "deteriorating", ". ".join(parts)
 
-    return "stable", (
-        f"Consistent (~{newer_avg_updates:.1f} updates/scan, ~{newer_avg_outdated:.0f} outdated)"
-    )
+    return "stable", (f"Consistent (~{newer_avg_updates:.1f} updates/scan, ~{newer_avg_outdated:.0f} outdated)")
 
 
 def _aggregate_metrics(
@@ -258,10 +256,10 @@ def _aggregate_metrics(
     unknown_total = type_counts.get("unknown", 0)
 
     granularity_ratio = {
-        "patch": round(patch_total / total_updates, 2) if total_updates else 0,
-        "minor": round(minor_total / total_updates, 2) if total_updates else 0,
-        "major": round(major_total / total_updates, 2) if total_updates else 0,
-        "unknown": round(unknown_total / total_updates, 2) if total_updates else 0,
+        "patch": round(patch_total / total_updates, 2) if total_updates else 0.0,
+        "minor": round(minor_total / total_updates, 2) if total_updates else 0.0,
+        "major": round(major_total / total_updates, 2) if total_updates else 0.0,
+        "unknown": round(unknown_total / total_updates, 2) if total_updates else 0.0,
     }
 
     avg_days_between = time_range_days / num_intervals if num_intervals else 0
@@ -269,16 +267,12 @@ def _aggregate_metrics(
     total_outdated_detected = len(ever_outdated)
     outdated_resolved_count = len(ever_outdated & ever_resolved)
     update_coverage_pct = (
-        round(outdated_resolved_count / total_outdated_detected * 100, 1)
-        if total_outdated_detected
-        else 0.0
+        round(outdated_resolved_count / total_outdated_detected * 100, 1) if total_outdated_detected else 0.0
     )
 
     trend_direction, trend_detail = _compute_trend(scan_timeline)
 
-    slowest_packages = _build_slowest_packages(
-        package_outdated_counts, package_latest_info, deps_by_scan
-    )
+    slowest_packages = _build_slowest_packages(package_outdated_counts, package_latest_info, deps_by_scan)
     recent_updates = sorted(all_events, key=lambda e: e.scan_date, reverse=True)[:30]
 
     return UpdateFrequencyMetrics(
@@ -350,7 +344,7 @@ def _empty_metrics(project_id: str, project_name: str, scan_count: int, scan_dat
         minor_updates=0,
         major_updates=0,
         unknown_updates=0,
-        granularity_ratio={"patch": 0, "minor": 0, "major": 0, "unknown": 0},
+        granularity_ratio={"patch": 0.0, "minor": 0.0, "major": 0.0, "unknown": 0.0},
         avg_days_between_scans=0.0,
         total_outdated_detected=0,
         outdated_resolved=0,
@@ -415,8 +409,8 @@ async def compute_update_frequency(
     )
 
     if len(completed_scans) < 2:
-        scan_date = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
-        return _empty_metrics(project_id, project_name, len(completed_scans), scan_date)
+        first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
+        return _empty_metrics(project_id, project_name, len(completed_scans), first_date_str)
 
     outdated_by_scan, package_latest_info = _build_outdated_maps(outdated_results)
 
@@ -431,8 +425,8 @@ async def compute_update_frequency(
     ever_resolved: set = set()
 
     for i, scan in enumerate(completed_scans):
-        scan_id = scan["_id"]
-        scan_date: datetime = scan["created_at"]
+        scan_id: str = scan["_id"]
+        scan_dt: datetime = scan["created_at"]
         scan_outdated = outdated_by_scan.get(scan_id, set())
 
         # Track outdated counts
@@ -441,15 +435,20 @@ async def compute_update_frequency(
             ever_outdated.add(pkg_name)
 
         if i == 0:
-            scan_timeline.append(_build_timeline_entry(scan_id, scan_date, [], len(scan_outdated)))
+            scan_timeline.append(_build_timeline_entry(scan_id, scan_dt, [], len(scan_outdated)))
             continue
 
         prev_scan = completed_scans[i - 1]
+        prev_dt: datetime = prev_scan["created_at"]
         prev_outdated = outdated_by_scan.get(prev_scan["_id"], set())
 
         events = _compare_scan_pair(
-            deps_by_scan, prev_scan["_id"], prev_scan["created_at"],
-            scan_id, scan_date, prev_outdated,
+            deps_by_scan,
+            prev_scan["_id"],
+            prev_dt,
+            scan_id,
+            scan_dt,
+            prev_outdated,
         )
 
         # Track resolved outdated packages
@@ -458,12 +457,19 @@ async def compute_update_frequency(
                 ever_resolved.add(e.package_name)
 
         all_update_events.extend(events)
-        scan_timeline.append(_build_timeline_entry(scan_id, scan_date, events, len(scan_outdated)))
+        scan_timeline.append(_build_timeline_entry(scan_id, scan_dt, events, len(scan_outdated)))
 
     return _aggregate_metrics(
-        all_update_events, completed_scans, ever_outdated, ever_resolved,
-        scan_timeline, deps_by_scan, package_outdated_counts, package_latest_info,
-        project_id, project_name,
+        all_update_events,
+        completed_scans,
+        ever_outdated,
+        ever_resolved,
+        scan_timeline,
+        deps_by_scan,
+        package_outdated_counts,
+        package_latest_info,
+        project_id,
+        project_name,
     )
 
 
@@ -480,6 +486,7 @@ async def compute_update_frequency_comparison(
     Args:
         projects: List of dicts with at least {_id, name} and optionally {team_name}.
     """
+
     # Compute all projects in parallel with asyncio.gather
     async def _compute_single(project: Dict[str, Any]) -> Optional[ProjectUpdateSummary]:
         project_id = project.get("_id") or project.get("id", "")
@@ -516,9 +523,7 @@ async def compute_update_frequency_comparison(
         )
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
-    summaries: List[ProjectUpdateSummary] = [
-        s for s in results if isinstance(s, ProjectUpdateSummary)
-    ]
+    summaries: List[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
 
     # Sort by coverage descending, then by updates_per_month descending
     summaries.sort(key=lambda s: (s.update_coverage_pct, s.updates_per_month), reverse=True)

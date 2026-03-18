@@ -18,7 +18,7 @@ export const analyticsKeys = {
     dependencyMetadata: (component: string, version?: string, type?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }] as const,
     dependencyTypes: () => [...analyticsKeys.all, 'dependency-types'] as const,
     recommendations: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'recommendations', projectId, { scanId }] as const,
-    updateFrequency: (projectId: string) => [...analyticsKeys.all, 'update-frequency', projectId] as const,
+    updateFrequency: (projectId: string, maxScans?: number) => [...analyticsKeys.all, 'update-frequency', projectId, { maxScans }] as const,
     updateFrequencyComparison: (teamId?: string, maxScans?: number) => [...analyticsKeys.all, 'update-frequency-comparison', { teamId, maxScans }] as const,
 }
 
@@ -142,7 +142,7 @@ export const useProjectRecommendations = (projectId: string, scanId?: string) =>
 
 export const useUpdateFrequency = (projectId: string, maxScans?: number) => {
     return useQuery({
-        queryKey: analyticsKeys.updateFrequency(projectId),
+        queryKey: analyticsKeys.updateFrequency(projectId, maxScans),
         queryFn: () => analyticsApi.getUpdateFrequency(projectId, maxScans),
         enabled: !!projectId,
         staleTime: 5 * 60 * 1000,

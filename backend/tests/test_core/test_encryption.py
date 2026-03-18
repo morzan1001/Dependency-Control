@@ -16,6 +16,7 @@ MODULE = "app.core.encryption"
 # is_encryption_enabled
 # ---------------------------------------------------------------------------
 
+
 class TestIsEncryptionEnabled:
     def test_returns_false_when_key_empty(self):
         from app.core.encryption import is_encryption_enabled
@@ -35,6 +36,7 @@ class TestIsEncryptionEnabled:
 # ---------------------------------------------------------------------------
 # encrypt / decrypt roundtrip
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptDecrypt:
     def test_roundtrip_with_hex_key(self):

@@ -20,6 +20,7 @@ MODULE = "app.api.v1.endpoints.archives"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_archive_metadata(**overrides):
     """Create an ArchiveMetadata instance for testing."""
     defaults = {
@@ -47,6 +48,7 @@ def _make_archive_metadata(**overrides):
 # ---------------------------------------------------------------------------
 # list_archives
 # ---------------------------------------------------------------------------
+
 
 class TestListArchives:
     def test_returns_paginated_archives(self, admin_user):
@@ -85,13 +87,15 @@ class TestListArchives:
     def test_returns_extended_metadata_fields(self, admin_user):
         from app.api.v1.endpoints.archives import list_archives
 
-        archives = [_make_archive_metadata(
-            findings_count=10,
-            critical_findings_count=3,
-            high_findings_count=4,
-            dependencies_count=25,
-            sbom_filenames=["sbom-a.json", "sbom-b.json"],
-        )]
+        archives = [
+            _make_archive_metadata(
+                findings_count=10,
+                critical_findings_count=3,
+                high_findings_count=4,
+                dependencies_count=25,
+                sbom_filenames=["sbom-a.json", "sbom-b.json"],
+            )
+        ]
 
         mock_repo = MagicMock()
         mock_repo.count_by_project = AsyncMock(return_value=1)
@@ -246,6 +250,7 @@ class TestListArchives:
 # restore_archive
 # ---------------------------------------------------------------------------
 
+
 class TestRestoreArchive:
     def test_restores_archive_successfully(self, admin_user):
         from app.api.v1.endpoints.archives import restore_archive
@@ -374,6 +379,7 @@ class TestRestoreArchive:
 # ---------------------------------------------------------------------------
 # download_archive
 # ---------------------------------------------------------------------------
+
 
 class TestDownloadArchive:
     def test_downloads_archive(self, admin_user):
@@ -515,6 +521,7 @@ class TestDownloadArchive:
 # list_archive_branches
 # ---------------------------------------------------------------------------
 
+
 class TestListArchiveBranches:
     def test_returns_branch_list(self, admin_user):
         from app.api.v1.endpoints.archives import list_archive_branches
@@ -574,6 +581,7 @@ class TestListArchiveBranches:
 # pin_scan / unpin_scan
 # ---------------------------------------------------------------------------
 
+
 class TestPinScan:
     def test_pins_scan_successfully(self, admin_user):
         from app.api.v1.endpoints.archives import pin_scan
@@ -596,9 +604,7 @@ class TestPinScan:
 
         assert result.scan_id == "scan-1"
         assert result.pinned is True
-        mock_db.scans.update_one.assert_called_once_with(
-            {"_id": "scan-1"}, {"$set": {"pinned": True}}
-        )
+        mock_db.scans.update_one.assert_called_once_with({"_id": "scan-1"}, {"$set": {"pinned": True}})
 
     def test_raises_404_when_scan_not_found(self, admin_user):
         from app.api.v1.endpoints.archives import pin_scan
@@ -659,9 +665,7 @@ class TestUnpinScan:
 
         assert result.scan_id == "scan-1"
         assert result.pinned is False
-        mock_db.scans.update_one.assert_called_once_with(
-            {"_id": "scan-1"}, {"$set": {"pinned": False}}
-        )
+        mock_db.scans.update_one.assert_called_once_with({"_id": "scan-1"}, {"$set": {"pinned": False}})
 
     def test_raises_404_when_scan_not_found(self, admin_user):
         from app.api.v1.endpoints.archives import unpin_scan
@@ -688,6 +692,7 @@ class TestUnpinScan:
 # ---------------------------------------------------------------------------
 # list_all_archives (admin endpoint)
 # ---------------------------------------------------------------------------
+
 
 class TestListAllArchives:
     def test_returns_archives_with_project_names(self, admin_user):
@@ -785,6 +790,7 @@ class TestListAllArchives:
 # ---------------------------------------------------------------------------
 # Permission enforcement on restore
 # ---------------------------------------------------------------------------
+
 
 class TestRestoreArchivePermissions:
     def test_raises_403_without_archive_restore_permission(self, no_perms_user):

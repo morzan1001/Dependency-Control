@@ -27,6 +27,7 @@ MODULE = "app.services.archive"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_scan_doc(**overrides):
     """Create a minimal scan document for testing."""
     doc = {
@@ -86,8 +87,9 @@ class _AsyncCursorMock:
         return list(self._docs)
 
 
-def _make_mock_db(scan_doc=None, findings=None, finding_records=None,
-                  dependencies=None, analysis_results=None, callgraphs=None):
+def _make_mock_db(
+    scan_doc=None, findings=None, finding_records=None, dependencies=None, analysis_results=None, callgraphs=None
+):
     """Create a mock database with collection mocks supporting async iteration."""
     db = MagicMock()
 
@@ -122,6 +124,7 @@ def _make_mock_db(scan_doc=None, findings=None, finding_records=None,
 # ---------------------------------------------------------------------------
 # _serialize_doc
 # ---------------------------------------------------------------------------
+
 
 class TestSerializeDoc:
     def test_converts_objectid(self):
@@ -168,6 +171,7 @@ class TestSerializeDoc:
 # _extract_gridfs_ids_from_refs
 # ---------------------------------------------------------------------------
 
+
 class TestExtractGridfsIds:
     def test_extracts_gridfs_ids(self):
         refs = [
@@ -197,6 +201,7 @@ class TestExtractGridfsIds:
 # ---------------------------------------------------------------------------
 # archive_scan
 # ---------------------------------------------------------------------------
+
 
 class TestArchiveScan:
     def test_returns_none_when_s3_not_configured(self):
@@ -291,9 +296,11 @@ class TestArchiveScan:
         mock_repo.create.assert_not_called()
 
     def test_populates_extended_metadata_fields(self):
-        scan_doc = _make_scan_doc(sbom_refs=[
-            {"type": "gridfs_reference", "gridfs_id": "gfs-1"},
-        ])
+        scan_doc = _make_scan_doc(
+            sbom_refs=[
+                {"type": "gridfs_reference", "gridfs_id": "gfs-1"},
+            ]
+        )
         findings = [
             {"_id": "f-1", "scan_id": "scan-1", "severity": "CRITICAL"},
             {"_id": "f-2", "scan_id": "scan-1", "severity": "HIGH"},
@@ -335,9 +342,11 @@ class TestArchiveScan:
         assert result.sbom_filenames == ["sbom.json"]
 
     def test_includes_gridfs_sboms_in_bundle(self):
-        scan_doc = _make_scan_doc(sbom_refs=[
-            {"type": "gridfs_reference", "gridfs_id": "gfs-1"},
-        ])
+        scan_doc = _make_scan_doc(
+            sbom_refs=[
+                {"type": "gridfs_reference", "gridfs_id": "gfs-1"},
+            ]
+        )
         db = _make_mock_db(scan_doc=scan_doc)
 
         mock_repo = MagicMock()
@@ -366,6 +375,7 @@ class TestArchiveScan:
 # ---------------------------------------------------------------------------
 # restore_scan
 # ---------------------------------------------------------------------------
+
 
 class TestRestoreScan:
     def test_returns_none_when_s3_not_configured(self):
@@ -596,6 +606,7 @@ class TestRestoreScan:
 # archive_scan with encryption
 # ---------------------------------------------------------------------------
 
+
 class TestArchiveScanEncryption:
     def test_archives_with_encryption(self):
         scan_doc = _make_scan_doc()
@@ -653,6 +664,7 @@ class TestArchiveScanEncryption:
 # ---------------------------------------------------------------------------
 # restore_scan with encryption
 # ---------------------------------------------------------------------------
+
 
 class TestRestoreScanEncryption:
     def test_restores_encrypted_archive(self):

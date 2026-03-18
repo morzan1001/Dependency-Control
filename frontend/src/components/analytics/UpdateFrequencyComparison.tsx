@@ -234,11 +234,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
   )
 }
 
-interface UpdateFrequencyComparisonProps {
-  onSelectProject?: (projectId: string) => void
-}
-
-export function UpdateFrequencyComparison({ onSelectProject }: Readonly<UpdateFrequencyComparisonProps>) {
+export function UpdateFrequencyComparison() {
   const [selectedTeamId, setSelectedTeamId] = useState<string | undefined>(undefined)
 
   const { data: teamsData } = useTeams()

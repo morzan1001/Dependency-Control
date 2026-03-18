@@ -172,9 +172,7 @@ class TestExistsByName:
 
         asyncio.run(repo.exists_by_name("Test GitLab", exclude_id="some-id"))
 
-        collection.find_one.assert_called_once_with(
-            {"name": "Test GitLab", "_id": {"$ne": "some-id"}}, {"_id": 1}
-        )
+        collection.find_one.assert_called_once_with({"name": "Test GitLab", "_id": {"$ne": "some-id"}}, {"_id": 1})
 
 
 class TestCRUD:

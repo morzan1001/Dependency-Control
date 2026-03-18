@@ -21,6 +21,7 @@ MODULE = "app.core.s3"
 # is_archive_enabled
 # ---------------------------------------------------------------------------
 
+
 class TestIsArchiveEnabled:
     def test_enabled_when_both_set(self):
         with patch(f"{MODULE}.settings") as mock_settings:
@@ -50,6 +51,7 @@ class TestIsArchiveEnabled:
 # ---------------------------------------------------------------------------
 # ensure_bucket_exists
 # ---------------------------------------------------------------------------
+
 
 class TestEnsureBucketExists:
     def test_skips_when_not_enabled(self):
@@ -100,6 +102,7 @@ class TestEnsureBucketExists:
 # upload_bytes
 # ---------------------------------------------------------------------------
 
+
 class TestUploadBytes:
     def test_uploads_data(self):
         mock_s3 = AsyncMock()
@@ -130,6 +133,7 @@ class TestUploadBytes:
 # ---------------------------------------------------------------------------
 # download_bytes
 # ---------------------------------------------------------------------------
+
 
 class TestDownloadBytes:
     def test_downloads_data(self):
@@ -164,6 +168,7 @@ class TestDownloadBytes:
 # ---------------------------------------------------------------------------
 # delete_object
 # ---------------------------------------------------------------------------
+
 
 class TestDeleteObject:
     def test_deletes_object(self):

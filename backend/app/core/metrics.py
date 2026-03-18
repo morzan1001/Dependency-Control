@@ -480,9 +480,7 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
             resp_content_length = response.headers.get("content-length")
             if resp_content_length:
                 try:
-                    http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(
-                        int(resp_content_length)
-                    )
+                    http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(int(resp_content_length))
                 except ValueError:
                     pass
 

@@ -24,6 +24,7 @@ ARCHIVE_SVC = "app.services.archive"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_archive_metadata(scan_id="scan-1"):
     return ArchiveMetadata(
         project_id="proj-1",
@@ -37,6 +38,7 @@ def _make_archive_metadata(scan_id="scan-1"):
 # _archive_scans_and_delete
 # ---------------------------------------------------------------------------
 
+
 class TestArchiveScansAndDelete:
     def test_returns_zero_for_empty_list(self):
         result = asyncio.run(_archive_scans_and_delete(MagicMock(), [], "test"))
@@ -49,9 +51,7 @@ class TestArchiveScansAndDelete:
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive,
             patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=1) as mock_delete,
         ):
-            result = asyncio.run(
-                _archive_scans_and_delete(MagicMock(), ["scan-1"], "test")
-            )
+            result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
 
         assert result == 1
         mock_archive.assert_called_once()
@@ -61,9 +61,7 @@ class TestArchiveScansAndDelete:
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=None) as mock_archive,
             patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=0) as mock_delete,
         ):
-            result = asyncio.run(
-                _archive_scans_and_delete(MagicMock(), ["scan-1"], "test")
-            )
+            result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
 
         assert result == 0
         mock_archive.assert_called_once()
@@ -82,9 +80,7 @@ class TestArchiveScansAndDelete:
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=mock_archive_fn),
             patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=1) as mock_delete,
         ):
-            result = asyncio.run(
-                _archive_scans_and_delete(MagicMock(), ["scan-1", "scan-2"], "test")
-            )
+            result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1", "scan-2"], "test"))
 
         assert result == 1
         # Only scan-1 should be in the delete list
@@ -97,9 +93,7 @@ class TestArchiveScansAndDelete:
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=Exception("Archive crashed")),
             patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=0) as mock_delete,
         ):
-            result = asyncio.run(
-                _archive_scans_and_delete(MagicMock(), ["scan-1"], "test")
-            )
+            result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
 
         assert result == 0
         call_args = mock_delete.call_args[0]
@@ -114,9 +108,7 @@ class TestArchiveScansAndDelete:
             patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=50),
             patch(f"{MODULE}.ARCHIVE_BATCH_SIZE", 50),
         ):
-            asyncio.run(
-                _archive_scans_and_delete(MagicMock(), scan_ids, "test")
-            )
+            asyncio.run(_archive_scans_and_delete(MagicMock(), scan_ids, "test"))
 
         # Should only process ARCHIVE_BATCH_SIZE scans
         assert mock_archive.call_count == 50
@@ -126,12 +118,11 @@ class TestArchiveScansAndDelete:
 # _handle_retention_action
 # ---------------------------------------------------------------------------
 
+
 class TestHandleRetentionAction:
     def test_delete_action_calls_delete(self):
         with patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete:
-            asyncio.run(
-                _handle_retention_action(MagicMock(), ["scan-1"], "delete", "test")
-            )
+            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "delete", "test"))
 
         mock_delete.assert_called_once()
 
@@ -140,9 +131,7 @@ class TestHandleRetentionAction:
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
         ):
-            asyncio.run(
-                _handle_retention_action(MagicMock(), ["scan-1"], "archive", "test")
-            )
+            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "archive", "test"))
 
         mock_archive.assert_called_once()
 
@@ -153,9 +142,7 @@ class TestHandleRetentionAction:
             patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
             patch(f"{MODULE}.logger") as mock_logger,
         ):
-            asyncio.run(
-                _handle_retention_action(MagicMock(), ["scan-1"], "archive", "test")
-            )
+            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "archive", "test"))
 
         mock_archive.assert_not_called()
         mock_delete.assert_not_called()
@@ -166,9 +153,7 @@ class TestHandleRetentionAction:
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
             patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
         ):
-            asyncio.run(
-                _handle_retention_action(MagicMock(), ["scan-1"], "none", "test")
-            )
+            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
 
         mock_archive.assert_not_called()
         mock_delete.assert_not_called()
@@ -178,9 +163,7 @@ class TestHandleRetentionAction:
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
             patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
         ):
-            asyncio.run(
-                _handle_retention_action(MagicMock(), [], "delete", "test")
-            )
+            asyncio.run(_handle_retention_action(MagicMock(), [], "delete", "test"))
 
         mock_archive.assert_not_called()
         mock_delete.assert_not_called()
@@ -189,6 +172,7 @@ class TestHandleRetentionAction:
 # ---------------------------------------------------------------------------
 # run_housekeeping (global mode with archive)
 # ---------------------------------------------------------------------------
+
 
 class TestRunHousekeepingArchive:
     def test_global_mode_with_archive_action(self):
