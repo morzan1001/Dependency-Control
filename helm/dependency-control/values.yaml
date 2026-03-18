@@ -285,6 +285,10 @@ backend:
     # Set to 0 to disable. Default: 43200 (12 hours)
     # The PodDisruptionBudget ensures pods restart one at a time
     maxPodUptimeSeconds: 43200
+    # MongoDB read preference for replica sets.
+    # Options: primary, primaryPreferred, secondary, secondaryPreferred, nearest
+    # secondaryPreferred distributes read load across replicas (recommended for production)
+    mongodbReadPreference: "secondaryPreferred"
   # Secret key for JWT signing
   secrets:
     secretKey: ""  # Leave empty to auto-generate

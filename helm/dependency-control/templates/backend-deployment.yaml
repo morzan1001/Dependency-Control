@@ -217,6 +217,9 @@ spec:
             # Pod lifecycle: max uptime before automatic restart (helps manage memory)
             - name: MAX_POD_UPTIME_SECONDS
               value: "{{ .Values.backend.env.maxPodUptimeSeconds | default 86400 }}"
+            # MongoDB read preference for replica sets (distributes read load)
+            - name: MONGODB_READ_PREFERENCE
+              value: "{{ .Values.backend.env.mongodbReadPreference | default "secondaryPreferred" }}"
             {{- if .Values.global.tls.enabled }}
             # TLS environment variables
             - name: TLS_ENABLED
