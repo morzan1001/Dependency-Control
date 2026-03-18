@@ -117,7 +117,7 @@ class BaseRepository[T: BaseModel]:
     async def exists(self, query: Dict[str, Any]) -> bool:
         """Check if a document matching the query exists."""
         with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one(query) is not None
+            return await self.collection.find_one(query, {"_id": 1}) is not None
 
     async def create(self, model: T) -> T:
         """Create a new document from a model instance."""

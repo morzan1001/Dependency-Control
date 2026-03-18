@@ -427,3 +427,83 @@ export interface AdvancedSearchOptions {
     skip?: number;
     limit?: number;
 }
+
+// --- Update Frequency Analysis ---
+
+export interface DependencyUpdateEvent {
+    package_name: string;
+    package_type: string;
+    purl?: string;
+    old_version: string;
+    new_version: string;
+    update_type: 'patch' | 'minor' | 'major' | 'unknown';
+    scan_date: string;
+    previous_scan_date: string;
+    days_between_scans: number;
+    was_outdated: boolean;
+}
+
+export interface ScanTimelineEntry {
+    scan_id: string;
+    date: string;
+    updates_count: number;
+    outdated_count: number;
+    patch: number;
+    minor: number;
+    major: number;
+}
+
+export interface SlowPackage {
+    name: string;
+    type: string;
+    current_version?: string;
+    latest_version?: string;
+    scans_outdated: number;
+}
+
+export interface UpdateFrequencyMetrics {
+    project_id: string;
+    project_name: string;
+    scan_count: number;
+    time_range_days: number;
+    first_scan_date: string;
+    last_scan_date: string;
+    total_updates: number;
+    updates_per_scan: number;
+    updates_per_month: number;
+    patch_updates: number;
+    minor_updates: number;
+    major_updates: number;
+    unknown_updates: number;
+    granularity_ratio: Record<string, number>;
+    avg_days_between_scans: number;
+    total_outdated_detected: number;
+    outdated_resolved: number;
+    update_coverage_pct: number;
+    trend_direction: 'improving' | 'stable' | 'deteriorating';
+    trend_detail: string;
+    scan_timeline: ScanTimelineEntry[];
+    slowest_packages: SlowPackage[];
+    recent_updates: DependencyUpdateEvent[];
+}
+
+export interface ProjectUpdateSummary {
+    project_id: string;
+    project_name: string;
+    team_name?: string;
+    scan_count: number;
+    updates_per_month: number;
+    update_coverage_pct: number;
+    patch_ratio: number;
+    trend_direction: 'improving' | 'stable' | 'deteriorating';
+    total_outdated: number;
+    last_scan_date: string;
+}
+
+export interface UpdateFrequencyComparison {
+    projects: ProjectUpdateSummary[];
+    team_avg_updates_per_month: number;
+    team_avg_coverage_pct: number;
+    best_project?: string;
+    worst_project?: string;
+}

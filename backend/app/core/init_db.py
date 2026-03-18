@@ -63,9 +63,11 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["teams"].create_index("members.user_id")
 
     # Scans
-    await database["scans"].create_index("project_id")
+    # Note: standalone project_id index removed — covered by compound indexes
+    # (project_id, created_at), (project_id, pipeline_id), (project_id, status), etc.
     await database["scans"].create_index("pipeline_id")  # For CI/CD lookups
-    await database["scans"].create_index("status")  # For worker queue
+    # Note: standalone status index removed — covered by (status, analysis_started_at)
+    # and (project_id, status) compound indexes
     await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
     # Compound index for efficient retrieval of project scans sorted by date
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
@@ -82,13 +84,13 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
 
     # Dependencies (New Normalized Collection)
-    await database["dependencies"].create_index("project_id")
-    await database["dependencies"].create_index("scan_id")
+    # Note: standalone project_id removed — covered by (project_id, name) compound
+    # Note: standalone scan_id removed — covered by multiple compounds: (scan_id, name),
+    # (scan_id, direct), (scan_id, name, version), (scan_id, source_type), etc.
     await database["dependencies"].create_index("name")
     await database["dependencies"].create_index("purl")
-    await database["dependencies"].create_index("version")
-    await database["dependencies"].create_index("type")
-    await database["dependencies"].create_index("direct")
+    # Note: standalone version, type, direct removed — always queried with scan_id,
+    # covered by respective compound indexes
     # Unique constraint to prevent duplicate dependencies in the same scan
     # This allows safe upsert operations and prevents race conditions during SBOM ingestion
     await database["dependencies"].create_index(
@@ -108,8 +110,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
 
     # Findings (New Normalized Collection)
-    await database["findings"].create_index("project_id")
-    await database["findings"].create_index("scan_id")
+    # Note: standalone project_id removed — covered by (project_id, component, type) compound
+    # Note: standalone scan_id removed — covered by multiple compounds: (scan_id, severity),
+    # (scan_id, waived), (scan_id, type), (scan_id, component, version), (scan_id, reachable)
     await database["findings"].create_index("severity")
     await database["findings"].create_index("type")
     await database["findings"].create_index("finding_id")  # Logical ID (CVE)
@@ -169,9 +172,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["scans"].create_index("latest_rescan_id")  # For fast rescan history traversal
 
     # Findings - Additional indexes for analytics and stats
-    await database["findings"].create_index("waived")
-    await database["findings"].create_index("component")
-    await database["findings"].create_index("version")
+    # Note: standalone waived, component, version removed — always queried with scan_id
+    # or project_id, covered by respective compound indexes
     await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)])
@@ -198,7 +200,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.ASCENDING),
         ]
     )
-    await database["dependencies"].create_index("source_type")
+    # Note: standalone source_type removed — covered by (scan_id, source_type) compound
 
     # Waivers - Additional indexes for finding/package lookups
     await database["waivers"].create_index("finding_id")

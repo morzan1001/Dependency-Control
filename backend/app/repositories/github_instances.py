@@ -95,7 +95,7 @@ class GitHubInstanceRepository:
         query: Dict[str, Any] = {"url": normalized_url}
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
-        return await self.collection.count_documents(query) > 0
+        return await self.collection.find_one(query, {"_id": 1}) is not None
 
     async def exists_by_name(self, name: str, exclude_id: Optional[str] = None) -> bool:
         """
@@ -105,4 +105,4 @@ class GitHubInstanceRepository:
         query: Dict[str, Any] = {"name": name}
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
-        return await self.collection.count_documents(query) > 0
+        return await self.collection.find_one(query, {"_id": 1}) is not None

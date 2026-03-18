@@ -7,6 +7,10 @@ class Settings(BaseSettings):
 
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "dependency_control"
+    # Read preference for replica sets: primary, primaryPreferred, secondary,
+    # secondaryPreferred, nearest. Use secondaryPreferred in production to
+    # distribute read load across replicas.
+    MONGODB_READ_PREFERENCE: str = "primary"
 
     # Redis Cache Settings
     REDIS_URL: str = "redis://localhost:6379/0"

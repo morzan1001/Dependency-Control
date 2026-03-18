@@ -293,3 +293,110 @@ class RecommendationsResponse(BaseModel):
     total_vulnerabilities: int
     recommendations: List[RecommendationResponse]
     summary: Dict[str, Any]
+
+
+# --- Update Frequency Analysis ---
+
+
+class DependencyUpdateEvent(BaseModel):
+    """A single dependency version change between two consecutive scans."""
+
+    package_name: str
+    package_type: str
+    purl: Optional[str] = None
+    old_version: str
+    new_version: str
+    update_type: str  # "patch" | "minor" | "major" | "unknown"
+    scan_date: str  # ISO timestamp of the scan where the update was detected
+    previous_scan_date: str
+    days_between_scans: int
+    was_outdated: bool  # was flagged as outdated in the previous scan
+
+
+class ScanTimelineEntry(BaseModel):
+    """Per-scan summary for timeline chart data."""
+
+    scan_id: str
+    date: str
+    updates_count: int
+    outdated_count: int
+    patch: int
+    minor: int
+    major: int
+
+
+class SlowPackage(BaseModel):
+    """A package that remains outdated across multiple scans."""
+
+    name: str
+    type: str
+    current_version: Optional[str] = None
+    latest_version: Optional[str] = None
+    scans_outdated: int  # number of scans where this package was flagged as outdated
+
+
+class UpdateFrequencyMetrics(BaseModel):
+    """Aggregated update frequency metrics for a single project."""
+
+    project_id: str
+    project_name: str
+    scan_count: int
+    time_range_days: int
+    first_scan_date: str
+    last_scan_date: str
+
+    # Frequency
+    total_updates: int
+    updates_per_scan: float
+    updates_per_month: float
+
+    # Granularity
+    patch_updates: int
+    minor_updates: int
+    major_updates: int
+    unknown_updates: int
+    granularity_ratio: Dict[str, float]  # {"patch": 0.6, "minor": 0.3, "major": 0.1}
+
+    # Scan cadence
+    avg_days_between_scans: float
+
+    # Coverage — how many outdated packages actually got updated
+    total_outdated_detected: int
+    outdated_resolved: int
+    update_coverage_pct: float
+
+    # Trend — comparing recent vs older scan history
+    trend_direction: str  # "improving" | "stable" | "deteriorating"
+    trend_detail: str
+
+    # Chart data
+    scan_timeline: List[ScanTimelineEntry]
+
+    # Tables
+    slowest_packages: List[SlowPackage]
+    recent_updates: List[DependencyUpdateEvent]
+
+
+class ProjectUpdateSummary(BaseModel):
+    """Lightweight update metrics for cross-project comparison."""
+
+    project_id: str
+    project_name: str
+    team_name: Optional[str] = None
+    scan_count: int
+    updates_per_month: float
+    update_coverage_pct: float
+    patch_ratio: float  # proportion of patch updates (0-1)
+    trend_direction: str  # "improving" | "stable" | "deteriorating"
+    total_outdated: int
+    last_scan_date: str
+
+
+class UpdateFrequencyComparison(BaseModel):
+    """Cross-project comparison of update frequency metrics."""
+
+    projects: List[ProjectUpdateSummary]
+    team_avg_updates_per_month: float
+    team_avg_coverage_pct: float
+    best_project: Optional[str] = None
+    worst_project: Optional[str] = None

@@ -88,6 +88,9 @@ class CacheTTL:
     # Negative cache (when API returns no data)
     NEGATIVE_RESULT = 1 * 3600  # 1 hour
 
+    # Update frequency analysis (changes only on new scan completion)
+    UPDATE_FREQUENCY = 30 * 60  # 30 minutes
+
 
 class CacheKeys:
     """Cache key builders for consistent key naming."""
@@ -141,6 +144,14 @@ class CacheKeys:
     @staticmethod
     def malware(registry: str, package: str, version: str) -> str:
         return f"malware:{registry}:{package}:{version}"
+
+    @staticmethod
+    def update_frequency(project_id: str) -> str:
+        return f"update_freq:{project_id}"
+
+    @staticmethod
+    def update_frequency_comparison(user_id: str, team_id: str = "all") -> str:
+        return f"update_freq_cmp:{user_id}:{team_id}"
 
 
 class CacheService:

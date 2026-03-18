@@ -26,8 +26,8 @@ except ImportError:
 
 # Connection pool settings (Motor uses these internally)
 # These can be overridden via MONGODB_URL query parameters
-DEFAULT_MAX_POOL_SIZE = 25
-DEFAULT_MIN_POOL_SIZE = 2
+DEFAULT_MAX_POOL_SIZE = 50
+DEFAULT_MIN_POOL_SIZE = 5
 DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 30000  # 30 seconds
 DEFAULT_CONNECT_TIMEOUT_MS = 20000  # 20 seconds
 DEFAULT_SOCKET_TIMEOUT_MS = 30000  # 30 seconds
@@ -73,6 +73,10 @@ async def connect_to_mongo() -> None:
         serverSelectionTimeoutMS=DEFAULT_SERVER_SELECTION_TIMEOUT_MS,
         connectTimeoutMS=DEFAULT_CONNECT_TIMEOUT_MS,
         socketTimeoutMS=DEFAULT_SOCKET_TIMEOUT_MS,
+        retryWrites=True,
+        retryReads=True,
+        compressors="zstd,zlib",
+        readPreference=settings.MONGODB_READ_PREFERENCE,
     )
 
     # Validate connection by pinging the server

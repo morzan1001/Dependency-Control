@@ -27,6 +27,7 @@ from app.api.v1.helpers.analytics import (
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, get_severity_value
 from app.core.permissions import Permissions
 from app.repositories import (
+    AnalysisResultRepository,
     DependencyEnrichmentRepository,
     DependencyRepository,
     FindingRepository,
@@ -45,13 +46,20 @@ from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,
     SeverityBreakdown,
+    UpdateFrequencyComparison,
+    UpdateFrequencyMetrics,
     VulnerabilityHotspot,
     VulnerabilitySearchResponse,
     VulnerabilitySearchResult,
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
+from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.services.enrichment import get_cve_enrichment
 from app.services.recommendations import recommendation_engine
+from app.services.update_frequency import (
+    compute_update_frequency,
+    compute_update_frequency_comparison,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1415,3 +1423,126 @@ async def get_project_recommendations(
         recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
         summary=summary,
     )
+
+
+@router.get("/projects/{project_id}/update-frequency", responses=RESP_AUTH_404)
+async def get_project_update_frequency(
+    project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    max_scans: Annotated[int, Query(ge=2, le=50)] = 20,
+) -> UpdateFrequencyMetrics:
+    """
+    Get update frequency metrics for a project.
+
+    Analyzes how regularly and incrementally dependencies are updated
+    by comparing versions across consecutive scans.
+    """
+    require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
+
+    project_repo = ProjectRepository(db)
+    project = await project_repo.get_raw_by_id(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    user_project_ids = await get_user_project_ids(current_user, db)
+    if project_id not in user_project_ids:
+        raise HTTPException(status_code=403, detail="Access denied to this project")
+
+    # Check cache
+    cache_key = CacheKeys.update_frequency(project_id)
+    cached = await cache_service.get(cache_key)
+    if cached:
+        return UpdateFrequencyMetrics(**cached)
+
+    scan_repo = ScanRepository(db)
+    dep_repo = DependencyRepository(db)
+    analysis_repo = AnalysisResultRepository(db)
+
+    metrics = await compute_update_frequency(
+        project_id=project_id,
+        project_name=project.get("name", "Unknown"),
+        scan_repo=scan_repo,
+        dep_repo=dep_repo,
+        analysis_repo=analysis_repo,
+        max_scans=max_scans,
+    )
+
+    await cache_service.set(cache_key, metrics.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
+    return metrics
+
+
+@router.get("/update-frequency/comparison", responses=RESP_AUTH)
+async def get_update_frequency_comparison(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    team_id: Optional[str] = None,
+    max_scans: Annotated[int, Query(ge=2, le=20)] = 10,
+) -> UpdateFrequencyComparison:
+    """
+    Get update frequency comparison across projects.
+
+    Returns a ranking of projects by their update behavior,
+    optionally filtered by team.
+    """
+    require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
+
+    # Check cache
+    cache_key = CacheKeys.update_frequency_comparison(
+        current_user.id, team_id or "all"
+    )
+    cached = await cache_service.get(cache_key)
+    if cached:
+        return UpdateFrequencyComparison(**cached)
+
+    project_repo = ProjectRepository(db)
+    user_project_ids = await get_user_project_ids(current_user, db)
+
+    if not user_project_ids:
+        return UpdateFrequencyComparison(
+            projects=[],
+            team_avg_updates_per_month=0.0,
+            team_avg_coverage_pct=0.0,
+        )
+
+    # Build query for projects
+    query: Dict[str, Any] = {"_id": {"$in": user_project_ids}}
+    if team_id:
+        query["team_id"] = team_id
+
+    projects_raw = await project_repo.find_many_raw(
+        query,
+        projection={"_id": 1, "name": 1, "team_id": 1},
+        limit=100,
+    )
+
+    # Resolve team names if needed
+    if projects_raw:
+        team_ids = list({p.get("team_id") for p in projects_raw if p.get("team_id")})
+        team_names: Dict[str, str] = {}
+        if team_ids:
+            from app.repositories import TeamRepository
+
+            team_repo = TeamRepository(db)
+            for tid in team_ids:
+                team = await team_repo.get_raw_by_id(tid)
+                if team:
+                    team_names[tid] = team.get("name", "")
+
+        for p in projects_raw:
+            p["team_name"] = team_names.get(p.get("team_id", ""))
+
+    scan_repo = ScanRepository(db)
+    dep_repo = DependencyRepository(db)
+    analysis_repo = AnalysisResultRepository(db)
+
+    comparison = await compute_update_frequency_comparison(
+        projects=projects_raw,
+        scan_repo=scan_repo,
+        dep_repo=dep_repo,
+        analysis_repo=analysis_repo,
+        max_scans=max_scans,
+    )
+
+    await cache_service.set(cache_key, comparison.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
+    return comparison

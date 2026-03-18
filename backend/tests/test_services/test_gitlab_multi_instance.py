@@ -42,10 +42,10 @@ class TestApiMethodTokenGuards:
         result = asyncio.run(service._api_put("/test", {"body": "x"}))
         assert result is None
 
-    def test_api_get_paginated_returns_empty_without_token(self):
+    def test_api_get_paginated_returns_none_without_token(self):
         service = GitLabService(make_gitlab_instance(access_token=None))
         result = asyncio.run(service._api_get_paginated("/test"))
-        assert result == []
+        assert result is None
 
     def test_get_project_members_returns_none_without_token(self):
         service = GitLabService(make_gitlab_instance(access_token=None))

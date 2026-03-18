@@ -48,16 +48,18 @@ class TestGetByUrl:
 
 class TestExistsByUrl:
     def test_normalizes_url(self):
-        collection = create_mock_collection(count_documents=0)
+        collection = create_mock_collection(find_one=None)
         db = create_mock_db({"github_instances": collection})
         repo = GitHubInstanceRepository(db)
 
         asyncio.run(repo.exists_by_url("https://token.actions.githubusercontent.com/"))
 
-        collection.count_documents.assert_called_once_with({"url": "https://token.actions.githubusercontent.com"})
+        collection.find_one.assert_called_once_with(
+            {"url": "https://token.actions.githubusercontent.com"}, {"_id": 1}
+        )
 
     def test_returns_true_when_exists(self):
-        collection = create_mock_collection(count_documents=1)
+        collection = create_mock_collection(find_one={"_id": "some-id"})
         db = create_mock_db({"github_instances": collection})
         repo = GitHubInstanceRepository(db)
 
@@ -65,7 +67,7 @@ class TestExistsByUrl:
         assert result is True
 
     def test_returns_false_when_not_exists(self):
-        collection = create_mock_collection(count_documents=0)
+        collection = create_mock_collection(find_one=None)
         db = create_mock_db({"github_instances": collection})
         repo = GitHubInstanceRepository(db)
 
@@ -73,23 +75,24 @@ class TestExistsByUrl:
         assert result is False
 
     def test_exclude_id_adds_ne_filter(self):
-        collection = create_mock_collection(count_documents=0)
+        collection = create_mock_collection(find_one=None)
         db = create_mock_db({"github_instances": collection})
         repo = GitHubInstanceRepository(db)
 
         asyncio.run(repo.exists_by_url("https://token.actions.githubusercontent.com", exclude_id="excluded-id"))
 
-        collection.count_documents.assert_called_once_with(
+        collection.find_one.assert_called_once_with(
             {
                 "url": "https://token.actions.githubusercontent.com",
                 "_id": {"$ne": "excluded-id"},
-            }
+            },
+            {"_id": 1},
         )
 
 
 class TestExistsByName:
     def test_returns_true_when_exists(self):
-        collection = create_mock_collection(count_documents=1)
+        collection = create_mock_collection(find_one={"_id": "some-id"})
         db = create_mock_db({"github_instances": collection})
         repo = GitHubInstanceRepository(db)
 
@@ -97,7 +100,7 @@ class TestExistsByName:
         assert result is True
 
     def test_returns_false_when_not_exists(self):
-        collection = create_mock_collection(count_documents=0)
+        collection = create_mock_collection(find_one=None)
         db = create_mock_db({"github_instances": collection})
         repo = GitHubInstanceRepository(db)
 
@@ -105,13 +108,15 @@ class TestExistsByName:
         assert result is False
 
     def test_exclude_id_adds_ne_filter(self):
-        collection = create_mock_collection(count_documents=0)
+        collection = create_mock_collection(find_one=None)
         db = create_mock_db({"github_instances": collection})
         repo = GitHubInstanceRepository(db)
 
         asyncio.run(repo.exists_by_name("GitHub.com", exclude_id="some-id"))
 
-        collection.count_documents.assert_called_once_with({"name": "GitHub.com", "_id": {"$ne": "some-id"}})
+        collection.find_one.assert_called_once_with(
+            {"name": "GitHub.com", "_id": {"$ne": "some-id"}}, {"_id": 1}
+        )
 
 
 class TestCRUD:

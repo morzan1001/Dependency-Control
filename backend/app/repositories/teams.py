@@ -116,7 +116,7 @@ class TeamRepository:
 
     async def is_member(self, team_id: str, user_id: str) -> bool:
         """Check if user is a member of team."""
-        result = await self.collection.find_one({"_id": team_id, _MEMBERS_USER_ID: user_id})
+        result = await self.collection.find_one({"_id": team_id, _MEMBERS_USER_ID: user_id}, {"_id": 1})
         return result is not None
 
     async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:

@@ -8,8 +8,10 @@ import { VulnerabilityHotspots } from '@/components/analytics/VulnerabilityHotsp
 import { CrossProjectSearch } from '@/components/analytics/CrossProjectSearch'
 import { VulnerabilitySearch } from '@/components/analytics/VulnerabilitySearch'
 import { Recommendations } from '@/components/analytics/Recommendations'
+import { UpdateFrequency } from '@/components/analytics/UpdateFrequency'
+import { UpdateFrequencyComparison } from '@/components/analytics/UpdateFrequencyComparison'
 import { AnalyticsDependencyModal } from '@/components/analytics/AnalyticsDependencyModal'
-import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert } from 'lucide-react'
+import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert, RefreshCw } from 'lucide-react'
 import { useAuth } from '@/context/useAuth'
 
 export default function AnalyticsPage() {
@@ -33,6 +35,7 @@ export default function AnalyticsPage() {
     if (canViewImpact) tabs.push({ id: 'impact', label: 'Impact', icon: Zap })
     if (canViewHotspots) tabs.push({ id: 'hotspots', label: 'Hotspots', icon: Flame })
     if (canViewRecommendations) tabs.push({ id: 'recommendations', label: 'Recommendations', icon: Lightbulb })
+    if (canViewRecommendations) tabs.push({ id: 'update-frequency', label: 'Update Frequency', icon: RefreshCw })
     if (canViewSearch) tabs.push({ id: 'search-deps', label: 'Dependencies', icon: Package })
     if (canViewSearch) tabs.push({ id: 'search-vulns', label: 'Vulnerabilities', icon: ShieldAlert })
     return tabs
@@ -115,6 +118,16 @@ export default function AnalyticsPage() {
         {canViewRecommendations && (
           <TabsContent value="recommendations">
             <Recommendations />
+          </TabsContent>
+        )}
+
+        {/* Update Frequency Tab */}
+        {canViewRecommendations && (
+          <TabsContent value="update-frequency" className="space-y-8">
+            <UpdateFrequencyComparison />
+            <div className="border-t pt-8">
+              <UpdateFrequency />
+            </div>
           </TabsContent>
         )}
 

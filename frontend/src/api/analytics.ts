@@ -14,7 +14,9 @@ import {
     VulnerabilitySearchOptions,
     ComponentFinding,
     DependencyMetadata,
-    RecommendationsResponse
+    RecommendationsResponse,
+    UpdateFrequencyMetrics,
+    UpdateFrequencyComparison,
 } from '@/types/analytics';
 
 export const analyticsApi = {
@@ -132,5 +134,23 @@ export const analyticsApi = {
             { params }
         );
         return response.data;
-    }
+    },
+
+    getUpdateFrequency: async (projectId: string, maxScans?: number): Promise<UpdateFrequencyMetrics> => {
+        const params = buildQueryParams({ max_scans: maxScans });
+        const response = await api.get<UpdateFrequencyMetrics>(
+            `/analytics/projects/${projectId}/update-frequency`,
+            { params }
+        );
+        return response.data;
+    },
+
+    getUpdateFrequencyComparison: async (teamId?: string, maxScans?: number): Promise<UpdateFrequencyComparison> => {
+        const params = buildQueryParams({ team_id: teamId, max_scans: maxScans });
+        const response = await api.get<UpdateFrequencyComparison>(
+            '/analytics/update-frequency/comparison',
+            { params }
+        );
+        return response.data;
+    },
 }

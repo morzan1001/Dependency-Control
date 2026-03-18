@@ -458,10 +458,12 @@ class TestRemoveTeamMember:
     def test_raises_400_when_removing_owner(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member
 
+        # admin_user has id="admin-1"; make them the owner so user_id == current_user.id
+        # triggers the "Cannot remove yourself as owner" guard
         team = _make_team(
             members=[
-                TeamMember(user_id="owner-id", role=TEAM_ROLE_OWNER),
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
+                TeamMember(user_id="admin-1", role=TEAM_ROLE_OWNER),
+                TeamMember(user_id="other-user", role=TEAM_ROLE_ADMIN),
             ]
         )
 
@@ -473,7 +475,7 @@ class TestRemoveTeamMember:
                     asyncio.run(
                         remove_team_member(
                             team_id="team-1",
-                            user_id="owner-id",
+                            user_id="admin-1",
                             current_user=admin_user,
                             db=MagicMock(),
                         )

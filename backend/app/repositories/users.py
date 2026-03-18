@@ -111,12 +111,12 @@ class UserRepository:
     async def exists_by_username(self, username: str) -> bool:
         """Check if username exists."""
         with track_db_operation(_COL, "find_one"):
-            return await self.collection.find_one({"username": username}) is not None
+            return await self.collection.find_one({"username": username}, {"_id": 1}) is not None
 
     async def exists_by_email(self, email: str) -> bool:
         """Check if email exists."""
         with track_db_operation(_COL, "find_one"):
-            return await self.collection.find_one({"email": email}) is not None
+            return await self.collection.find_one({"email": email}, {"_id": 1}) is not None
 
     async def find_active(self) -> List[Dict[str, Any]]:
         """Find all active users."""

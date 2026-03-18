@@ -116,8 +116,7 @@ class GitLabInstanceRepository:
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
 
-        count = await self.collection.count_documents(query)
-        return count > 0
+        return await self.collection.find_one(query, {"_id": 1}) is not None
 
     async def exists_by_name(self, name: str, exclude_id: Optional[str] = None) -> bool:
         """
@@ -128,5 +127,4 @@ class GitLabInstanceRepository:
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
 
-        count = await self.collection.count_documents(query)
-        return count > 0
+        return await self.collection.find_one(query, {"_id": 1}) is not None
