@@ -144,8 +144,12 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
-        # Iterate over all projects using Pydantic models
-        async for project_data in db.projects.find({}):
+        # Iterate over projects with only the fields needed for rescan logic
+        rescan_projection = {
+            "_id": 1, "name": 1, "rescan_enabled": 1, "rescan_interval": 1,
+            "last_scan_at": 1, "latest_scan_id": 1,
+        }
+        async for project_data in db.projects.find({}, rescan_projection):
             try:
                 project = Project(**project_data)
 
@@ -325,6 +329,20 @@ async def _handle_retention_action(db: Any, scan_ids: List[str], action: str, la
         )
 
 
+async def _process_scans_in_batches(
+    db: Any, cursor: Any, action: str, label: str, batch_size: int = ARCHIVE_BATCH_SIZE
+) -> None:
+    """Stream scan IDs from cursor and process retention in batches."""
+    batch: List[str] = []
+    async for doc in cursor:
+        batch.append(str(doc["_id"]))
+        if len(batch) >= batch_size:
+            await _handle_retention_action(db, batch, action, label)
+            batch = []
+    if batch:
+        await _handle_retention_action(db, batch, action, label)
+
+
 async def run_housekeeping() -> None:
     """
     Periodically cleans up old scan data based on project retention settings.
@@ -363,8 +381,7 @@ async def run_housekeeping() -> None:
                     {"_id": 1},
                 )
 
-                scan_ids = [str(doc["_id"]) async for doc in cursor]
-                await _handle_retention_action(db, scan_ids, retention_action, "Global housekeeping")
+                await _process_scans_in_batches(db, cursor, retention_action, "Global housekeeping")
 
         else:
             # Project-specific retention
@@ -415,9 +432,8 @@ async def run_housekeeping() -> None:
                     {"_id": 1},
                 )
 
-                scan_ids = [str(doc["_id"]) async for doc in cursor]
                 label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
-                await _handle_retention_action(db, scan_ids, action, label)
+                await _process_scans_in_batches(db, cursor, action, label)
 
     except Exception as e:
         logger.error(f"Housekeeping task failed: {e}")
@@ -642,6 +658,11 @@ async def sync_branch_status() -> None:
     try:
         db = await get_database()
 
+        branch_sync_projection = {
+            "_id": 1, "name": 1, "latest_scan_id": 1,
+            "gitlab_instance_id": 1, "gitlab_project_id": 1,
+            "github_instance_id": 1, "github_repository_path": 1,
+        }
         cursor = db.projects.find(
             {
                 "$or": [
@@ -649,6 +670,7 @@ async def sync_branch_status() -> None:
                     {"github_instance_id": {"$exists": True, "$ne": None}},
                 ]
             },
+            branch_sync_projection,
         )
 
         count = 0

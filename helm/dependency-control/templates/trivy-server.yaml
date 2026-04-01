@@ -1,0 +1,118 @@
+{{- if .Values.trivyServer.enabled }}
+# Trivy Server: Central vulnerability database service
+# Backend pods send SBOMs here via HTTP instead of running local Trivy CLI.
+# This saves ~1GB ephemeral storage per backend pod and centralizes DB updates.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-trivy-server
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trivy-server
+spec:
+  replicas: {{ .Values.trivyServer.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: trivy-server
+  template:
+    metadata:
+      labels:
+        {{- include "dependency-control.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: trivy-server
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: trivy-server
+          image: "{{ .Values.trivyServer.image.repository }}:{{ .Values.trivyServer.image.tag }}"
+          imagePullPolicy: {{ .Values.trivyServer.image.pullPolicy | default "IfNotPresent" }}
+          args:
+            - server
+            - --listen
+            - "0.0.0.0:4954"
+          ports:
+            - name: http
+              containerPort: 4954
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: trivy-cache
+              mountPath: /root/.cache
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.trivyServer.resources | nindent 12 }}
+      volumes:
+        - name: trivy-cache
+          {{- if .Values.trivyServer.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "dependency-control.fullname" . }}-trivy-cache
+          {{- else }}
+          emptyDir:
+            sizeLimit: 2Gi
+          {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-trivy-server
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trivy-server
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4954
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "dependency-control.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: trivy-server
+{{- if .Values.trivyServer.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-trivy-cache
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.trivyServer.persistence.size | default "2Gi" }}
+  {{- if .Values.trivyServer.persistence.storageClass }}
+  storageClassName: {{ .Values.trivyServer.persistence.storageClass }}
+  {{- end }}
+{{- end }}
+{{- end }}

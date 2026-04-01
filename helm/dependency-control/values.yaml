@@ -546,3 +546,41 @@ monitoring:
     labels:
       grafana_dashboard: "1"
     annotations: {}
+
+# -----------------------------------------------------------------------------
+# Trivy Server (Central Vulnerability Database)
+# -----------------------------------------------------------------------------
+# Runs a single Trivy server that holds the vulnerability database.
+# Backend pods send SBOMs via HTTP instead of running local Trivy CLI.
+# Saves ~1GB ephemeral storage per backend pod.
+trivyServer:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: aquasecurity/trivy
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+  persistence:
+    enabled: true
+    size: 2Gi
+    storageClass: ""
+
+# -----------------------------------------------------------------------------
+# Grype DB Updater (Shared Vulnerability Database)
+# -----------------------------------------------------------------------------
+# CronJob that downloads the Grype vulnerability database to a PersistentVolume.
+# Backend pods mount it read-only. Saves ~1.4GB ephemeral storage per pod.
+grypeDbUpdater:
+  enabled: false
+  # How often to check for DB updates (every 6 hours)
+  schedule: "0 */6 * * *"
+  persistence:
+    size: 3Gi
+    storageClass: ""

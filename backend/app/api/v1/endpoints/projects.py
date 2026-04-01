@@ -377,12 +377,9 @@ async def read_all_scans(
 
     # 1. Get accessible project IDs
     permission_query = await build_user_project_query(current_user, team_repo)
-    projects = await project_repo.find_all(
-        permission_query,
-        projection={"_id": 1, "name": 1},
-    )
+    projects = await project_repo.find_many_minimal(permission_query)
 
-    project_map: Dict[str, str] = {str(p["_id"]): str(p.get("name", "")) for p in projects}
+    project_map: Dict[str, str] = {str(p.id): str(p.name) for p in projects}
     project_ids = list(project_map.keys())
 
     if not project_ids:

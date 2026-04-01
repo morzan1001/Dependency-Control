@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     # Default: 43200 (12 hours) - helps manage memory growth
     MAX_POD_UPTIME_SECONDS: int = 43200
 
+    # Trivy Server Mode (empty = use local CLI)
+    # When set, Trivy scans are sent to a central server via HTTP instead of
+    # running the CLI locally. This avoids storing the 1GB Trivy DB on every pod.
+    TRIVY_SERVER_URL: str = ""  # e.g. "http://trivy-server:4954"
+
+    # Grype DB Path (can be overridden to point to a shared volume)
+    GRYPE_DB_CACHE_DIR: str = "/app/.cache/grype"
+
     # S3 / Archive Storage Settings
     S3_ENDPOINT_URL: str = ""  # e.g. "http://minio:9000" (empty = archive disabled)
     S3_ACCESS_KEY: str = ""

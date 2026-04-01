@@ -65,6 +65,8 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
+_MSG_ACCESS_DENIED = "Access denied to this project"
+
 
 @router.get("/summary", responses=RESP_AUTH)
 async def get_analytics_summary(
@@ -252,7 +254,7 @@ async def get_dependency_tree(
     # Verify access
     project_ids = await get_user_project_ids(current_user, db)
     if project_id not in project_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this project")
+        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
     # Get scan ID (prefer latest scan from active branch)
     if not scan_id:
@@ -558,13 +560,17 @@ async def get_vulnerability_hotspots(
             }
         },
         {"$sort": {mongo_sort_field: sort_direction}},
-        {"$limit": limit * 3 if post_sort_by else skip + limit},
     ]
 
-    results = await finding_repo.aggregate(pipeline)
+    if post_sort_by:
+        # For post-sort fields (epss, risk) we need more results to re-sort in Python
+        pipeline.append({"$limit": limit * 3})
+    else:
+        # Use server-side skip/limit for direct MongoDB sort fields
+        pipeline.append({"$skip": skip})
+        pipeline.append({"$limit": limit})
 
-    if not post_sort_by:
-        results = results[skip : skip + limit]
+    results = await finding_repo.aggregate(pipeline)
 
     # Collect all CVE IDs for enrichment
     all_cves = list({fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")})
@@ -576,13 +582,14 @@ async def get_vulnerability_hotspots(
         except Exception as e:
             logger.warning(f"Failed to enrich CVEs: {e}")
 
-    # Batch fetch dependency types
+    # Batch fetch dependency types via aggregation (deduplicates by name)
     component_names = list({r["_id"]["component"] for r in results})
-    deps_by_name = await dep_repo.find_all(
-        {"name": {"$in": component_names}},
-        projection={"name": 1, "type": 1},
-    )
-    dep_type_map = {d["name"]: d.get("type", "unknown") for d in deps_by_name}
+    type_pipeline: List[Dict[str, Any]] = [
+        {"$match": {"name": {"$in": component_names}}},
+        {"$group": {"_id": "$name", "type": {"$first": "$type"}}},
+    ]
+    type_results = await dep_repo.aggregate(type_pipeline, limit=len(component_names) + 1)
+    dep_type_map = {d["_id"]: d.get("type", "unknown") for d in type_results}
 
     hotspots = [_build_hotspot(r, enrichments, dep_type_map, project_name_map, project_ids) for r in results]
 
@@ -1264,7 +1271,7 @@ async def get_project_recommendations(
     # Check if user has access to this project
     user_project_ids = await get_user_project_ids(current_user, db)
     if project_id not in user_project_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this project")
+        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
     # Get the latest scan or specified scan
     if scan_id:
@@ -1447,7 +1454,7 @@ async def get_project_update_frequency(
 
     user_project_ids = await get_user_project_ids(current_user, db)
     if project_id not in user_project_ids:
-        raise HTTPException(status_code=403, detail="Access denied to this project")
+        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
     # Check cache
     cache_key = CacheKeys.update_frequency(project_id)
@@ -1508,9 +1515,10 @@ async def get_update_frequency_comparison(
     if team_id:
         query["team_id"] = team_id
 
-    projects_raw = await project_repo.find_all(
+    projects_raw = await project_repo.find_many_raw(
         query,
         projection={"_id": 1, "name": 1, "team_id": 1},
+        limit=len(user_project_ids),
     )
 
     # Resolve team names if needed

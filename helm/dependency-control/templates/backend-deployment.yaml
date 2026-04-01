@@ -60,6 +60,12 @@ spec:
           emptyDir: {}
         - name: cache-volume
           emptyDir: {}
+        {{- if .Values.grypeDbUpdater.enabled }}
+        - name: grype-db
+          persistentVolumeClaim:
+            claimName: {{ include "dependency-control.fullname" . }}-grype-db
+            readOnly: true
+        {{- end }}
         {{- if .Values.global.tls.enabled }}
         # Internal CA Certificate for TLS verification
         {{- if eq .Values.global.tls.source "certManager" }}
@@ -114,6 +120,11 @@ spec:
               name: tmp-volume
             - mountPath: /app/.cache
               name: cache-volume
+            {{- if .Values.grypeDbUpdater.enabled }}
+            - mountPath: /app/.cache/grype
+              name: grype-db
+              readOnly: true
+            {{- end }}
             {{- if .Values.global.tls.enabled }}
             # Mount internal CA for certificate verification
             {{- if or (eq .Values.global.tls.source "certManager") (and (eq .Values.global.tls.source "custom") .Values.global.tls.custom.caSecretName) }}
@@ -220,6 +231,16 @@ spec:
             # MongoDB read preference for replica sets (distributes read load)
             - name: MONGODB_READ_PREFERENCE
               value: "{{ .Values.backend.env.mongodbReadPreference | default "secondaryPreferred" }}"
+            {{- if .Values.trivyServer.enabled }}
+            # Trivy Server: send scans via HTTP to central server (no local DB needed)
+            - name: TRIVY_SERVER_URL
+              value: "http://{{ include "dependency-control.fullname" . }}-trivy-server:4954"
+            {{- end }}
+            {{- if .Values.grypeDbUpdater.enabled }}
+            # Grype: use shared DB from PersistentVolume (no local download needed)
+            - name: GRYPE_DB_SHARED
+              value: "true"
+            {{- end }}
             {{- if .Values.global.tls.enabled }}
             # TLS environment variables
             - name: TLS_ENABLED

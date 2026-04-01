@@ -25,6 +25,9 @@ from app.services.stats import recalculate_all_projects, recalculate_project_sta
 
 router = CustomAPIRouter()
 
+_MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
+_MSG_WAIVER_NOT_FOUND = "Waiver not found"
+
 
 @router.post("/", response_model=WaiverResponse, status_code=201, responses=RESP_AUTH)
 async def create_waiver(
@@ -92,12 +95,12 @@ async def list_waivers(
     has_read_own = has_permission(current_user.permissions, Permissions.WAIVER_READ)
 
     if not (has_read_all or has_read_own):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     if global_only:
         # Only return global waivers (requires waiver:manage or waiver:read_all)
         if not (has_read_all or has_permission(current_user.permissions, Permissions.WAIVER_MANAGE)):
-            raise HTTPException(status_code=403, detail="Not enough permissions")
+            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
         query["project_id"] = None
     elif project_id:
         # Check access to specific project
@@ -165,7 +168,7 @@ async def update_waiver(
     waiver_repo = WaiverRepository(db)
     waiver = await waiver_repo.get_by_id(waiver_id)
     if not waiver:
-        raise HTTPException(status_code=404, detail="Waiver not found")
+        raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
     if waiver.project_id:
         await check_project_access(waiver.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
@@ -179,7 +182,7 @@ async def update_waiver(
 
     updated = await waiver_repo.update(waiver_id, update_data)
     if not updated:
-        raise HTTPException(status_code=404, detail="Waiver not found")
+        raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
     # Trigger stats recalculation if status changed (affects waived/unwaived state)
     if "status" in update_data:
@@ -207,14 +210,14 @@ async def delete_waiver(
     waiver_repo = WaiverRepository(db)
     waiver = await waiver_repo.get_by_id(waiver_id)
     if not waiver:
-        raise HTTPException(status_code=404, detail="Waiver not found")
+        raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
     if waiver.project_id:
         if not has_permission(current_user.permissions, Permissions.WAIVER_DELETE):
             await check_project_access(waiver.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     else:
         if not has_permission(current_user.permissions, [Permissions.WAIVER_MANAGE, Permissions.WAIVER_DELETE]):
-            raise HTTPException(status_code=403, detail="Not enough permissions")
+            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     await waiver_repo.delete(waiver_id)
 

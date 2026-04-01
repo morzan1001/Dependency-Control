@@ -118,8 +118,3 @@ class UserRepository:
         with track_db_operation(_COL, "find_one"):
             return await self.collection.find_one({"email": email}, {"_id": 1}) is not None
 
-    async def find_active(self) -> List[Dict[str, Any]]:
-        """Find all active users."""
-        with track_db_operation(_COL, "find"):
-            cursor = self.collection.find({"is_active": True})
-            return await cursor.to_list(None)

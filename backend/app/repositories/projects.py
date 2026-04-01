@@ -191,6 +191,20 @@ class ProjectRepository:
             docs = await cursor.to_list(limit)
         return [Project(**doc) for doc in docs]
 
+    async def find_many_raw(
+        self,
+        query: Dict[str, Any],
+        skip: int = 0,
+        limit: int = 100,
+        sort_by: str = "name",
+        sort_order: int = 1,
+        projection: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find multiple raw project documents with pagination."""
+        with track_db_operation(_COL, "find"):
+            cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
+            return await cursor.to_list(limit)
+
     async def find_many_ids(
         self,
         query: Dict[str, Any],
@@ -228,7 +242,11 @@ class ProjectRepository:
         query: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Find all projects matching query. Returns raw dicts (for projections)."""
+        """Find all projects matching query. Returns raw dicts (for projections).
+
+        Consider using iterate() or iterate_all() for large result sets
+        to avoid loading all documents into memory at once.
+        """
         cursor = self.collection.find(query or {}, projection)
         return await cursor.to_list(None)
 
@@ -237,10 +255,15 @@ class ProjectRepository:
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})
 
-    async def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Run aggregation pipeline."""
+    async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Run aggregation pipeline.
+
+        Args:
+            pipeline: MongoDB aggregation pipeline stages.
+            limit: Maximum number of results. Use $limit in the pipeline for best performance.
+        """
         with track_db_operation(_COL, "aggregate"):
-            return await self.collection.aggregate(pipeline).to_list(None)
+            return await self.collection.aggregate(pipeline).to_list(limit)
 
     async def update_many(self, query: Dict[str, Any], update_data: Dict[str, Any]) -> int:
         """Update multiple projects matching query."""
@@ -266,7 +289,14 @@ class ProjectRepository:
         """
         await self.collection.update_one({"_id": project_id, "members.user_id": user_id}, {"$set": update_data})
 
+    async def iterate(
+        self, query: Optional[Dict[str, Any]] = None, projection: Optional[Dict[str, int]] = None
+    ) -> AsyncGenerator[Project, None]:
+        """Iterate over projects as Pydantic models (async generator)."""
+        async for doc in self.collection.find(query or {}, projection):
+            yield Project(**doc)
+
     async def iterate_all(self, query: Optional[Dict[str, Any]] = None) -> AsyncGenerator[Dict[str, Any], None]:
-        """Iterate over all projects (async generator)."""
+        """Iterate over all projects as raw dicts (async generator)."""
         async for doc in self.collection.find(query or {}):
             yield doc

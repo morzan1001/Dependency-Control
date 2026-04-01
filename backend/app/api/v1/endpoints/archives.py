@@ -7,7 +7,7 @@ Provides endpoints for listing, downloading, restoring, and managing archived sc
 import math
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -52,7 +52,6 @@ def _require_archive_enabled() -> None:
 
 @router.get(
     "/{project_id}/archives",
-    response_model=ArchiveListResponse,
     summary="List archived scans for a project",
     responses=RESP_AUTH_404,
 )
@@ -60,11 +59,11 @@ async def list_archives(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
-    branch: Optional[str] = Query(None, description="Filter by branch name"),
-    date_from: Optional[datetime] = Query(None, description="Filter scans created from this date"),
-    date_to: Optional[datetime] = Query(None, description="Filter scans created until this date"),
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 20,
+    branch: Annotated[Optional[str], Query(description="Filter by branch name")] = None,
+    date_from: Annotated[Optional[datetime], Query(description="Filter scans created from this date")] = None,
+    date_to: Annotated[Optional[datetime], Query(description="Filter scans created until this date")] = None,
 ) -> ArchiveListResponse:
     """List all archived scans for a project. Requires archive:read permission."""
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_READ)
@@ -113,7 +112,6 @@ async def list_archives(
 
 @router.get(
     "/{project_id}/archives/branches",
-    response_model=List[str],
     summary="Get distinct branch names in project archives",
     responses=RESP_AUTH_404,
 )
@@ -134,7 +132,6 @@ async def list_archive_branches(
 
 @router.post(
     "/{project_id}/archives/{scan_id}/restore",
-    response_model=ArchiveRestoreResponse,
     summary="Restore an archived scan back to MongoDB",
     responses=RESP_AUTH_404_500,
 )
@@ -216,7 +213,6 @@ async def download_archive(
 
 @router.post(
     "/{project_id}/scans/{scan_id}/pin",
-    response_model=ScanPinResponse,
     summary="Pin a scan to prevent archival by housekeeping",
     responses=RESP_AUTH_404_500,
 )
@@ -240,7 +236,6 @@ async def pin_scan(
 
 @router.post(
     "/{project_id}/scans/{scan_id}/unpin",
-    response_model=ScanPinResponse,
     summary="Unpin a scan to allow archival by housekeeping",
     responses=RESP_AUTH_404_500,
 )
@@ -269,19 +264,18 @@ async def unpin_scan(
 
 @admin_router.get(
     "/all",
-    response_model=AdminArchiveListResponse,
     summary="List all archives across all projects (admin)",
     responses=RESP_AUTH_404,
 )
 async def list_all_archives(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
-    project_id: Optional[str] = Query(None, description="Filter by project ID"),
-    branch: Optional[str] = Query(None, description="Filter by branch name"),
-    date_from: Optional[datetime] = Query(None, description="Filter scans created from this date"),
-    date_to: Optional[datetime] = Query(None, description="Filter scans created until this date"),
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 20,
+    project_id: Annotated[Optional[str], Query(description="Filter by project ID")] = None,
+    branch: Annotated[Optional[str], Query(description="Filter by branch name")] = None,
+    date_from: Annotated[Optional[datetime], Query(description="Filter scans created from this date")] = None,
+    date_to: Annotated[Optional[datetime], Query(description="Filter scans created until this date")] = None,
 ) -> AdminArchiveListResponse:
     """List all archived scans across all projects. Requires archive:read_all permission."""
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_READ_ALL)

@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
+REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
 
 # Import metrics for cache monitoring
 cache_hits_total: Optional[Counter] = None
@@ -201,7 +202,7 @@ class CacheService:
             except Exception as e:
                 logger.warning(f"Redis connection failed: {e}. Cache will be disabled.")
                 self._available = False
-                self._unavailable_since = asyncio.get_event_loop().time()
+                self._unavailable_since = time.monotonic()
                 raise
         return self._client
 
@@ -211,8 +212,13 @@ class CacheService:
             return False
         if self._unavailable_since == 0:
             return True
-        elapsed = asyncio.get_event_loop().time() - self._unavailable_since
+        elapsed = time.monotonic() - self._unavailable_since
         return elapsed >= self.RECONNECT_INTERVAL_SECONDS
+
+    def _mark_unavailable(self) -> None:
+        """Mark Redis as unavailable and record the time for reconnect backoff."""
+        self._available = False
+        self._unavailable_since = time.monotonic()
 
     async def _try_reconnect(self) -> bool:
         """Attempt to reconnect to Redis. Returns True if successful."""
@@ -224,7 +230,16 @@ class CacheService:
             logger.info("Redis cache reconnected successfully")
             return True
         except Exception:
+            self._mark_unavailable()
             return False
+
+    async def _ensure_available(self) -> bool:
+        """Check availability and attempt reconnect if needed. Returns True if usable."""
+        if self._available:
+            return True
+        if self._should_retry_connection():
+            return await self._try_reconnect()
+        return False
 
     async def close(self) -> None:
         """Close Redis connection pool."""
@@ -249,14 +264,15 @@ class CacheService:
         Returns:
             Cached value or None if not found/expired
         """
-        if not self._available:
-            if not (self._should_retry_connection() and await self._try_reconnect()):
-                return None
+        if not await self._ensure_available():
+            return None
 
         _start = time.time()
         try:
             client = await self.get_client()
-            data = await client.get(self._make_key(key))
+            data = await asyncio.wait_for(
+                client.get(self._make_key(key)), timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            )
             if data:
                 if cache_hits_total:
                     cache_hits_total.inc()
@@ -264,10 +280,9 @@ class CacheService:
             if cache_misses_total:
                 cache_misses_total.inc()
             return None
-        except redis.ConnectionError:
+        except (redis.ConnectionError, asyncio.TimeoutError):
             logger.warning(REDIS_CONNECTION_LOST_MSG)
-            self._available = False
-            self._unavailable_since = asyncio.get_event_loop().time()
+            self._mark_unavailable()
             return None
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to decode cached value for {key}: {e}")
@@ -293,9 +308,8 @@ class CacheService:
         Returns:
             True if cached successfully, False otherwise
         """
-        if not self._available:
-            if not (self._should_retry_connection() and await self._try_reconnect()):
-                return False
+        if not await self._ensure_available():
+            return False
 
         if ttl_seconds is None:
             ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
@@ -304,12 +318,14 @@ class CacheService:
         try:
             client = await self.get_client()
             serialized = json.dumps(value, default=str)
-            await client.setex(self._make_key(key), ttl_seconds, serialized)
+            await asyncio.wait_for(
+                client.setex(self._make_key(key), ttl_seconds, serialized),
+                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            )
             return True
-        except redis.ConnectionError:
+        except (redis.ConnectionError, asyncio.TimeoutError):
             logger.warning(REDIS_CONNECTION_LOST_MSG)
-            self._available = False
-            self._unavailable_since = asyncio.get_event_loop().time()
+            self._mark_unavailable()
             return False
         except (TypeError, ValueError) as e:
             logger.warning(f"Failed to serialize value for {key}: {e}")
@@ -325,19 +341,19 @@ class CacheService:
 
     async def delete(self, key: str) -> bool:
         """Delete a key from cache."""
-        if not self._available:
-            if not (self._should_retry_connection() and await self._try_reconnect()):
-                return False
+        if not await self._ensure_available():
+            return False
 
         _start = time.time()
         try:
             client = await self.get_client()
-            await client.delete(self._make_key(key))
+            await asyncio.wait_for(
+                client.delete(self._make_key(key)), timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            )
             return True
-        except redis.ConnectionError:
+        except (redis.ConnectionError, asyncio.TimeoutError):
             logger.warning(REDIS_CONNECTION_LOST_MSG)
-            self._available = False
-            self._unavailable_since = asyncio.get_event_loop().time()
+            self._mark_unavailable()
             return False
         except Exception as e:
             logger.warning(f"Cache delete error for {key}: {e}")
@@ -358,14 +374,18 @@ class CacheService:
         Returns:
             Dict mapping keys to their values (None for missing keys)
         """
-        if not self._available or not keys:
+        if not keys:
+            return {}
+        if not await self._ensure_available():
             return dict.fromkeys(keys)
 
         _start = time.time()
         try:
             client = await self.get_client()
             prefixed_keys = [self._make_key(k) for k in keys]
-            values = await client.mget(prefixed_keys)
+            values = await asyncio.wait_for(
+                client.mget(prefixed_keys), timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            )
 
             result = {}
             for key, value in zip(keys, values):
@@ -377,8 +397,8 @@ class CacheService:
                 else:
                     result[key] = None
             return result
-        except redis.ConnectionError:
-            self._available = False
+        except (redis.ConnectionError, asyncio.TimeoutError):
+            self._mark_unavailable()
             return dict.fromkeys(keys)
         except Exception as e:
             logger.warning(f"Cache mget error: {e}")
@@ -400,7 +420,9 @@ class CacheService:
         Returns:
             True if all cached successfully
         """
-        if not self._available or not mapping:
+        if not mapping:
+            return False
+        if not await self._ensure_available():
             return False
 
         if ttl_seconds is None:
@@ -415,8 +437,11 @@ class CacheService:
                 serialized = json.dumps(value, default=str)
                 pipe.setex(self._make_key(key), ttl_seconds, serialized)
 
-            await pipe.execute()
+            await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
             return True
+        except (redis.ConnectionError, asyncio.TimeoutError):
+            self._mark_unavailable()
+            return False
         except Exception as e:
             logger.warning(f"Cache mset error: {e}")
             return False

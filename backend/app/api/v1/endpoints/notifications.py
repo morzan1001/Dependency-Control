@@ -113,6 +113,247 @@ async def suggest_packages(
     return [r["name"] for r in results]
 
 
+def _queue_announcement(
+    background_tasks: BackgroundTasks,
+    users: List[User],
+    subject: str,
+    message: str,
+    message_html: str,
+    frontend_url: str,
+    db: Any,
+    forced_channels: Any,
+) -> None:
+    """Queue an announcement notification for a list of users."""
+    html_msg = get_announcement_template(message=message_html, link=frontend_url)
+    blocks = build_advisory_blocks(subject=subject, message=message, dashboard_link=frontend_url)
+    mm_props = mm_advisory_props(subject=subject, message=message, dashboard_link=frontend_url)
+    background_tasks.add_task(
+        notification_service.notify_users,
+        users, "analysis_completed", subject, message,
+        db=db, forced_channels=forced_channels,
+        html_message=html_msg, slack_blocks=blocks, mattermost_props=mm_props,
+    )
+
+
+async def _handle_global_broadcast(
+    payload: "BroadcastRequest",
+    background_tasks: BackgroundTasks,
+    user_repo: UserRepository,
+    message_html: str,
+    frontend_url: str,
+    db: Any,
+    forced_channels: Any,
+) -> tuple[int, int]:
+    """Handle global broadcast. Returns (unique_user_count, project_count)."""
+    users = await user_repo.find_many({"is_active": True}, limit=10000)
+    if users and not payload.dry_run:
+        _queue_announcement(background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels)
+    return len(users), 0
+
+
+async def _handle_teams_broadcast(
+    payload: "BroadcastRequest",
+    background_tasks: BackgroundTasks,
+    user_repo: UserRepository,
+    team_repo: "TeamRepository",
+    message_html: str,
+    frontend_url: str,
+    db: Any,
+    forced_channels: Any,
+) -> tuple[int, int]:
+    """Handle teams broadcast. Returns (unique_user_count, project_count)."""
+    if not payload.target_teams:
+        return 0, 0
+
+    teams = await team_repo.find_many({"_id": {"$in": payload.target_teams}}, limit=100)
+    user_ids: Set[str] = set()
+    for t in teams:
+        for m in t.members:
+            user_ids.add(m.user_id)
+
+    if not user_ids:
+        return 0, 0
+
+    users = await user_repo.find_many({"_id": {"$in": list(user_ids)}, "is_active": True}, limit=10000)
+    if users and not payload.dry_run:
+        _queue_announcement(background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels)
+    return len(users), 0
+
+
+async def _build_advisory_scan_map(
+    project_repo: "ProjectRepository",
+    db: Any,
+) -> Dict[str, Project]:
+    """Build scan_id -> Project map for advisory broadcasts, handling deleted branches."""
+    scan_map: Dict[str, Project] = {}
+    projects_needing_lookup: list = []
+
+    async for p in project_repo.iterate({"latest_scan_id": {"$exists": True}}):
+        if not p or not p.latest_scan_id:
+            continue
+        if p.deleted_branches:
+            projects_needing_lookup.append(p)
+        else:
+            scan_map[p.latest_scan_id] = p
+
+    if projects_needing_lookup:
+        or_conditions = [
+            {"project_id": p.id, "branch": {"$nin": p.deleted_branches}, "status": "completed"}
+            for p in projects_needing_lookup
+        ]
+        pipeline: List[Dict[str, Any]] = [
+            {"$match": {"$or": or_conditions}},
+            {"$sort": {"created_at": -1}},
+            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
+        ]
+        proj_map = {p.id: p for p in projects_needing_lookup}
+        async for doc in db.scans.aggregate(pipeline):
+            proj = proj_map.get(doc["_id"])
+            if proj:
+                scan_map[doc["scan_id"]] = proj
+
+    return scan_map
+
+
+def _find_affected_projects(
+    dep: Any,
+    payload_packages: list,
+    scan_map: Dict[str, Project],
+    affected_projects_map: Dict[str, Project],
+    project_findings: Dict[str, List[str]],
+) -> None:
+    """Check if a dependency is affected by any advisory package rule."""
+    dep_name = dep.name
+    dep_version = dep.version
+
+    matching_rule = None
+    for pkg_rule in payload_packages:
+        if pkg_rule.name == dep_name:
+            if pkg_rule.type and dep.type != pkg_rule.type:
+                continue
+            matching_rule = pkg_rule
+            break
+
+    if not matching_rule:
+        return
+
+    is_affected = False
+    if matching_rule.version:
+        try:
+            target_ver = parse_version(matching_rule.version)
+            dep_ver = parse_version(dep_version)
+            is_affected = dep_ver <= target_ver
+        except Exception:
+            is_affected = True
+    else:
+        is_affected = True
+
+    if not is_affected:
+        return
+
+    p_data = scan_map.get(dep.scan_id)
+    if not p_data:
+        return
+
+    project_id = str(p_data.id)
+    if project_id not in affected_projects_map:
+        affected_projects_map[project_id] = p_data
+    if project_id not in project_findings:
+        project_findings[project_id] = []
+
+    finding_str = f"{dep_name} ({dep_version})"
+    if finding_str not in project_findings[project_id]:
+        project_findings[project_id].append(finding_str)
+
+
+def _build_advisory_html(
+    message_html: str, projects_data: list, frontend_url: str,
+) -> tuple[str, str]:
+    """Build HTML and plain-text messages for an advisory notification. Returns (html, text)."""
+    projects_html_parts = []
+    projects_text_parts = []
+
+    for p in projects_data:
+        safe_name = html.escape(p["name"])
+        safe_findings = html.escape(", ".join(p["findings"]))
+        p_link = f"{frontend_url}/projects/{p['id']}"
+        projects_html_parts.append(f"<li><strong><a href='{p_link}'>{safe_name}</a></strong>: {safe_findings}</li>")
+        projects_text_parts.append(f"- {p['name']}: {', '.join(p['findings'])}")
+
+    findings_list_html = "<ul>" + "".join(projects_html_parts) + "</ul>"
+    findings_text_block = "\n".join(projects_text_parts)
+
+    btn_style = "background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;"
+    div_style = "background-color: #fff3cd; border: 1px solid #ffeeba; padding: 15px; margin-bottom: 20px; border-radius: 4px;"
+    dashboard_button = f'<p style="margin-top: 20px;"><a href="{frontend_url}" style="{btn_style}">View Dashboard</a></p>'
+
+    final_html = f"""
+    <div style="font-family: Arial, sans-serif; color: #333;">
+        <h2>Security Advisory</h2>
+        <div style="{div_style}">{message_html}</div>
+        <h3>Your Affected Projects ({len(projects_data)})</h3>
+        <p>The following projects you own are using the affected package versions:</p>
+        {findings_list_html}
+        {dashboard_button}
+    </div>
+    """
+    return final_html, findings_text_block
+
+
+async def _notify_advisory_owners(
+    affected_projects_map: Dict[str, Project],
+    project_findings: Dict[str, List[str]],
+    user_repo: UserRepository,
+    payload: "BroadcastRequest",
+    background_tasks: BackgroundTasks,
+    message_html: str,
+    frontend_url: str,
+    db: Any,
+    forced_channels: Any,
+) -> int:
+    """Group affected projects by owner and queue advisory notifications. Returns unique user count."""
+    all_owner_ids = {p.owner_id for p in affected_projects_map.values()}
+    owner_users = await user_repo.find_many({"_id": {"$in": list(all_owner_ids)}, "is_active": True}, limit=10000)
+    users_dict = {str(u.id): u for u in owner_users}
+
+    # Group projects by owner
+    user_notification_map: Dict[str, Dict] = {}
+    for pid, project in affected_projects_map.items():
+        uid = project.owner_id
+        if uid not in users_dict:
+            continue
+        if uid not in user_notification_map:
+            user_notification_map[uid] = {"user": users_dict[uid], "projects": []}
+        user_notification_map[uid]["projects"].append(
+            {"id": pid, "name": project.name, "findings": project_findings.get(pid, [])},
+        )
+
+    if not payload.dry_run:
+        for uid, data in user_notification_map.items():
+            projects_data = data["projects"]
+            final_html, findings_text = _build_advisory_html(message_html, projects_data, frontend_url)
+            context_message = f"{payload.message}\n\n--- Affected Projects ---\n{findings_text}\n"
+
+            advisory_subject = f"ACTION REQUIRED: {payload.subject}"
+            advisory_blocks = build_advisory_blocks(
+                subject=advisory_subject, message=payload.message,
+                affected_projects=projects_data, dashboard_link=frontend_url,
+            )
+            advisory_mm = mm_advisory_props(
+                subject=advisory_subject, message=payload.message,
+                affected_projects=projects_data, dashboard_link=frontend_url,
+            )
+
+            background_tasks.add_task(
+                notification_service.notify_users,
+                [data["user"]], "vulnerability_found", advisory_subject, context_message,
+                db=db, forced_channels=forced_channels,
+                html_message=final_html, slack_blocks=advisory_blocks, mattermost_props=advisory_mm,
+            )
+
+    return len(user_notification_map)
+
+
 @router.post("/broadcast", responses=RESP_AUTH_400)
 async def broadcast_message(
     payload: BroadcastRequest,
@@ -132,7 +373,6 @@ async def broadcast_message(
     dep_repo = DependencyRepository(db)
     broadcast_repo = BroadcastRepository(db)
 
-    users_to_notify: List[User] = []
     project_count = 0
     unique_user_count = 0
 
@@ -155,313 +395,51 @@ async def broadcast_message(
     message_html_content = markdown.markdown(safe_message)
 
     if payload.target_type == "global":
-        # All active users
-        users_to_notify = await user_repo.find_many({"is_active": True}, limit=10000)
-        unique_user_count = len(users_to_notify)
-
-        if users_to_notify and not payload.dry_run:
-            html_msg = get_announcement_template(
-                message=message_html_content,
-                link=frontend_url,
-            )
-            announcement_blocks = build_advisory_blocks(
-                subject=payload.subject,
-                message=payload.message,
-                dashboard_link=frontend_url,
-            )
-            announcement_mm_props = mm_advisory_props(
-                subject=payload.subject,
-                message=payload.message,
-                dashboard_link=frontend_url,
-            )
-            background_tasks.add_task(
-                notification_service.notify_users,
-                users_to_notify,
-                "analysis_completed",
-                payload.subject,
-                payload.message,
-                db=db,
-                forced_channels=forced_channels,
-                html_message=html_msg,
-                slack_blocks=announcement_blocks,
-                mattermost_props=announcement_mm_props,
-            )
+        unique_user_count, project_count = await _handle_global_broadcast(
+            payload, background_tasks, user_repo, message_html_content, frontend_url, db, forced_channels,
+        )
 
     elif payload.target_type == "teams":
-        if not payload.target_teams:
-            return BroadcastResult(recipient_count=0)
-
-        # Find teams -> members -> users
-        teams = await team_repo.find_many({"_id": {"$in": payload.target_teams}}, limit=100)
-        user_ids: Set[str] = set()
-
-        for t in teams:
-            for m in t.members:
-                user_ids.add(m.user_id)
-
-        if user_ids:
-            users_to_notify = await user_repo.find_many(
-                {"_id": {"$in": list(user_ids)}, "is_active": True}, limit=10000
-            )
-            unique_user_count = len(users_to_notify)
-
-            if users_to_notify and not payload.dry_run:
-                html_msg = get_announcement_template(
-                    message=message_html_content,
-                    link=frontend_url,
-                )
-                team_blocks = build_advisory_blocks(
-                    subject=payload.subject,
-                    message=payload.message,
-                    dashboard_link=frontend_url,
-                )
-                team_mm_props = mm_advisory_props(
-                    subject=payload.subject,
-                    message=payload.message,
-                    dashboard_link=frontend_url,
-                )
-                background_tasks.add_task(
-                    notification_service.notify_users,
-                    users_to_notify,
-                    "analysis_completed",
-                    payload.subject,
-                    payload.message,
-                    db=db,
-                    forced_channels=forced_channels,
-                    html_message=html_msg,
-                    slack_blocks=team_blocks,
-                    mattermost_props=team_mm_props,
-                )
+        unique_user_count, project_count = await _handle_teams_broadcast(
+            payload, background_tasks, user_repo, team_repo, message_html_content, frontend_url, db, forced_channels,
+        )
 
     elif payload.target_type == "advisory":
         if not payload.packages:
             raise HTTPException(status_code=400, detail="At least one package required for advisory")
 
-        # 1. Get all projects with latest_scan_id
-        projects_list = await project_repo.find_many({"latest_scan_id": {"$exists": True}}, limit=10000)
-
-        # Map scan_id -> Project Data (excluding scans from deleted branches)
-        scan_map: Dict[str, Project] = {}
-        projects_needing_lookup: list = []
-        for p in projects_list:
-            if not p.latest_scan_id:
-                continue
-            if p.deleted_branches:
-                projects_needing_lookup.append(p)
-            else:
-                scan_map[p.latest_scan_id] = p
-
-        # Resolve active branch scans for projects with deleted branches
-        if projects_needing_lookup:
-            or_conditions = [
-                {"project_id": p.id, "branch": {"$nin": p.deleted_branches}, "status": "completed"}
-                for p in projects_needing_lookup
-            ]
-            pipeline: List[Dict[str, Any]] = [
-                {"$match": {"$or": or_conditions}},
-                {"$sort": {"created_at": -1}},
-                {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-            ]
-            proj_map = {p.id: p for p in projects_needing_lookup}
-            async for doc in db.scans.aggregate(pipeline):
-                proj = proj_map.get(doc["_id"])
-                if proj:
-                    scan_map[doc["scan_id"]] = proj
-
+        scan_map = await _build_advisory_scan_map(project_repo, db)
         if not scan_map:
             return BroadcastResult(recipient_count=0)
 
-        # project_id -> Project
         affected_projects_map: Dict[str, Project] = {}
-        # project_id -> list of strings "PackageName (Version)"
         project_findings: Dict[str, List[str]] = {}
 
-        # 2. Use AGGREGATED query for better performance
-        # Build match conditions for all packages
+        # Build match query for affected dependencies
         package_names = [pkg.name for pkg in payload.packages]
-
-        # Single aggregation query to find all affected dependencies
         match_query: Dict[str, Any] = {
             "scan_id": {"$in": list(scan_map.keys())},
             "name": {"$in": package_names},
         }
-
-        # Add type filter if all packages have the same type
         unique_types = {pkg.type for pkg in payload.packages if pkg.type}
         if len(unique_types) == 1:
             match_query["type"] = list(unique_types)[0]
 
-        # Fetch all potentially affected dependencies in ONE query
-        dependencies = await dep_repo.find_many(match_query, limit=100000)
+        # Stream dependencies and find affected projects
+        dep_count = 0
+        async for dep in dep_repo.iterate(match_query):
+            dep_count += 1
+            _find_affected_projects(dep, payload.packages, scan_map, affected_projects_map, project_findings)
 
-        logger.info(
-            f"Advisory broadcast: Found {len(dependencies)} dependencies matching {len(package_names)} packages"
-        )
-
-        # Process dependencies and check version ranges
-        for dep in dependencies:
-            dep_name = dep.name
-            dep_version = dep.version
-
-            # Find matching package rule
-            matching_rule = None
-            for pkg_rule in payload.packages:
-                if pkg_rule.name == dep_name:
-                    # Type match (if specified)
-                    if pkg_rule.type and dep.type != pkg_rule.type:
-                        continue
-                    matching_rule = pkg_rule
-                    break
-
-            if not matching_rule:
-                continue
-
-            # Check version range
-            is_affected = False
-            if matching_rule.version:
-                try:
-                    target_ver = parse_version(matching_rule.version)
-                    dep_ver = parse_version(dep_version)
-                    # Check if dep_ver <= target_version (affected range)
-                    if dep_ver <= target_ver:
-                        is_affected = True
-                except Exception as e:
-                    logger.debug(f"Could not parse version '{dep_version}' for '{dep_name}': {e}")
-                    # If version parsing fails, assume affected (conservative)
-                    is_affected = True
-            else:
-                # No version specified, all versions affected
-                is_affected = True
-
-            if is_affected:
-                p_data = scan_map.get(dep.scan_id)
-                if p_data:
-                    project_id = str(p_data.id)
-                    if project_id not in affected_projects_map:
-                        affected_projects_map[project_id] = p_data
-
-                    if project_id not in project_findings:
-                        project_findings[project_id] = []
-
-                    finding_str = f"{dep_name} ({dep_version})"
-                    if finding_str not in project_findings[project_id]:
-                        project_findings[project_id].append(finding_str)
+        logger.info(f"Advisory broadcast: Processed {dep_count} dependencies matching {len(package_names)} packages")
 
         project_count = len(affected_projects_map)
 
-        # 3. Group by User (Advisory Logic Update)
-        # user_id -> { user: User, projects: { project_id: { name: str, findings: [] } } }
-        user_notification_map: Dict[str, Dict] = {}
-
-        # We need to resolve users for all affected projects
-        all_owner_ids = set()
-        for p in affected_projects_map.values():
-            all_owner_ids.add(p.owner_id)
-
-        owner_users = await user_repo.find_many({"_id": {"$in": list(all_owner_ids)}, "is_active": True}, limit=10000)
-        users_dict = {str(u.id): u for u in owner_users}
-
-        for pid, project in affected_projects_map.items():
-            if project.owner_id in users_dict:
-                uid = project.owner_id
-                if uid not in user_notification_map:
-                    user_notification_map[uid] = {
-                        "user": users_dict[uid],
-                        "projects": [],
-                    }
-
-                user_notification_map[uid]["projects"].append(
-                    {
-                        "id": pid,
-                        "name": project.name,
-                        "findings": project_findings.get(pid, []),
-                    }
-                )
-
-        unique_user_count = len(user_notification_map)
-
-        # 4. Notify per User (Batching)
-        if not payload.dry_run:
-            for uid, data in user_notification_map.items():
-                user = data["user"]
-                projects_data = data["projects"]
-
-                # Construct a consolidated message
-                projects_html_parts = []
-                projects_text_parts = []
-
-                for p in projects_data:
-                    # Escape HTML to prevent XSS
-                    safe_name = html.escape(p["name"])
-                    safe_findings = html.escape(", ".join(p["findings"]))
-                    p_link = f"{frontend_url}/projects/{p['id']}"
-                    projects_html_parts.append(
-                        f"<li><strong><a href='{p_link}'>{safe_name}</a></strong>: {safe_findings}</li>"
-                    )
-                    projects_text_parts.append(f"- {p['name']}: {', '.join(p['findings'])}")
-
-                # Build Context Message
-                findings_list_html = "<ul>" + "".join(projects_html_parts) + "</ul>"
-                findings_text_block = "\n".join(projects_text_parts)
-
-                context_message = f"{payload.message}\n\n--- Affected Projects ---\n{findings_text_block}\n"
-
-                # Use Announcement Template but injected with Project List
-                # Generic HTML wrapper used because custom construction is safer for multi-project listings.
-
-                btn_style = (
-                    "background-color: #dc3545; color: white; padding: 10px 20px; "
-                    "text-decoration: none; border-radius: 4px;"
-                )
-                div_style = (
-                    "background-color: #fff3cd; border: 1px solid #ffeeba; "
-                    "padding: 15px; margin-bottom: 20px; border-radius: 4px;"
-                )
-
-                dashboard_button = (
-                    f'<p style="margin-top: 20px;"><a href="{frontend_url}" style="{btn_style}">View Dashboard</a></p>'
-                )
-
-                final_html = f"""
-                <div style="font-family: Arial, sans-serif; color: #333;">
-                    <h2>Security Advisory</h2>
-                    <div style="{div_style}">
-                        {message_html_content}
-                    </div>
-                    <h3>Your Affected Projects ({len(projects_data)})</h3>
-                    <p>The following projects you own are using the affected package versions:</p>
-                    {findings_list_html}
-                    {dashboard_button}
-                </div>
-                """
-
-                # Build Slack blocks with per-user affected projects
-                advisory_blocks = build_advisory_blocks(
-                    subject=f"ACTION REQUIRED: {payload.subject}",
-                    message=payload.message,
-                    affected_projects=projects_data,
-                    dashboard_link=frontend_url,
-                )
-                advisory_mm = mm_advisory_props(
-                    subject=f"ACTION REQUIRED: {payload.subject}",
-                    message=payload.message,
-                    affected_projects=projects_data,
-                    dashboard_link=frontend_url,
-                )
-
-                # Queue notification for background delivery
-                background_tasks.add_task(
-                    notification_service.notify_users,
-                    [user],
-                    "vulnerability_found",
-                    f"ACTION REQUIRED: {payload.subject}",
-                    context_message,
-                    db=db,
-                    forced_channels=forced_channels,
-                    html_message=final_html,
-                    slack_blocks=advisory_blocks,
-                    mattermost_props=advisory_mm,
-                )
+        # Group affected projects by owner and notify
+        unique_user_count = await _notify_advisory_owners(
+            affected_projects_map, project_findings, user_repo,
+            payload, background_tasks, message_html_content, frontend_url, db, forced_channels,
+        )
 
     # 5. Save History
     if not payload.dry_run:

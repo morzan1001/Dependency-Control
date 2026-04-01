@@ -194,7 +194,12 @@ class BaseRepository[T: BaseModel]:
         return result.deleted_count
 
     async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Run an aggregation pipeline."""
+        """Run an aggregation pipeline.
+
+        Args:
+            pipeline: MongoDB aggregation pipeline stages.
+            limit: Maximum number of results. Use $limit in the pipeline for best performance.
+        """
         with track_db_operation(self.collection_name, "aggregate"):
             return await self.collection.aggregate(pipeline).to_list(limit)
 

@@ -148,10 +148,6 @@ class ScanRepository:
             data = await self.collection.find_one(query, sort=[("created_at", -1)])
         return Scan(**data) if data else None
 
-    async def get_pending_scans(self) -> List[Dict[str, Any]]:
-        """Get all pending scans."""
-        cursor = self.collection.find({"status": "pending"})
-        return await cursor.to_list(None)
 
     async def iterate(
         self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None

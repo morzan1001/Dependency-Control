@@ -1,0 +1,88 @@
+{{- if .Values.grypeDbUpdater.enabled }}
+# Grype DB Updater: CronJob that downloads the Grype vulnerability database
+# to a shared PersistentVolume. Backend pods mount it read-only.
+# This saves ~1.4GB ephemeral storage per backend pod.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-grype-db-updater
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grype-db-updater
+spec:
+  schedule: "{{ .Values.grypeDbUpdater.schedule | default "0 */6 * * *" }}"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          restartPolicy: OnFailure
+          securityContext:
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: grype-updater
+              image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag | default .Chart.AppVersion }}"
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  echo "Updating Grype vulnerability database..."
+                  rm -rf /grype-db/grype-db-download* /tmp/getter* 2>/dev/null || true
+                  grype db update
+                  rm -rf /grype-db/grype-db-download* /tmp/getter* 2>/dev/null || true
+                  echo "Grype DB update completed successfully"
+                  ls -lh /grype-db/
+              env:
+                - name: GRYPE_DB_CACHE_DIR
+                  value: "/grype-db"
+              securityContext:
+                runAsUser: 1000
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: grype-db
+                  mountPath: /grype-db
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+                  ephemeral-storage: 4Gi
+          volumes:
+            - name: grype-db
+              persistentVolumeClaim:
+                claimName: {{ include "dependency-control.fullname" . }}-grype-db
+            - name: tmp
+              emptyDir:
+                sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-grype-db
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.grypeDbUpdater.persistence.size | default "3Gi" }}
+  {{- if .Values.grypeDbUpdater.persistence.storageClass }}
+  storageClassName: {{ .Values.grypeDbUpdater.persistence.storageClass }}
+  {{- end }}
+{{- end }}

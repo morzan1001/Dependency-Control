@@ -43,6 +43,162 @@ def _build_enrichment(
     )
 
 
+def _add_finding_to_map(
+    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    cve: str,
+    finding: Dict[str, Any],
+) -> None:
+    """Add a finding to the CVE-to-findings map, avoiding duplicates."""
+    if cve not in cve_to_findings:
+        cve_to_findings[cve] = []
+    if not any(f.get("_id") == finding.get("_id") for f in cve_to_findings[cve]):
+        cve_to_findings[cve].append(finding)
+
+
+def _extract_cves_from_finding(
+    finding: Dict[str, Any],
+    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    cvss_scores: Dict[str, float],
+) -> None:
+    """Extract CVE/GHSA IDs from a single finding and its nested vulnerabilities."""
+    details = finding.get("details", {})
+    if not isinstance(details, dict):
+        return
+
+    # Check if finding ID itself is a CVE
+    finding_id = finding.get("finding_id") or finding.get("id", "")
+    if finding_id and finding_id.startswith("CVE-"):
+        _add_finding_to_map(cve_to_findings, finding_id, finding)
+        if details.get("cvss_score") is not None:
+            cvss_scores[finding_id] = details["cvss_score"]
+
+    # Extract CVEs from vulnerabilities array (aggregated findings)
+    for vuln in details.get("vulnerabilities", []):
+        cve = vuln.get("id", "")
+        if cve and (cve.startswith("CVE-") or cve.startswith("GHSA-")):
+            _add_finding_to_map(cve_to_findings, cve, finding)
+            if vuln.get("cvss_score") is not None and cve not in cvss_scores:
+                cvss_scores[cve] = vuln["cvss_score"]
+
+        # Also check aliases within the vulnerability
+        for alias in vuln.get("aliases", []):
+            if alias.startswith("CVE-"):
+                _add_finding_to_map(cve_to_findings, alias, finding)
+
+    # Also check aliases at finding level
+    for alias in finding.get("aliases", []):
+        if alias.startswith("CVE-"):
+            _add_finding_to_map(cve_to_findings, alias, finding)
+
+
+def _apply_ghsa_to_vuln(
+    vuln: Dict[str, Any],
+    ghsa_id: str,
+    ghsa_data: GHSAData,
+    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    finding: Dict[str, Any],
+) -> None:
+    """Apply GHSA resolution data to a single vulnerability entry."""
+    if vuln.get("id") != ghsa_id:
+        return
+
+    vuln["github_advisory_url"] = ghsa_data.advisory_url
+
+    if ghsa_data.cve_id:
+        if "aliases" not in vuln:
+            vuln["aliases"] = []
+        if ghsa_data.cve_id not in vuln["aliases"]:
+            vuln["aliases"].append(ghsa_data.cve_id)
+        vuln["resolved_cve"] = ghsa_data.cve_id
+        _add_finding_to_map(cve_to_findings, ghsa_data.cve_id, finding)
+
+    for alias in ghsa_data.aliases:
+        if "aliases" not in vuln:
+            vuln["aliases"] = []
+        if alias not in vuln["aliases"]:
+            vuln["aliases"].append(alias)
+
+
+def _apply_ghsa_resolutions(
+    ghsa_resolutions: Dict[str, GHSAData],
+    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    """Apply all GHSA resolutions to affected findings."""
+    for ghsa_id, ghsa_data in ghsa_resolutions.items():
+        for finding in cve_to_findings.get(ghsa_id, []):
+            if "details" not in finding:
+                finding["details"] = {}
+
+            finding["details"]["github_advisory_url"] = ghsa_data.advisory_url
+
+            for vuln in finding["details"].get("vulnerabilities", []):
+                _apply_ghsa_to_vuln(vuln, ghsa_id, ghsa_data, cve_to_findings, finding)
+
+            if ghsa_data.cve_id:
+                if "aliases" not in finding:
+                    finding["aliases"] = []
+                if ghsa_data.cve_id not in finding["aliases"]:
+                    finding["aliases"].append(ghsa_data.cve_id)
+
+
+def _apply_enrichment_to_vuln(
+    vuln: Dict[str, Any],
+    cve: str,
+    enrichment: VulnerabilityEnrichment,
+) -> None:
+    """Apply EPSS/KEV enrichment to a single vulnerability entry."""
+    vuln_id = vuln.get("id", "")
+    if vuln_id != cve and cve not in vuln.get("aliases", []):
+        return
+
+    if enrichment.epss_score is not None:
+        vuln["epss_score"] = enrichment.epss_score
+        vuln["epss_percentile"] = enrichment.epss_percentile
+    if enrichment.is_kev:
+        vuln["in_kev"] = True
+        vuln["kev_due_date"] = enrichment.kev_due_date
+        vuln["kev_ransomware_use"] = enrichment.kev_ransomware_use
+
+
+def _apply_enrichment_to_finding(
+    finding: Dict[str, Any],
+    enrichment: VulnerabilityEnrichment,
+) -> None:
+    """Apply aggregated EPSS/KEV enrichment to finding-level details."""
+    details = finding.setdefault("details", {})
+
+    # Enrich individual vulnerabilities in the array
+    for vuln in details.get("vulnerabilities", []):
+        _apply_enrichment_to_vuln(vuln, enrichment.cve, enrichment)
+
+    # Aggregate: use the highest EPSS score across all vulns
+    if enrichment.epss_score is not None:
+        max_epss = details.get("epss_score")
+        if max_epss is None or enrichment.epss_score > max_epss:
+            details["epss_score"] = enrichment.epss_score
+            details["epss_percentile"] = enrichment.epss_percentile
+            details["epss_date"] = enrichment.epss_date
+
+    if enrichment.is_kev:
+        details["in_kev"] = True
+        details["kev_date_added"] = enrichment.kev_date_added
+        details["kev_due_date"] = enrichment.kev_due_date
+        details["kev_required_action"] = enrichment.kev_required_action
+        details["kev_ransomware_use"] = enrichment.kev_ransomware_use
+
+    if enrichment.exploit_maturity and enrichment.exploit_maturity != "unknown":
+        current_maturity = details.get("exploit_maturity", "unknown")
+        if EXPLOIT_MATURITY_ORDER.get(enrichment.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(
+            current_maturity, 0
+        ):
+            details["exploit_maturity"] = enrichment.exploit_maturity
+
+    if enrichment.risk_score is not None:
+        current_risk = details.get("risk_score")
+        if current_risk is None or enrichment.risk_score > current_risk:
+            details["risk_score"] = enrichment.risk_score
+
+
 class VulnerabilityEnrichmentService:
     """
     Service to enrich vulnerability data with EPSS scores and CISA KEV information.
@@ -155,164 +311,31 @@ class VulnerabilityEnrichmentService:
         if not findings:
             return
 
-        # Extract CVE IDs and CVSS scores from all findings
-        # Map: CVE -> List of (finding, vuln_index) tuples to update
+        # Phase 1: Extract CVE/GHSA IDs from all findings
         cve_to_findings: Dict[str, List[Dict[str, Any]]] = {}
         cvss_scores: Dict[str, float] = {}
 
         for finding in findings:
-            details = finding.get("details", {})
-            if not isinstance(details, dict):
-                continue
-
-            # Check if finding ID itself is a CVE
-            finding_id = finding.get("finding_id") or finding.get("id", "")
-            if finding_id and finding_id.startswith("CVE-"):
-                if finding_id not in cve_to_findings:
-                    cve_to_findings[finding_id] = []
-                cve_to_findings[finding_id].append(finding)
-                if details.get("cvss_score") is not None:
-                    cvss_scores[finding_id] = details["cvss_score"]
-
-            # Extract CVEs from vulnerabilities array (aggregated findings)
-            vulns = details.get("vulnerabilities", [])
-            for vuln in vulns:
-                cve = vuln.get("id", "")
-                if cve and (cve.startswith("CVE-") or cve.startswith("GHSA-")):
-                    if cve not in cve_to_findings:
-                        cve_to_findings[cve] = []
-                    cve_to_findings[cve].append(finding)
-
-                    # Extract CVSS score
-                    if vuln.get("cvss_score") is not None and cve not in cvss_scores:
-                        cvss_scores[cve] = vuln["cvss_score"]
-
-                # Also check aliases within the vulnerability
-                for alias in vuln.get("aliases", []):
-                    if alias.startswith("CVE-"):
-                        if alias not in cve_to_findings:
-                            cve_to_findings[alias] = []
-                        if not any(f.get("_id") == finding.get("_id") for f in cve_to_findings[alias]):
-                            cve_to_findings[alias].append(finding)
-
-            # Also check aliases at finding level
-            for alias in finding.get("aliases", []):
-                if alias.startswith("CVE-"):
-                    if alias not in cve_to_findings:
-                        cve_to_findings[alias] = []
-                    if not any(f.get("_id") == finding.get("_id") for f in cve_to_findings[alias]):
-                        cve_to_findings[alias].append(finding)
+            _extract_cves_from_finding(finding, cve_to_findings, cvss_scores)
 
         if not cve_to_findings:
             return
 
+        # Phase 2: Resolve GHSA IDs to CVEs
         ghsa_ids = [vid for vid in cve_to_findings.keys() if vid.startswith("GHSA-")]
-        ghsa_resolutions: Dict[str, GHSAData] = {}
-
         if ghsa_ids:
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
             ghsa_resolutions = await self.resolve_ghsa_to_cve(ghsa_ids)
+            _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings)
 
-            # Process resolved GHSAs
-            for ghsa_id, ghsa_data in ghsa_resolutions.items():
-                affected_findings = cve_to_findings.get(ghsa_id, [])
-
-                for finding in affected_findings:
-                    if "details" not in finding:
-                        finding["details"] = {}
-
-                    # Add GitHub Advisory URL to finding
-                    finding["details"]["github_advisory_url"] = ghsa_data.advisory_url
-
-                    # Update vulnerabilities array with GHSA data
-                    vulns = finding["details"].get("vulnerabilities", [])
-                    for vuln in vulns:
-                        if vuln.get("id") == ghsa_id:
-                            vuln["github_advisory_url"] = ghsa_data.advisory_url
-
-                            # If we resolved a CVE, add it as an alias and use for EPSS/KEV
-                            if ghsa_data.cve_id:
-                                if "aliases" not in vuln:
-                                    vuln["aliases"] = []
-                                if ghsa_data.cve_id not in vuln["aliases"]:
-                                    vuln["aliases"].append(ghsa_data.cve_id)
-                                vuln["resolved_cve"] = ghsa_data.cve_id
-
-                                # Add this CVE to our enrichment list
-                                if ghsa_data.cve_id not in cve_to_findings:
-                                    cve_to_findings[ghsa_data.cve_id] = []
-                                if not any(
-                                    f.get("_id") == finding.get("_id") for f in cve_to_findings[ghsa_data.cve_id]
-                                ):
-                                    cve_to_findings[ghsa_data.cve_id].append(finding)
-
-                            # Add other aliases from GHSA
-                            for alias in ghsa_data.aliases:
-                                if alias not in vuln.get("aliases", []):
-                                    if "aliases" not in vuln:
-                                        vuln["aliases"] = []
-                                    vuln["aliases"].append(alias)
-
-                    # Also update finding-level aliases
-                    if ghsa_data.cve_id:
-                        if "aliases" not in finding:
-                            finding["aliases"] = []
-                        if ghsa_data.cve_id not in finding["aliases"]:
-                            finding["aliases"].append(ghsa_data.cve_id)
-
-        # Enrich CVEs (only CVE- prefixed, not GHSA-)
+        # Phase 3: Enrich CVEs with EPSS/KEV data
         cves_to_enrich = [cve for cve in cve_to_findings.keys() if cve.startswith("CVE-")]
         enrichments = await self.enrich_cves(cves_to_enrich, cvss_scores)
 
-        # Apply enrichment to findings and their vulnerabilities
+        # Phase 4: Apply enrichment to findings
         for cve, enrichment in enrichments.items():
             for finding in cve_to_findings.get(cve, []):
-                # Add enrichment data to finding details
-                if "details" not in finding:
-                    finding["details"] = {}
-
-                # Enrich individual vulnerabilities in the array
-                vulns = finding["details"].get("vulnerabilities", [])
-                for vuln in vulns:
-                    vuln_id = vuln.get("id", "")
-                    if vuln_id == cve or cve in vuln.get("aliases", []):
-                        # Add enrichment to this specific vulnerability
-                        if enrichment.epss_score is not None:
-                            vuln["epss_score"] = enrichment.epss_score
-                            vuln["epss_percentile"] = enrichment.epss_percentile
-                        if enrichment.is_kev:
-                            vuln["in_kev"] = True
-                            vuln["kev_due_date"] = enrichment.kev_due_date
-                            vuln["kev_ransomware_use"] = enrichment.kev_ransomware_use
-
-                # Also add aggregated data to finding level for quick access
-                # Use the highest EPSS score and any KEV status across all vulns
-                max_epss = finding["details"].get("epss_score")
-                if enrichment.epss_score is not None:
-                    if max_epss is None or enrichment.epss_score > max_epss:
-                        finding["details"]["epss_score"] = enrichment.epss_score
-                        finding["details"]["epss_percentile"] = enrichment.epss_percentile
-                        finding["details"]["epss_date"] = enrichment.epss_date
-
-                if enrichment.is_kev:
-                    finding["details"]["in_kev"] = True
-                    finding["details"]["kev_date_added"] = enrichment.kev_date_added
-                    finding["details"]["kev_due_date"] = enrichment.kev_due_date
-                    finding["details"]["kev_required_action"] = enrichment.kev_required_action
-                    finding["details"]["kev_ransomware_use"] = enrichment.kev_ransomware_use
-
-                if enrichment.exploit_maturity and enrichment.exploit_maturity != "unknown":
-                    current_maturity = finding["details"].get("exploit_maturity", "unknown")
-                    # Keep the more severe maturity level
-                    if EXPLOIT_MATURITY_ORDER.get(enrichment.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(
-                        current_maturity, 0
-                    ):
-                        finding["details"]["exploit_maturity"] = enrichment.exploit_maturity
-
-                if enrichment.risk_score is not None:
-                    current_risk = finding["details"].get("risk_score")
-                    if current_risk is None or enrichment.risk_score > current_risk:
-                        finding["details"]["risk_score"] = enrichment.risk_score
+                _apply_enrichment_to_finding(finding, enrichment)
 
     # expose the scoring functions for external use if needed, e.g. reachability
     def calculate_adjusted_risk_score(

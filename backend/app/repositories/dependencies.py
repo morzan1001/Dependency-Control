@@ -34,7 +34,11 @@ class DependencyRepository(BaseRepository[Dependency]):
         query: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Find all dependencies matching query (returns raw dicts)."""
+        """Find all dependencies matching query (returns raw dicts).
+
+        Consider using iterate() for large result sets to avoid
+        loading all documents into memory at once.
+        """
         cursor = self.collection.find(query or {}, projection)
         return await cursor.to_list(None)
 

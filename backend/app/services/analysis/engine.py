@@ -131,24 +131,34 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
         limit=10000,
     )
 
+    if not old_results:
+        return
+
+    # Bulk upsert all external results in a single operation
+    bulk_ops = []
     for old_result in old_results:
-        # Use upsert to avoid race conditions when multiple workers might copy the same result
-        # The unique key is (scan_id, analyzer_name, result hash)
         new_result = old_result.model_dump(by_alias=True).copy()
         new_result["_id"] = str(uuid.uuid4())
         new_result["scan_id"] = scan_id
         new_result["created_at"] = datetime.now(timezone.utc)
 
-        # Use upsert via repository (upsert is implicit, no parameter needed)
-        await result_repo.upsert(
-            {
-                "scan_id": scan_id,
-                "analyzer_name": old_result.analyzer_name,
-                "result": old_result.result,
-            },
-            {"$setOnInsert": new_result},
+        bulk_ops.append(
+            UpdateOne(
+                {
+                    "scan_id": scan_id,
+                    "analyzer_name": old_result.analyzer_name,
+                    "result": old_result.result,
+                },
+                {"$setOnInsert": new_result},
+                upsert=True,
+            )
         )
-        logger.debug(f"Carried over result for {old_result.analyzer_name}")
+
+    try:
+        await db.analysis_results.bulk_write(bulk_ops, ordered=False)
+        logger.info(f"Carried over {len(bulk_ops)} external results to rescan {scan_id}")
+    except Exception as e:
+        logger.error(f"Failed to bulk carry over external results: {e}")
 
 
 async def process_analyzer(
@@ -210,6 +220,299 @@ async def process_analyzer(
         return f"{analyzer_name}: Failed"
 
 
+async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> Optional[Dict[str, Any]]:
+    """Resolve a single SBOM item from inline dict or GridFS reference."""
+    if isinstance(item, dict) and item.get("type") == "gridfs_reference":
+        gridfs_id = item.get("gridfs_id")
+        try:
+            if analysis_gridfs_operations_total:
+                analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
+            stream = await fs.open_download_stream(ObjectId(gridfs_id))
+            content: bytes = await stream.read()
+            sbom = json.loads(content)
+            del content
+            if analysis_gridfs_operations_total:
+                analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
+            return sbom
+        except Exception as gridfs_err:
+            logger.error(f"Failed to fetch SBOM from GridFS {gridfs_id}: {gridfs_err}")
+            if analysis_gridfs_operations_total:
+                analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
+            aggregator.aggregate("system", {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"})
+            return None
+    return item
+
+
+async def _process_sbom(
+    index: int,
+    item: Any,
+    scan_id: str,
+    db: Database,
+    fs: AsyncIOMotorGridFSBucket,
+    aggregator: ResultAggregator,
+    active_analyzers: List[str],
+    system_settings: Any,
+) -> List[str]:
+    """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
+    current_sbom = await _resolve_sbom(item, fs, aggregator)
+    if not current_sbom:
+        return []
+
+    fallback_source = f"SBOM #{index + 1}"
+
+    parsed_components: List[Dict[str, Any]] = []
+    try:
+        parsed_sbom = parse_sbom(current_sbom)
+        parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
+        logger.info(f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}")
+        if analysis_sbom_processed_total:
+            analysis_sbom_processed_total.labels(format=parsed_sbom.format.value).inc()
+        if analysis_components_parsed_total:
+            analysis_components_parsed_total.inc(len(parsed_components))
+    except Exception as parse_err:
+        logger.warning(f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing")
+        if analysis_sbom_parse_errors_total:
+            analysis_sbom_parse_errors_total.inc()
+
+    tasks = [
+        process_analyzer(
+            analyzer_name,
+            analyzers[analyzer_name],
+            current_sbom,
+            scan_id,
+            db,
+            aggregator,
+            settings=system_settings.model_dump() if system_settings else None,
+            fallback_source=fallback_source,
+            parsed_components=(parsed_components if parsed_components else None),
+        )
+        for analyzer_name in active_analyzers
+        if analyzer_name in analyzers
+    ]
+
+    batch_results = await asyncio.gather(*tasks)
+    del current_sbom, parsed_components
+    return list(batch_results)
+
+
+def _track_findings_metrics(aggregated_findings: List[Any]) -> None:
+    """Track Prometheus metrics for aggregated findings."""
+    for finding in aggregated_findings:
+        finding_type = finding.type if hasattr(finding, "type") else "unknown"
+        severity = finding.severity if hasattr(finding, "severity") else "unknown"
+        if analysis_findings_by_type:
+            analysis_findings_by_type.labels(type=finding_type, severity=severity).inc()
+        if analysis_findings_total:
+            scanners = finding.scanners if hasattr(finding, "scanners") else []
+            for scanner_name in scanners:
+                analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
+
+
+async def _enrich_dependencies(
+    dependency_enrichments: Dict[str, Any], scan_id: str, db: Database
+) -> None:
+    """Bulk-update dependencies with aggregated enrichment data."""
+    if not dependency_enrichments:
+        return
+
+    logger.info(f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata")
+    bulk_ops: List[UpdateOne] = []
+    total_updated = 0
+
+    for key, enrichment_data in dependency_enrichments.items():
+        parts = key.rsplit("@", 1)
+        if len(parts) != 2:
+            continue
+        name, version = parts
+        if enrichment_data:
+            bulk_ops.append(
+                UpdateOne(
+                    {"scan_id": scan_id, "name": name, "version": version},
+                    {"$set": enrichment_data},
+                )
+            )
+
+        if len(bulk_ops) >= _BULK_CHUNK_SIZE:
+            try:
+                await db.dependencies.bulk_write(bulk_ops, ordered=False)
+                total_updated += len(bulk_ops)
+            except Exception as e:
+                logger.error(f"Failed to bulk update dependencies: {e}")
+            bulk_ops.clear()
+
+    if bulk_ops:
+        try:
+            await db.dependencies.bulk_write(bulk_ops, ordered=False)
+            total_updated += len(bulk_ops)
+        except Exception as e:
+            logger.error(f"Failed to bulk update dependencies: {e}")
+
+    logger.info(f"Bulk updated {total_updated} dependencies.")
+
+
+async def _run_epss_kev_enrichment(
+    vulnerability_findings: List[Dict[str, Any]],
+    scan_id: str,
+    result_repo: AnalysisResultRepository,
+    github_token: Optional[str],
+    results_summary: List[str],
+) -> None:
+    """Run EPSS/KEV enrichment on vulnerability findings."""
+    try:
+        await enrich_vulnerability_findings(vulnerability_findings, github_token=github_token)
+        epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
+        await result_repo.create_raw(
+            {
+                "_id": str(uuid.uuid4()),
+                "scan_id": scan_id,
+                "analyzer_name": "epss_kev",
+                "result": epss_kev_summary,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        results_summary.append(f"epss_kev: Success ({len(vulnerability_findings)} enriched)")
+        logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
+
+        if analysis_enrichment_total:
+            analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
+
+        for vf in vulnerability_findings:
+            details = vf.get("details", {})
+            epss_score = details.get("epss_score")
+            if epss_score is not None and analysis_epss_scores:
+                try:
+                    analysis_epss_scores.observe(float(epss_score))
+                except (ValueError, TypeError):
+                    pass
+            if details.get("is_kev") and analysis_kev_vulnerabilities_total:
+                analysis_kev_vulnerabilities_total.inc()
+
+    except Exception as e:
+        results_summary.append("epss_kev: Failed")
+        logger.warning(f"[epss_kev] Failed to enrich findings: {e}")
+
+
+async def _run_reachability_enrichment(
+    vulnerability_findings: List[Dict[str, Any]],
+    scan_id: str,
+    project_id: str,
+    scan_doc: Scan,
+    db: Database,
+    callgraph_repo: CallgraphRepository,
+    result_repo: AnalysisResultRepository,
+    scan_repo: ScanRepository,
+    results_summary: List[str],
+) -> None:
+    """Run reachability analysis on vulnerability findings."""
+    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
+
+    if not callgraphs:
+        pipeline_id = scan_doc.pipeline_id if scan_doc else None
+        if pipeline_id:
+            callgraphs = await callgraph_repo.find_all_minimal_by_pipeline(project_id, pipeline_id)
+
+    if not callgraphs:
+        await scan_repo.update_raw(
+            scan_id,
+            {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
+        )
+        logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
+        return
+
+    try:
+        enriched_count = await enrich_findings_with_reachability(
+            findings=vulnerability_findings, project_id=str(project_id), db=db, scan_id=scan_id,
+        )
+        reachability_summary = build_reachability_summary(
+            vulnerability_findings, [cg.model_dump(by_alias=True) for cg in callgraphs], enriched_count,
+        )
+        await result_repo.create_raw(
+            {
+                "_id": str(uuid.uuid4()),
+                "scan_id": scan_id,
+                "analyzer_name": "reachability",
+                "result": reachability_summary,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        results_summary.append(f"reachability: Success ({enriched_count} enriched)")
+        logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
+
+        if analysis_enrichment_total:
+            analysis_enrichment_total.labels(type="reachability").inc(enriched_count)
+
+        if analysis_reachable_vulnerabilities_total:
+            for vf in vulnerability_findings:
+                reachability = vf.get("details", {}).get("reachability", {})
+                if reachability.get("is_reachable"):
+                    level = reachability.get("level", "unknown")
+                    analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
+    except Exception as e:
+        results_summary.append("reachability: Failed")
+        logger.warning(f"[reachability] Failed to enrich findings: {e}")
+
+
+async def _apply_waivers(
+    active_waivers: List[Waiver],
+    scan_id: str,
+    finding_repo: FindingRepository,
+) -> None:
+    """Apply all active waivers to findings for a scan."""
+    from app.services.stats import _build_waiver_query
+
+    for waiver in active_waivers:
+        if waiver.vulnerability_id:
+            await finding_repo.apply_vulnerability_waiver(
+                scan_id=scan_id, vulnerability_id=waiver.vulnerability_id, waived=True, waiver_reason=waiver.reason,
+            )
+        else:
+            query = _build_waiver_query(waiver)
+            await finding_repo.apply_finding_waiver(
+                scan_id=scan_id, query=query, waived=True, waiver_reason=waiver.reason,
+            )
+
+
+def _track_waiver_metrics(active_waivers: List[Waiver]) -> None:
+    """Track Prometheus metrics for applied waivers."""
+    if not analysis_waivers_applied_total:
+        return
+
+    waiver_types: Dict[str, int] = {}
+    for waiver in active_waivers:
+        waiver_type = _get_waiver_type(waiver)
+        waiver_types[waiver_type] = waiver_types.get(waiver_type, 0) + 1
+
+    for waiver_type, count in waiver_types.items():
+        analysis_waivers_applied_total.labels(type=waiver_type).inc(count)
+
+
+async def _check_race_condition(
+    scan_id: str, external_load_start: datetime, scan_repo: ScanRepository
+) -> bool:
+    """Check if new results arrived during processing. Returns True if race detected."""
+    race_check = await scan_repo.get_by_id(scan_id)
+    last_result_at = race_check.last_result_at if race_check else None
+
+    if last_result_at and last_result_at.tzinfo is None:
+        last_result_at = last_result_at.replace(tzinfo=timezone.utc)
+
+    if last_result_at and last_result_at >= external_load_start:
+        logger.warning(
+            f"Race condition detected for scan {scan_id}. "
+            f"New results arrived at {last_result_at} (Analysis load start: {external_load_start}). "
+            f"Rescheduling scan."
+        )
+        if analysis_race_conditions_total:
+            analysis_race_conditions_total.inc()
+
+        await scan_repo.update_raw(
+            scan_id, {"$set": {"status": "pending"}, "$inc": {"retry_count": 1}},
+        )
+        return True
+
+    return False
+
+
 async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db: Database) -> bool:
     """
     Orchestrates the analysis process for a given SBOM scan.
@@ -264,172 +567,30 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     # Process SBOMs sequentially to save memory
     for index, item in enumerate(sboms):
-        current_sbom = None
+        sbom_results = await _process_sbom(
+            index, item, scan_id, db, fs, aggregator, active_analyzers, system_settings,
+        )
+        results_summary.extend(sbom_results)
 
-        # Resolve GridFS reference if needed
-        if isinstance(item, dict) and item.get("type") == "gridfs_reference":
-            gridfs_id = item.get("gridfs_id")
-            try:
-                if analysis_gridfs_operations_total:
-                    analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
-                stream = await fs.open_download_stream(ObjectId(gridfs_id))
-                content: bytes = await stream.read()
-                current_sbom = json.loads(content)
-                del content
-                if analysis_gridfs_operations_total:
-                    analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
-            except Exception as gridfs_err:
-                logger.error(f"Failed to fetch SBOM from GridFS {gridfs_id}: {gridfs_err}")
-                if analysis_gridfs_operations_total:
-                    analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
-                aggregator.aggregate(
-                    "system",
-                    {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"},
-                )
-                continue
-        else:
-            current_sbom = item
-
-        if not current_sbom:
-            continue
-
-        # Determine fallback source name
-        fallback_source = f"SBOM #{index + 1}"
-
-        # Parse SBOM once
-        parsed_components = []
-        try:
-            parsed_sbom = parse_sbom(current_sbom)
-            parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
-            logger.info(f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}")
-            # Track metrics
-            if analysis_sbom_processed_total:
-                analysis_sbom_processed_total.labels(format=parsed_sbom.format.value).inc()
-            if analysis_components_parsed_total:
-                analysis_components_parsed_total.inc(len(parsed_components))
-        except Exception as parse_err:
-            logger.warning(f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing")
-            if analysis_sbom_parse_errors_total:
-                analysis_sbom_parse_errors_total.inc()
-
-        # Run analyzers for THIS SBOM concurrently
-        tasks = []
-        for analyzer_name in active_analyzers:
-            if analyzer_name in analyzers:
-                analyzer = analyzers[analyzer_name]
-                tasks.append(
-                    process_analyzer(
-                        analyzer_name,
-                        analyzer,
-                        current_sbom,
-                        scan_id,
-                        db,
-                        aggregator,
-                        settings=system_settings.model_dump() if system_settings else None,
-                        fallback_source=fallback_source,
-                        parsed_components=(parsed_components if parsed_components else None),
-                    )
-                )
-
-        # Wait for this batch to finish
-        batch_results = await asyncio.gather(*tasks)
-        results_summary.extend(batch_results)
-
-        # Explicitly release memory
-        del current_sbom, parsed_components
-
-    # 1. Fetch and Aggregate External Results (TruffleHog, OpenGrep, etc.)
-    # We mark the time BEFORE loading external results to detect race conditions later
+    # 1. Fetch and aggregate external results (TruffleHog, OpenGrep, etc.)
     external_load_start = datetime.now(timezone.utc)
-
-    # Load external results via repository
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
-    external_analyzer_names = set()
     for res in external_results:
-        name = res.analyzer_name
-        if name not in analyzers:
-            aggregator.aggregate(name, res.result)
-            external_analyzer_names.add(name)
-
-    # Add external analyzers to results_summary so notifications reflect them
-    for ext_name in sorted(external_analyzer_names):
-        results_summary.append(f"{ext_name}: Success")
+        if res.analyzer_name not in analyzers:
+            aggregator.aggregate(res.analyzer_name, res.result)
+            results_summary.append(f"{res.analyzer_name}: Success")
     del external_results
 
-    # Save aggregated findings to the scan document
+    # 2. Collect findings and enrichments, then free aggregator
     aggregated_findings = aggregator.get_findings()
-
-    # Track findings metrics
-    for finding in aggregated_findings:
-        finding_type = finding.type if hasattr(finding, "type") else "unknown"
-        severity = finding.severity if hasattr(finding, "severity") else "unknown"
-        if analysis_findings_by_type:
-            analysis_findings_by_type.labels(type=finding_type, severity=severity).inc()
-        if analysis_findings_total:
-            scanners = finding.scanners if hasattr(finding, "scanners") else []
-            for scanner_name in scanners:
-                analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
-
-    # Get aggregated dependency enrichments
+    _track_findings_metrics(aggregated_findings)
     dependency_enrichments = aggregator.get_dependency_enrichments()
-
-    # Free the aggregator and all its internal caches (findings, scorecard, license data, enrichments)
     del aggregator
 
-    # Note: project_id was already fetched at the beginning of the function
-
-    # Enrich dependencies with aggregated data (in chunks to limit memory)
-    if dependency_enrichments:
-        logger.info(f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata")
-
-        bulk_ops: List[UpdateOne] = []
-        total_updated = 0
-        for key, enrichment_data in dependency_enrichments.items():
-            # key format: "name@version"
-            parts = key.rsplit("@", 1)
-            if len(parts) != 2:
-                continue
-            name, version = parts
-
-            if enrichment_data:
-                bulk_ops.append(
-                    UpdateOne(
-                        {"scan_id": scan_id, "name": name, "version": version},
-                        {"$set": enrichment_data},
-                    )
-                )
-
-            if len(bulk_ops) >= _BULK_CHUNK_SIZE:
-                try:
-                    await db.dependencies.bulk_write(bulk_ops, ordered=False)
-                    total_updated += len(bulk_ops)
-                except Exception as e:
-                    logger.error(f"Failed to bulk update dependencies: {e}")
-                bulk_ops.clear()
-
-        if bulk_ops:
-            try:
-                await db.dependencies.bulk_write(bulk_ops, ordered=False)
-                total_updated += len(bulk_ops)
-            except Exception as e:
-                logger.error(f"Failed to bulk update dependencies: {e}")
-
-        logger.info(f"Bulk updated {total_updated} dependencies.")
-
-    # Free enrichment data
+    await _enrich_dependencies(dependency_enrichments, scan_id, db)
     del dependency_enrichments
 
-    # Fetch active waivers via repository (handles expiration filtering)
-    from app.repositories import WaiverRepository
-
-    active_waivers: List[Waiver] = []
-    if project_id:
-        waiver_repo = WaiverRepository(db)
-        active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
-
-    # Save Findings to 'findings' collection
-    await finding_repo.delete_many({"scan_id": scan_id})
-
+    # 3. Prepare finding records for insertion
     findings_to_insert: List[Dict[str, Any]] = []
     vulnerability_findings: List[Dict[str, Any]] = []
     for f in aggregated_findings:
@@ -442,169 +603,37 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         if record.get("type") == "vulnerability":
             vulnerability_findings.append(record)
 
-    # Capture count before freeing aggregated_findings later
     total_findings_count = len(findings_to_insert)
 
+    # 4. Resolve GitHub token for enrichment
     github_token = system_settings.github_token
     if not github_token:
         github_token = await _get_github_instance_token(db)
-        if github_token and system_settings:
-            system_settings.github_token = github_token
 
-    # EPSS/KEV Enrichment
+    # 5. Enrich vulnerability findings
     if "epss_kev" in active_analyzers and vulnerability_findings:
-        try:
-            await enrich_vulnerability_findings(vulnerability_findings, github_token=github_token)
-            epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
-            # Store EPSS/KEV summary via repository
-            await result_repo.create_raw(
-                {
-                    "_id": str(uuid.uuid4()),
-                    "scan_id": scan_id,
-                    "analyzer_name": "epss_kev",
-                    "result": epss_kev_summary,
-                    "created_at": datetime.now(timezone.utc),
-                }
-            )
-            results_summary.append(f"epss_kev: Success ({len(vulnerability_findings)} enriched)")
-            logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
+        await _run_epss_kev_enrichment(vulnerability_findings, scan_id, result_repo, github_token, results_summary)
 
-            # Track EPSS/KEV metrics
-            if analysis_enrichment_total:
-                analysis_enrichment_total.labels(type="epss_kev").inc(len(vulnerability_findings))
-
-            # Track EPSS scores and KEV findings
-            for vf in vulnerability_findings:
-                details = vf.get("details", {})
-                epss_score = details.get("epss_score")
-                if epss_score is not None and analysis_epss_scores:
-                    try:
-                        analysis_epss_scores.observe(float(epss_score))
-                    except (ValueError, TypeError):
-                        pass
-
-                if details.get("is_kev") and analysis_kev_vulnerabilities_total:
-                    analysis_kev_vulnerabilities_total.inc()
-
-        except Exception as e:
-            results_summary.append("epss_kev: Failed")
-            logger.warning(f"[epss_kev] Failed to enrich findings: {e}")
-
-    # Reachability Analysis
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
-        callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
+        await _run_reachability_enrichment(
+            vulnerability_findings, scan_id, project_id, scan_doc,
+            db, callgraph_repo, result_repo, scan_repo, results_summary,
+        )
 
-        if not callgraphs:
-            pipeline_id = scan_doc.pipeline_id if scan_doc else None
-            if pipeline_id:
-                callgraphs = await callgraph_repo.find_all_minimal_by_pipeline(project_id, pipeline_id)
+    # 6. Insert findings and apply waivers
+    await finding_repo.delete_many({"scan_id": scan_id})
+    for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
+        await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
-        if callgraphs:
-            try:
-                enriched_count = await enrich_findings_with_reachability(
-                    findings=vulnerability_findings,
-                    project_id=str(project_id),
-                    db=db,
-                    scan_id=scan_id,
-                )
-                reachability_summary = build_reachability_summary(
-                    vulnerability_findings,
-                    [cg.model_dump(by_alias=True) for cg in callgraphs],
-                    enriched_count,
-                )
-                # Store reachability summary via repository
-                await result_repo.create_raw(
-                    {
-                        "_id": str(uuid.uuid4()),
-                        "scan_id": scan_id,
-                        "analyzer_name": "reachability",
-                        "result": reachability_summary,
-                        "created_at": datetime.now(timezone.utc),
-                    }
-                )
-                results_summary.append(f"reachability: Success ({enriched_count} enriched)")
-                logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
+    from app.repositories import WaiverRepository
+    active_waivers: List[Waiver] = []
+    if project_id:
+        waiver_repo = WaiverRepository(db)
+        active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
 
-                # Track reachability metrics
-                if analysis_enrichment_total:
-                    analysis_enrichment_total.labels(type="reachability").inc(enriched_count)
-
-                # Track reachable vulnerabilities by level
-                if analysis_reachable_vulnerabilities_total:
-                    for vf in vulnerability_findings:
-                        details = vf.get("details", {})
-                        reachability = details.get("reachability", {})
-                        if reachability.get("is_reachable"):
-                            level = reachability.get("level", "unknown")
-                            analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
-            except Exception as e:
-                results_summary.append("reachability: Failed")
-                logger.warning(f"[reachability] Failed to enrich findings: {e}")
-        else:
-            await scan_repo.update_raw(
-                scan_id,
-                {
-                    "$set": {
-                        "reachability_pending": True,
-                        "reachability_pending_since": datetime.now(timezone.utc),
-                    }
-                },
-            )
-            logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
-
-    if findings_to_insert:
-        for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
-            await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
-
-    # Apply waivers via DB updates
-    from app.services.stats import _resolve_finding_id_query
-
-    for waiver in active_waivers:
-        query: Dict[str, Any] = {"scan_id": scan_id}
-        scope = waiver.scope or "finding"
-
-        if waiver.finding_id:
-            query["finding_id"] = _resolve_finding_id_query(
-                waiver.finding_id,
-                scope,
-                waiver.package_name or "",
-            )
-        if waiver.package_name and scope != "rule":
-            query["component"] = waiver.package_name
-        if waiver.package_version and waiver.package_version != "Unknown":
-            query["version"] = waiver.package_version
-        if waiver.finding_type:
-            query["type"] = waiver.finding_type
-
-        if waiver.vulnerability_id:
-            # Use custom repository method with array_filters support
-            await finding_repo.apply_vulnerability_waiver(
-                scan_id=scan_id,
-                vulnerability_id=waiver.vulnerability_id,
-                waived=True,
-                waiver_reason=waiver.reason,
-            )
-        else:
-            # Use custom repository method for finding-level waivers
-            await finding_repo.apply_finding_waiver(
-                scan_id=scan_id,
-                query={k: v for k, v in query.items() if k != "scan_id"},
-                waived=True,
-                waiver_reason=waiver.reason,
-            )
-
+    await _apply_waivers(active_waivers, scan_id, finding_repo)
     ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
-
-    # Track waiver metrics
-    if analysis_waivers_applied_total:
-        # Count by waiver type
-        waiver_types: Dict[str, int] = {}
-        for waiver in active_waivers:
-            waiver_type = _get_waiver_type(waiver)
-            waiver_types[waiver_type] = waiver_types.get(waiver_type, 0) + 1
-
-        for waiver_type, count in waiver_types.items():
-            analysis_waivers_applied_total.labels(type=waiver_type).inc(count)
+    _track_waiver_metrics(active_waivers)
 
     # Calculate comprehensive stats
     stats = await calculate_comprehensive_stats(db, scan_id)
@@ -619,46 +648,11 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     }
 
     # Race Condition Check: Did new results arrive while we were processing?
-    # Specifically, after we started loading external results.
-    # We need a fresh query here since last_result_at may have changed during processing
-    race_check = await scan_repo.get_by_id(scan_id)
-    last_result_at = race_check.last_result_at if race_check else None
-
-    # Ensure timezone-aware comparison (handle legacy timezone-naive datetimes)
-    if last_result_at:
-        if last_result_at.tzinfo is None:
-            # Convert naive datetime to UTC
-            last_result_at = last_result_at.replace(tzinfo=timezone.utc)
-
-    if last_result_at and last_result_at >= external_load_start:
-        logger.warning(
-            f"Race condition detected for scan {scan_id}. "
-            f"New results arrived at {last_result_at} (Analysis load start: {external_load_start}). "
-            f"Rescheduling scan."
-        )
-        # Track race condition
-        if analysis_race_conditions_total:
-            analysis_race_conditions_total.inc()
-
-        # Reset to pending so it gets picked up again
-        # IMPORTANT: Increment retry_count to prevent infinite loops
-        # This ensures that scans stuck in race condition loops eventually fail
-        await scan_repo.update_raw(
-            scan_id,
-            {
-                "$set": {
-                    "status": "pending",
-                    # We do NOT unset received_results/last_result_at here, keep them for the next run
-                },
-                "$inc": {"retry_count": 1},
-            },
-        )
+    if await _check_race_condition(scan_id, external_load_start, scan_repo):
         return False
 
-    # Track aggregation duration
     if analysis_aggregation_duration_seconds:
-        aggregation_duration = time.time() - aggregation_start_time
-        analysis_aggregation_duration_seconds.observe(aggregation_duration)
+        analysis_aggregation_duration_seconds.observe(time.time() - aggregation_start_time)
 
     await scan_repo.update_raw(
         scan_id,

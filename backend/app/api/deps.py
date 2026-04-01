@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, List, Optional
+from typing import Annotated, Any, List, Optional
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -184,13 +184,173 @@ async def get_project_by_api_key(
     return Project(**project_data)
 
 
+async def _resolve_owner_id(user_repo: UserRepository, email: Optional[str] = None, username: Optional[str] = None) -> str:
+    """Resolve an owner ID from email/username, falling back to first admin."""
+    if email:
+        user = await user_repo.get_raw_by_email(email)
+        if user:
+            return str(user["_id"])
+    if username:
+        user = await user_repo.get_raw_by_username(username)
+        if user:
+            return str(user["_id"])
+    admin = await user_repo.get_first_admin()
+    if admin:
+        return str(admin["_id"])
+    raise HTTPException(status_code=500, detail="Cannot auto-create project: No suitable owner found")
+
+
+async def _sync_project_name(
+    project: Project, new_path: str, project_repo: ProjectRepository,
+    path_field: str = "gitlab_project_path", extra_updates: Optional[dict] = None,
+) -> Project:
+    """Sync project path/name if the VCS project was renamed."""
+    updates: dict = extra_updates or {}
+    current_path = getattr(project, path_field, None)
+    if current_path and current_path != new_path:
+        updates[path_field] = new_path
+        if project.name == current_path:
+            updates["name"] = new_path
+
+    if updates:
+        await project_repo.update(project.id, updates)
+        for key, value in updates.items():
+            setattr(project, key, value)
+    return project
+
+
+async def _handle_gitlab_oidc(
+    oidc_token: str,
+    gitlab_instance: Any,
+    db: AsyncIOMotorDatabase,
+    project_repo: ProjectRepository,
+    user_repo: UserRepository,
+    default_analyzers: list,
+) -> Project:
+    """Handle GitLab OIDC authentication and project resolution."""
+    from app.models.project import Project, ProjectMember
+
+    if not gitlab_instance.is_active:
+        raise HTTPException(status_code=403, detail=f"GitLab instance '{gitlab_instance.name}' is not active")
+
+    gitlab_service = GitLabService(gitlab_instance)
+    payload = await gitlab_service.validate_oidc_token(oidc_token)
+    if not payload:
+        raise HTTPException(status_code=403, detail="Invalid GitLab OIDC Token")
+
+    gitlab_project_id = int(payload.project_id)
+    gitlab_project_path = payload.project_path
+    instance_id = str(gitlab_instance.id)
+
+    # Find existing project
+    project_data = await project_repo.get_raw_by_gitlab_composite_key(instance_id, gitlab_project_id)
+
+    if project_data:
+        project = Project(**project_data)
+        extra_updates: dict = {}
+
+        if gitlab_instance.sync_teams:
+            gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
+            team_id = await gitlab_service.sync_team_from_gitlab(
+                db, gitlab_project_id, gitlab_project_path, gitlab_project_data=gitlab_project_data,
+            )
+            if team_id and project.team_id != team_id:
+                extra_updates["team_id"] = team_id
+
+        return await _sync_project_name(
+            project, gitlab_project_path, project_repo,
+            path_field="gitlab_project_path", extra_updates=extra_updates,
+        )
+
+    # Auto-create
+    if not gitlab_instance.auto_create_projects:
+        raise HTTPException(
+            status_code=404, detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled",
+        )
+
+    owner_id = await _resolve_owner_id(user_repo, email=payload.user_email)
+    new_project = Project(
+        name=gitlab_project_path, owner_id=owner_id,
+        members=[ProjectMember(user_id=owner_id, role="admin")],
+        gitlab_instance_id=instance_id, gitlab_project_id=gitlab_project_id,
+        gitlab_project_path=gitlab_project_path, default_branch=None,
+        active_analyzers=default_analyzers,
+    )
+
+    if gitlab_instance.sync_teams:
+        gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
+        team_id = await gitlab_service.sync_team_from_gitlab(
+            db, gitlab_project_id, gitlab_project_path, gitlab_project_data=gitlab_project_data,
+        )
+        if team_id:
+            new_project.team_id = team_id
+
+    project, created = await project_repo.find_or_create_by_gitlab_key(instance_id, gitlab_project_id, new_project)
+    if created:
+        logger.info(f"Auto-created project '{gitlab_project_path}' from GitLab instance '{gitlab_instance.name}'")
+    return project
+
+
+async def _handle_github_oidc(
+    oidc_token: str,
+    github_instance: Any,
+    db: AsyncIOMotorDatabase,
+    project_repo: ProjectRepository,
+    user_repo: UserRepository,
+    default_analyzers: list,
+) -> Project:
+    """Handle GitHub OIDC authentication and project resolution."""
+    from app.models.project import Project, ProjectMember
+    from app.services.github import GitHubService
+
+    if not github_instance.is_active:
+        raise HTTPException(status_code=403, detail=f"GitHub instance '{github_instance.name}' is not active")
+
+    github_service = GitHubService(github_instance)
+    gh_payload = await github_service.validate_oidc_token(oidc_token)
+    if not gh_payload:
+        raise HTTPException(status_code=403, detail="Invalid GitHub Actions OIDC Token")
+
+    instance_id = str(github_instance.id)
+    repo_id = gh_payload.repository_id
+    repo_path = gh_payload.repository
+
+    # Find existing project
+    project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
+    if project_data:
+        return await _sync_project_name(
+            Project(**project_data), repo_path, project_repo,
+            path_field="github_repository_path",
+        )
+
+    # Auto-create
+    if not github_instance.auto_create_projects:
+        raise HTTPException(
+            status_code=404, detail=f"Project not found on GitHub instance '{github_instance.name}' and auto-creation is disabled",
+        )
+
+    owner_id = await _resolve_owner_id(user_repo, username=gh_payload.actor)
+    new_project = Project(
+        name=repo_path, owner_id=owner_id,
+        members=[ProjectMember(user_id=owner_id, role="admin")],
+        github_instance_id=instance_id, github_repository_id=repo_id,
+        github_repository_path=repo_path, default_branch=None,
+        active_analyzers=default_analyzers,
+    )
+
+    project, created = await project_repo.find_or_create_by_github_key(instance_id, repo_id, new_project)
+    if created:
+        logger.info(f"Auto-created project '{repo_path}' from GitHub instance '{github_instance.name}'")
+    return project
+
+
 async def get_project_for_ingest(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     oidc_token: Optional[str] = Header(None, alias="Job-Token"),
     db: AsyncIOMotorDatabase = Depends(get_database),
     settings: SystemSettings = Depends(get_system_settings),
 ) -> Project:
-    from app.models.project import Project, ProjectMember
+    from app.models.project import Project
 
     project_repo = ProjectRepository(db)
     user_repo = UserRepository(db)
@@ -209,16 +369,9 @@ async def get_project_for_ingest(
 
     # 2. Try OIDC Token (GitLab or GitHub)
     if oidc_token:
-        # Check if token is OIDC (JWT)
-        is_oidc = len(oidc_token.split(".")) == 3
+        if len(oidc_token.split(".")) != 3:
+            raise HTTPException(status_code=403, detail="Invalid Token format. Expected a JWT (OIDC) token.")
 
-        if not is_oidc:
-            raise HTTPException(
-                status_code=403,
-                detail="Invalid Token format. Expected a JWT (OIDC) token.",
-            )
-
-        # STEP 1: Extract issuer from token (unverified) to route to correct provider
         from jose import jwt as jose_jwt
         from app.repositories.gitlab_instances import GitLabInstanceRepository
         from app.repositories.github_instances import GitHubInstanceRepository
@@ -233,205 +386,20 @@ async def get_project_for_ingest(
         if not issuer:
             raise HTTPException(status_code=403, detail="OIDC token missing issuer (iss) claim")
 
-        # STEP 2a: Try GitLab instance by issuer URL
-        gitlab_instance_repo = GitLabInstanceRepository(db)
-        gitlab_instance = await gitlab_instance_repo.get_by_url(issuer)
-
+        # Try GitLab
+        gitlab_instance = await GitLabInstanceRepository(db).get_by_url(issuer)
         if gitlab_instance:
-            if not gitlab_instance.is_active:
-                raise HTTPException(status_code=403, detail=f"GitLab instance '{gitlab_instance.name}' is not active")
-
-            # Validate token using instance-specific service
-            gitlab_service = GitLabService(gitlab_instance)
-
-            payload = await gitlab_service.validate_oidc_token(oidc_token)
-            if not payload:
-                raise HTTPException(status_code=403, detail="Invalid GitLab OIDC Token")
-
-            gitlab_project_id = int(payload.project_id)
-            gitlab_project_path = payload.project_path
-            gitlab_user_email = payload.user_email
-
-            # Find project using composite key (instance + project ID)
-            project_data = await project_repo.get_raw_by_gitlab_composite_key(
-                str(gitlab_instance.id), gitlab_project_id
+            return await _handle_gitlab_oidc(
+                oidc_token, gitlab_instance, db, project_repo, user_repo, settings.default_active_analyzers,
             )
 
-            if project_data:
-                project = Project(**project_data)
-
-                # Sync project path/name if GitLab project was renamed
-                updates: dict = {}
-                if project.gitlab_project_path != gitlab_project_path:
-                    updates["gitlab_project_path"] = gitlab_project_path
-                    if project.name == project.gitlab_project_path:
-                        updates["name"] = gitlab_project_path
-
-                # Sync Teams/Members if enabled for this instance
-                if gitlab_instance.sync_teams:
-                    gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
-
-                    team_id = await gitlab_service.sync_team_from_gitlab(
-                        db,
-                        gitlab_project_id,
-                        gitlab_project_path,
-                        gitlab_project_data=gitlab_project_data,
-                    )
-                    if team_id and project.team_id != team_id:
-                        updates["team_id"] = team_id
-
-                if updates:
-                    await project_repo.update(project.id, updates)
-                    for key, value in updates.items():
-                        setattr(project, key, value)
-
-                return project
-
-            # Auto-create project if enabled for this instance
-            if gitlab_instance.auto_create_projects:
-                owner_id = None
-
-                if gitlab_user_email:
-                    user = await user_repo.get_raw_by_email(gitlab_user_email)
-                    if user:
-                        owner_id = str(user["_id"])
-
-                if not owner_id:
-                    admin = await user_repo.get_first_admin()
-                    if admin:
-                        owner_id = str(admin["_id"])
-
-                if not owner_id:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Cannot auto-create project: No suitable owner found",
-                    )
-
-                new_project = Project(
-                    name=gitlab_project_path,
-                    owner_id=owner_id,
-                    members=[ProjectMember(user_id=owner_id, role="admin")],
-                    gitlab_instance_id=str(gitlab_instance.id),
-                    gitlab_project_id=gitlab_project_id,
-                    gitlab_project_path=gitlab_project_path,
-                    default_branch=None,
-                    active_analyzers=settings.default_active_analyzers,
-                )
-
-                if gitlab_instance.sync_teams:
-                    gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
-
-                    team_id = await gitlab_service.sync_team_from_gitlab(
-                        db,
-                        gitlab_project_id,
-                        gitlab_project_path,
-                        gitlab_project_data=gitlab_project_data,
-                    )
-                    if team_id:
-                        new_project.team_id = team_id
-
-                project, created = await project_repo.find_or_create_by_gitlab_key(
-                    str(gitlab_instance.id), gitlab_project_id, new_project
-                )
-                if created:
-                    logger.info(
-                        f"Auto-created project '{gitlab_project_path}' from GitLab instance '{gitlab_instance.name}'"
-                    )
-                return project
-
-            raise HTTPException(
-                status_code=404,
-                detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled",
-            )
-
-        # STEP 2b: Try GitHub instance by issuer URL
-        github_instance_repo = GitHubInstanceRepository(db)
-        github_instance = await github_instance_repo.get_by_url(issuer)
-
+        # Try GitHub
+        github_instance = await GitHubInstanceRepository(db).get_by_url(issuer)
         if github_instance:
-            if not github_instance.is_active:
-                raise HTTPException(status_code=403, detail=f"GitHub instance '{github_instance.name}' is not active")
-
-            from app.services.github import GitHubService
-
-            github_service = GitHubService(github_instance)
-            gh_payload = await github_service.validate_oidc_token(oidc_token)
-            if not gh_payload:
-                raise HTTPException(status_code=403, detail="Invalid GitHub Actions OIDC Token")
-
-            github_repository_id = gh_payload.repository_id
-            github_repository_path = gh_payload.repository
-            github_actor = gh_payload.actor
-
-            # Find project using composite key (instance + repository ID)
-            project_data = await project_repo.get_raw_by_github_composite_key(
-                str(github_instance.id), github_repository_id
+            return await _handle_github_oidc(
+                oidc_token, github_instance, db, project_repo, user_repo, settings.default_active_analyzers,
             )
 
-            if project_data:
-                project = Project(**project_data)
-
-                # Sync repository path/name if repo was renamed
-                gh_updates: dict = {}
-                if project.github_repository_path != github_repository_path:
-                    gh_updates["github_repository_path"] = github_repository_path
-                    if project.name == project.github_repository_path:
-                        gh_updates["name"] = github_repository_path
-
-                if gh_updates:
-                    await project_repo.update(project.id, gh_updates)
-                    for key, value in gh_updates.items():
-                        setattr(project, key, value)
-
-                return project
-
-            # Auto-create project if enabled
-            if github_instance.auto_create_projects:
-                owner_id = None
-
-                # Try to match user by username (GitHub actor)
-                if github_actor:
-                    user = await user_repo.get_raw_by_username(github_actor)
-                    if user:
-                        owner_id = str(user["_id"])
-
-                if not owner_id:
-                    admin = await user_repo.get_first_admin()
-                    if admin:
-                        owner_id = str(admin["_id"])
-
-                if not owner_id:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Cannot auto-create project: No suitable owner found",
-                    )
-
-                new_project = Project(
-                    name=github_repository_path,
-                    owner_id=owner_id,
-                    members=[ProjectMember(user_id=owner_id, role="admin")],
-                    github_instance_id=str(github_instance.id),
-                    github_repository_id=github_repository_id,
-                    github_repository_path=github_repository_path,
-                    default_branch=None,
-                    active_analyzers=settings.default_active_analyzers,
-                )
-
-                project, created = await project_repo.find_or_create_by_github_key(
-                    str(github_instance.id), github_repository_id, new_project
-                )
-                if created:
-                    logger.info(
-                        f"Auto-created project '{github_repository_path}' from GitHub instance '{github_instance.name}'"
-                    )
-                return project
-
-            raise HTTPException(
-                status_code=404,
-                detail=f"Project not found on GitHub instance '{github_instance.name}' and auto-creation is disabled",
-            )
-
-        # No matching instance found for this issuer
         raise HTTPException(
             status_code=403,
             detail=f"No CI/CD instance configured for OIDC issuer: {issuer}. "
