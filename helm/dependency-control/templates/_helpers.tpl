@@ -82,12 +82,7 @@ Supports:
 - Global TLS (global.tls.enabled)
 */}}
 {{- define "dependency-control.redisUrl" -}}
-{{- if .Values.global.tls.enabled -}}
-{{- $caPath := printf "%s/ca.crt" .Values.global.tls.caMountPath -}}
-rediss://:{{ .Values.dragonfly.password }}@{{ .Release.Name }}-dragonfly:{{ .Values.dragonfly.service.port }}/0?ssl_ca_certs={{ $caPath }}&ssl_cert_reqs=required
-{{- else -}}
-redis://:{{ .Values.dragonfly.password }}@{{ .Release.Name }}-dragonfly:{{ .Values.dragonfly.service.port }}/0
-{{- end -}}
+{{/* REDIS_URL is now built directly in secrets.yaml using the generated dragonfly password */}}
 {{- end -}}
 
 {{/*

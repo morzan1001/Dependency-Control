@@ -1,8 +1,9 @@
 {{/*
 PodDisruptionBudget for DragonflyDB
-Ensures cache availability during cluster maintenance
+Note: The Dragonfly Operator manages its own PDB when using the CR.
+This template is kept for backward compatibility with non-operator deployments.
 */}}
-{{- if and .Values.dragonflyOperator.enabled .Values.dragonfly.podDisruptionBudget.enabled }}
+{{- if .Values.dragonflyOperator.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -11,17 +12,8 @@ metadata:
     {{- include "dependency-control.labels" . | nindent 4 }}
     app.kubernetes.io/component: cache
 spec:
-  {{- if .Values.dragonfly.podDisruptionBudget.minAvailable }}
-  minAvailable: {{ .Values.dragonfly.podDisruptionBudget.minAvailable }}
-  {{- else if .Values.dragonfly.podDisruptionBudget.maxUnavailable }}
-  maxUnavailable: {{ .Values.dragonfly.podDisruptionBudget.maxUnavailable }}
-  {{- else }}
   minAvailable: 1
-  {{- end }}
   selector:
     matchLabels:
       app: {{ include "dependency-control.fullname" . }}-dragonfly
-  {{- if .Values.dragonfly.podDisruptionBudget.unhealthyPodEvictionPolicy }}
-  unhealthyPodEvictionPolicy: {{ .Values.dragonfly.podDisruptionBudget.unhealthyPodEvictionPolicy }}
-  {{- end }}
 {{- end }}

@@ -357,31 +357,19 @@ mongodb-operator:
       app.kubernetes.io/name: mongodb-kubernetes-operator
 
 # -----------------------------------------------------------------------------
-# Percona Operator (Sub-Chart)
+# Percona PSMDB Operator
 # -----------------------------------------------------------------------------
-psmdb-operator:
+# Installed separately in percona-system namespace.
+# Install: helm install psmdb-operator percona/psmdb-operator -n percona-system --set watchNamespace=dependency-control
+
+# -----------------------------------------------------------------------------
+# DragonflyDB - Redis-compatible Cache (via Dragonfly Operator)
+# -----------------------------------------------------------------------------
+# The Dragonfly Operator must be installed separately in the cluster.
+# Install: kubectl apply -f https://raw.githubusercontent.com/dragonflydb/dragonfly-operator/main/manifests/dragonfly-operator.yaml
+dragonflyOperator:
   enabled: false
-  registerCRDs: true
-  watchNamespace: "dependency-control"
-  replicaCount: 1
-  image:
-    pullPolicy: IfNotPresent
-  resources:
-    limits:
-      cpu: 200m
-      memory: 256Mi
-    requests:
-      cpu: 100m
-      memory: 128Mi
-
-# -----------------------------------------------------------------------------
-# DragonflyDB - Redis-compatible Cache (Sub-Chart)
-# -----------------------------------------------------------------------------
-dragonfly:
-  enabled: true
-  replicaCount: 1
-  password: ""  # Leave empty to auto-generate
-
+  replicas: 2
   resources:
     limits:
       cpu: 500m
@@ -389,57 +377,6 @@ dragonfly:
     requests:
       cpu: 100m
       memory: 1Gi
-
-  podSecurityContext:
-    fsGroup: 1000
-    runAsUser: 1000
-    runAsGroup: 1000
-    runAsNonRoot: true
-
-  securityContext:
-    allowPrivilegeEscalation: false
-    readOnlyRootFilesystem: true
-    runAsNonRoot: true
-    runAsUser: 1000
-    capabilities:
-      drop: [ALL]
-
-  extraArgs:
-    - --maxmemory=1536mb
-    - --cache_mode=true
-    - --proactor_threads=2
-    # --requirepass needed to be set when not using autogenerate
-
-  storage:
-    enabled: false
-    requests: 2Gi
-    storageClassName: ""
-
-  affinity:
-    podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          podAffinityTerm:
-            labelSelector:
-              matchLabels:
-                app.kubernetes.io/name: dragonfly
-            topologyKey: kubernetes.io/hostname
-
-  service:
-    type: ClusterIP
-    port: 6379
-
-  serviceMonitor:
-    enabled: false
-    interval: "30s"
-    scrapeTimeout: "10s"
-
-  # PodDisruptionBudget for DragonflyDB
-  podDisruptionBudget:
-    enabled: true
-    minAvailable: 1
-    # maxUnavailable: 1  # Alternative to minAvailable
-    # unhealthyPodEvictionPolicy: IfHealthyBudget  # Kubernetes 1.27+
 
 # -----------------------------------------------------------------------------
 # Traefik Ingress Controller (Sub-Chart)
