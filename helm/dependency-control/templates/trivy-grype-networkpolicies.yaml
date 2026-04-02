@@ -1,0 +1,98 @@
+{{- if .Values.trivyServer.enabled }}
+# Allow Trivy server to download vulnerability DB from the internet
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-trivy-server-egress
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: trivy-server
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - port: 443
+      protocol: TCP
+    - port: 80
+      protocol: TCP
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+---
+# Allow backend pods to reach the Trivy server
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-backend-to-trivy
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: backend
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: trivy-server
+    ports:
+    - port: 4954
+      protocol: TCP
+---
+# Allow backend pods to reach the Trivy server (ingress side)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-trivy-server-ingress
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: trivy-server
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: backend
+    ports:
+    - port: 4954
+      protocol: TCP
+{{- end }}
+{{- if .Values.grypeDbUpdater.enabled }}
+---
+# Allow Grype DB updater to download DB from the internet
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-grype-updater-egress
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: grype-db-updater
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - port: 443
+      protocol: TCP
+    - port: 80
+      protocol: TCP
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+{{- end }}

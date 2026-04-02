@@ -21,6 +21,10 @@ spec:
       labels:
         {{- include "dependency-control.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: backend
+      {{- if .Values.grypeDbUpdater.enabled }}
+      annotations:
+        gke-gcsfuse/volumes: "true"
+      {{- end }}
     spec:
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -62,9 +66,11 @@ spec:
           emptyDir: {}
         {{- if .Values.grypeDbUpdater.enabled }}
         - name: grype-db
-          persistentVolumeClaim:
-            claimName: {{ include "dependency-control.fullname" . }}-grype-db
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
             readOnly: true
+            volumeAttributes:
+              bucketName: {{ .Values.grypeDbUpdater.gcsBucket }}
         {{- end }}
         {{- if .Values.global.tls.enabled }}
         # Internal CA Certificate for TLS verification

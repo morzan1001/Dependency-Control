@@ -144,12 +144,8 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
-        # Iterate over projects with only the fields needed for rescan logic
-        rescan_projection = {
-            "_id": 1, "name": 1, "rescan_enabled": 1, "rescan_interval": 1,
-            "last_scan_at": 1, "latest_scan_id": 1,
-        }
-        async for project_data in db.projects.find({}, rescan_projection):
+        # Iterate over projects - load all fields since Project model has required fields
+        async for project_data in db.projects.find({}):
             try:
                 project = Project(**project_data)
 

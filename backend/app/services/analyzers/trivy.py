@@ -18,53 +18,8 @@ class TrivyAnalyzer(CLIAnalyzer):
     empty_result_key = "Results"
 
     def _is_server_mode(self) -> bool:
-        """Check if Trivy should use server mode (HTTP) instead of local CLI."""
+        """Check if Trivy should use server mode instead of local CLI with local DB."""
         return bool(settings.TRIVY_SERVER_URL)
-
-    async def analyze(
-        self,
-        sbom: Dict[str, Any],
-        settings_dict: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        """Run Trivy analysis - via server HTTP if configured, otherwise local CLI."""
-        if self._is_server_mode():
-            return await self._analyze_via_server(sbom)
-        return await super().analyze(sbom, settings=settings_dict, parsed_components=parsed_components)
-
-    async def _analyze_via_server(self, sbom: Dict[str, Any]) -> Dict[str, Any]:
-        """Send SBOM to Trivy server for analysis via HTTP."""
-        import httpx
-
-        server_url = settings.TRIVY_SERVER_URL.rstrip("/")
-
-        try:
-            sbom_bytes = json.dumps(sbom).encode()
-
-            async with httpx.AsyncClient(timeout=self.cli_timeout) as client:
-                response = await client.post(
-                    f"{server_url}/twirp/trivy.scanner.v1.Scanner/Scan",
-                    content=sbom_bytes,
-                    headers={"Content-Type": "application/json"},
-                )
-
-                if response.status_code != 200:
-                    logger.error(f"Trivy server returned {response.status_code}: {response.text[:500]}")
-                    return {"error": f"Trivy server error: HTTP {response.status_code}"}
-
-                data = response.json()
-                normalized_vulns = self._normalize_vulnerabilities(data)
-                return {**data, "trivy_vulnerabilities": normalized_vulns}
-
-        except httpx.TimeoutException:
-            logger.error(f"Trivy server request timed out after {self.cli_timeout}s")
-            return {"error": "Trivy server request timed out"}
-        except httpx.ConnectError as e:
-            logger.error(f"Cannot connect to Trivy server at {server_url}: {e}")
-            return {"error": f"Cannot connect to Trivy server: {e}"}
-        except Exception as e:
-            logger.exception(f"Trivy server analysis failed: {e}")
-            return {"error": f"Trivy server analysis failed: {e}"}
 
     def _build_command_args(self, sbom_path: str, settings_dict: Optional[Dict[str, Any]]) -> List[str]:
         """Build Trivy CLI command arguments (used in local/CLI mode)."""

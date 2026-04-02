@@ -161,7 +161,7 @@ frontend:
   image:
     repository: ghcr.io/morzan1001/dependency-control-frontend
     pullPolicy: IfNotPresent
-    tag: "latest"
+    tag: "0.69.3"
 
   replicaCount: 2
 
@@ -241,7 +241,7 @@ backend:
   image:
     repository: ghcr.io/morzan1001/dependency-control
     pullPolicy: IfNotPresent
-    tag: "latest"
+    tag: "0.69.3"
 
   replicaCount: 2
 
@@ -557,8 +557,8 @@ trivyServer:
   enabled: false
   replicaCount: 1
   image:
-    repository: aquasecurity/trivy
-    tag: "latest"
+    repository: ghcr.io/aquasecurity/trivy
+    tag: "0.62.1"
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -581,6 +581,5 @@ grypeDbUpdater:
   enabled: false
   # How often to check for DB updates (every 6 hours)
   schedule: "0 */6 * * *"
-  persistence:
-    size: 3Gi
-    storageClass: ""
+  # GCS bucket for shared Grype DB (mounted via GCSFuse)
+  gcsBucket: ""

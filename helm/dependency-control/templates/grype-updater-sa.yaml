@@ -1,0 +1,10 @@
+{{- if .Values.grypeDbUpdater.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-grype-updater
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+  annotations:
+    iam.gke.io/gcp-service-account: grype-db-updater@{{ .Values.grypeDbUpdater.gcpProject | default "rd-itsecurity-sboms-prod" }}.iam.gserviceaccount.com
+{{- end }}

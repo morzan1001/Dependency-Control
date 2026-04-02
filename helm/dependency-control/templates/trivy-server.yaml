@@ -37,32 +37,42 @@ spec:
             - server
             - --listen
             - "0.0.0.0:4954"
+            - --cache-dir
+            - /trivy-cache
+            - --db-repository
+            - ghcr.io/aquasecurity/trivy-db:2
           ports:
             - name: http
               containerPort: 4954
               protocol: TCP
-          livenessProbe:
+          startupProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 60
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 10
           securityContext:
             runAsUser: 1000
             runAsNonRoot: true
-            readOnlyRootFilesystem: true
+            readOnlyRootFilesystem: false
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
           volumeMounts:
             - name: trivy-cache
-              mountPath: /root/.cache
+              mountPath: /trivy-cache
             - name: tmp
               mountPath: /tmp
           resources:
