@@ -93,7 +93,7 @@ class GitLabService:
                     params=params,
                 )
         except Exception as e:
-            logger.error(f"GitLab API GET {endpoint} failed: {e}")
+            logger.error(f"GitLab API GET {endpoint} failed: {type(e).__name__}: {e}")
             return None
 
     async def _api_post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
@@ -118,7 +118,7 @@ class GitLabService:
                     json=json_data,
                 )
         except Exception as e:
-            logger.error(f"GitLab API POST {endpoint} failed: {e}")
+            logger.error(f"GitLab API POST {endpoint} failed: {type(e).__name__}: {e}")
             return None
 
     async def _api_put(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
@@ -143,7 +143,7 @@ class GitLabService:
                     json=json_data,
                 )
         except Exception as e:
-            logger.error(f"GitLab API PUT {endpoint} failed: {e}")
+            logger.error(f"GitLab API PUT {endpoint} failed: {type(e).__name__}: {e}")
             return None
 
     async def _api_get_paginated(
@@ -208,7 +208,7 @@ class GitLabService:
                     page += 1
 
         except Exception as e:
-            logger.error(f"GitLab API paginated GET {endpoint} failed: {e}")
+            logger.error(f"GitLab API paginated GET {endpoint} failed: {type(e).__name__}: {e}")
             return None
 
         return all_items

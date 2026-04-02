@@ -6,7 +6,7 @@ Created when:
 - global.tls.source: "certManager"
 - dragonfly.enabled: true
 */}}
-{{- if and .Values.global.tls.enabled (eq .Values.global.tls.source "certManager") .Values.dragonfly.enabled }}
+{{- if and .Values.global.tls.enabled (eq .Values.global.tls.source "certManager") .Values.dragonflyOperator.enabled }}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

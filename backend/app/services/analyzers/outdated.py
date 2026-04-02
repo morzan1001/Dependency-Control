@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import httpx
+from packaging.version import Version, InvalidVersion
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.http_utils import InstrumentedAsyncClient
@@ -14,6 +15,33 @@ from .base import Analyzer
 from .purl_utils import parse_purl
 
 logger = logging.getLogger(__name__)
+
+
+def _is_older_than(current: str, latest: str) -> bool:
+    """Return True if current version is strictly older than latest.
+
+    Uses semantic version comparison via ``packaging.version.Version``.
+    Falls back to string inequality when either version string cannot be
+    parsed (e.g. non-PEP-440 / non-semver), preserving the previous
+    behaviour for exotic version schemes.
+    """
+    try:
+        return Version(current) < Version(latest)
+    except InvalidVersion:
+        return current != latest
+
+
+def _is_ahead_of(current: str, latest: str) -> bool:
+    """Return True if current version is strictly newer than latest.
+
+    This detects cases where the installed version is ahead of the version
+    that deps.dev reports as the default (e.g. 1.26.0 installed but
+    deps.dev still flags 1.25.5 as default).
+    """
+    try:
+        return Version(current) > Version(latest)
+    except InvalidVersion:
+        return False
 
 
 class OutdatedAnalyzer(Analyzer):
@@ -33,58 +61,97 @@ class OutdatedAnalyzer(Analyzer):
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
-        results = []
+        outdated: List[Dict[str, Any]] = []
+        ahead: List[Dict[str, Any]] = []
 
         # Check cache for latest versions first
         cached_versions, uncached_components = await self._get_cached_latest_versions(components)
 
         # Process cached versions
         for component, latest_version in cached_versions:
-            name = component.get("name", "")
-            version = component.get("version", "")
-            purl = component.get("purl", "")
-
-            if latest_version and latest_version != version:
-                results.append(
-                    {
-                        "component": name,
-                        "current_version": version,
-                        "latest_version": latest_version,
-                        "purl": purl,
-                        "severity": Severity.INFO.value,
-                        "message": f"Update available: {latest_version}",
-                    }
-                )
+            if not latest_version:
+                continue
+            self._classify_version(component, latest_version, outdated, ahead)
 
         logger.debug(f"Outdated: {len(cached_versions)} from cache, {len(uncached_components)} to fetch")
 
         # Process uncached components with distributed locking to prevent cache stampede
         if uncached_components:
-            timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
+            await self._fetch_and_classify(uncached_components, outdated, ahead)
 
-            async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-                # Process in batches to avoid overwhelming deps.dev API
-                batch_size = ANALYZER_BATCH_SIZES.get("outdated", 25)
-                for i in range(0, len(uncached_components), batch_size):
-                    batch = uncached_components[i : i + batch_size]
-                    tasks = [self._check_component_for_batch(client, comp) for comp in batch]
+        return {"outdated_dependencies": outdated, "ahead_of_default": ahead}
 
-                    component_results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+    def _classify_version(
+        self,
+        component: Dict[str, Any],
+        latest_version: str,
+        outdated: List[Dict[str, Any]],
+        ahead: List[Dict[str, Any]],
+    ) -> None:
+        """Classify a component as outdated, ahead-of-default, or up-to-date."""
+        name = component.get("name", "")
+        version = component.get("version", "")
+        purl = component.get("purl", "")
 
-                    for comp, result in zip(batch, component_results):
-                        if isinstance(result, Exception):
-                            continue
-                        if result:
-                            # Remove internal fields before adding to results
-                            result_clean = {k: v for k, v in result.items() if not k.startswith("_")}
-                            if result_clean:
-                                results.append(result_clean)
+        if _is_older_than(version, latest_version):
+            outdated.append(
+                {
+                    "component": name,
+                    "current_version": version,
+                    "latest_version": latest_version,
+                    "purl": purl,
+                    "severity": Severity.INFO.value,
+                    "message": f"Update available: {latest_version}",
+                }
+            )
+        elif _is_ahead_of(version, latest_version):
+            ahead.append(
+                {
+                    "component": name,
+                    "current_version": version,
+                    "default_version": latest_version,
+                    "purl": purl,
+                    "severity": Severity.INFO.value,
+                    "message": (
+                        f"Installed {version} is newer than the registry default "
+                        f"{latest_version}. The registry may not have flagged this "
+                        f"release as default yet."
+                    ),
+                }
+            )
 
-                    # Small delay between batches to avoid rate limits
-                    if i + batch_size < len(uncached_components):
-                        await asyncio.sleep(0.1)
+    async def _fetch_and_classify(
+        self,
+        uncached_components: List[Dict[str, Any]],
+        outdated: List[Dict[str, Any]],
+        ahead: List[Dict[str, Any]],
+    ) -> None:
+        """Fetch latest versions for uncached components and classify them."""
+        timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
 
-        return {"outdated_dependencies": results}
+        async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
+            batch_size = ANALYZER_BATCH_SIZES.get("outdated", 25)
+            for i in range(0, len(uncached_components), batch_size):
+                batch = uncached_components[i : i + batch_size]
+                tasks = [self._check_component_for_batch(client, comp) for comp in batch]
+
+                component_results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for comp, result in zip(batch, component_results):
+                    if isinstance(result, Exception) or not result:
+                        continue
+                    # Remove internal fields before adding to results
+                    result_clean = {k: v for k, v in result.items() if not k.startswith("_")}
+                    if not result_clean:
+                        continue
+                    if result.get("_ahead"):
+                        ahead.append(result_clean)
+                    else:
+                        outdated.append(result_clean)
+
+                # Small delay between batches to avoid rate limits
+                if i + batch_size < len(uncached_components):
+                    await asyncio.sleep(0.1)
 
     async def _get_cached_latest_versions(
         self, components: List[Dict[str, Any]]
@@ -146,25 +213,41 @@ class OutdatedAnalyzer(Analyzer):
     def _build_outdated_result(
         self, name: str, version: str, latest_version: Optional[str], purl_str: str, cache_key: str
     ) -> Optional[Dict[str, Any]]:
-        """Build result dict based on whether the version is outdated."""
-        if latest_version and latest_version != version:
+        """Build result dict based on whether the version is outdated or ahead."""
+        if not latest_version:
+            return None
+
+        base = {"_cache_key": cache_key, "_latest_version": latest_version}
+
+        if _is_older_than(version, latest_version):
             return {
+                **base,
                 "component": name,
                 "current_version": version,
                 "latest_version": latest_version,
                 "purl": purl_str,
                 "severity": Severity.INFO.value,
                 "message": f"Update available: {latest_version}",
-                "_cache_key": cache_key,
-                "_latest_version": latest_version,
             }
-        if latest_version:
-            # Version is current, return metadata for tracking
+
+        if _is_ahead_of(version, latest_version):
             return {
-                "_cache_key": cache_key,
-                "_latest_version": latest_version,
+                **base,
+                "_ahead": True,
+                "component": name,
+                "current_version": version,
+                "default_version": latest_version,
+                "purl": purl_str,
+                "severity": Severity.INFO.value,
+                "message": (
+                    f"Installed {version} is newer than the registry default "
+                    f"{latest_version}. The registry may not have flagged this "
+                    f"release as default yet."
+                ),
             }
-        return None
+
+        # Version matches default — metadata only
+        return base
 
     async def _check_component_for_batch(
         self, client: InstrumentedAsyncClient, component: Dict[str, Any]

@@ -17,6 +17,25 @@ class TrivyAnalyzer(CLIAnalyzer):
     cli_command = "trivy"
     empty_result_key = "Results"
 
+    # Retry up to 3 times for transient Trivy server errors (e.g. layer cache miss after DB update)
+    max_retries = 3
+    retry_delay = 3.0
+
+    _RETRYABLE_PATTERNS = (
+        "layer cache missing",
+        "failed to apply layers",
+        "connection refused",
+        "connection reset",
+        "EOF",
+        "context deadline exceeded",
+        "unavailable",
+        "i/o timeout",
+    )
+
+    def _is_retryable_error(self, stderr: bytes) -> bool:
+        msg = stderr.decode(errors="replace").lower()
+        return any(p in msg for p in self._RETRYABLE_PATTERNS)
+
     def _build_command_args(self, sbom_path: str, settings_dict: Optional[Dict[str, Any]]) -> List[str]:
         """Build Trivy CLI command arguments.
 

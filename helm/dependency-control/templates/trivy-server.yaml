@@ -2,15 +2,20 @@
 # Trivy Server: Central vulnerability database service
 # Backend pods send SBOMs here via HTTP instead of running local Trivy CLI.
 # This saves ~1GB ephemeral storage per backend pod and centralizes DB updates.
+# StatefulSet ensures each replica gets its own persistent cache volume.
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ include "dependency-control.fullname" . }}-trivy-server
   labels:
     {{- include "dependency-control.labels" . | nindent 4 }}
     app.kubernetes.io/component: trivy-server
 spec:
-  replicas: {{ .Values.trivyServer.replicaCount | default 1 }}
+  serviceName: {{ include "dependency-control.fullname" . }}-trivy-server-headless
+  replicas: {{ .Values.trivyServer.replicaCount | default 2 }}
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
   selector:
     matchLabels:
       {{- include "dependency-control.selectorLabels" . | nindent 6 }}
@@ -29,6 +34,14 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "dependency-control.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: trivy-server
       containers:
         - name: trivy-server
           image: "{{ .Values.trivyServer.image.repository }}:{{ .Values.trivyServer.image.tag }}"
@@ -78,18 +91,52 @@ spec:
           resources:
             {{- toYaml .Values.trivyServer.resources | nindent 12 }}
       volumes:
-        - name: trivy-cache
-          {{- if .Values.trivyServer.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "dependency-control.fullname" . }}-trivy-cache
-          {{- else }}
-          emptyDir:
-            sizeLimit: 2Gi
-          {{- end }}
         - name: tmp
           emptyDir:
-            sizeLimit: 256Mi
+            sizeLimit: 1Gi
+  {{- if .Values.trivyServer.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: trivy-cache
+        labels:
+          {{- include "dependency-control.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.trivyServer.persistence.size | default "5Gi" }}
+        {{- if .Values.trivyServer.persistence.storageClass }}
+        storageClassName: {{ .Values.trivyServer.persistence.storageClass }}
+        {{- end }}
+  {{- else }}
+      {{- /* When persistence is disabled, use emptyDir for cache */}}
+        - name: trivy-cache
+          emptyDir:
+            sizeLimit: 5Gi
+  {{- end }}
 ---
+# Headless Service required by StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-trivy-server-headless
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trivy-server
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - port: 4954
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "dependency-control.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: trivy-server
+---
+# Regular Service for load-balanced access from backend
 apiVersion: v1
 kind: Service
 metadata:
@@ -107,22 +154,18 @@ spec:
   selector:
     {{- include "dependency-control.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: trivy-server
-{{- if .Values.trivyServer.persistence.enabled }}
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
+apiVersion: policy/v1
+kind: PodDisruptionBudget
 metadata:
-  name: {{ include "dependency-control.fullname" . }}-trivy-cache
+  name: {{ include "dependency-control.fullname" . }}-trivy-server
   labels:
     {{- include "dependency-control.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trivy-server
 spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: {{ .Values.trivyServer.persistence.size | default "2Gi" }}
-  {{- if .Values.trivyServer.persistence.storageClass }}
-  storageClassName: {{ .Values.trivyServer.persistence.storageClass }}
-  {{- end }}
-{{- end }}
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: trivy-server
 {{- end }}

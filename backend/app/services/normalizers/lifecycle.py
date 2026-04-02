@@ -26,6 +26,26 @@ def normalize_outdated(aggregator: "ResultAggregator", result: Dict[str, Any], s
             source=source,
         )
 
+    for item in result.get("ahead_of_default") or []:
+        component = safe_get(item, "component", "unknown")
+
+        aggregator.add_finding(
+            Finding(
+                id=build_finding_id("OUTDATED", component, "ahead"),
+                type=FindingType.OUTDATED,
+                severity=Severity.INFO,
+                component=component,
+                version=item.get("current_version"),
+                description=item.get("message") or f"Ahead of default: {component}",
+                scanners=["outdated_packages"],
+                details={
+                    "default_version": item.get("default_version"),
+                    "ahead_of_default": True,
+                },
+            ),
+            source=source,
+        )
+
 
 def normalize_eol(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     """Normalize end-of-life findings."""

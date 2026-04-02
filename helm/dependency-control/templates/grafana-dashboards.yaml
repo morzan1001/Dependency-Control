@@ -59,7 +59,7 @@ data:
 {{ .Files.Get "dashboards/percona-mongodb.json" | indent 4 }}
 {{- end }}
 
-{{- if .Values.dragonfly.enabled }}
+{{- if .Values.dragonflyOperator.enabled }}
 ---
 # Grafana Dashboard ConfigMap - DragonflyDB
 apiVersion: v1

@@ -39,13 +39,20 @@ class CLIAnalyzer(Analyzer):
             return False
         return shutil.which(self.cli_command) is not None
 
+    def _is_retryable_error(self, stderr: bytes) -> bool:
+        """Check if the error is transient and worth retrying.
+
+        Subclasses can override to define tool-specific retryable errors.
+        """
+        return False
+
     async def analyze(
         self,
         sbom: Dict[str, Any],
         settings: Optional[Dict[str, Any]] = None,
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Run CLI analysis with automatic temp file management."""
+        """Run CLI analysis with automatic temp file management and retry."""
         # Check tool availability first
         if not self.is_tool_available():
             logger.warning(f"{self.name}: CLI tool '{self.cli_command}' not found in PATH")
@@ -67,14 +74,29 @@ class CLIAnalyzer(Analyzer):
 
             # Build and execute command
             args = self._build_command_args(target_path, settings)
-            stdout, stderr, returncode = await self._execute_command(args)
 
-            # Handle errors
-            if returncode != 0:
+            last_stderr = b""
+            for attempt in range(1 + self.max_retries):
+                stdout, stderr, returncode = await self._execute_command(args)
+
+                if returncode == 0:
+                    return self._parse_output(stdout)
+
+                last_stderr = stderr
+
+                # Retry only for transient errors
+                if attempt < self.max_retries and self._is_retryable_error(stderr):
+                    delay = self.retry_delay * (2 ** attempt)
+                    logger.warning(
+                        f"{self.name} failed (attempt {attempt + 1}/{1 + self.max_retries}), "
+                        f"retrying in {delay:.1f}s: {stderr.decode()[:200]}"
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
                 return self._handle_error(stderr)
 
-            # Parse and return result
-            return self._parse_output(stdout)
+            return self._handle_error(last_stderr)
 
         except Exception as e:
             logger.exception(f"Exception during {self.name} analysis")
@@ -113,6 +135,10 @@ class CLIAnalyzer(Analyzer):
 
     # Default timeout for CLI tool execution (5 minutes)
     cli_timeout: int = 300
+
+    # Retry configuration for transient failures
+    max_retries: int = 0  # Subclasses can override
+    retry_delay: float = 2.0  # Base delay in seconds (doubles each retry)
 
     async def _execute_command(self, args: List[str]) -> Tuple[bytes, bytes, int]:
         """Execute the CLI command and return stdout, stderr, returncode."""

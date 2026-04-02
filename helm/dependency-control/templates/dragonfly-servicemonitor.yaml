@@ -1,4 +1,4 @@
-{{- if and .Values.dragonfly.enabled .Values.monitoring.serviceMonitor.enabled }}
+{{- if and .Values.dragonflyOperator.enabled .Values.monitoring.serviceMonitor.enabled }}
 ---
 # DragonflyDB ServiceMonitor for Prometheus
 # Uses our custom metrics service that exposes the admin port (9999)
@@ -19,20 +19,6 @@ spec:
       path: /metrics
       interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
       scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
-      {{- if .Values.global.tls.enabled }}
-      scheme: https
-      tlsConfig:
-        # Skip server certificate verification (Prometheus connects to pod IPs)
-        insecureSkipVerify: true
-        # Provide client certificate for mTLS authentication
-        cert:
-          secret:
-            name: {{ .Release.Name }}-dragonfly-tls
-            key: tls.crt
-        keySecret:
-          name: {{ .Release.Name }}-dragonfly-tls
-          key: tls.key
-      {{- else }}
+      # Admin port does not support TLS (--admin_tls not available in current version)
       scheme: http
-      {{- end }}
 {{- end }}

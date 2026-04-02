@@ -1,0 +1,44 @@
+{{- if .Values.dragonflyOperator.enabled }}
+apiVersion: dragonflydb.io/v1alpha1
+kind: Dragonfly
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-dragonfly
+  labels:
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.dragonflyOperator.replicas | default 2 }}
+
+  image: {{ .Values.dragonflyOperator.image | default "docker.dragonflydb.io/dragonflydb/dragonfly" }}
+
+  resources:
+    {{- toYaml .Values.dragonflyOperator.resources | nindent 4 }}
+
+  {{- if .Values.dragonflyOperator.authentication }}
+  authentication:
+    {{- if .Values.dragonflyOperator.authentication.passwordFromSecret }}
+    passwordFromSecret:
+      name: {{ .Values.dragonflyOperator.authentication.passwordFromSecret.name }}
+      key: {{ .Values.dragonflyOperator.authentication.passwordFromSecret.key }}
+    {{- end }}
+    {{- if .Values.dragonflyOperator.authentication.clientCaCertSecret }}
+    clientCaCertSecret:
+      name: {{ .Values.dragonflyOperator.authentication.clientCaCertSecret.name }}
+      key: {{ .Values.dragonflyOperator.authentication.clientCaCertSecret.key }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.dragonflyOperator.tlsSecretRef }}
+  tlsSecretRef:
+    name: {{ .Values.dragonflyOperator.tlsSecretRef.name }}
+  {{- end }}
+
+  {{- if .Values.dragonflyOperator.args }}
+  args:
+    {{- toYaml .Values.dragonflyOperator.args | nindent 4 }}
+  {{- end }}
+
+  {{- if .Values.dragonflyOperator.affinity }}
+  affinity:
+    {{- toYaml .Values.dragonflyOperator.affinity | nindent 4 }}
+  {{- end }}
+{{- end }}

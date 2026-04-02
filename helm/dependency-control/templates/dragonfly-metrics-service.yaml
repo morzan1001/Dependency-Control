@@ -3,7 +3,7 @@ DragonflyDB Metrics Service
 Exposes the admin port for Prometheus scraping
 Created when dragonfly.enabled and dragonfly.serviceMonitor.enabled
 */}}
-{{- if and .Values.dragonfly.enabled .Values.monitoring.serviceMonitor.enabled }}
+{{- if and .Values.dragonflyOperator.enabled .Values.monitoring.serviceMonitor.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -20,6 +20,5 @@ spec:
       protocol: TCP
       name: admin
   selector:
-    app.kubernetes.io/name: dragonfly
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    app: {{ include "dependency-control.fullname" . }}-dragonfly
 {{- end }}

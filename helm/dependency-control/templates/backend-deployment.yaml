@@ -206,7 +206,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "dependency-control.fullname" . }}-secrets
                   key: mongodb-url
-            {{- if .Values.dragonfly.enabled }}
+            {{- if .Values.dragonflyOperator.enabled }}
             # DragonflyDB (Redis-compatible) connection
             - name: REDIS_URL
               valueFrom:

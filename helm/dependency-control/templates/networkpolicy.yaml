@@ -197,7 +197,7 @@ spec:
           app.kubernetes.io/instance: {{ .Values.database.cluster.name }}
           app.kubernetes.io/name: percona-server-mongodb
           {{- end }}
-    # Allow Operator
+    # Allow Operator (in-namespace, legacy)
     - podSelector:
         matchLabels:
           {{- if eq .Values.database.type "mongodb" }}
@@ -205,6 +205,13 @@ spec:
           {{- else }}
           app.kubernetes.io/name: psmdb-operator
           {{- end }}
+    # Allow Operator (from percona-system namespace)
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: percona-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: psmdb-operator
     # Allow Init-Users Job (workaround for Percona bug #1983)
     - podSelector:
         matchLabels:
@@ -355,7 +362,7 @@ spec:
       port: 8081
 {{- end }}
 
-{{- if and .Values.dragonfly.enabled .Values.networkPolicy.enabled }}
+{{- if and .Values.dragonflyOperator.enabled .Values.networkPolicy.enabled }}
 ---
 # Allow Backend to talk to DragonflyDB (Subchart)
 kind: NetworkPolicy
@@ -371,11 +378,10 @@ spec:
   - Egress
   egress:
   - to:
-    # DragonflyDB subchart pods use app.kubernetes.io/name: dragonfly
+    # DragonflyDB subchart pods use app: {{ include "dependency-control.fullname" . }}-dragonfly
     - podSelector:
         matchLabels:
-          app.kubernetes.io/name: dragonfly
-          app.kubernetes.io/instance: {{ .Release.Name }}
+          app: {{ include "dependency-control.fullname" . }}-dragonfly
     ports:
     - protocol: TCP
       port: 6379
@@ -389,8 +395,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: dragonfly
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app: {{ include "dependency-control.fullname" . }}-dragonfly
   policyTypes:
   - Ingress
   ingress:
@@ -403,15 +408,24 @@ spec:
     ports:
     - protocol: TCP
       port: 6379
-  # Allow from other DragonflyDB pods (for potential replication)
+  # Allow from other DragonflyDB pods (replication + admin)
   - from:
     - podSelector:
         matchLabels:
-          app.kubernetes.io/name: dragonfly
-          app.kubernetes.io/instance: {{ .Release.Name }}
+          app: {{ include "dependency-control.fullname" . }}-dragonfly
     ports:
     - protocol: TCP
       port: 6379
+    - protocol: TCP
+      port: 9999
+  # Allow Dragonfly Operator to configure replication via admin port
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: dragonfly-operator-system
+    ports:
+    - protocol: TCP
+      port: 9999
   {{- if .Values.monitoring.serviceMonitor.enabled }}
   # Allow Prometheus to scrape Dragonfly admin metrics (port 9999)
   # RESTRICTED: Only from kube-monitoring namespace, only prometheus pods
@@ -436,20 +450,20 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: dragonfly
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app: {{ include "dependency-control.fullname" . }}-dragonfly
   policyTypes:
   - Egress
   egress:
-  # Allow communication between DragonflyDB pods (for potential replication)
+  # Allow communication between DragonflyDB pods (replication + admin)
   - to:
     - podSelector:
         matchLabels:
-          app.kubernetes.io/name: dragonfly
-          app.kubernetes.io/instance: {{ .Release.Name }}
+          app: {{ include "dependency-control.fullname" . }}-dragonfly
     ports:
     - protocol: TCP
       port: 6379
+    - protocol: TCP
+      port: 9999
   # Allow DNS resolution only
   - ports:
     - protocol: UDP

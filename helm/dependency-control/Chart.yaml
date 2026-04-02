@@ -13,14 +13,10 @@ dependencies:
     repository: https://mongodb.github.io/helm-charts
     alias: mongodb-operator
     condition: mongodb-operator.enabled
-  - name: psmdb-operator
-    version: 1.21.3
-    repository: https://percona.github.io/percona-helm-charts/
-    condition: psmdb-operator.enabled
-  - name: dragonfly
-    version: "v1.35.1"
-    repository: oci://ghcr.io/dragonflydb/dragonfly/helm
-    condition: dragonfly.enabled
+  # Percona PSMDB Operator is now installed separately in percona-system namespace.
+  # Install: helm install psmdb-operator percona/psmdb-operator -n percona-system --set watchNamespace=dependency-control
+  # Dragonfly is now managed via the Dragonfly Operator CR (see dragonfly-cr.yaml)
+  # The operator must be installed separately in the cluster.
   - name: traefik
     version: 37.4.0
     repository: https://traefik.github.io/charts

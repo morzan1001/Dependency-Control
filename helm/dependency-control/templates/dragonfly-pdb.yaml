@@ -2,7 +2,7 @@
 PodDisruptionBudget for DragonflyDB
 Ensures cache availability during cluster maintenance
 */}}
-{{- if and .Values.dragonfly.enabled .Values.dragonfly.podDisruptionBudget.enabled }}
+{{- if and .Values.dragonflyOperator.enabled .Values.dragonfly.podDisruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -20,8 +20,7 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: dragonfly
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app: {{ include "dependency-control.fullname" . }}-dragonfly
   {{- if .Values.dragonfly.podDisruptionBudget.unhealthyPodEvictionPolicy }}
   unhealthyPodEvictionPolicy: {{ .Values.dragonfly.podDisruptionBudget.unhealthyPodEvictionPolicy }}
   {{- end }}

@@ -555,21 +555,21 @@ monitoring:
 # Saves ~1GB ephemeral storage per backend pod.
 trivyServer:
   enabled: false
-  replicaCount: 1
+  replicaCount: 2
   image:
     repository: ghcr.io/aquasecurity/trivy
     tag: "0.62.1"
     pullPolicy: IfNotPresent
   resources:
     requests:
-      cpu: 100m
-      memory: 512Mi
+      cpu: 200m
+      memory: 1Gi
     limits:
-      cpu: 1
-      memory: 2Gi
+      cpu: 2
+      memory: 4Gi
   persistence:
     enabled: true
-    size: 2Gi
+    size: 5Gi
     storageClass: ""
 
 # -----------------------------------------------------------------------------
