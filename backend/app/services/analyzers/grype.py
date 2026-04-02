@@ -1,8 +1,6 @@
 import json
-import os
 from typing import Any, Dict, List, Optional
 
-from app.core.config import settings as app_settings
 from app.models.finding import Severity
 
 from .cli_base import CLIAnalyzer
@@ -16,22 +14,17 @@ class GrypeAnalyzer(CLIAnalyzer):
     def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
         """Build Grype command arguments.
 
-        Uses GRYPE_DB_CACHE_DIR from settings to support shared DB volumes.
+        The Grype DB path is controlled via GRYPE_DB_CACHE_DIR environment variable,
+        which is set in docker-entrypoint.sh or by the Kubernetes volume mount.
+        No need to set it here - the CLI reads it from the environment.
         """
-        args = [
+        return [
             "grype",
             f"sbom:{sbom_path}",
             "-o",
             "json",
             "--quiet",
         ]
-
-        # Point to shared DB volume if configured (overrides GRYPE_DB_CACHE_DIR env var)
-        db_dir = app_settings.GRYPE_DB_CACHE_DIR
-        if db_dir and db_dir != "/app/.cache/grype":
-            os.environ["GRYPE_DB_CACHE_DIR"] = db_dir
-
-        return args
 
     def _parse_output(self, stdout: bytes) -> Dict[str, Any]:
         """Parse Grype JSON output and normalize vulnerabilities."""
@@ -117,7 +110,6 @@ class GrypeAnalyzer(CLIAnalyzer):
         description: str,
     ) -> str:
         """Create a human-readable message for the vulnerability."""
-        # Use first sentence of description if available
         if description:
             first_sentence = description.split(".")[0]
             if len(first_sentence) > 100:

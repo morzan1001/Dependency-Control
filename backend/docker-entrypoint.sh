@@ -22,15 +22,8 @@ fi
 export TRIVY_SKIP_DB_UPDATE=true
 
 if [ "$GRYPE_DB_SHARED" = "true" ]; then
-    # Check if shared DB is available (GCSFuse mount)
-    if find "${GRYPE_DB_CACHE_DIR:-/app/.cache/grype}" -name "vulnerability.db" 2>/dev/null | grep -q .; then
-        echo "Grype shared DB mode: using pre-loaded DB from ${GRYPE_DB_CACHE_DIR:-/app/.cache/grype}"
-    else
-        echo "WARNING: Shared Grype DB not yet available. Falling back to local download..."
-        export GRYPE_DB_CACHE_DIR=/app/.cache/grype-local
-        mkdir -p "$GRYPE_DB_CACHE_DIR"
-        grype db update 2>&1 || echo "WARNING: Grype DB update failed"
-    fi
+    echo "Grype shared DB mode: expecting DB at ${GRYPE_DB_CACHE_DIR:-/app/.cache/grype}"
+    echo "DB will be provided by GCSFuse mount. Grype scans will fail until CronJob populates the bucket."
 else
     echo "Updating Grype vulnerability database..."
     rm -rf "${GRYPE_DB_CACHE_DIR:-/app/.cache/grype}"/grype-db-download* /tmp/getter* 2>/dev/null || true

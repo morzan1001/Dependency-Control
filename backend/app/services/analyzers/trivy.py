@@ -17,12 +17,12 @@ class TrivyAnalyzer(CLIAnalyzer):
     cli_command = "trivy"
     empty_result_key = "Results"
 
-    def _is_server_mode(self) -> bool:
-        """Check if Trivy should use server mode instead of local CLI with local DB."""
-        return bool(settings.TRIVY_SERVER_URL)
-
     def _build_command_args(self, sbom_path: str, settings_dict: Optional[Dict[str, Any]]) -> List[str]:
-        """Build Trivy CLI command arguments (used in local/CLI mode)."""
+        """Build Trivy CLI command arguments.
+
+        When TRIVY_SERVER_URL is configured, adds --server flag to offload
+        scanning to a central Trivy server (no local DB needed).
+        """
         args = [
             "trivy",
             "sbom",
@@ -31,8 +31,6 @@ class TrivyAnalyzer(CLIAnalyzer):
             "--quiet",
         ]
 
-        # If a remote server is configured but we're falling back to CLI,
-        # still use the server to avoid needing a local DB
         if settings.TRIVY_SERVER_URL:
             args.extend(["--server", settings.TRIVY_SERVER_URL])
 
@@ -57,7 +55,6 @@ class TrivyAnalyzer(CLIAnalyzer):
         if is_cyclonedx or is_spdx:
             return tmp_sbom_path, []
 
-        # Attempt to convert using Syft
         logger.info("SBOM format not natively supported by Trivy (likely Syft JSON). Attempting conversion...")
         converted_sbom_path = tmp_sbom_path + ".cdx.json"
 
