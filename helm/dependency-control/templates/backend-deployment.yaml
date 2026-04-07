@@ -219,6 +219,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "dependency-control.fullname" . }}-secrets
                   key: secret-key
+            # glibc memory management: lower trim threshold to release freed heap
+            # pages back to OS more aggressively (default 128KB, set to 32KB).
+            # Combined with explicit malloc_trim() calls after analysis runs.
+            - name: MALLOC_TRIM_THRESHOLD_
+              value: "32768"
             - name: WORKER_COUNT
               value: "{{ .Values.backend.env.workerCount }}"
             - name: LOG_LEVEL

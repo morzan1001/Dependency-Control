@@ -711,4 +711,17 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
 
     del aggregated_findings
+
+    # Force garbage collection and release memory back to OS.
+    # Python's pymalloc does not return freed heap to the OS by default.
+    # gc.collect() frees circular references, ctypes malloc_trim() releases
+    # freed glibc heap pages back to the OS (Linux-only, no-op elsewhere).
+    import gc
+    gc.collect()
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        pass  # Non-Linux or musl libc (Alpine) - skip
+
     return True

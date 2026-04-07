@@ -20,7 +20,12 @@ async def enrich_vulnerability_findings(
     # Set the GitHub token on the service if provided
     if github_token:
         vulnerability_enrichment_service.set_github_token(github_token)
-    await vulnerability_enrichment_service.enrich_findings(findings)
+    try:
+        await vulnerability_enrichment_service.enrich_findings(findings)
+    finally:
+        # Close HTTP client after each enrichment run to prevent connection pool growth.
+        # The client is lazily recreated on next use.
+        await vulnerability_enrichment_service.close()
 
 
 async def get_cve_enrichment(cves: List[str]) -> Dict[str, VulnerabilityEnrichment]:

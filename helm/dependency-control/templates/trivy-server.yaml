@@ -146,6 +146,13 @@ metadata:
     app.kubernetes.io/component: trivy-server
 spec:
   type: ClusterIP
+  # Session affinity ensures a client always reaches the same Trivy server pod.
+  # Required because each pod has its own layer cache (emptyDir) - switching
+  # mid-scan to a different pod causes "layer cache missing" errors.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 600
   ports:
     - port: 4954
       targetPort: http
