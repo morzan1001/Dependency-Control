@@ -271,7 +271,8 @@ class CacheService:
         try:
             client = await self.get_client()
             data = await asyncio.wait_for(
-                client.get(self._make_key(key)), timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+                client.get(self._make_key(key)),
+                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             )
             if data:
                 if cache_hits_total:
@@ -348,7 +349,8 @@ class CacheService:
         try:
             client = await self.get_client()
             await asyncio.wait_for(
-                client.delete(self._make_key(key)), timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+                client.delete(self._make_key(key)),
+                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             )
             return True
         except (redis.ConnectionError, asyncio.TimeoutError):
@@ -384,7 +386,8 @@ class CacheService:
             client = await self.get_client()
             prefixed_keys = [self._make_key(k) for k in keys]
             values = await asyncio.wait_for(
-                client.mget(prefixed_keys), timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+                client.mget(prefixed_keys),
+                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
             )
 
             result = {}

@@ -183,20 +183,11 @@ class NotificationService:
         # Map: user_id -> specific_prefs (or None if no override)
         targets: Dict[str, Optional[Dict[str, List[str]]]] = {}
 
-        # 1a. Owner
-        owner_id = project.owner_id
-        targets[owner_id] = project.owner_notification_preferences
-
-        # 1b. Project Members
+        # 1. Project Members (admins get notified by default)
         if project.members:
             for member in project.members:
-                # If member has configured preferences (non-empty), use them.
-                # Otherwise, treat as None (fallback to Global later)
                 m_prefs = member.notification_preferences if member.notification_preferences else None
 
-                # If user already in targets (e.g. Owner), prioritize existing value IF it is set
-                # But here, Owner prefs is managed in project.owner_notification_preferences.
-                # If that was set, targets[owner_id] is set. Member prefs is likely empty for owner.
                 if member.user_id in targets and targets[member.user_id] is not None:
                     continue
 
@@ -221,7 +212,12 @@ class NotificationService:
         users_map = {str(u["_id"]): User(**u) for u in users_list}
 
         # 3. Determine Enforced Settings
-        enforced_prefs = project.owner_notification_preferences if project.enforce_notification_settings else None
+        enforced_prefs = None
+        if project.enforce_notification_settings and project.members:
+            # Use first admin member's prefs as enforced settings
+            admin_member = next((m for m in project.members if m.role == "admin" and m.notification_preferences), None)
+            if admin_member:
+                enforced_prefs = admin_member.notification_preferences
 
         # 4. Iterate and Send
         tasks = []

@@ -655,9 +655,13 @@ async def sync_branch_status() -> None:
         db = await get_database()
 
         branch_sync_projection = {
-            "_id": 1, "name": 1, "latest_scan_id": 1,
-            "gitlab_instance_id": 1, "gitlab_project_id": 1,
-            "github_instance_id": 1, "github_repository_path": 1,
+            "_id": 1,
+            "name": 1,
+            "latest_scan_id": 1,
+            "gitlab_instance_id": 1,
+            "gitlab_project_id": 1,
+            "github_instance_id": 1,
+            "github_repository_path": 1,
         }
         cursor = db.projects.find(
             {

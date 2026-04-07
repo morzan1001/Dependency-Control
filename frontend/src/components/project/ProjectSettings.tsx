@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { projectKeys, useProjectBranches, useUpdateProjectNotifications, useTransferOwnership } from '@/hooks/queries/use-projects'
+import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances } from '@/hooks/queries/use-instances'
 import { WebhookCreate } from '@/types/webhook'
@@ -16,7 +16,6 @@ import {
   canUpdateProject,
   canDeleteProject,
   canRotateApiKey,
-  canTransferOwnership,
   canEnforceNotifications,
   canCreateProjectWebhook,
   canDeleteProjectWebhook,
@@ -28,7 +27,7 @@ import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { WebhookManager } from '@/components/WebhookManager'
-import { AlertTriangle, RefreshCw, Copy, Trash2, Info, ArrowRightLeft } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Copy, Trash2, Info } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from '@/lib/constants'
@@ -71,7 +70,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const canUpdate = canUpdateProject(project, userId, permissions)
   const canDelete = canDeleteProject(project, userId, permissions)
   const canRotateKey = canRotateApiKey(project, userId, permissions)
-  const canTransfer = canTransferOwnership(project, userId, permissions)
   const canEnforce = canEnforceNotifications(project, userId, permissions)
   const canCreateWh = canCreateProjectWebhook(project, userId, permissions)
   const canDeleteWh = canDeleteProjectWebhook(project, userId, permissions)
@@ -93,8 +91,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
-  const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false)
-  const [transferTargetId, setTransferTargetId] = useState<string>("")
   const [enforceNotificationSettings, setEnforceNotificationSettings] = useState(project.enforce_notification_settings || false)
   
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>(() => {
@@ -109,7 +105,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
 
     // Project-level preferences (owner or member)
     let projectPrefs: Record<string, string[]> | undefined;
-    if (project.owner_id === userId) {
+    if (project.members?.some(m => m.user_id === userId && m.role === 'admin')) {
       projectPrefs = project.owner_notification_preferences;
     } else if (project.members) {
       const member = project.members.find(m => m.user_id === userId);
@@ -173,7 +169,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     }
   })
 
-  const transferOwnershipMutation = useTransferOwnership()
 
   const createProjectWebhookMutation = useCreateProjectWebhook()
   const deleteWebhookMutation = useDeleteWebhook()
@@ -556,7 +551,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             {!enforceNotificationSettings && (() => {
                 const userId = user.id;
                 let hasProjectPrefs: boolean;
-                if (project.owner_id === userId) {
+                if (project.members?.some(m => m.user_id === userId && m.role === 'admin')) {
                     hasProjectPrefs = !!(project.owner_notification_preferences && Object.keys(project.owner_notification_preferences).length > 0);
                 } else {
                     const member = project.members?.find(m => m.user_id === userId);
@@ -649,7 +644,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
         deletePermission={canDeleteWh}
       />
 
-      {(canUpdate || canDelete || canRotateKey || canTransfer) && (
+      {(canUpdate || canDelete || canRotateKey) && (
         <Card className="border-destructive">
             <CardHeader>
                 <CardTitle className="text-destructive flex items-center gap-2">
@@ -661,21 +656,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                {canTransfer && (
-                    <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
-                        <div>
-                            <div className="font-medium">Transfer Ownership</div>
-                            <div className="text-sm text-muted-foreground">
-                                Transfer this project to another member. The new owner will have full control.
-                            </div>
-                        </div>
-                        <Button variant="destructive" onClick={() => setIsTransferDialogOpen(true)} disabled={(project.members?.length ?? 0) < 2}>
-                            <ArrowRightLeft className="mr-2 h-4 w-4" />
-                            Transfer
-                        </Button>
-                    </div>
-                )}
-
                 {canRotateKey && (
                     <div className="flex items-center justify-between p-4 border border-destructive/20 rounded-lg bg-destructive/5">
                         <div>
@@ -753,63 +733,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isTransferDialogOpen} onOpenChange={(open) => {
-        setIsTransferDialogOpen(open)
-        if (!open) setTransferTargetId("")
-      }}>
-        <DialogContent>
-            <DialogHeader>
-                <DialogTitle>Transfer Project Ownership</DialogTitle>
-                <DialogDescription>
-                    Select a project member to become the new owner of <strong>{project.name}</strong>. You will remain a member with admin role.
-                </DialogDescription>
-            </DialogHeader>
-            <div className="py-4">
-                <Label htmlFor="transfer-target">New Owner</Label>
-                <Select value={transferTargetId} onValueChange={setTransferTargetId}>
-                    <SelectTrigger className="mt-2">
-                        <SelectValue placeholder="Select a member" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {(project.members ?? [])
-                            .filter(m => m.user_id !== project.owner_id && !m.inherited_from)
-                            .map(m => (
-                                <SelectItem key={m.user_id} value={m.user_id}>
-                                    {m.username || m.user_id} ({m.role})
-                                </SelectItem>
-                            ))
-                        }
-                    </SelectContent>
-                </Select>
-            </div>
-            <DialogFooter>
-                <Button variant="outline" onClick={() => setIsTransferDialogOpen(false)}>Cancel</Button>
-                <Button
-                    variant="destructive"
-                    onClick={() => {
-                        transferOwnershipMutation.mutate(
-                            { id: projectId, newOwnerId: transferTargetId },
-                            {
-                                onSuccess: () => {
-                                    toast.success("Ownership transferred successfully")
-                                    setIsTransferDialogOpen(false)
-                                    setTransferTargetId("")
-                                },
-                                onError: (error) => {
-                                    toast.error("Failed to transfer ownership", {
-                                        description: getErrorMessage(error)
-                                    })
-                                }
-                            }
-                        )
-                    }}
-                    disabled={!transferTargetId || transferOwnershipMutation.isPending}
-                >
-                    {transferOwnershipMutation.isPending ? "Transferring..." : "Transfer Ownership"}
-                </Button>
-            </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

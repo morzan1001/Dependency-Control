@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import BackgroundTasks, Body, Depends, HTTPException, Response, status
+from fastapi import BackgroundTasks, Depends, HTTPException, Response, status
 
 from app.api.router import CustomAPIRouter
 
@@ -211,7 +211,9 @@ async def create_project(
         # Users with system:manage permission are exempt from limits
         if not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
             # Count projects owned by the user
-            current_count = await project_repo.count({"owner_id": str(current_user.id)})
+            current_count = await project_repo.count(
+                {"members": {"$elemMatch": {"user_id": str(current_user.id), "role": "admin"}}}
+            )
             if current_count >= settings.project_limit_per_user:
                 raise HTTPException(
                     status_code=403,
@@ -231,7 +233,6 @@ async def create_project(
     project = Project(
         id=project_id,
         name=project_in.name,
-        owner_id=str(current_user.id),
         team_id=project_in.team_id,
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
@@ -508,10 +509,9 @@ async def read_project(
 
     # Verify Access (Logic from check_project_access but using loaded data)
     if not has_permission(current_user.permissions, Permissions.PROJECT_READ_ALL):
-        is_owner = project.owner_id == str(current_user.id)
         is_member = any(m.user_id == str(current_user.id) for m in project.members)
 
-        if not (is_owner or is_member):
+        if not is_member:
             raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
         if Permissions.PROJECT_READ not in current_user.permissions:
@@ -836,27 +836,26 @@ async def update_notification_settings(
     """
     project = await check_project_access(project_id, current_user, db)
 
-    is_owner = project.owner_id == str(current_user.id)
+    is_admin = any(m.user_id == str(current_user.id) and m.role == "admin" for m in project.members)
     has_update_perm = has_permission(current_user.permissions, Permissions.PROJECT_UPDATE)
 
     update_data: Dict[str, Any] = {}
 
-    # Handle enforcement setting (Owner/Admin only)
+    # Handle enforcement setting (Admin only)
     if settings.enforce_notification_settings is not None:
-        if is_owner or has_update_perm:
+        if is_admin or has_update_perm:
             update_data["enforce_notification_settings"] = settings.enforce_notification_settings
 
     project_repo = ProjectRepository(db)
 
-    if is_owner:
-        update_data["owner_notification_preferences"] = settings.notification_preferences
+    if is_admin:
         await project_repo.update(project_id, update_data)
     else:
         # If settings are enforced, regular members cannot update their preferences
         if project.enforce_notification_settings and not has_update_perm:
             raise HTTPException(
                 status_code=403,
-                detail="Notification settings are enforced by the project owner",
+                detail="Notification settings are enforced by the project admin",
             )
 
         # Check if member
@@ -1236,9 +1235,12 @@ async def update_project_member(
     if member_index == -1:
         raise HTTPException(status_code=404, detail="User is not a member of this project")
 
-    # Prevent changing owner's role via this endpoint (though owner is not in members list usually, but just in case)
-    if project.owner_id == user_id:
-        raise HTTPException(status_code=400, detail="Cannot change role of project owner")
+    # Prevent demoting the last admin
+    current_member = project.members[member_index]
+    if current_member.role == "admin" and member_in.role and member_in.role != "admin":
+        admin_count = sum(1 for m in project.members if m.role == "admin")
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="Cannot demote the last admin. Add another admin first.")
 
     project_repo = ProjectRepository(db)
 
@@ -1284,60 +1286,15 @@ async def remove_project_member(
     if not member_exists:
         raise HTTPException(status_code=404, detail="User is not a member of this project")
 
-    if project.owner_id == user_id:
-        raise HTTPException(status_code=400, detail="Cannot remove project owner")
+    # Prevent removing the last admin
+    member_role = next((m.role for m in project.members if m.user_id == user_id), None)
+    if member_role == "admin":
+        admin_count = sum(1 for m in project.members if m.role == "admin")
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="Cannot remove the last admin. Add another admin first.")
 
     project_repo = ProjectRepository(db)
     await project_repo.remove_member(project_id, user_id)
-
-    updated_project = await project_repo.get_by_id(project_id)
-    if updated_project:
-        return updated_project
-    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-
-
-@router.post(
-    "/{project_id}/transfer-ownership",
-    summary="Transfer project ownership",
-    responses=RESP_AUTH_400_404,
-)
-async def transfer_ownership(
-    project_id: str,
-    current_user: CurrentUserDep,
-    db: DatabaseDep,
-    new_owner_id: Annotated[str, Body(embed=True)],
-) -> Project:
-    """
-    Transfer project ownership to another user.
-
-    Only the current owner or a user with 'system:manage' permission can transfer ownership.
-    The new owner must be an existing member of the project.
-    """
-    project = await check_project_access(project_id, current_user, db, required_role="admin")
-
-    is_owner = project.owner_id == str(current_user.id)
-    has_system_manage = has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE)
-
-    if not (is_owner or has_system_manage):
-        raise HTTPException(status_code=403, detail="Only the project owner or a system admin can transfer ownership")
-
-    if project.owner_id == new_owner_id:
-        raise HTTPException(status_code=400, detail="User is already the project owner")
-
-    # Verify new owner is a member
-    is_member = any(m.user_id == new_owner_id for m in project.members)
-    if not is_member:
-        raise HTTPException(status_code=400, detail="New owner must be a member of the project")
-
-    project_repo = ProjectRepository(db)
-
-    # Ensure new owner has admin role in members list
-    for i, m in enumerate(project.members):
-        if m.user_id == new_owner_id and m.role != "admin":
-            await project_repo.update_member(project_id, new_owner_id, {f"members.{i}.role": "admin"})
-            break
-
-    await project_repo.update(project_id, {"owner_id": new_owner_id})
 
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
@@ -1450,14 +1407,14 @@ async def delete_project(
     """
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
-    # Additional check: Only global admin or project owner can delete
+    # Additional check: Only global admin or project admin can delete
     has_delete_perm = has_permission(current_user.permissions, Permissions.PROJECT_DELETE)
-    is_owner = project.owner_id == str(current_user.id)
+    is_admin = any(m.user_id == str(current_user.id) and m.role == "admin" for m in project.members)
 
-    if not (has_delete_perm or is_owner):
+    if not (has_delete_perm or is_admin):
         raise HTTPException(
             status_code=403,
-            detail="Only project owner or administrator can delete a project",
+            detail="Only project admin or system administrator can delete a project",
         )
 
     project_repo = ProjectRepository(db)

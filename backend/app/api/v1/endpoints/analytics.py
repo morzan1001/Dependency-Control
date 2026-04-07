@@ -1523,9 +1523,7 @@ async def get_update_frequency_comparison(
 
     # Resolve team names if needed
     if projects_raw:
-        team_ids: List[str] = [
-            str(p["team_id"]) for p in projects_raw if p.get("team_id")
-        ]
+        team_ids: List[str] = [str(p["team_id"]) for p in projects_raw if p.get("team_id")]
         unique_team_ids = list(set(team_ids))
         team_names: Dict[str, str] = {}
         if unique_team_ids:

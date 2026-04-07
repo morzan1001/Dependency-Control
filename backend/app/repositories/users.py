@@ -117,4 +117,3 @@ class UserRepository:
         """Check if email exists."""
         with track_db_operation(_COL, "find_one"):
             return await self.collection.find_one({"email": email}, {"_id": 1}) is not None
-

@@ -86,7 +86,7 @@ class CLIAnalyzer(Analyzer):
 
                 # Retry only for transient errors
                 if attempt < self.max_retries and self._is_retryable_error(stderr):
-                    delay = self.retry_delay * (2 ** attempt)
+                    delay = self.retry_delay * (2**attempt)
                     logger.warning(
                         f"{self.name} failed (attempt {attempt + 1}/{1 + self.max_retries}), "
                         f"retrying in {delay:.1f}s: {stderr.decode()[:200]}"

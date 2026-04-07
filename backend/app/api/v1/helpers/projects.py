@@ -54,7 +54,6 @@ async def build_user_project_query(
 
     return {
         "$or": [
-            {"owner_id": str(user.id)},
             {"members.user_id": str(user.id)},
             {"team_id": {"$in": team_ids}},
         ]
@@ -94,7 +93,6 @@ async def check_project_access(
     if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return project
 
-    is_owner = project.owner_id == str(user.id)
     is_member = False
     member_role = None
 
@@ -110,8 +108,6 @@ async def check_project_access(
         if team:
             for tm in team.get("members", []):
                 if tm["user_id"] == str(user.id):
-                    # Team members get 'viewer' access by default,
-                    # Team admins/owners get 'admin' access on project.
                     if tm["role"] in [TEAM_ROLE_ADMIN, TEAM_ROLE_OWNER]:
                         member_role = PROJECT_ROLE_ADMIN
                     else:
@@ -119,19 +115,14 @@ async def check_project_access(
                     is_member = True
                     break
 
-    if not (is_owner or is_member):
+    if not is_member:
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    # Check for basic read permission
     if Permissions.PROJECT_READ not in user.permissions and Permissions.PROJECT_READ_ALL not in user.permissions:
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     if required_role:
-        if is_owner:
-            return project
-        # Role hierarchy: admin > editor > viewer
         roles = PROJECT_ROLES
-        # If member_role is None, default to viewer
         current_role = member_role or PROJECT_ROLE_VIEWER
         if roles.index(current_role) < roles.index(required_role):
             raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)

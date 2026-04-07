@@ -77,6 +77,7 @@ export default function ScanDetails() {
 
   const activeTab = searchParams.get('tab') || 'overview';
   const sbomParam = searchParams.get('sbom');
+  const severityFilter = searchParams.get('severity') || undefined;
   
   const handleTabChange = (val: string) => {
     setSearchParams(prev => {
@@ -477,7 +478,7 @@ export default function ScanDetails() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-            <FindingsTable scanId={scanId!} projectId={projectId!} scanContext={scanContext} stickyHeaderTop={0} />
+            <FindingsTable scanId={scanId!} projectId={projectId!} severity={severityFilter} scanContext={scanContext} stickyHeaderTop={0} />
         </TabsContent>
 
         {showSecurity && (

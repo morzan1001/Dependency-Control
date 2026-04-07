@@ -187,15 +187,17 @@ class EndOfLifeAnalyzer(Analyzer):
             return False
 
     def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Check if a version matches an EOL cycle."""
+        """Check if a version matches an EOL cycle.
+
+        If EOL, enriches the result with the latest active (non-EOL) version
+        as a recommended upgrade target.
+        """
         if not version:
             return None
 
-        # Ensure version is a string before calling string methods
         if not isinstance(version, str):
             version = str(version)
 
-        # Clean version string
         clean_version = version.lstrip("v").lower()
 
         for cycle in cycles:
@@ -205,8 +207,29 @@ class EndOfLifeAnalyzer(Analyzer):
                 continue
 
             if self._is_eol(cycle.get("eol")):
+                # Find the newest active (non-EOL) cycle as upgrade recommendation
+                recommended = self._find_active_cycle(cycles)
+                if recommended and recommended.get("latest") != cycle.get("latest"):
+                    cycle["recommended_version"] = recommended.get("latest")
+                    cycle["recommended_cycle"] = recommended.get("cycle")
                 return cycle
 
+        return None
+
+    @staticmethod
+    def _find_active_cycle(cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Find the newest active (non-EOL) cycle from the list."""
+        for cycle in cycles:
+            eol = cycle.get("eol")
+            if eol is False or eol is None:
+                return cycle
+            if isinstance(eol, str):
+                try:
+                    eol_date = datetime.strptime(eol, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    if eol_date > datetime.now(timezone.utc):
+                        return cycle
+                except ValueError:
+                    continue
         return None
 
     def _version_matches_cycle(self, version: str, cycle: str) -> bool:

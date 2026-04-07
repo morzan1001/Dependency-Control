@@ -24,12 +24,13 @@ interface FindingsTableProps {
     projectId: string;
     category?: string;
     search?: string;
+    severity?: string;
     scanContext?: ScanContext;
     /** Top offset (px) for the sticky table header, e.g. when a sticky TabsList sits above. */
     stickyHeaderTop?: number;
 }
 
-export function FindingsTable({ scanId, projectId, category, search, scanContext, stickyHeaderTop = 0 }: FindingsTableProps) {
+export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0 }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [sortBy, setSortBy] = useState("severity")
@@ -43,13 +44,14 @@ export function FindingsTable({ scanId, projectId, category, search, scanContext
         isLoading,
         isError
     } = useInfiniteQuery({
-        queryKey: ['findings', scanId, category, search, sortBy, sortOrder],
+        queryKey: ['findings', scanId, category, search, severity, sortBy, sortOrder],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
                 limit: DEFAULT_PAGE_SIZE,
                 category,
                 search,
+                severity,
                 sort_by: sortBy,
                 sort_order: sortOrder
             });

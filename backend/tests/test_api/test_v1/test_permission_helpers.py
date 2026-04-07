@@ -71,10 +71,10 @@ class TestCheckProjectAccess:
                 )
         assert result.id == "proj-1"
 
-    def test_owner_has_full_access(self, regular_user):
+    def test_admin_member_has_full_access(self, regular_user):
         from app.api.v1.helpers.projects import check_project_access
 
-        project = self._make_project(owner_id=str(regular_user.id))
+        project = self._make_project(members=[ProjectMember(user_id=str(regular_user.id), role="admin")])
         mock_proj_repo = MagicMock()
         mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 
@@ -89,10 +89,10 @@ class TestCheckProjectAccess:
                 )
         assert result.id == "proj-1"
 
-    def test_owner_bypasses_role_check(self, regular_user):
+    def test_admin_member_bypasses_role_check(self, regular_user):
         from app.api.v1.helpers.projects import check_project_access
 
-        project = self._make_project(owner_id=str(regular_user.id))
+        project = self._make_project(members=[ProjectMember(user_id=str(regular_user.id), role="admin")])
         mock_proj_repo = MagicMock()
         mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 

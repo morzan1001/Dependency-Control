@@ -220,7 +220,9 @@ async def process_analyzer(
         return f"{analyzer_name}: Failed"
 
 
-async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> Optional[Dict[str, Any]]:
+async def _resolve_sbom(
+    item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator
+) -> Optional[Dict[str, Any]]:
     """Resolve a single SBOM item from inline dict or GridFS reference."""
     if isinstance(item, dict) and item.get("type") == "gridfs_reference":
         gridfs_id = item.get("gridfs_id")
@@ -240,7 +242,8 @@ async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: Res
                 analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
             aggregator.aggregate("system", {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"})
             return None
-    return item
+    result: Optional[Dict[str, Any]] = item
+    return result
 
 
 async def _process_sbom(
@@ -308,9 +311,7 @@ def _track_findings_metrics(aggregated_findings: List[Any]) -> None:
                 analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
 
 
-async def _enrich_dependencies(
-    dependency_enrichments: Dict[str, Any], scan_id: str, db: Database
-) -> None:
+async def _enrich_dependencies(dependency_enrichments: Dict[str, Any], scan_id: str, db: Database) -> None:
     """Bulk-update dependencies with aggregated enrichment data."""
     if not dependency_enrichments:
         return
@@ -421,10 +422,15 @@ async def _run_reachability_enrichment(
 
     try:
         enriched_count = await enrich_findings_with_reachability(
-            findings=vulnerability_findings, project_id=str(project_id), db=db, scan_id=scan_id,
+            findings=vulnerability_findings,
+            project_id=str(project_id),
+            db=db,
+            scan_id=scan_id,
         )
         reachability_summary = build_reachability_summary(
-            vulnerability_findings, [cg.model_dump(by_alias=True) for cg in callgraphs], enriched_count,
+            vulnerability_findings,
+            [cg.model_dump(by_alias=True) for cg in callgraphs],
+            enriched_count,
         )
         await result_repo.create_raw(
             {
@@ -463,12 +469,18 @@ async def _apply_waivers(
     for waiver in active_waivers:
         if waiver.vulnerability_id:
             await finding_repo.apply_vulnerability_waiver(
-                scan_id=scan_id, vulnerability_id=waiver.vulnerability_id, waived=True, waiver_reason=waiver.reason,
+                scan_id=scan_id,
+                vulnerability_id=waiver.vulnerability_id,
+                waived=True,
+                waiver_reason=waiver.reason,
             )
         else:
             query = _build_waiver_query(waiver)
             await finding_repo.apply_finding_waiver(
-                scan_id=scan_id, query=query, waived=True, waiver_reason=waiver.reason,
+                scan_id=scan_id,
+                query=query,
+                waived=True,
+                waiver_reason=waiver.reason,
             )
 
 
@@ -486,9 +498,7 @@ def _track_waiver_metrics(active_waivers: List[Waiver]) -> None:
         analysis_waivers_applied_total.labels(type=waiver_type).inc(count)
 
 
-async def _check_race_condition(
-    scan_id: str, external_load_start: datetime, scan_repo: ScanRepository
-) -> bool:
+async def _check_race_condition(scan_id: str, external_load_start: datetime, scan_repo: ScanRepository) -> bool:
     """Check if new results arrived during processing. Returns True if race detected."""
     race_check = await scan_repo.get_by_id(scan_id)
     last_result_at = race_check.last_result_at if race_check else None
@@ -506,7 +516,8 @@ async def _check_race_condition(
             analysis_race_conditions_total.inc()
 
         await scan_repo.update_raw(
-            scan_id, {"$set": {"status": "pending"}, "$inc": {"retry_count": 1}},
+            scan_id,
+            {"$set": {"status": "pending"}, "$inc": {"retry_count": 1}},
         )
         return True
 
@@ -568,7 +579,14 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Process SBOMs sequentially to save memory
     for index, item in enumerate(sboms):
         sbom_results = await _process_sbom(
-            index, item, scan_id, db, fs, aggregator, active_analyzers, system_settings,
+            index,
+            item,
+            scan_id,
+            db,
+            fs,
+            aggregator,
+            active_analyzers,
+            system_settings,
         )
         results_summary.extend(sbom_results)
 
@@ -616,8 +634,15 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
         await _run_reachability_enrichment(
-            vulnerability_findings, scan_id, project_id, scan_doc,
-            db, callgraph_repo, result_repo, scan_repo, results_summary,
+            vulnerability_findings,
+            scan_id,
+            project_id,
+            scan_doc,
+            db,
+            callgraph_repo,
+            result_repo,
+            scan_repo,
+            results_summary,
         )
 
     # 6. Insert findings and apply waivers
@@ -626,6 +651,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
     from app.repositories import WaiverRepository
+
     active_waivers: List[Waiver] = []
     if project_id:
         waiver_repo = WaiverRepository(db)
@@ -635,7 +661,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Read from PRIMARY for consistency after bulk insert + waiver updates
     from pymongo import ReadPreference
 
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)
+    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
     ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
     _track_waiver_metrics(active_waivers)
 
@@ -704,7 +730,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     # Integrations & Notifications (read from PRIMARY after project stats update)
     if project_id:
-        projects_primary = db.projects.with_options(read_preference=ReadPreference.PRIMARY)
+        projects_primary = db.projects.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         project_data = await projects_primary.find_one({"_id": project_id})
         if project_data:
             project = Project(**project_data)
@@ -722,9 +748,11 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # gc.collect() frees circular references, ctypes malloc_trim() releases
     # freed glibc heap pages back to the OS (Linux-only, no-op elsewhere).
     import gc
+
     gc.collect()
     try:
         import ctypes
+
         ctypes.CDLL("libc.so.6").malloc_trim(0)
     except (OSError, AttributeError):
         pass  # Non-Linux or musl libc (Alpine) - skip

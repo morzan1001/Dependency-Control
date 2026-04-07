@@ -56,19 +56,33 @@ def normalize_eol(aggregator: "ResultAggregator", result: Dict[str, Any], source
         latest = eol_info.get("latest")
         component = safe_get(item, "component", "unknown")
 
+        # Use recommended version from active cycle if available,
+        # otherwise fall back to latest within same cycle
+        recommended = eol_info.get("recommended_version") or latest
+        recommended_cycle = eol_info.get("recommended_cycle")
+
+        if recommended_cycle:
+            description = (
+                f"End of Life: Version cycle {cycle} reached EOL on {eol_date}. "
+                f"Upgrade to {recommended} (cycle {recommended_cycle})"
+            )
+        else:
+            description = f"End of Life reached on {eol_date} (Cycle {cycle}). Latest: {latest}"
+
         aggregator.add_finding(
             Finding(
                 id=build_finding_id("EOL", component, cycle),
                 type=FindingType.EOL,
-                severity=Severity.HIGH,
+                severity=safe_severity(item.get("severity"), default=Severity.HIGH),
                 component=component,
                 version=item.get("version"),
-                description=f"End of Life reached on {eol_date} (Cycle {cycle}). Latest: {latest}",
+                description=description,
                 scanners=["end_of_life"],
                 details={
-                    "fixed_version": latest,
+                    "fixed_version": recommended,
                     "eol_date": eol_date,
                     "cycle": cycle,
+                    "recommended_cycle": recommended_cycle,
                     "link": eol_info.get("link"),
                     "lts": eol_info.get("lts"),
                 },

@@ -172,7 +172,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
                   <Select
                     value={member.role}
                     onValueChange={(value) => updateMemberMutation.mutate({ userId: member.user_id, role: value })}
-                    disabled={member.user_id === project.owner_id || !canManageMembers || !!member.inherited_from}
+                    disabled={!canManageMembers || !!member.inherited_from}
                   >
                     <SelectTrigger className="w-[120px]">
                       <SelectValue />
@@ -194,7 +194,7 @@ export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
                   )}
                 </TableCell>
                 <TableCell>
-                  {member.user_id !== project.owner_id && canManageMembers && !member.inherited_from && (
+                  {canManageMembers && !member.inherited_from && (
                     <Button 
                       variant="ghost" 
                       size="icon" 

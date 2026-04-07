@@ -73,7 +73,6 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str
     projects = await project_repo.find_many_ids(
         {
             "$or": [
-                {"owner_id": str(user.id)},
                 {"members.user_id": str(user.id)},
                 {"team_id": {"$in": user_team_ids}},
             ]

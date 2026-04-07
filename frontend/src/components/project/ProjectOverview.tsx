@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts } from '@/types/scan'
@@ -56,6 +57,7 @@ interface ProjectOverviewProps {
 }
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
+  const navigate = useNavigate()
   const { data: scans, isLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
 
   const { data: waivers } = useProjectWaivers(projectId)
@@ -265,7 +267,13 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
             </p>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className="cursor-pointer transition-colors hover:bg-muted/50"
+          onClick={() => {
+            const scan = activeBranch ? latestScansByBranch[activeBranch] : Object.values(latestScansByBranch)[0]
+            if (scan) navigate(`/projects/${projectId}/scans/${scan.id}?severity=CRITICAL`)
+          }}
+        >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Critical Issues</CardTitle>
             <ShieldAlert className="h-4 w-4 text-destructive" />
@@ -273,11 +281,17 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           <CardContent>
             <div className="text-2xl font-bold text-destructive">{stats.critical}</div>
             <p className="text-xs text-muted-foreground">
-              Unique findings
+              Click to view findings
             </p>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          className="cursor-pointer transition-colors hover:bg-muted/50"
+          onClick={() => {
+            const scan = activeBranch ? latestScansByBranch[activeBranch] : Object.values(latestScansByBranch)[0]
+            if (scan) navigate(`/projects/${projectId}/scans/${scan.id}?severity=HIGH`)
+          }}
+        >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">High Issues</CardTitle>
             <AlertTriangle className="h-4 w-4 text-orange-500" />
@@ -285,7 +299,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           <CardContent>
             <div className="text-2xl font-bold text-orange-500">{stats.high}</div>
             <p className="text-xs text-muted-foreground">
-              Unique findings
+              Click to view findings
             </p>
           </CardContent>
         </Card>
@@ -352,7 +366,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           <CardContent>
             <div className="h-[300px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
+                <PieChart className="cursor-pointer">
                   <Pie
                     data={pieData}
                     cx="50%"
@@ -361,6 +375,12 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                     outerRadius={80}
                     paddingAngle={5}
                     dataKey="value"
+                    onClick={(data) => {
+                      if (data?.name) {
+                        const scan = activeBranch ? latestScansByBranch[activeBranch] : Object.values(latestScansByBranch)[0]
+                        if (scan) navigate(`/projects/${projectId}/scans/${scan.id}?severity=${data.name.toUpperCase()}`)
+                      }
+                    }}
                   >
                     {pieData.map((entry) => (
                       <Cell key={`cell-${entry.name}`} fill={entry.color} />
@@ -388,11 +408,22 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                 <CardContent>
                     <div className="h-[400px] w-full min-w-0">
                         <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={branchStats} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                            <BarChart
+                              data={branchStats}
+                              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                              className="cursor-pointer"
+                              onClick={(state) => {
+                                if (state?.activeLabel) {
+                                  const branchName = state.activeLabel
+                                  const scan = latestScansByBranch[branchName]
+                                  if (scan) navigate(`/projects/${projectId}/scans/${scan.id}`)
+                                }
+                              }}
+                            >
                                 <CartesianGrid strokeDasharray="3 3" />
                                 <XAxis dataKey="name" />
                                 <YAxis />
-                                <Tooltip 
+                                <Tooltip
                                     contentStyle={{ backgroundColor: 'hsl(var(--background))', borderColor: 'hsl(var(--border))' }}
                                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                                 />

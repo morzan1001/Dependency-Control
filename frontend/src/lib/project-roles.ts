@@ -48,8 +48,9 @@ export function hasProjectRole(
   return ROLE_HIERARCHY.indexOf(role) >= ROLE_HIERARCHY.indexOf(requiredRole);
 }
 
+/** @deprecated Use isProjectAdmin instead. Kept for backward compatibility. */
 export function isProjectOwner(project: Project, userId: string): boolean {
-  return project.owner_id === userId;
+  return project.members?.some(m => m.user_id === userId && m.role === 'admin') ?? false;
 }
 
 export function isProjectAdmin(
@@ -107,17 +108,7 @@ export function canDeleteProject(
     && (isProjectOwner(project, userId) || globalPermissions.includes('project:delete'));
 }
 
-/** Transfer ownership: owner OR global system:manage */
-export function canTransferOwnership(
-  project: Project,
-  userId: string,
-  globalPermissions: string[]
-): boolean {
-  return isProjectOwner(project, userId)
-    || globalPermissions.includes('system:manage');
-}
-
-/** Toggle enforce notification settings: owner OR global project:update */
+/** Toggle enforce notification settings: admin member OR global project:update */
 export function canEnforceNotifications(
   project: Project,
   userId: string,

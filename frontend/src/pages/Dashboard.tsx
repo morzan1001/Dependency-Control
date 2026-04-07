@@ -72,28 +72,31 @@ export default function Dashboard() {
       title: "Total Projects",
       value: String(dashboardStats?.total_projects ?? 0),
       icon: FolderGit2,
-      description: "Active projects"
+      description: "Active projects",
+      onClick: () => navigate("/projects"),
     },
     {
       title: "Critical Vulnerabilities",
       value: String(dashboardStats?.total_critical ?? 0),
       icon: ShieldAlert,
-      description: "Across all projects",
-      className: "text-destructive"
+      description: "Click to view",
+      className: "text-destructive",
+      onClick: () => navigate("/analytics?tab=vulnerabilities&severity=CRITICAL"),
     },
     {
       title: "High Vulnerabilities",
       value: String(dashboardStats?.total_high ?? 0),
       icon: Activity,
-      description: "Across all projects",
-      className: "text-severity-high"
+      description: "Click to view",
+      className: "text-severity-high",
+      onClick: () => navigate("/analytics?tab=vulnerabilities&severity=HIGH"),
     },
     {
       title: "Avg Risk Score",
       value: String(dashboardStats?.avg_risk_score ?? "0.0"),
       icon: ShieldCheck,
       description: "Average risk per project",
-      tooltip: "Calculated as the average sum of CVSS scores per project. If CVSS is missing, weighted severity is used: Critical=10, High=7.5, Medium=4, Low=1."
+      tooltip: "Calculated as the average sum of CVSS scores per project. If CVSS is missing, weighted severity is used: Critical=10, High=7.5, Medium=4, Low=1.",
     }
   ]
 
@@ -117,7 +120,12 @@ export default function Dashboard() {
           stats.map((stat) => {
             const Icon = stat.icon
             return (
-              <Card key={stat.title} title={stat.tooltip}>
+              <Card
+                key={stat.title}
+                title={stat.tooltip}
+                className={stat.onClick ? "cursor-pointer transition-colors hover:bg-muted/50" : ""}
+                onClick={stat.onClick}
+              >
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium flex items-center gap-2">
                     {stat.title}
@@ -179,7 +187,16 @@ export default function Dashboard() {
                             labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
                             itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
                         />
-                        <Bar dataKey="risk" fill="currentColor" radius={[4, 4, 0, 0]} className="fill-primary" barSize={40} />
+                        <Bar
+                          dataKey="risk"
+                          fill="currentColor"
+                          radius={[4, 4, 0, 0]}
+                          className="fill-primary cursor-pointer"
+                          barSize={40}
+                          onClick={(data) => {
+                            if (data?.id) navigate(`/projects/${data.id}`)
+                          }}
+                        />
                     </BarChart>
                     </ResponsiveContainer>
                 </div>

@@ -188,9 +188,7 @@ def _apply_enrichment_to_finding(
 
     if enrichment.exploit_maturity and enrichment.exploit_maturity != "unknown":
         current_maturity = details.get("exploit_maturity", "unknown")
-        if EXPLOIT_MATURITY_ORDER.get(enrichment.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(
-            current_maturity, 0
-        ):
+        if EXPLOIT_MATURITY_ORDER.get(enrichment.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(current_maturity, 0):
             details["exploit_maturity"] = enrichment.exploit_maturity
 
     if enrichment.risk_score is not None:

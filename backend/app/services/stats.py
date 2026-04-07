@@ -266,12 +266,12 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         from pymongo import ReadPreference
 
         pipeline = _build_stats_pipeline(scan_id)
-        findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)
+        findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         stats_result = await findings_primary.aggregate(pipeline).to_list(1)
         stats = _stats_from_result(stats_result)
 
         # 4. Calculate ignored count (read from PRIMARY after waiver writes)
-        findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)
+        findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
 
         scan_repo = ScanRepository(db)

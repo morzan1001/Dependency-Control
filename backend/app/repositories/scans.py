@@ -148,7 +148,6 @@ class ScanRepository:
             data = await self.collection.find_one(query, sort=[("created_at", -1)])
         return Scan(**data) if data else None
 
-
     async def iterate(
         self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:

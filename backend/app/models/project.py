@@ -32,9 +32,8 @@ class Project(BaseModel):
         serialization_alias="_id",
     )
     name: str
-    owner_id: str
+    owner_id: Optional[str] = None  # Deprecated: use team/member admins instead
     team_id: Optional[str] = None
-    owner_notification_preferences: Dict[str, List[str]] = Field(default_factory=dict)
     members: List[ProjectMember] = Field(default_factory=list)
     api_key_hash: Optional[str] = Field(None, exclude=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -184,8 +184,10 @@ async def get_project_by_api_key(
     return Project(**project_data)
 
 
-async def _resolve_owner_id(user_repo: UserRepository, email: Optional[str] = None, username: Optional[str] = None) -> str:
-    """Resolve an owner ID from email/username, falling back to first admin."""
+async def _resolve_initial_member_id(
+    user_repo: UserRepository, email: Optional[str] = None, username: Optional[str] = None
+) -> Optional[str]:
+    """Resolve a user ID to add as initial project admin member. Returns None if no match."""
     if email:
         user = await user_repo.get_raw_by_email(email)
         if user:
@@ -194,15 +196,15 @@ async def _resolve_owner_id(user_repo: UserRepository, email: Optional[str] = No
         user = await user_repo.get_raw_by_username(username)
         if user:
             return str(user["_id"])
-    admin = await user_repo.get_first_admin()
-    if admin:
-        return str(admin["_id"])
-    raise HTTPException(status_code=500, detail="Cannot auto-create project: No suitable owner found")
+    return None
 
 
 async def _sync_project_name(
-    project: Project, new_path: str, project_repo: ProjectRepository,
-    path_field: str = "gitlab_project_path", extra_updates: Optional[dict] = None,
+    project: Project,
+    new_path: str,
+    project_repo: ProjectRepository,
+    path_field: str = "gitlab_project_path",
+    extra_updates: Optional[dict] = None,
 ) -> Project:
     """Sync project path/name if the VCS project was renamed."""
     updates: dict = extra_updates or {}
@@ -252,35 +254,48 @@ async def _handle_gitlab_oidc(
         if gitlab_instance.sync_teams:
             gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
             team_id = await gitlab_service.sync_team_from_gitlab(
-                db, gitlab_project_id, gitlab_project_path, gitlab_project_data=gitlab_project_data,
+                db,
+                gitlab_project_id,
+                gitlab_project_path,
+                gitlab_project_data=gitlab_project_data,
             )
             if team_id and project.team_id != team_id:
                 extra_updates["team_id"] = team_id
 
         return await _sync_project_name(
-            project, gitlab_project_path, project_repo,
-            path_field="gitlab_project_path", extra_updates=extra_updates,
+            project,
+            gitlab_project_path,
+            project_repo,
+            path_field="gitlab_project_path",
+            extra_updates=extra_updates,
         )
 
     # Auto-create
     if not gitlab_instance.auto_create_projects:
         raise HTTPException(
-            status_code=404, detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled",
+            status_code=404,
+            detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled",
         )
 
-    owner_id = await _resolve_owner_id(user_repo, email=payload.user_email)
+    initial_member_id = await _resolve_initial_member_id(user_repo, email=payload.user_email)
+    members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
     new_project = Project(
-        name=gitlab_project_path, owner_id=owner_id,
-        members=[ProjectMember(user_id=owner_id, role="admin")],
-        gitlab_instance_id=instance_id, gitlab_project_id=gitlab_project_id,
-        gitlab_project_path=gitlab_project_path, default_branch=None,
+        name=gitlab_project_path,
+        members=members,
+        gitlab_instance_id=instance_id,
+        gitlab_project_id=gitlab_project_id,
+        gitlab_project_path=gitlab_project_path,
+        default_branch=None,
         active_analyzers=default_analyzers,
     )
 
     if gitlab_instance.sync_teams:
         gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
         team_id = await gitlab_service.sync_team_from_gitlab(
-            db, gitlab_project_id, gitlab_project_path, gitlab_project_data=gitlab_project_data,
+            db,
+            gitlab_project_id,
+            gitlab_project_path,
+            gitlab_project_data=gitlab_project_data,
         )
         if team_id:
             new_project.team_id = team_id
@@ -319,22 +334,28 @@ async def _handle_github_oidc(
     project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
     if project_data:
         return await _sync_project_name(
-            Project(**project_data), repo_path, project_repo,
+            Project(**project_data),
+            repo_path,
+            project_repo,
             path_field="github_repository_path",
         )
 
     # Auto-create
     if not github_instance.auto_create_projects:
         raise HTTPException(
-            status_code=404, detail=f"Project not found on GitHub instance '{github_instance.name}' and auto-creation is disabled",
+            status_code=404,
+            detail=f"Project not found on GitHub instance '{github_instance.name}' and auto-creation is disabled",
         )
 
-    owner_id = await _resolve_owner_id(user_repo, username=gh_payload.actor)
+    initial_member_id = await _resolve_initial_member_id(user_repo, username=gh_payload.actor)
+    members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
     new_project = Project(
-        name=repo_path, owner_id=owner_id,
-        members=[ProjectMember(user_id=owner_id, role="admin")],
-        github_instance_id=instance_id, github_repository_id=repo_id,
-        github_repository_path=repo_path, default_branch=None,
+        name=repo_path,
+        members=members,
+        github_instance_id=instance_id,
+        github_repository_id=repo_id,
+        github_repository_path=repo_path,
+        default_branch=None,
         active_analyzers=default_analyzers,
     )
 
@@ -390,14 +411,24 @@ async def get_project_for_ingest(
         gitlab_instance = await GitLabInstanceRepository(db).get_by_url(issuer)
         if gitlab_instance:
             return await _handle_gitlab_oidc(
-                oidc_token, gitlab_instance, db, project_repo, user_repo, settings.default_active_analyzers,
+                oidc_token,
+                gitlab_instance,
+                db,
+                project_repo,
+                user_repo,
+                settings.default_active_analyzers,
             )
 
         # Try GitHub
         github_instance = await GitHubInstanceRepository(db).get_by_url(issuer)
         if github_instance:
             return await _handle_github_oidc(
-                oidc_token, github_instance, db, project_repo, user_repo, settings.default_active_analyzers,
+                oidc_token,
+                github_instance,
+                db,
+                project_repo,
+                user_repo,
+                settings.default_active_analyzers,
             )
 
         raise HTTPException(

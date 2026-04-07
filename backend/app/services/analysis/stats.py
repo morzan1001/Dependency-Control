@@ -520,7 +520,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     # resulting in all-zero stats.
     from pymongo import ReadPreference
 
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)
+    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
     stats_result: List[Dict[str, Any]] = await findings_primary.aggregate(pipeline).to_list(1)
 
     # Initialize stats with defaults

@@ -545,8 +545,10 @@ class TestTeamSyncGroupMembers:
             GitLabMember(username="dev", email="dev@test.com", access_level=30),
         ]
 
-        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members, \
-             patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve:
+        with (
+            patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members,
+            patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve,
+        ):
             mock_members.return_value = members
             mock_resolve.return_value = {"id": 10}  # Parent group ID
 

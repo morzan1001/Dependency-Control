@@ -58,10 +58,6 @@ async def check_callgraph_access(
 
     user_id = str(user.id)
 
-    # Check if user is owner
-    if project.get("owner_id") == user_id:
-        return project
-
     # Check global permissions
     if _has_global_permission(user, require_write):
         return project

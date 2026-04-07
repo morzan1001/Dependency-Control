@@ -129,9 +129,15 @@ def _queue_announcement(
     mm_props = mm_advisory_props(subject=subject, message=message, dashboard_link=frontend_url)
     background_tasks.add_task(
         notification_service.notify_users,
-        users, "analysis_completed", subject, message,
-        db=db, forced_channels=forced_channels,
-        html_message=html_msg, slack_blocks=blocks, mattermost_props=mm_props,
+        users,
+        "analysis_completed",
+        subject,
+        message,
+        db=db,
+        forced_channels=forced_channels,
+        html_message=html_msg,
+        slack_blocks=blocks,
+        mattermost_props=mm_props,
     )
 
 
@@ -147,7 +153,9 @@ async def _handle_global_broadcast(
     """Handle global broadcast. Returns (unique_user_count, project_count)."""
     users = await user_repo.find_many({"is_active": True}, limit=10000)
     if users and not payload.dry_run:
-        _queue_announcement(background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels)
+        _queue_announcement(
+            background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels
+        )
     return len(users), 0
 
 
@@ -176,7 +184,9 @@ async def _handle_teams_broadcast(
 
     users = await user_repo.find_many({"_id": {"$in": list(user_ids)}, "is_active": True}, limit=10000)
     if users and not payload.dry_run:
-        _queue_announcement(background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels)
+        _queue_announcement(
+            background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels
+        )
     return len(users), 0
 
 
@@ -267,7 +277,9 @@ def _find_affected_projects(
 
 
 def _build_advisory_html(
-    message_html: str, projects_data: list, frontend_url: str,
+    message_html: str,
+    projects_data: list,
+    frontend_url: str,
 ) -> tuple[str, str]:
     """Build HTML and plain-text messages for an advisory notification. Returns (html, text)."""
     projects_html_parts = []
@@ -283,9 +295,15 @@ def _build_advisory_html(
     findings_list_html = "<ul>" + "".join(projects_html_parts) + "</ul>"
     findings_text_block = "\n".join(projects_text_parts)
 
-    btn_style = "background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;"
-    div_style = "background-color: #fff3cd; border: 1px solid #ffeeba; padding: 15px; margin-bottom: 20px; border-radius: 4px;"
-    dashboard_button = f'<p style="margin-top: 20px;"><a href="{frontend_url}" style="{btn_style}">View Dashboard</a></p>'
+    btn_style = (
+        "background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;"
+    )
+    div_style = (
+        "background-color: #fff3cd; border: 1px solid #ffeeba; padding: 15px; margin-bottom: 20px; border-radius: 4px;"
+    )
+    dashboard_button = (
+        f'<p style="margin-top: 20px;"><a href="{frontend_url}" style="{btn_style}">View Dashboard</a></p>'
+    )
 
     final_html = f"""
     <div style="font-family: Arial, sans-serif; color: #333;">
@@ -311,22 +329,29 @@ async def _notify_advisory_owners(
     db: Any,
     forced_channels: Any,
 ) -> int:
-    """Group affected projects by owner and queue advisory notifications. Returns unique user count."""
-    all_owner_ids = {p.owner_id for p in affected_projects_map.values()}
-    owner_users = await user_repo.find_many({"_id": {"$in": list(all_owner_ids)}, "is_active": True}, limit=10000)
-    users_dict = {str(u.id): u for u in owner_users}
+    """Group affected projects by admin members and queue advisory notifications. Returns unique user count."""
+    # Collect all admin member IDs across affected projects
+    all_admin_ids: Set[str] = set()
+    for project in affected_projects_map.values():
+        for member in project.members:
+            if member.role == "admin":
+                all_admin_ids.add(member.user_id)
 
-    # Group projects by owner
+    admin_users = await user_repo.find_many({"_id": {"$in": list(all_admin_ids)}, "is_active": True}, limit=10000)
+    users_dict = {str(u.id): u for u in admin_users}
+
+    # Group projects by admin members
     user_notification_map: Dict[str, Dict] = {}
     for pid, project in affected_projects_map.items():
-        uid = project.owner_id
-        if uid not in users_dict:
-            continue
-        if uid not in user_notification_map:
-            user_notification_map[uid] = {"user": users_dict[uid], "projects": []}
-        user_notification_map[uid]["projects"].append(
-            {"id": pid, "name": project.name, "findings": project_findings.get(pid, [])},
-        )
+        for member in project.members:
+            if member.role != "admin" or member.user_id not in users_dict:
+                continue
+            uid = member.user_id
+            if uid not in user_notification_map:
+                user_notification_map[uid] = {"user": users_dict[uid], "projects": []}
+            user_notification_map[uid]["projects"].append(
+                {"id": pid, "name": project.name, "findings": project_findings.get(pid, [])},
+            )
 
     if not payload.dry_run:
         for uid, data in user_notification_map.items():
@@ -336,19 +361,29 @@ async def _notify_advisory_owners(
 
             advisory_subject = f"ACTION REQUIRED: {payload.subject}"
             advisory_blocks = build_advisory_blocks(
-                subject=advisory_subject, message=payload.message,
-                affected_projects=projects_data, dashboard_link=frontend_url,
+                subject=advisory_subject,
+                message=payload.message,
+                affected_projects=projects_data,
+                dashboard_link=frontend_url,
             )
             advisory_mm = mm_advisory_props(
-                subject=advisory_subject, message=payload.message,
-                affected_projects=projects_data, dashboard_link=frontend_url,
+                subject=advisory_subject,
+                message=payload.message,
+                affected_projects=projects_data,
+                dashboard_link=frontend_url,
             )
 
             background_tasks.add_task(
                 notification_service.notify_users,
-                [data["user"]], "vulnerability_found", advisory_subject, context_message,
-                db=db, forced_channels=forced_channels,
-                html_message=final_html, slack_blocks=advisory_blocks, mattermost_props=advisory_mm,
+                [data["user"]],
+                "vulnerability_found",
+                advisory_subject,
+                context_message,
+                db=db,
+                forced_channels=forced_channels,
+                html_message=final_html,
+                slack_blocks=advisory_blocks,
+                mattermost_props=advisory_mm,
             )
 
     return len(user_notification_map)
@@ -396,12 +431,25 @@ async def broadcast_message(
 
     if payload.target_type == "global":
         unique_user_count, project_count = await _handle_global_broadcast(
-            payload, background_tasks, user_repo, message_html_content, frontend_url, db, forced_channels,
+            payload,
+            background_tasks,
+            user_repo,
+            message_html_content,
+            frontend_url,
+            db,
+            forced_channels,
         )
 
     elif payload.target_type == "teams":
         unique_user_count, project_count = await _handle_teams_broadcast(
-            payload, background_tasks, user_repo, team_repo, message_html_content, frontend_url, db, forced_channels,
+            payload,
+            background_tasks,
+            user_repo,
+            team_repo,
+            message_html_content,
+            frontend_url,
+            db,
+            forced_channels,
         )
 
     elif payload.target_type == "advisory":
@@ -437,8 +485,15 @@ async def broadcast_message(
 
         # Group affected projects by owner and notify
         unique_user_count = await _notify_advisory_owners(
-            affected_projects_map, project_findings, user_repo,
-            payload, background_tasks, message_html_content, frontend_url, db, forced_channels,
+            affected_projects_map,
+            project_findings,
+            user_repo,
+            payload,
+            background_tasks,
+            message_html_content,
+            frontend_url,
+            db,
+            forced_channels,
         )
 
     # 5. Save History

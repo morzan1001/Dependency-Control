@@ -392,7 +392,8 @@ class GitLabService:
         encoded_path = urllib.parse.quote(group_path, safe="")
         response = await self._api_get(f"/groups/{encoded_path}")
         if response and response.status_code == 200:
-            return response.json()
+            result: Dict[str, Any] = response.json()
+            return result
         return None
 
     async def sync_team_from_gitlab(
@@ -509,8 +510,10 @@ class GitLabService:
                     "members": [tm.model_dump() for tm in team_members],
                     "updated_at": now,
                 }
-                # Sync name if group was renamed
-                if team.get("name") != team_name:
+                # Sync name only if it still has the auto-generated GitLab prefix.
+                # If the team was manually renamed (e.g. to "BOS"), keep the custom name.
+                current_name = team.get("name", "")
+                if current_name.startswith("GitLab Group:") and current_name != team_name:
                     update_data["name"] = team_name
                     update_data["description"] = description
                 # Backfill gitlab IDs for legacy teams found by name
