@@ -538,15 +538,17 @@ class TestTeamSyncGroupMembers:
             assert result is not None
 
     def test_team_name_includes_group_path(self, gitlab_instance_a):
-        """Team created from sync should be named 'GitLab Group: <full_path>'."""
+        """Team created from sync should use team_sync_depth to truncate path."""
         service = GitLabService(gitlab_instance_a)
 
         members = [
             GitLabMember(username="dev", email="dev@test.com", access_level=30),
         ]
 
-        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members, \
+             patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve:
             mock_members.return_value = members
+            mock_resolve.return_value = {"id": 10}  # Parent group ID
 
             user_doc = {"_id": "uid", "username": "dev"}
             users_coll = create_mock_collection(find_one=user_doc)
@@ -567,10 +569,10 @@ class TestTeamSyncGroupMembers:
                 )
             )
 
-            # Team must have been inserted
+            # With team_sync_depth=1 (default), team name should be truncated to top-level
             teams_coll.insert_one.assert_called_once()
             team_data = teams_coll.insert_one.call_args[0][0]
-            assert "org/subgroup" in team_data["name"]
+            assert team_data["name"] == "GitLab Group: org"
 
     def test_updates_existing_team_members(self, gitlab_instance_a):
         """If team already exists, should update members instead of creating."""

@@ -514,11 +514,14 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         },
     ]
 
-    # Use FindingRepository for consistent data access
-    from app.repositories import FindingRepository
+    # Read from PRIMARY to ensure read-after-write consistency.
+    # With secondaryPreferred, the stats aggregation might hit a replica
+    # that hasn't replicated the findings written milliseconds earlier,
+    # resulting in all-zero stats.
+    from pymongo import ReadPreference
 
-    finding_repo = FindingRepository(db)
-    stats_result: List[Dict[str, Any]] = await finding_repo.aggregate(pipeline, limit=1)
+    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)
+    stats_result: List[Dict[str, Any]] = await findings_primary.aggregate(pipeline).to_list(1)
 
     # Initialize stats with defaults
     stats = Stats()

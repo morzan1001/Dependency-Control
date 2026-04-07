@@ -14,6 +14,7 @@ export interface GitLabInstance {
   oidc_audience?: string;
   auto_create_projects: boolean;
   sync_teams: boolean;
+  team_sync_depth: number;
   created_at: string;
   created_by: string;
   last_modified_at?: string;
@@ -30,6 +31,7 @@ export interface GitLabInstanceCreate {
   oidc_audience?: string;
   auto_create_projects?: boolean;
   sync_teams?: boolean;
+  team_sync_depth?: number;
 }
 
 export interface GitLabInstanceUpdate {
@@ -42,6 +44,7 @@ export interface GitLabInstanceUpdate {
   oidc_audience?: string;
   auto_create_projects?: boolean;
   sync_teams?: boolean;
+  team_sync_depth?: number;
 }
 
 export interface GitLabInstanceList {

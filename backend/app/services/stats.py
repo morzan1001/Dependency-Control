@@ -262,13 +262,17 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
         await _apply_waivers(finding_repo, scan_id, waivers)
 
-        # 3. Calculate stats
+        # 3. Calculate stats (read from PRIMARY for consistency after waiver updates)
+        from pymongo import ReadPreference
+
         pipeline = _build_stats_pipeline(scan_id)
-        stats_result = await finding_repo.aggregate(pipeline, limit=1)
+        findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)
+        stats_result = await findings_primary.aggregate(pipeline).to_list(1)
         stats = _stats_from_result(stats_result)
 
-        # 4. Calculate ignored count and update Scan and Project
-        ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
+        # 4. Calculate ignored count (read from PRIMARY after waiver writes)
+        findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)
+        ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
 
         scan_repo = ScanRepository(db)
         await scan_repo.update_raw(

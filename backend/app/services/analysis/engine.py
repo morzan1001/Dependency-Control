@@ -632,7 +632,11 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
 
     await _apply_waivers(active_waivers, scan_id, finding_repo)
-    ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
+    # Read from PRIMARY for consistency after bulk insert + waiver updates
+    from pymongo import ReadPreference
+
+    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)
+    ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
     _track_waiver_metrics(active_waivers)
 
     # Calculate comprehensive stats
@@ -698,9 +702,10 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             },
         )
 
-    # Integrations & Notifications
+    # Integrations & Notifications (read from PRIMARY after project stats update)
     if project_id:
-        project_data = await project_repo.get_raw_by_id(project_id)
+        projects_primary = db.projects.with_options(read_preference=ReadPreference.PRIMARY)
+        project_data = await projects_primary.find_one({"_id": project_id})
         if project_data:
             project = Project(**project_data)
 

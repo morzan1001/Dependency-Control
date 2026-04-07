@@ -44,6 +44,13 @@ class GitLabInstance(BaseModel):
         False, description="Automatically create projects from OIDC tokens if they don't exist"
     )
     sync_teams: bool = Field(False, description="Sync GitLab group members to local teams")
+    team_sync_depth: int = Field(
+        1,
+        description="GitLab group path depth for team creation. "
+        "1 = top-level group only (e.g. 'mo'), "
+        "2 = two levels (e.g. 'mo/edge'), "
+        "0 = full path (current behavior)",
+    )
 
     # Metadata
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

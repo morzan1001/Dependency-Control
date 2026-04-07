@@ -54,6 +54,7 @@ type UnifiedInstance = {
   // GitLab-specific
   is_default?: boolean;
   sync_teams?: boolean;
+  team_sync_depth?: number;
   token_configured?: boolean;
   // GitHub-specific
   github_url?: string;
@@ -71,6 +72,7 @@ interface InstanceFormData {
   // GitLab-specific
   access_token: string;
   sync_teams: boolean;
+  team_sync_depth: number;
   is_default: boolean;
   // GitHub-specific
   github_url: string;
@@ -86,6 +88,7 @@ const emptyFormData: InstanceFormData = {
   auto_create_projects: false,
   access_token: "",
   sync_teams: false,
+  team_sync_depth: 1,
   is_default: false,
   github_url: "",
 };
@@ -110,6 +113,7 @@ function mergeInstances(
         created_at: gl.created_at,
         is_default: gl.is_default,
         sync_teams: gl.sync_teams,
+        team_sync_depth: gl.team_sync_depth,
         token_configured: gl.token_configured,
       });
     }
@@ -293,6 +297,7 @@ export function CICDInstancesManagement() {
         oidc_audience: formData.oidc_audience || undefined,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
+        team_sync_depth: formData.team_sync_depth,
         is_active: formData.is_active,
         is_default: formData.is_default,
       };
@@ -324,6 +329,7 @@ export function CICDInstancesManagement() {
         oidc_audience: formData.oidc_audience || undefined,
         auto_create_projects: formData.auto_create_projects,
         sync_teams: formData.sync_teams,
+        team_sync_depth: formData.team_sync_depth,
         is_active: formData.is_active,
         is_default: formData.is_default,
       };
@@ -355,6 +361,7 @@ export function CICDInstancesManagement() {
       auto_create_projects: instance.auto_create_projects,
       access_token: "",
       sync_teams: instance.sync_teams || false,
+      team_sync_depth: instance.team_sync_depth ?? 1,
       is_default: instance.is_default || false,
       github_url: instance.github_url || "",
     });
@@ -778,24 +785,48 @@ function InstanceForm({
 
         {/* GitLab-specific: Sync Teams */}
         {formData.type === "gitlab" && (
-          <div className="flex items-center justify-between">
-            <div>
-              <Label htmlFor="ci-sync-teams" className={!formData.access_token && !isEdit ? "text-muted-foreground" : ""}>Sync Teams</Label>
-              <p className="text-xs text-muted-foreground">
-                {!formData.access_token && !isEdit
-                  ? "Requires an access token"
-                  : "Sync GitLab group members to local teams"}
-              </p>
+          <>
+            <div className="flex items-center justify-between">
+              <div>
+                <Label htmlFor="ci-sync-teams" className={!formData.access_token && !isEdit ? "text-muted-foreground" : ""}>Sync Teams</Label>
+                <p className="text-xs text-muted-foreground">
+                  {!formData.access_token && !isEdit
+                    ? "Requires an access token"
+                    : "Sync GitLab group members to local teams"}
+                </p>
+              </div>
+              <Switch
+                id="ci-sync-teams"
+                checked={formData.sync_teams}
+                disabled={!formData.access_token && !isEdit}
+                onCheckedChange={(checked) =>
+                  setFormData((prev) => ({ ...prev, sync_teams: checked }))
+                }
+              />
             </div>
-            <Switch
-              id="ci-sync-teams"
-              checked={formData.sync_teams}
-              disabled={!formData.access_token && !isEdit}
-              onCheckedChange={(checked) =>
-                setFormData((prev) => ({ ...prev, sync_teams: checked }))
-              }
-            />
-          </div>
+
+            {formData.sync_teams && (
+              <div className="space-y-2">
+                <Label htmlFor="ci-team-sync-depth">Team Sync Depth</Label>
+                <select
+                  id="ci-team-sync-depth"
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  value={formData.team_sync_depth}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, team_sync_depth: parseInt(e.target.value) }))
+                  }
+                >
+                  <option value={1}>Top-level group only (e.g. &quot;mo&quot;)</option>
+                  <option value={2}>Two levels (e.g. &quot;mo/edge&quot;)</option>
+                  <option value={3}>Three levels</option>
+                  <option value={0}>Full path (one team per subgroup)</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Controls how deep into the GitLab group hierarchy teams are created.
+                </p>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

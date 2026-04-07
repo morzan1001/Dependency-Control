@@ -385,6 +385,16 @@ class GitLabService:
         members = await self._api_get_paginated(f"/groups/{group_id}/members/all")
         return [GitLabMember(**m) for m in members] if members else None
 
+    async def _resolve_group_by_path(self, group_path: str) -> Optional[Dict[str, Any]]:
+        """Resolve a GitLab group by its full path. Returns group dict with 'id' key."""
+        import urllib.parse
+
+        encoded_path = urllib.parse.quote(group_path, safe="")
+        response = await self._api_get(f"/groups/{encoded_path}")
+        if response and response.status_code == 200:
+            return response.json()
+        return None
+
     async def sync_team_from_gitlab(
         self,
         db: AsyncIOMotorDatabase,
@@ -416,6 +426,28 @@ class GitLabService:
                 namespace = gitlab_project_data.namespace
                 group_id = namespace.id
                 group_path = namespace.full_path
+
+                # Apply team_sync_depth to determine team granularity.
+                # depth=1: "mo/edge/k8s/app" -> team "mo" (top-level only)
+                # depth=2: "mo/edge/k8s/app" -> team "mo/edge"
+                # depth=0: full path (legacy behavior)
+                depth = getattr(self.instance, "team_sync_depth", 1)
+                if depth > 0:
+                    parts = group_path.split("/")
+                    truncated_path = "/".join(parts[:depth])
+                    # Use the parent group at the truncated level for member sync
+                    if len(parts) > depth:
+                        # Resolve the parent group ID via API
+                        parent_group = await self._resolve_group_by_path(truncated_path)
+                        if parent_group:
+                            group_id = parent_group["id"]
+                            group_path = truncated_path
+                        else:
+                            # Fallback to truncated path name but keep original group_id
+                            group_path = truncated_path
+                    else:
+                        group_path = truncated_path
+
                 team_name = f"GitLab Group: {group_path}"
                 description = f"Imported from GitLab Group {group_path}"
 
