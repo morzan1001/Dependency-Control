@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.core.constants import TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER, TEAM_ROLE_OWNER
+from app.core.constants import TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER
 from app.models.team import Team, TeamMember
 
 MODULE = "app.api.v1.endpoints.teams"
@@ -15,7 +15,7 @@ MODULE = "app.api.v1.endpoints.teams"
 def _make_team(id="team-1", name="Test Team", members=None):
     """Create a Team with sensible defaults."""
     if members is None:
-        members = [TeamMember(user_id="user-1", role=TEAM_ROLE_OWNER)]
+        members = [TeamMember(user_id="user-1", role=TEAM_ROLE_ADMIN)]
     return Team(id=id, name=name, members=members)
 
 
@@ -37,7 +37,7 @@ class TestCreateTeam:
             )
 
         assert result["name"] == "New Team"
-        assert result["members"][0]["role"] == TEAM_ROLE_OWNER
+        assert result["members"][0]["role"] == TEAM_ROLE_ADMIN
         assert result["members"][0]["user_id"] == str(regular_user.id)
         assert result["members"][0]["username"] == regular_user.username
         mock_repo.create.assert_called_once()
@@ -272,7 +272,7 @@ class TestAddTeamMember:
         from app.api.v1.endpoints.teams import add_team_member
         from app.schemas.team import TeamMemberAdd, TeamResponse
 
-        team = _make_team(members=[TeamMember(user_id="admin-1", role=TEAM_ROLE_OWNER)])
+        team = _make_team(members=[TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN)])
         user_doc = {"_id": "new-user-id", "username": "newuser", "email": "new@test.com"}
         enriched = TeamResponse(
             _id="team-1",
@@ -363,7 +363,7 @@ class TestUpdateTeamMember:
 
         team = _make_team(
             members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_OWNER),
+                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
                 TeamMember(user_id="target-user", role=TEAM_ROLE_MEMBER),
             ]
         )
@@ -400,7 +400,7 @@ class TestUpdateTeamMember:
         from app.api.v1.endpoints.teams import update_team_member
         from app.schemas.team import TeamMemberUpdate
 
-        team = _make_team(members=[TeamMember(user_id="admin-1", role=TEAM_ROLE_OWNER)])
+        team = _make_team(members=[TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN)])
 
         mock_repo = MagicMock()
 
@@ -426,7 +426,7 @@ class TestRemoveTeamMember:
 
         team = _make_team(
             members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_OWNER),
+                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
                 TeamMember(user_id="to-remove", role=TEAM_ROLE_MEMBER),
             ]
         )
@@ -455,15 +455,15 @@ class TestRemoveTeamMember:
 
         mock_repo.update_raw.assert_called_once()
 
-    def test_raises_400_when_removing_owner(self, admin_user):
+    def test_raises_400_when_removing_last_admin_self(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member
 
-        # admin_user has id="admin-1"; make them the owner so user_id == current_user.id
-        # triggers the "Cannot remove yourself as owner" guard
+        # admin_user has id="admin-1"; make them the only admin
+        # triggers the "Cannot remove yourself as the last admin" guard
         team = _make_team(
             members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_OWNER),
-                TeamMember(user_id="other-user", role=TEAM_ROLE_ADMIN),
+                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
+                TeamMember(user_id="other-user", role=TEAM_ROLE_MEMBER),
             ]
         )
 
@@ -481,12 +481,12 @@ class TestRemoveTeamMember:
                         )
                     )
         assert exc_info.value.status_code == 400
-        assert "owner" in exc_info.value.detail.lower()
+        assert "admin" in exc_info.value.detail.lower()
 
     def test_raises_404_when_not_member(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member
 
-        team = _make_team(members=[TeamMember(user_id="admin-1", role=TEAM_ROLE_OWNER)])
+        team = _make_team(members=[TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN)])
 
         mock_repo = MagicMock()
 
@@ -551,9 +551,9 @@ class TestDeleteTeamPermissions:
                 )
 
         assert exc_info.value.status_code == 403
-        # Verify the required_role=TEAM_ROLE_OWNER was passed
+        # Verify the required_role=TEAM_ROLE_ADMIN was passed
         call_kwargs = mock_access.call_args
-        assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_OWNER
+        assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_ADMIN
 
 
 class TestUpdateTeamMemberOwnerProtection:
@@ -565,7 +565,7 @@ class TestUpdateTeamMemberOwnerProtection:
 
         team = _make_team(
             members=[
-                TeamMember(user_id="the-owner", role=TEAM_ROLE_OWNER),
+                TeamMember(user_id="the-owner", role=TEAM_ROLE_ADMIN),
                 TeamMember(user_id=str(regular_user.id), role=TEAM_ROLE_ADMIN),
             ]
         )
@@ -594,4 +594,4 @@ class TestUpdateTeamMemberOwnerProtection:
         assert exc_info.value.status_code == 403
         # Verify owner role was required
         call_kwargs = mock_access.call_args
-        assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_OWNER
+        assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_ADMIN

@@ -18,7 +18,7 @@ from app.api.v1.helpers import (
     get_member_role,
     get_team_with_access,
 )
-from app.core.constants import TEAM_ROLE_OWNER
+from app.core.constants import TEAM_ROLE_ADMIN
 from app.core.permissions import has_permission
 from app.models.team import Team, TeamMember
 from app.models.user import User
@@ -43,14 +43,14 @@ async def create_team(
     db: DatabaseDep,
 ) -> Dict[str, Any]:
     """
-    Create a new team. The creator becomes the owner.
+    Create a new team. The creator becomes an admin.
     """
     team_repo = TeamRepository(db)
 
     team = Team(
         name=team_in.name,
         description=team_in.description,
-        members=[TeamMember(user_id=str(current_user.id), role=TEAM_ROLE_OWNER)],
+        members=[TeamMember(user_id=str(current_user.id), role=TEAM_ROLE_ADMIN)],
     )
 
     await team_repo.create(team)
@@ -127,7 +127,7 @@ async def update_team(
     db: DatabaseDep,
 ) -> TeamResponse:
     """
-    Update team details. Requires 'admin' or 'owner' role.
+    Update team details. Requires 'admin' role.
     """
     await get_team_with_access(team_id, current_user, db)
 
@@ -148,7 +148,7 @@ async def delete_team(
     db: DatabaseDep,
 ) -> None:
     """
-    Delete a team. Requires 'owner' role.
+    Delete a team. Requires 'admin' role.
 
     Performs cascade cleanup:
     - Sets team_id=null on all projects assigned to this team
@@ -157,7 +157,7 @@ async def delete_team(
     from app.repositories import ProjectRepository
 
     if not has_permission(current_user.permissions, "team:delete"):
-        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_OWNER)
+        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
     # CASCADE: Unassign team from all projects
     project_repo = ProjectRepository(db)
@@ -234,10 +234,10 @@ async def update_team_member(
     if member_index is None:
         raise HTTPException(status_code=404, detail="User not in team")
 
-    # Prevent modifying owner if you are not owner (admins can't demote owners)
-    # If target is owner, only owner can modify
-    if team.members[member_index].role == TEAM_ROLE_OWNER:
-        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_OWNER)
+    # Prevent modifying the last admin
+    # If target is admin, check if they are the last admin
+    if team.members[member_index].role == TEAM_ROLE_ADMIN:
+        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
     await team_repo.update_raw(
         team_id,
@@ -270,10 +270,10 @@ async def remove_team_member(
     if target_role is None:
         raise HTTPException(status_code=404, detail="User not in team")
 
-    if target_role == TEAM_ROLE_OWNER:
+    if target_role == TEAM_ROLE_ADMIN:
         if user_id == current_user.id:
-            raise HTTPException(status_code=400, detail="Cannot remove yourself as owner")
-        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_OWNER)
+            raise HTTPException(status_code=400, detail="Cannot remove yourself as the last admin")
+        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
     await team_repo.update_raw(
         team_id,

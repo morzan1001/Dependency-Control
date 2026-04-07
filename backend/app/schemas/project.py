@@ -68,10 +68,10 @@ class ProjectUpdate(BaseModel):
     )
     default_branch: Optional[str] = Field(None, description="Default branch to show in dashboard")
     enforce_notification_settings: Optional[bool] = Field(
-        None, description="Enforce owner notification settings for all members"
+        None, description="Enforce admin notification settings for all members"
     )
     owner_notification_preferences: Optional[Dict[str, List[str]]] = Field(
-        None, description="Notification preferences for the owner"
+        None, description="Notification preferences (legacy field)"
     )
 
 

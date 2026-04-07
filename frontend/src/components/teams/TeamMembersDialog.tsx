@@ -2,7 +2,7 @@ import { useUpdateTeamMember, useRemoveTeamMember } from '@/hooks/queries/use-te
 import { Team } from '@/types/team';
 import { useAuth } from '@/context/useAuth';
 import { useCurrentUser } from '@/hooks/queries/use-users';
-import { canManageTeamMembers, isTeamOwner } from '@/lib/team-roles';
+import { canManageTeamMembers } from '@/lib/team-roles';
 import { Button } from '@/components/ui/button';
 import { UserMinus, Loader2 } from 'lucide-react';
 import {
@@ -47,9 +47,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
     ? canManageTeamMembers(team, currentUser.id, permissions)
     : false;
 
-  const currentUserIsOwner = team && currentUser
-    ? isTeamOwner(team, currentUser.id)
-    : false;
+
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -71,9 +69,8 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
               </TableHeader>
               <TableBody>
                 {team?.members.map((member) => {
-                  const memberIsOwner = member.role === 'owner';
                   const isSelf = member.user_id === currentUser?.id;
-                  const canEditRole = canManage && (!memberIsOwner || currentUserIsOwner) && !isSelf;
+                  const canEditRole = canManage && !isSelf;
                   return (
                     <TableRow key={member.user_id}>
                       <TableCell>
@@ -109,7 +106,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                       </TableCell>
                       {canManage && (
                         <TableCell>
-                          {!isSelf && (!memberIsOwner || currentUserIsOwner) && (
+                          {!isSelf && canManage && (
                             <Button
                               variant="ghost"
                               size="icon"

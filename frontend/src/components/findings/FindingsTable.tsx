@@ -32,6 +32,8 @@ interface FindingsTableProps {
 
 export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0 }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
+    const scrollTargetRef = useRef<HTMLTableRowElement | null>(null)
+    const hasScrolledRef = useRef(false)
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [sortBy, setSortBy] = useState("severity")
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
@@ -44,14 +46,14 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         isLoading,
         isError
     } = useInfiniteQuery({
-        queryKey: ['findings', scanId, category, search, severity, sortBy, sortOrder],
+        // severity is NOT passed to API - we show all findings but scroll to the target
+        queryKey: ['findings', scanId, category, search, sortBy, sortOrder],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
                 limit: DEFAULT_PAGE_SIZE,
                 category,
                 search,
-                severity,
                 sort_by: sortBy,
                 sort_order: sortOrder
             });
@@ -65,6 +67,18 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     })
 
     const allRows = data ? data.pages.flatMap((d) => d.items) : []
+
+    // Scroll to first finding matching the target severity (from URL param)
+    useEffect(() => {
+        if (!severity || hasScrolledRef.current || allRows.length === 0) return
+        const targetRow = scrollTargetRef.current
+        if (targetRow) {
+            targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            targetRow.classList.add('ring-2', 'ring-primary', 'ring-offset-1')
+            setTimeout(() => targetRow.classList.remove('ring-2', 'ring-primary', 'ring-offset-1'), 3000)
+            hasScrolledRef.current = true
+        }
+    }, [severity, allRows.length])
 
     // IntersectionObserver on sentinel element triggers loading the next page
     // when the user scrolls near the bottom of the table.
@@ -162,10 +176,18 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {allRows.map((finding) => {
+                        {(() => { let scrollTargetFound = false; return allRows.map((finding) => {
                             const sourceInfo = getSourceInfo(finding?.source_type)
+                            // Set ref on the first row matching the target severity for scroll-to
+                            let isScrollTarget = false
+                            if (severity && !scrollTargetFound && !hasScrolledRef.current
+                                && finding.severity?.toUpperCase() === severity.toUpperCase()) {
+                                isScrollTarget = true
+                                scrollTargetFound = true
+                            }
                             return (
                                 <TableRow
+                                    ref={isScrollTarget ? scrollTargetRef : undefined}
                                     onClick={() => setSelectedFinding(finding)}
                                     key={finding.id}
                                     className={`border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
@@ -283,7 +305,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                     </TableCell>
                                 </TableRow>
                             )
-                        })}
+                        })})()}
                         {isFetchingNextPage && (
                             <TableRow>
                                 <TableCell colSpan={6} className="p-4 text-center">

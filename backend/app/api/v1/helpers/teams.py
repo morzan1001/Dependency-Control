@@ -109,7 +109,7 @@ async def check_team_access(
         team_id: The team ID to check access for
         user: The current user
         db: Database instance
-        required_role: Optional minimum role required (member, admin, owner)
+        required_role: Optional minimum role required (member, admin)
 
     Returns:
         The Team object if access is granted
@@ -145,7 +145,7 @@ async def check_team_access(
     if required_role:
         if member_role is None:
             raise HTTPException(status_code=403, detail="Not enough permissions in this team")
-        # Role hierarchy: owner > admin > member (TEAM_ROLES is ordered this way)
+        # Role hierarchy: admin > member (TEAM_ROLES is ordered this way)
         if TEAM_ROLES.index(member_role) < TEAM_ROLES.index(required_role):
             raise HTTPException(status_code=403, detail="Not enough permissions in this team")
 

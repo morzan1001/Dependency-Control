@@ -10,9 +10,8 @@ from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLE_VIEWER,
-    TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
-    TEAM_ROLE_OWNER,
+    TEAM_ROLE_ADMIN,
 )
 from app.models.project import Project, ProjectMember
 from app.models.team import Team, TeamMember
@@ -374,7 +373,7 @@ class TestCheckTeamAccess:
         from app.api.v1.helpers.teams import check_team_access
 
         team = self._make_team(
-            members=[TeamMember(user_id="other-user", role=TEAM_ROLE_OWNER)],
+            members=[TeamMember(user_id="other-user", role=TEAM_ROLE_ADMIN)],
         )
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=team)
@@ -431,32 +430,11 @@ class TestCheckTeamAccess:
             )
         assert result.id == "team-1"
 
-    def test_admin_role_insufficient_for_owner_required(self, regular_user):
+    def test_admin_can_access_with_admin_required(self, regular_user):
         from app.api.v1.helpers.teams import check_team_access
 
         team = self._make_team(
             members=[TeamMember(user_id=str(regular_user.id), role=TEAM_ROLE_ADMIN)],
-        )
-        mock_repo = MagicMock()
-        mock_repo.get_by_id = AsyncMock(return_value=team)
-
-        with patch(f"{HELPERS_TEAMS}.TeamRepository", return_value=mock_repo):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(
-                    check_team_access(
-                        "team-1",
-                        regular_user,
-                        MagicMock(),
-                        required_role=TEAM_ROLE_OWNER,
-                    )
-                )
-        assert exc_info.value.status_code == 403
-
-    def test_owner_can_access_with_owner_required(self, regular_user):
-        from app.api.v1.helpers.teams import check_team_access
-
-        team = self._make_team(
-            members=[TeamMember(user_id=str(regular_user.id), role=TEAM_ROLE_OWNER)],
         )
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=team)
@@ -467,7 +445,7 @@ class TestCheckTeamAccess:
                     "team-1",
                     regular_user,
                     MagicMock(),
-                    required_role=TEAM_ROLE_OWNER,
+                    required_role=TEAM_ROLE_ADMIN,
                 )
             )
         assert result.id == "team-1"

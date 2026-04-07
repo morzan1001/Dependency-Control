@@ -423,7 +423,7 @@ def _merge_team_members(data: Dict[str, Any], t_users: Dict[str, str]) -> None:
         uid = tm["user_id"]
         if uid in existing_ids:
             continue
-        role = "admin" if tm.get("role") in ["admin", "owner"] else "viewer"
+        role = "admin" if tm.get("role") in ["admin"] else "viewer"
         data["members"].append(
             {
                 "user_id": uid,
@@ -885,7 +885,7 @@ async def update_notification_settings(
                 # Superusers must be members to set preferences.
                 raise HTTPException(
                     status_code=400,
-                    detail="You must be a member or owner to set notification preferences",
+                    detail="You must be a member or admin to set notification preferences",
                 )
 
     # Return updated project
@@ -1235,11 +1235,17 @@ async def update_project_member(
     if member_index == -1:
         raise HTTPException(status_code=404, detail="User is not a member of this project")
 
-    # Prevent demoting the last admin
+    # Prevent demoting the last admin (count both direct and team admins)
     current_member = project.members[member_index]
     if current_member.role == "admin" and member_in.role and member_in.role != "admin":
-        admin_count = sum(1 for m in project.members if m.role == "admin")
-        if admin_count <= 1:
+        direct_admin_count = sum(1 for m in project.members if m.role == "admin")
+        team_admin_count = 0
+        if project.team_id:
+            team_repo = TeamRepository(db)
+            team = await team_repo.get_raw_by_id(project.team_id)
+            if team:
+                team_admin_count = sum(1 for m in team.get("members", []) if m.get("role") in ("admin"))
+        if direct_admin_count + team_admin_count <= 1:
             raise HTTPException(status_code=400, detail="Cannot demote the last admin. Add another admin first.")
 
     project_repo = ProjectRepository(db)
@@ -1286,11 +1292,18 @@ async def remove_project_member(
     if not member_exists:
         raise HTTPException(status_code=404, detail="User is not a member of this project")
 
-    # Prevent removing the last admin
+    # Prevent removing the last admin (count both direct and team admins)
     member_role = next((m.role for m in project.members if m.user_id == user_id), None)
     if member_role == "admin":
-        admin_count = sum(1 for m in project.members if m.role == "admin")
-        if admin_count <= 1:
+        direct_admin_count = sum(1 for m in project.members if m.role == "admin")
+        team_admin_count = 0
+        if project.team_id:
+            team_repo = TeamRepository(db)
+            team = await team_repo.get_raw_by_id(project.team_id)
+            if team:
+                team_admin_count = sum(1 for m in team.get("members", []) if m.get("role") in ("admin"))
+        total_admins = direct_admin_count + team_admin_count
+        if total_admins <= 1:
             raise HTTPException(status_code=400, detail="Cannot remove the last admin. Add another admin first.")
 
     project_repo = ProjectRepository(db)
@@ -1403,7 +1416,7 @@ async def delete_project(
 ) -> None:
     """
     Delete a project and all associated data (scans, results).
-    Requires 'project:delete' permission or being the project owner.
+    Requires 'project:delete' permission or being a project admin.
     """
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 

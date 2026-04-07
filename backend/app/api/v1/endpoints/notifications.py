@@ -318,7 +318,7 @@ def _build_advisory_html(
     return final_html, findings_text_block
 
 
-async def _notify_advisory_owners(
+async def _notify_advisory_admins(
     affected_projects_map: Dict[str, Project],
     project_findings: Dict[str, List[str]],
     user_repo: UserRepository,
@@ -399,7 +399,7 @@ async def broadcast_message(
     ],
 ) -> BroadcastResult:
     """
-    Send a broadcast message to all users, specific teams, or owners of projects affecting a specific dependency.
+    Send a broadcast message to all users, specific teams, or admins of projects affecting a specific dependency.
     """
     # Initialize repositories
     user_repo = UserRepository(db)
@@ -483,8 +483,8 @@ async def broadcast_message(
 
         project_count = len(affected_projects_map)
 
-        # Group affected projects by owner and notify
-        unique_user_count = await _notify_advisory_owners(
+        # Group affected projects by admin members and notify
+        unique_user_count = await _notify_advisory_admins(
             affected_projects_map,
             project_findings,
             user_repo,

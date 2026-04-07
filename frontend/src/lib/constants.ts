@@ -45,7 +45,6 @@ export const ANALYZER_CATEGORIES = {
 export const TEAM_ROLES = [
   { value: 'member', label: 'Member' },
   { value: 'admin', label: 'Admin' },
-  { value: 'owner', label: 'Owner' },
 ] as const;
 
 export const DEFAULT_PAGE_SIZE = 50;

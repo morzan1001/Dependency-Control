@@ -16,7 +16,6 @@ from app.core.constants import (
     PROJECT_ROLE_VIEWER,
     PROJECT_ROLES,
     TEAM_ROLE_ADMIN,
-    TEAM_ROLE_OWNER,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
@@ -34,8 +33,7 @@ async def build_user_project_query(
     Build a MongoDB query to filter projects the user has access to.
 
     This includes projects where:
-    - User is the owner
-    - User is a direct member
+    - User is a direct member of the project
     - User is a member of the project's team
 
     Args:
@@ -108,7 +106,7 @@ async def check_project_access(
         if team:
             for tm in team.get("members", []):
                 if tm["user_id"] == str(user.id):
-                    if tm["role"] in [TEAM_ROLE_ADMIN, TEAM_ROLE_OWNER]:
+                    if tm["role"] == TEAM_ROLE_ADMIN:
                         member_role = PROJECT_ROLE_ADMIN
                     else:
                         member_role = PROJECT_ROLE_VIEWER
