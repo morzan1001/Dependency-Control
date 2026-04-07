@@ -706,7 +706,11 @@ async def login_oidc_callback(
         )
 
         await user_repo.create(new_user)
-        user = await user_repo.get_raw_by_id(new_user.id)
+        # Read back from PRIMARY to avoid replication lag with secondaryPreferred
+        from pymongo import ReadPreference
+
+        users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)
+        user = await users_primary.find_one({"_id": new_user.id})
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
