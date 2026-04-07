@@ -271,8 +271,9 @@ async def remove_team_member(
         raise HTTPException(status_code=404, detail="User not in team")
 
     if target_role == TEAM_ROLE_ADMIN:
-        if user_id == current_user.id:
-            raise HTTPException(status_code=400, detail="Cannot remove yourself as the last admin")
+        admin_count = sum(1 for m in team.members if m.role == TEAM_ROLE_ADMIN)
+        if admin_count <= 1:
+            raise HTTPException(status_code=400, detail="Cannot remove the last admin. Add another admin first.")
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
     await team_repo.update_raw(
