@@ -816,9 +816,9 @@ function InstanceForm({
                     setFormData((prev) => ({ ...prev, team_sync_depth: parseInt(e.target.value) }))
                   }
                 >
-                  <option value={1}>Top-level group only (e.g. &quot;mo&quot;)</option>
-                  <option value={2}>Two levels (e.g. &quot;mo/edge&quot;)</option>
-                  <option value={3}>Three levels</option>
+                  <option value={1}>Top-level group only (e.g. &quot;foo&quot;)</option>
+                  <option value={2}>Two levels (e.g. &quot;foo/bar&quot;)</option>
+                  <option value={3}>Three levels (e.g. &quot;foo/bar/baz&quot;)</option>
                   <option value={0}>Full path (one team per subgroup)</option>
                 </select>
                 <p className="text-xs text-muted-foreground">

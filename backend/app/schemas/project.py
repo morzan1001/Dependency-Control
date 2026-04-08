@@ -67,11 +67,9 @@ class ProjectUpdate(BaseModel):
         description="Action when retention period expires: delete, archive, or none",
     )
     default_branch: Optional[str] = Field(None, description="Default branch to show in dashboard")
+    gitlab_mr_comments_enabled: Optional[bool] = Field(None, description="Post scan results as MR comments on GitLab")
     enforce_notification_settings: Optional[bool] = Field(
         None, description="Enforce admin notification settings for all members"
-    )
-    owner_notification_preferences: Optional[Dict[str, List[str]]] = Field(
-        None, description="Notification preferences (legacy field)"
     )
 
 
