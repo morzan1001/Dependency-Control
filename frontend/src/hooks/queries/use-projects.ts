@@ -12,6 +12,7 @@ interface ProjectListFilters {
   limit: number;
   sortBy: string;
   sortOrder: 'asc' | 'desc';
+  teamId?: string;
 }
 
 // Centralized Query Keys
@@ -32,11 +33,12 @@ export const useProjects = (
   page: number = 1,
   limit: number = 20,
   sortBy: string = 'created_at',
-  sortOrder: 'asc' | 'desc' = 'desc'
+  sortOrder: 'asc' | 'desc' = 'desc',
+  teamId?: string,
 ) => {
   return useQuery<Awaited<ReturnType<typeof projectApi.getAll>>, ApiError>({
-    queryKey: projectKeys.list({ search, page, limit, sortBy, sortOrder }),
-    queryFn: () => projectApi.getAll(search, (page - 1) * limit, limit, sortBy, sortOrder),
+    queryKey: projectKeys.list({ search, page, limit, sortBy, sortOrder, teamId }),
+    queryFn: () => projectApi.getAll(search, (page - 1) * limit, limit, sortBy, sortOrder, teamId),
     placeholderData: keepPreviousData,
     retry: 2,
   });

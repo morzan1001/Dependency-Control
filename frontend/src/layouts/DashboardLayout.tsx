@@ -127,8 +127,8 @@ export default function DashboardLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-8 min-h-full">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="p-8">
           <Outlet />
         </div>
       </main>

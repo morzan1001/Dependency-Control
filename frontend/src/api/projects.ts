@@ -8,9 +8,10 @@ export const projectApi = {
     skip: number = 0,
     limit: number = 20,
     sortBy: string = 'created_at',
-    sortOrder: 'asc' | 'desc' = 'desc'
+    sortOrder: 'asc' | 'desc' = 'desc',
+    teamId?: string,
   ): Promise<ProjectsResponse> => {
-    const params = buildQueryParams({ search, skip, limit, sort_by: sortBy, sort_order: sortOrder });
+    const params = buildQueryParams({ search, skip, limit, sort_by: sortBy, sort_order: sortOrder, team_id: teamId });
 
     const response = await api.get<ProjectsResponse>('/projects/', { params });
     return response.data;

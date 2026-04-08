@@ -286,6 +286,7 @@ async def read_projects(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     search: Optional[str] = None,
+    team_id: Optional[str] = None,
     skip: int = 0,
     limit: int = 20,
     sort_by: str = "created_at",
@@ -296,6 +297,7 @@ async def read_projects(
 
     - **Superusers** see all projects.
     - **Regular users** see projects they own or are members of.
+    - **team_id** optional filter to show only projects of a specific team.
     """
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -308,6 +310,8 @@ async def read_projects(
     search_query: Dict[str, Any] = {}
     if search:
         search_query["name"] = {"$regex": re.escape(search), "$options": "i"}
+    if team_id:
+        search_query["team_id"] = team_id
 
     # Build permission query
     permission_query = await build_user_project_query(current_user, team_repo)

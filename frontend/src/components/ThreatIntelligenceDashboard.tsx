@@ -413,12 +413,12 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center p-3 bg-muted rounded-lg">
                 <div className="text-xs text-muted-foreground mb-1">Traditional (CVSS only)</div>
-                <div className="text-2xl font-bold">{stats.risk_score.toFixed(1)}</div>
+                <div className="text-2xl font-bold">{(stats.risk_score ?? 0).toFixed(1)}</div>
               </div>
               <div className="text-center p-3 bg-primary/10 rounded-lg border border-primary/20">
                 <div className="text-xs text-primary mb-1">Adjusted (EPSS/KEV/Reach)</div>
                 <div className="text-2xl font-bold text-primary">
-                  {stats.adjusted_risk_score.toFixed(1)}
+                  {(stats.adjusted_risk_score ?? 0).toFixed(1)}
                 </div>
               </div>
             </div>

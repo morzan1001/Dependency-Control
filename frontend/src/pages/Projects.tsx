@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useProjects } from '@/hooks/queries/use-projects';
+import { useTeams } from '@/hooks/queries/use-teams';
 import { useAppConfig } from '@/hooks/queries/use-system';
 import { useAuth } from '@/context/useAuth';
 import { usePaginationState } from '@/hooks/use-pagination-state';
@@ -24,16 +25,20 @@ import {
 export default function ProjectsPage() {
   const { hasPermission } = useAuth();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [teamFilter, setTeamFilter] = useState<string>("");
   const { search, setSearch, page, setPage, sortBy, setSortBy, sortOrder, setSortOrder, debouncedSearch } =
     usePaginationState();
   const limit = PROJECT_GRID_PAGE_SIZE;
+
+  const { data: teams = [] } = useTeams();
 
   const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjects(
     debouncedSearch,
     page,
     limit,
     sortBy,
-    sortOrder
+    sortOrder,
+    teamFilter || undefined,
   );
 
   const projects = projectsData?.items || [];
@@ -78,12 +83,25 @@ export default function ProjectsPage() {
         <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
         
         <div className="flex items-center gap-2">
-          <Input 
-            placeholder="Search projects..." 
-            value={search} 
+          <Input
+            placeholder="Search projects..."
+            value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-[250px]"
           />
+          {teams.length > 1 && (
+            <Select value={teamFilter || "all"} onValueChange={(v) => { setTeamFilter(v === "all" ? "" : v); setPage(1); }}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="All Teams" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Teams</SelectItem>
+                {teams.map((team) => (
+                  <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Select value={sortBy} onValueChange={setSortBy}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Sort by" />
