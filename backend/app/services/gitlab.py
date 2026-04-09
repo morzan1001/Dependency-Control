@@ -238,7 +238,7 @@ class GitLabService:
                         await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITLAB_JWKS_URI_CACHE_TTL)
                     return jwks_uri
             except Exception as e:
-                logger.warning(f"Error fetching OIDC discovery: {e}")
+                logger.warning(f"Error fetching OIDC discovery: {type(e).__name__}: {e}")
 
         return None
 
@@ -255,32 +255,39 @@ class GitLabService:
             result_jwks: dict[Any, Any] = cached_jwks
             return result_jwks
 
-        async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
-            try:
-                # Try to get JWKS URI from discovery document
-                jwks_uri = await self._get_jwks_uri()
+        import asyncio as _asyncio
 
-                if jwks_uri:
-                    response = await client.get(jwks_uri)
-                    if response.status_code == 200:
-                        jwks: dict[Any, Any] = response.json()
-                        # Cache in Redis for all pods
-                        await cache_service.set(cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
-                        return jwks
+        for attempt in range(3):
+            async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
+                try:
+                    # Try to get JWKS URI from discovery document
+                    jwks_uri = await self._get_jwks_uri()
 
-                # Fallback: Try common JWKS endpoints
-                for path in ["/-/jwks", "/oauth/discovery/keys"]:
-                    response = await client.get(f"{self.base_url}{path}")
-                    if response.status_code == 200:
-                        jwks_fallback: dict[Any, Any] = response.json()
-                        # Cache in Redis for all pods
-                        await cache_service.set(cache_key, jwks_fallback, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
-                        logger.info(f"JWKS fetched from fallback path: {path}")
-                        return jwks_fallback
+                    if jwks_uri:
+                        response = await client.get(jwks_uri)
+                        if response.status_code == 200:
+                            jwks: dict[Any, Any] = response.json()
+                            await cache_service.set(cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
+                            return jwks
 
-                logger.error("Failed to fetch JWKS from any known endpoint")
-            except Exception as e:
-                logger.error(f"Error fetching JWKS: {e}")
+                    # Fallback: Try common JWKS endpoints
+                    for path in ["/oauth/discovery/keys", "/-/jwks"]:
+                        response = await client.get(f"{self.base_url}{path}")
+                        if response.status_code == 200:
+                            jwks_fallback: dict[Any, Any] = response.json()
+                            await cache_service.set(cache_key, jwks_fallback, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
+                            logger.info(f"JWKS fetched from fallback path: {path}")
+                            return jwks_fallback
+
+                    logger.error(f"Failed to fetch JWKS from any known endpoint for {self.base_url}")
+                    return {}
+                except Exception as e:
+                    logger.warning(
+                        f"JWKS fetch attempt {attempt + 1}/3 failed for {self.base_url}: {type(e).__name__}: {e}"
+                    )
+                    if attempt < 2:
+                        await _asyncio.sleep(1)
+        logger.error(f"JWKS fetch failed after 3 attempts for {self.base_url}")
         return {}
 
     async def _invalidate_jwks_cache(self) -> None:
