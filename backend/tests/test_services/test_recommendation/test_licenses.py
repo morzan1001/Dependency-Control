@@ -1,7 +1,7 @@
 """Tests for app.services.recommendation.licenses."""
 
 from app.schemas.recommendation import Priority, RecommendationType
-from app.services.recommendation.licenses import process_licenses
+from app.services.recommendation.licenses import detect_license_drift, process_licenses
 
 
 def _license(
@@ -242,3 +242,69 @@ class TestProcessLicensesAction:
     def test_action_has_steps(self):
         rec = process_licenses([_license()])[0]
         assert len(rec.action["steps"]) > 0
+
+
+class TestProcessLicensesPriorityLow:
+    """INFO-only findings yield LOW priority."""
+
+    def test_info_only_returns_low(self):
+        rec = process_licenses([_license(severity="INFO")])[0]
+        assert rec.priority == Priority.LOW
+
+
+# --- License Drift Detection ---
+
+
+def _drift_finding(component, version, license_name, category="permissive"):
+    return {
+        "type": "license",
+        "severity": "INFO",
+        "component": component,
+        "version": version,
+        "details": {"license": license_name, "category": category},
+        "id": f"LIC-{license_name}",
+    }
+
+
+class TestDetectLicenseDrift:
+    """Tests for detect_license_drift."""
+
+    def test_empty_previous_returns_empty(self):
+        assert detect_license_drift([_drift_finding("a", "1.0", "MIT")], []) == []
+
+    def test_empty_current_returns_empty(self):
+        assert detect_license_drift([], [_drift_finding("a", "1.0", "MIT")]) == []
+
+    def test_no_change_returns_empty(self):
+        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
+        curr = [_drift_finding("a", "1.0", "MIT", "permissive")]
+        assert detect_license_drift(curr, prev) == []
+
+    def test_permissive_to_copyleft_detected(self):
+        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
+        curr = [_drift_finding("a", "1.0", "GPL-3.0", "strong_copyleft")]
+        result = detect_license_drift(curr, prev)
+        assert len(result) == 1
+        assert result[0].type == RecommendationType.LICENSE_DRIFT
+        assert result[0].priority == Priority.HIGH
+
+    def test_permissive_to_weak_copyleft_detected(self):
+        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
+        curr = [_drift_finding("a", "1.0", "LGPL-3.0", "weak_copyleft")]
+        result = detect_license_drift(curr, prev)
+        assert len(result) == 1
+        assert result[0].priority == Priority.MEDIUM
+
+    def test_copyleft_to_permissive_not_flagged(self):
+        """Drift to less restrictive license is not a problem."""
+        prev = [_drift_finding("a", "1.0", "GPL-3.0", "strong_copyleft")]
+        curr = [_drift_finding("a", "1.0", "MIT", "permissive")]
+        assert detect_license_drift(curr, prev) == []
+
+    def test_affected_components_format(self):
+        prev = [_drift_finding("lodash", "4.17.0", "MIT", "permissive")]
+        curr = [_drift_finding("lodash", "4.17.0", "GPL-3.0", "strong_copyleft")]
+        result = detect_license_drift(curr, prev)
+        assert "lodash" in result[0].affected_components[0]
+        assert "MIT" in result[0].affected_components[0]
+        assert "GPL-3.0" in result[0].affected_components[0]

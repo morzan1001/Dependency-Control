@@ -191,6 +191,14 @@ class RecommendationEngine:
             "licenses",
         )
 
+        # 5b. License drift detection (license changes between scans)
+        if previous_findings_list is not None:
+            _safe_extend(
+                recommendations,
+                lambda: licenses.detect_license_drift(findings_list, previous_findings_list),
+                "license_drift",
+            )
+
         # 6. Process QUALITY issues (maintainer risk, etc.)
         _safe_extend(
             recommendations,

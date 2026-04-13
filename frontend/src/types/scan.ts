@@ -414,6 +414,8 @@ export interface ScanFindingsParams {
   category?: string;
   severity?: string;
   search?: string;
+  license_category?: string;
+  hide_info?: boolean;
 }
 
 export interface ScanFindingsResponse {

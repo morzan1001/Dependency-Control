@@ -64,6 +64,13 @@ const LICENSE_CATEGORY_CONFIG: Record<
     icon: XCircle,
     description: 'May have commercial restrictions',
   },
+  license_incompatibility: {
+    label: 'License Conflict',
+    color: 'text-destructive',
+    bgColor: 'bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-800',
+    icon: XCircle,
+    description: 'Incompatible licenses detected between dependencies',
+  },
   unknown: {
     label: 'Unknown',
     color: 'text-muted-foreground',

@@ -28,9 +28,13 @@ interface FindingsTableProps {
     scanContext?: ScanContext;
     /** Top offset (px) for the sticky table header, e.g. when a sticky TabsList sits above. */
     stickyHeaderTop?: number;
+    /** Filter by license category (e.g. weak_copyleft, strong_copyleft) */
+    licenseCategory?: string;
+    /** Hide INFO-level findings */
+    hideInfo?: boolean;
 }
 
-export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0 }: FindingsTableProps) {
+export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
     const scrollTargetRef = useRef<HTMLTableRowElement | null>(null)
     const hasScrolledRef = useRef(false)
@@ -47,7 +51,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         isError
     } = useInfiniteQuery({
         // severity is NOT passed to API - we show all findings but scroll to the target
-        queryKey: ['findings', scanId, category, search, sortBy, sortOrder],
+        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
@@ -55,7 +59,9 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 category,
                 search,
                 sort_by: sortBy,
-                sort_order: sortOrder
+                sort_order: sortOrder,
+                ...(licenseCategory ? { license_category: licenseCategory } : {}),
+                ...(hideInfo ? { hide_info: true } : {}),
             });
             return res;
         },

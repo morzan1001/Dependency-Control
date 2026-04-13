@@ -38,6 +38,82 @@ SHARE_COMPLETE_SOURCE_CODE = "Share complete source code"
 NETWORK_USE_TRIGGERS_DISCLOSURE = "Network use triggers source disclosure"
 
 _SPDX_EXPR_SPLIT = re.compile(r"\s+(?:AND|OR|WITH)\s+")
+_SPDX_OR_SPLIT = re.compile(r"\s+OR\s+")
+_SPDX_AND_SPLIT = re.compile(r"\s+AND\s+")
+
+# Known license incompatibilities: (license_a, license_b) → explanation
+# Both directions are checked automatically
+_LICENSE_INCOMPATIBILITIES: Dict[tuple, str] = {
+    ("GPL-2.0-only", "GPL-3.0-only"): "GPL-2.0-only and GPL-3.0-only are not compatible — code cannot satisfy both simultaneously.",
+    ("GPL-2.0-only", "GPL-3.0"): "GPL-2.0-only cannot be combined with GPL-3.0 code.",
+    ("GPL-2.0-only", "AGPL-3.0"): "GPL-2.0-only is not compatible with AGPL-3.0.",
+    ("GPL-2.0-only", "AGPL-3.0-only"): "GPL-2.0-only is not compatible with AGPL-3.0-only.",
+    ("CDDL-1.0", "GPL-2.0"): "CDDL-1.0 and GPL-2.0 are incompatible due to conflicting copyleft terms.",
+    ("CDDL-1.0", "GPL-2.0-only"): "CDDL-1.0 and GPL-2.0-only are incompatible.",
+    ("CDDL-1.0", "GPL-3.0"): "CDDL-1.0 and GPL-3.0 are incompatible due to conflicting copyleft terms.",
+    ("CDDL-1.0", "GPL-3.0-only"): "CDDL-1.0 and GPL-3.0-only are incompatible.",
+    ("EPL-1.0", "GPL-2.0"): "EPL-1.0 is not compatible with GPL-2.0.",
+    ("EPL-1.0", "GPL-2.0-only"): "EPL-1.0 is not compatible with GPL-2.0-only.",
+    ("EPL-1.0", "GPL-3.0"): "EPL-1.0 is not compatible with GPL-3.0.",
+    ("SSPL-1.0", "GPL-2.0"): "SSPL-1.0 is not compatible with any GPL version.",
+    ("SSPL-1.0", "GPL-3.0"): "SSPL-1.0 is not compatible with any GPL version.",
+    ("SSPL-1.0", "AGPL-3.0"): "SSPL-1.0 is not compatible with AGPL-3.0.",
+}
+
+# Severity rank for choosing the least/most restrictive license in OR/AND expressions
+_SEVERITY_RANK = {
+    None: 0,  # No issue (permissive/public domain)
+    Severity.INFO.value: 1,
+    Severity.LOW.value: 2,
+    Severity.MEDIUM.value: 3,
+    Severity.HIGH.value: 4,
+    Severity.CRITICAL.value: 5,
+}
+
+
+def _check_pair_conflict(
+    a: Dict[str, str], b: Dict[str, str], seen: set
+) -> Optional[Dict[str, Any]]:
+    """Check if two component-license entries conflict. Returns an issue dict or None."""
+    if a["license"] == b["license"]:
+        return None
+
+    pair = tuple(sorted([a["license"], b["license"]]))
+    if pair in seen:
+        return None
+
+    explanation = _LICENSE_INCOMPATIBILITIES.get(
+        (a["license"], b["license"])
+    ) or _LICENSE_INCOMPATIBILITIES.get(
+        (b["license"], a["license"])
+    )
+    if not explanation:
+        return None
+
+    seen.add(pair)
+    return {
+        "component": f"{a['component']} + {b['component']}",
+        "version": f"{a['version']} / {b['version']}",
+        "license": f"{a['license']} / {b['license']}",
+        "license_url": None,
+        "severity": Severity.HIGH.value,
+        "category": "license_incompatibility",
+        "message": f"License conflict: {a['license']} and {b['license']}",
+        "explanation": (
+            f"{explanation}\n\n"
+            f"Component A: {a['component']}@{a['version']} ({a['license']})\n"
+            f"Component B: {b['component']}@{b['version']} ({b['license']})"
+        ),
+        "recommendation": (
+            "These licenses cannot coexist in the same distributed work. Options:\n"
+            "• Replace one of the conflicting components with an alternative\n"
+            "• Check if a dual-licensed or 'or-later' variant resolves the conflict\n"
+            "• Isolate the components into separate processes/services"
+        ),
+        "obligations": [],
+        "risks": [explanation],
+        "purl": a["purl"],
+    }
 
 
 class LicenseAnalyzer(Analyzer):
@@ -608,6 +684,10 @@ class LicenseAnalyzer(Analyzer):
                 policy=policy,
             )
 
+        # Cross-dependency license compatibility check
+        compatibility_issues = self._check_license_compatibility(components, ignore_dev)
+        issues.extend(compatibility_issues)
+
         return {"license_issues": issues, "summary": stats}
 
     def _analyze_component(
@@ -632,14 +712,31 @@ class LicenseAnalyzer(Analyzer):
             stats["skipped"] += 1
             return
 
+        comp_name = component.get("name", "unknown")
+        comp_version = component.get("version", "unknown")
+        comp_purl = component.get("purl", "")
+
+        # Check for SPDX OR expressions — use expression-aware evaluation
+        spdx_expr = self._has_spdx_expression(component)
+        if spdx_expr:
+            or_groups = self._parse_spdx_expression(spdx_expr)
+            # Track stats for the best choice
+            self._track_expression_stats(or_groups, stats)
+            issue = self._evaluate_expression(
+                comp_name, comp_version, comp_purl, or_groups, policy,
+            )
+            if issue:
+                issue["spdx_expression"] = spdx_expr
+                self._apply_transitive_adjustment(issue, is_transitive)
+                if self._should_include_finding(issue, is_transitive):
+                    issues.append(issue)
+            return
+
+        # Standard per-license evaluation (no OR expression)
         licenses = self._extract_licenses(component)
         if not licenses:
             stats["unknown"] += 1
             return
-
-        comp_name = component.get("name", "unknown")
-        comp_version = component.get("version", "unknown")
-        comp_purl = component.get("purl", "")
 
         for lic_id, lic_url in licenses:
             normalized = self._normalize_license(lic_id)
@@ -662,10 +759,143 @@ class LicenseAnalyzer(Analyzer):
                 policy=policy,
             )
             if issue:
-                issues.append(issue)
+                self._apply_transitive_adjustment(issue, is_transitive)
+                if self._should_include_finding(issue, is_transitive):
+                    issues.append(issue)
+
+    def _track_expression_stats(
+        self, or_groups: List[List[str]], stats: Dict[str, int]
+    ) -> None:
+        """Track license category stats for the best OR alternative."""
+        # Find the least restrictive OR group to track
+        best_rank = 999
+        best_licenses: List[str] = []
+        for group in or_groups:
+            worst_rank = 0
+            for lic_id in group:
+                normalized = self._normalize_license(lic_id)
+                info = self.LICENSE_DATABASE.get(normalized)
+                if info:
+                    cat_rank = {
+                        LicenseCategory.PERMISSIVE: 0,
+                        LicenseCategory.PUBLIC_DOMAIN: 0,
+                        LicenseCategory.WEAK_COPYLEFT: 1,
+                        LicenseCategory.STRONG_COPYLEFT: 2,
+                        LicenseCategory.NETWORK_COPYLEFT: 3,
+                        LicenseCategory.PROPRIETARY: 4,
+                    }.get(info.category, 5)
+                    worst_rank = max(worst_rank, cat_rank)
+            if worst_rank < best_rank:
+                best_rank = worst_rank
+                best_licenses = group
+
+        for lic_id in best_licenses:
+            normalized = self._normalize_license(lic_id)
+            info = self.LICENSE_DATABASE.get(normalized)
+            if info:
+                stat_key = self._CATEGORY_STAT_KEY.get(info.category)
+                if stat_key:
+                    stats[stat_key] += 1
+
+    @staticmethod
+    def _apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> None:
+        """Reduce severity for transitive dependencies.
+
+        Transitive dependencies pose less direct risk because:
+        - The direct dependency may abstract away the transitive's license obligations
+        - Dynamic linking/usage patterns may not trigger copyleft
+        """
+        if not is_transitive:
+            return
+
+        issue["is_transitive"] = True
+        severity = issue.get("severity")
+
+        # Downgrade severity by one level for transitive deps
+        downgrade_map = {
+            Severity.CRITICAL.value: Severity.HIGH.value,
+            Severity.HIGH.value: Severity.MEDIUM.value,
+            Severity.MEDIUM.value: Severity.LOW.value,
+        }
+        new_severity = downgrade_map.get(severity)
+        if new_severity:
+            issue["effective_severity"] = issue.get("effective_severity") or severity
+            issue["severity"] = new_severity
+            existing_reason = issue.get("context_reason", "")
+            transitive_note = "Severity reduced: transitive dependency (not directly included)."
+            issue["context_reason"] = (
+                f"{existing_reason} {transitive_note}".strip()
+                if existing_reason
+                else transitive_note
+            )
+
+    @staticmethod
+    def _should_include_finding(issue: Dict[str, Any], is_transitive: bool) -> bool:
+        """Determine if a finding should be included in results.
+
+        Skip INFO-level findings for transitive dependencies — they add noise
+        without actionable value.
+        """
+        if is_transitive and issue.get("severity") in (
+            Severity.INFO.value,
+            Severity.LOW.value,
+        ):
+            return False
+        return True
+
+    def _check_license_compatibility(
+        self,
+        components: List[Dict[str, Any]],
+        ignore_dev: bool,
+    ) -> List[Dict[str, Any]]:
+        """Check for known license incompatibilities across all components."""
+        component_licenses = self._collect_component_licenses(components, ignore_dev)
+        return self._find_license_conflicts(component_licenses)
+
+    def _collect_component_licenses(
+        self,
+        components: List[Dict[str, Any]],
+        ignore_dev: bool,
+    ) -> List[Dict[str, str]]:
+        """Collect resolved licenses per non-dev component."""
+        result: List[Dict[str, str]] = []
+        for comp in components:
+            comp_scope = (comp.get("scope") or "").lower()
+            if ignore_dev and comp_scope in ("dev", "development", "test", "optional"):
+                continue
+            for lic_id, _ in self._extract_licenses(comp):
+                normalized = self._normalize_license(lic_id)
+                if normalized in self.LICENSE_DATABASE:
+                    result.append({
+                        "component": comp.get("name", "unknown"),
+                        "version": comp.get("version", "unknown"),
+                        "license": normalized,
+                        "purl": comp.get("purl", ""),
+                    })
+        return result
+
+    @staticmethod
+    def _find_license_conflicts(
+        component_licenses: List[Dict[str, str]],
+    ) -> List[Dict[str, Any]]:
+        """Find known incompatibilities between license pairs."""
+        issues: List[Dict[str, Any]] = []
+        seen_conflicts: set = set()
+
+        for i, a in enumerate(component_licenses):
+            for b in component_licenses[i + 1:]:
+                conflict = _check_pair_conflict(a, b, seen_conflicts)
+                if conflict:
+                    issues.append(conflict)
+
+        return issues
 
     def _extract_licenses(self, component: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
-        """Extract license identifiers and URLs from a component."""
+        """Extract license identifiers and URLs from a component.
+
+        Returns a flat list of (license_id, url) tuples. For SPDX expression
+        handling, use _extract_license_expressions() which preserves OR/AND semantics.
+        """
         licenses = []
 
         for lic_entry in component.get("licenses", []):
@@ -677,11 +907,10 @@ class LicenseAnalyzer(Analyzer):
                 if lic_id and lic_id.upper() not in UNKNOWN_LICENSE_PATTERNS:
                     licenses.append((lic_id, lic_url))
 
-            # SPDX expression
+            # SPDX expression — delegate to expression parser
             if "expression" in lic_entry:
                 expr = lic_entry["expression"]
                 if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
-                    # Handle expressions like "MIT OR Apache-2.0"
                     for lic_id in _SPDX_EXPR_SPLIT.split(expr):
                         lic_id = lic_id.strip("() ")
                         if lic_id:
@@ -695,13 +924,11 @@ class LicenseAnalyzer(Analyzer):
             and direct_license.strip()
             and direct_license.upper() not in UNKNOWN_LICENSE_PATTERNS
         ):
-            # Handle SPDX expressions (e.g. "MIT OR Apache-2.0")
             if _SPDX_EXPR_SPLIT.search(direct_license):
                 for lic_id in _SPDX_EXPR_SPLIT.split(direct_license):
                     lic_id = lic_id.strip("() ")
                     if lic_id:
                         licenses.append((lic_id, license_url))
-            # Handle comma-separated licenses (e.g. "MIT, Apache-2.0")
             elif "," in direct_license:
                 for lic_id in direct_license.split(","):
                     lic_id = lic_id.strip()
@@ -711,6 +938,103 @@ class LicenseAnalyzer(Analyzer):
                 licenses.append((direct_license, license_url))
 
         return licenses
+
+    def _parse_spdx_expression(self, expr: str) -> List[List[str]]:
+        """Parse an SPDX expression into OR-groups of AND-connected licenses.
+
+        Returns a list of OR-alternatives, where each alternative is a list of
+        AND-connected license IDs. The caller should pick the least restrictive
+        OR-alternative.
+
+        Examples:
+            "MIT OR Apache-2.0"       → [["MIT"], ["Apache-2.0"]]
+            "GPL-2.0 AND Classpath"   → [["GPL-2.0", "Classpath"]]
+            "MIT OR (GPL-2.0 AND Classpath)" → [["MIT"], ["GPL-2.0", "Classpath"]]
+            "MIT"                     → [["MIT"]]
+        """
+        # Strip WITH exceptions (e.g. "GPL-2.0 WITH Classpath-exception-2.0")
+        # WITH modifies the preceding license but doesn't add a new one
+        expr = re.sub(r"\s+WITH\s+\S+", "", expr)
+
+        # Split by OR first (lowest precedence in SPDX)
+        or_parts = _SPDX_OR_SPLIT.split(expr)
+        result = []
+        for or_part in or_parts:
+            or_part = or_part.strip("() ")
+            if not or_part:
+                continue
+            # Each OR alternative may contain AND-connected licenses
+            and_parts = _SPDX_AND_SPLIT.split(or_part)
+            group = []
+            for and_part in and_parts:
+                lic_id = and_part.strip("() ")
+                if lic_id:
+                    group.append(lic_id)
+            if group:
+                result.append(group)
+        return result if result else [[expr.strip()]]
+
+    def _evaluate_expression(
+        self,
+        comp_name: str,
+        comp_version: str,
+        comp_purl: str,
+        or_groups: List[List[str]],
+        policy: LicensePolicy,
+    ) -> Optional[Dict[str, Any]]:
+        """Evaluate an SPDX expression by choosing the least restrictive OR-alternative.
+
+        For OR: pick the alternative with the lowest severity (user can choose).
+        For AND within an alternative: pick the highest severity (all apply).
+        """
+        best_issue: Optional[Dict[str, Any]] = None
+        best_severity_rank = 999
+
+        for and_group in or_groups:
+            # Evaluate all AND-connected licenses — worst (highest severity) wins
+            worst_issue: Optional[Dict[str, Any]] = None
+            worst_rank = -1
+
+            for lic_id in and_group:
+                normalized = self._normalize_license(lic_id)
+                license_info = self.LICENSE_DATABASE.get(normalized)
+                if not license_info:
+                    continue
+
+                issue = self._evaluate_license(
+                    component=comp_name,
+                    version=comp_version,
+                    license_info=license_info,
+                    lic_url=None,
+                    purl=comp_purl,
+                    policy=policy,
+                )
+                rank = _SEVERITY_RANK.get(issue["severity"] if issue else None, 0)
+                if rank > worst_rank:
+                    worst_rank = rank
+                    worst_issue = issue
+
+            # For OR: pick the least restrictive alternative
+            if worst_rank < best_severity_rank:
+                best_severity_rank = worst_rank
+                best_issue = worst_issue
+
+        return best_issue
+
+    def _has_spdx_expression(self, component: Dict[str, Any]) -> Optional[str]:
+        """Check if a component has an SPDX expression and return it."""
+        for lic_entry in component.get("licenses", []):
+            if "expression" in lic_entry:
+                expr = lic_entry["expression"]
+                if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
+                    if _SPDX_OR_SPLIT.search(expr):
+                        return expr
+
+        direct_license = component.get("license")
+        if isinstance(direct_license, str) and _SPDX_OR_SPLIT.search(direct_license):
+            return direct_license
+
+        return None
 
     def _normalize_license(self, lic_id: str) -> str:
         """Normalize a license identifier to SPDX format."""

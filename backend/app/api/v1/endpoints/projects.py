@@ -1050,6 +1050,8 @@ async def read_scan_findings(
     category: Optional[str] = None,  # security, secret, sast, compliance, quality
     severity: Optional[str] = None,
     search: Optional[str] = None,
+    license_category: Optional[str] = None,  # permissive, weak_copyleft, strong_copyleft, etc.
+    hide_info: Optional[bool] = None,  # Hide INFO severity findings
 ) -> Dict[str, Any]:
     """
     Get paginated findings for a scan.
@@ -1077,6 +1079,10 @@ async def read_scan_findings(
 
     if severity:
         query["severity"] = severity.upper()
+    if hide_info:
+        query["severity"] = {"$ne": "INFO"}
+    if license_category:
+        query["details.category"] = license_category
     if search:
         escaped_search = re.escape(search)
         query["$or"] = [

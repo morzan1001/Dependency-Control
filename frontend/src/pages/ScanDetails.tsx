@@ -78,7 +78,11 @@ export default function ScanDetails() {
   const activeTab = searchParams.get('tab') || 'overview';
   const sbomParam = searchParams.get('sbom');
   const severityFilter = searchParams.get('severity') || undefined;
-  
+
+  // Compliance tab filters
+  const [complianceLicenseCategory, setComplianceLicenseCategory] = useState<string | undefined>(undefined);
+  const [complianceHideInfo, setComplianceHideInfo] = useState(false);
+
   const handleTabChange = (val: string) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
@@ -501,7 +505,37 @@ export default function ScanDetails() {
 
         {showCompliance && (
             <TabsContent value="compliance" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="compliance" scanContext={scanContext} stickyHeaderTop={0} />
+                <div className="flex items-center gap-3 flex-wrap">
+                    <Select
+                        value={complianceLicenseCategory || "all"}
+                        onValueChange={(val) => setComplianceLicenseCategory(val === "all" ? undefined : val)}
+                    >
+                        <SelectTrigger className="w-[200px]">
+                            <SelectValue placeholder="License Category" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">All Categories</SelectItem>
+                            <SelectItem value="weak_copyleft">Weak Copyleft</SelectItem>
+                            <SelectItem value="strong_copyleft">Strong Copyleft</SelectItem>
+                            <SelectItem value="network_copyleft">Network Copyleft</SelectItem>
+                            <SelectItem value="proprietary">Proprietary</SelectItem>
+                            <SelectItem value="unknown">Unknown</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                        <input type="checkbox" checked={complianceHideInfo} onChange={(e) => setComplianceHideInfo(e.target.checked)} className="rounded border-gray-300" />
+                        {"Hide informational findings"}
+                    </label>
+                </div>
+                <FindingsTable
+                    scanId={scanId!}
+                    projectId={projectId!}
+                    category="compliance"
+                    scanContext={scanContext}
+                    stickyHeaderTop={0}
+                    licenseCategory={complianceLicenseCategory}
+                    hideInfo={complianceHideInfo}
+                />
             </TabsContent>
         )}
 

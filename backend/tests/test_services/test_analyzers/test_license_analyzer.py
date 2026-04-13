@@ -608,3 +608,219 @@ class TestEvaluateLicenseWithContext:
         assert "context_reason" in result
         assert "effective_severity" in result
         assert result["effective_severity"] == Severity.HIGH.value
+
+
+class TestSpdxExpressionEvaluation:
+    """Tests for SPDX OR/AND expression handling."""
+
+    def setup_method(self):
+        self.analyzer = LicenseAnalyzer()
+
+    def test_parse_simple_or(self):
+        """'MIT OR Apache-2.0' splits into two OR alternatives."""
+        result = self.analyzer._parse_spdx_expression("MIT OR Apache-2.0")
+        assert result == [["MIT"], ["Apache-2.0"]]
+
+    def test_parse_simple_and(self):
+        """'GPL-2.0 AND Classpath' stays as one AND group."""
+        result = self.analyzer._parse_spdx_expression("GPL-2.0 AND Classpath")
+        assert result == [["GPL-2.0", "Classpath"]]
+
+    def test_parse_mixed_or_and(self):
+        """'MIT OR GPL-2.0 AND Classpath' splits correctly."""
+        result = self.analyzer._parse_spdx_expression("MIT OR GPL-2.0 AND Classpath")
+        assert len(result) == 2
+        assert ["MIT"] in result
+
+    def test_parse_with_exception(self):
+        """WITH clauses are stripped (they modify but don't add licenses)."""
+        result = self.analyzer._parse_spdx_expression("GPL-2.0 WITH Classpath-exception-2.0")
+        assert result == [["GPL-2.0"]]
+
+    def test_parse_single_license(self):
+        result = self.analyzer._parse_spdx_expression("MIT")
+        assert result == [["MIT"]]
+
+    def test_evaluate_or_picks_least_restrictive(self):
+        """'MIT OR GPL-3.0' should evaluate as MIT (permissive, no finding)."""
+        policy = LicensePolicy()
+        or_groups = [["MIT"], ["GPL-3.0"]]
+        result = self.analyzer._evaluate_expression(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
+        # MIT is permissive → no issue, which is the least restrictive
+        assert result is None
+
+    def test_evaluate_or_gpl_or_lgpl_picks_lgpl(self):
+        """'GPL-3.0 OR LGPL-3.0' should pick LGPL (INFO) over GPL (HIGH)."""
+        policy = LicensePolicy()
+        or_groups = [["GPL-3.0"], ["LGPL-3.0"]]
+        result = self.analyzer._evaluate_expression(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+        assert result["license"] == "LGPL-3.0"
+
+    def test_evaluate_and_picks_most_restrictive(self):
+        """'MIT AND GPL-3.0' should evaluate as GPL (most restrictive)."""
+        policy = LicensePolicy()
+        or_groups = [["MIT", "GPL-3.0"]]
+        result = self.analyzer._evaluate_expression(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
+        assert result is not None
+        assert result["severity"] == Severity.HIGH.value
+
+    def test_evaluate_or_all_permissive(self):
+        """'MIT OR Apache-2.0' → both permissive → no finding."""
+        policy = LicensePolicy()
+        or_groups = [["MIT"], ["Apache-2.0"]]
+        result = self.analyzer._evaluate_expression(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
+        assert result is None
+
+    def test_evaluate_or_respects_policy(self):
+        """'GPL-3.0 OR AGPL-3.0' with internal_only picks GPL (INFO)."""
+        policy = LicensePolicy(distribution_model=DistributionModel.INTERNAL_ONLY)
+        or_groups = [["GPL-3.0"], ["AGPL-3.0"]]
+        result = self.analyzer._evaluate_expression(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
+        # Both become INFO with internal_only, but GPL is evaluated first
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+
+
+class TestTransitiveDependencySeverity:
+    """Tests for transitive dependency severity adjustment."""
+
+    def setup_method(self):
+        self.analyzer = LicenseAnalyzer()
+
+    def test_transitive_critical_downgraded_to_high(self):
+        issue = {"severity": Severity.CRITICAL.value, "category": "network_copyleft"}
+        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        assert issue["severity"] == Severity.HIGH.value
+        assert issue["is_transitive"] is True
+        assert "context_reason" in issue
+
+    def test_transitive_high_downgraded_to_medium(self):
+        issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
+        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        assert issue["severity"] == Severity.MEDIUM.value
+
+    def test_transitive_medium_downgraded_to_low(self):
+        issue = {"severity": Severity.MEDIUM.value, "category": "network_copyleft"}
+        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        assert issue["severity"] == Severity.LOW.value
+
+    def test_transitive_info_not_downgraded(self):
+        issue = {"severity": Severity.INFO.value, "category": "weak_copyleft"}
+        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        assert issue["severity"] == Severity.INFO.value
+
+    def test_direct_not_affected(self):
+        issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
+        self.analyzer._apply_transitive_adjustment(issue, is_transitive=False)
+        assert issue["severity"] == Severity.HIGH.value
+        assert "is_transitive" not in issue
+
+    def test_transitive_preserves_effective_severity(self):
+        issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
+        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        assert issue["effective_severity"] == Severity.HIGH.value
+
+    def test_transitive_info_filtered_out(self):
+        """INFO findings for transitive deps should be excluded."""
+        issue = {"severity": Severity.INFO.value}
+        assert self.analyzer._should_include_finding(issue, is_transitive=True) is False
+
+    def test_transitive_low_filtered_out(self):
+        """LOW findings for transitive deps should be excluded."""
+        issue = {"severity": Severity.LOW.value}
+        assert self.analyzer._should_include_finding(issue, is_transitive=True) is False
+
+    def test_transitive_medium_included(self):
+        """MEDIUM findings for transitive deps should be included."""
+        issue = {"severity": Severity.MEDIUM.value}
+        assert self.analyzer._should_include_finding(issue, is_transitive=True) is True
+
+    def test_direct_info_included(self):
+        """INFO findings for direct deps should always be included."""
+        issue = {"severity": Severity.INFO.value}
+        assert self.analyzer._should_include_finding(issue, is_transitive=False) is True
+
+
+class TestLicenseCompatibility:
+    """Tests for cross-dependency license compatibility checking."""
+
+    def setup_method(self):
+        self.analyzer = LicenseAnalyzer()
+
+    def _make_component(self, name, version, license_id, scope="runtime"):
+        return {
+            "name": name,
+            "version": version,
+            "licenses": [{"license": {"id": license_id}}],
+            "scope": scope,
+            "purl": f"pkg:pypi/{name}@{version}",
+        }
+
+    def test_no_conflict_permissive_only(self):
+        """No conflicts when all licenses are permissive."""
+        components = [
+            self._make_component("a", "1.0", "MIT"),
+            self._make_component("b", "1.0", "Apache-2.0"),
+        ]
+        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        assert len(issues) == 0
+
+    def test_gpl2_only_vs_gpl3_only_conflict(self):
+        """GPL-2.0-only and GPL-3.0-only are incompatible."""
+        components = [
+            self._make_component("a", "1.0", "GPL-2.0-only"),
+            self._make_component("b", "1.0", "GPL-3.0-only"),
+        ]
+        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == Severity.HIGH.value
+        assert issues[0]["category"] == "license_incompatibility"
+
+    def test_cddl_vs_gpl_conflict(self):
+        """CDDL-1.0 and GPL-2.0 are incompatible."""
+        components = [
+            self._make_component("a", "1.0", "CDDL-1.0"),
+            self._make_component("b", "1.0", "GPL-2.0"),
+        ]
+        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        assert len(issues) == 1
+
+    def test_dev_dependencies_skipped(self):
+        """Dev dependencies are excluded from compatibility checks."""
+        components = [
+            self._make_component("a", "1.0", "GPL-2.0-only"),
+            self._make_component("b", "1.0", "GPL-3.0-only", scope="dev"),
+        ]
+        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        assert len(issues) == 0
+
+    def test_same_license_no_conflict(self):
+        """Same license across components is never a conflict."""
+        components = [
+            self._make_component("a", "1.0", "GPL-3.0"),
+            self._make_component("b", "1.0", "GPL-3.0"),
+        ]
+        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        assert len(issues) == 0
+
+    def test_duplicate_conflict_deduplicated(self):
+        """Same conflict pair reported only once even with multiple components."""
+        components = [
+            self._make_component("a", "1.0", "GPL-2.0-only"),
+            self._make_component("b", "1.0", "GPL-3.0-only"),
+            self._make_component("c", "2.0", "GPL-2.0-only"),
+        ]
+        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        assert len(issues) == 1

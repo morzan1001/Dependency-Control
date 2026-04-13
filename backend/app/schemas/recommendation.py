@@ -29,6 +29,8 @@ class RecommendationType(str, Enum):
     FIX_INFRASTRUCTURE = "fix_infrastructure"
     # License-related
     LICENSE_COMPLIANCE = "license_compliance"
+    LICENSE_DRIFT = "license_drift"
+    LICENSE_INCOMPATIBILITY = "license_incompatibility"
     # Quality-related
     SUPPLY_CHAIN_RISK = "supply_chain_risk"
     CRITICAL_RISK = "critical_risk"  # Combined vuln + scorecard risk
