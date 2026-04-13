@@ -33,8 +33,11 @@ def process_licenses(findings: List[ModelOrDict]) -> List[Recommendation]:
         priority = Priority.CRITICAL
     elif severity_counts.get("HIGH", 0) > 0:
         priority = Priority.HIGH
-    else:
+    elif severity_counts.get("MEDIUM", 0) > 0 or severity_counts.get("LOW", 0) > 0:
         priority = Priority.MEDIUM
+    else:
+        # All findings are INFO-only (e.g. copyleft reduced by project context)
+        priority = Priority.LOW
 
     problematic_licenses = list(by_license.keys())[:10]
 

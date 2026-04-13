@@ -1,7 +1,13 @@
 """Tests for the LicenseAnalyzer - license compliance analysis."""
 
 from app.models.finding import Severity
-from app.models.license import LicenseCategory
+from app.models.license import (
+    DeploymentModel,
+    DistributionModel,
+    LicenseCategory,
+    LicensePolicy,
+    LibraryUsage,
+)
 from app.services.analyzers.license import LicenseAnalyzer
 
 
@@ -223,16 +229,19 @@ class TestEvaluateLicense:
         return self.analyzer.LICENSE_DATABASE[spdx_id]
 
     def _evaluate(self, spdx_id, allow_strong=False, allow_network=False):
-        """Evaluate a license with default component metadata."""
+        """Evaluate a license with default component metadata (conservative defaults)."""
         info = self._get_license_info(spdx_id)
+        policy = LicensePolicy(
+            allow_strong_copyleft=allow_strong,
+            allow_network_copyleft=allow_network,
+        )
         return self.analyzer._evaluate_license(
             component="test-pkg",
             version="1.0.0",
             license_info=info,
             lic_url=None,
             purl="pkg:pypi/test-pkg@1.0.0",
-            allow_strong_copyleft=allow_strong,
-            allow_network_copyleft=allow_network,
+            policy=policy,
         )
 
     def test_permissive_returns_none(self):
@@ -390,3 +399,212 @@ class TestLicenseDatabase:
 
     def test_gpl_not_compatible_with_proprietary(self):
         assert self.db["GPL-3.0"].compatible_with_proprietary is False
+
+
+class TestEvaluateLicenseWithContext:
+    """Tests for context-aware license evaluation using LicensePolicy."""
+
+    def setup_method(self):
+        self.analyzer = LicenseAnalyzer()
+
+    def _get_license_info(self, spdx_id):
+        return self.analyzer.LICENSE_DATABASE[spdx_id]
+
+    def _evaluate_with_policy(self, spdx_id, **policy_kwargs):
+        """Evaluate a license with a specific LicensePolicy."""
+        info = self._get_license_info(spdx_id)
+        policy = LicensePolicy(**policy_kwargs)
+        return self.analyzer._evaluate_license(
+            component="test-pkg",
+            version="1.0.0",
+            license_info=info,
+            lic_url=None,
+            purl="pkg:pypi/test-pkg@1.0.0",
+            policy=policy,
+        )
+
+    # --- Weak Copyleft + library_usage ---
+
+    def test_weak_copyleft_unmodified_returns_none(self):
+        """LGPL with unmodified usage produces no finding."""
+        result = self._evaluate_with_policy("LGPL-3.0", library_usage=LibraryUsage.UNMODIFIED)
+        assert result is None
+
+    def test_weak_copyleft_mpl_unmodified_returns_none(self):
+        """MPL with unmodified usage produces no finding."""
+        result = self._evaluate_with_policy("MPL-2.0", library_usage=LibraryUsage.UNMODIFIED)
+        assert result is None
+
+    def test_weak_copyleft_modified_returns_info(self):
+        """LGPL with modified usage produces INFO finding."""
+        result = self._evaluate_with_policy("LGPL-3.0", library_usage=LibraryUsage.MODIFIED)
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+        assert result["context_reason"] is not None
+
+    def test_weak_copyleft_mixed_returns_info(self):
+        """LGPL with mixed usage produces INFO finding (conservative, same as before)."""
+        result = self._evaluate_with_policy("LGPL-3.0", library_usage=LibraryUsage.MIXED)
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+
+    def test_weak_copyleft_default_returns_info(self):
+        """Default policy (mixed) preserves existing behavior for weak copyleft."""
+        result = self._evaluate_with_policy("LGPL-3.0")
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+
+    # --- Strong Copyleft + distribution_model ---
+
+    def test_strong_copyleft_internal_only_returns_info(self):
+        """GPL with internal-only distribution produces INFO."""
+        result = self._evaluate_with_policy(
+            "GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY
+        )
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+        assert result["context_reason"] is not None
+        assert result["effective_severity"] == Severity.HIGH.value
+
+    def test_strong_copyleft_open_source_returns_info(self):
+        """GPL with open source project produces INFO."""
+        result = self._evaluate_with_policy(
+            "GPL-3.0", distribution_model=DistributionModel.OPEN_SOURCE
+        )
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+        assert result["context_reason"] is not None
+        assert result["effective_severity"] == Severity.HIGH.value
+
+    def test_strong_copyleft_distributed_not_allowed_returns_high(self):
+        """GPL with distributed project and no allowance returns HIGH (unchanged)."""
+        result = self._evaluate_with_policy(
+            "GPL-3.0",
+            distribution_model=DistributionModel.DISTRIBUTED,
+            allow_strong_copyleft=False,
+        )
+        assert result is not None
+        assert result["severity"] == Severity.HIGH.value
+
+    def test_strong_copyleft_distributed_allowed_returns_info(self):
+        """GPL with distributed project but allowed returns INFO (unchanged)."""
+        result = self._evaluate_with_policy(
+            "GPL-3.0",
+            distribution_model=DistributionModel.DISTRIBUTED,
+            allow_strong_copyleft=True,
+        )
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+
+    # --- Network Copyleft + deployment_model ---
+
+    def test_network_copyleft_cli_batch_returns_low(self):
+        """AGPL with CLI/batch deployment produces LOW."""
+        result = self._evaluate_with_policy(
+            "AGPL-3.0", deployment_model=DeploymentModel.CLI_BATCH
+        )
+        assert result is not None
+        assert result["severity"] == Severity.LOW.value
+        assert result["context_reason"] is not None
+        assert result["effective_severity"] == Severity.CRITICAL.value
+
+    def test_network_copyleft_desktop_returns_low(self):
+        """AGPL with desktop deployment produces LOW."""
+        result = self._evaluate_with_policy(
+            "AGPL-3.0", deployment_model=DeploymentModel.DESKTOP
+        )
+        assert result is not None
+        assert result["severity"] == Severity.LOW.value
+
+    def test_network_copyleft_embedded_returns_low(self):
+        """AGPL with embedded deployment produces LOW."""
+        result = self._evaluate_with_policy(
+            "AGPL-3.0", deployment_model=DeploymentModel.EMBEDDED
+        )
+        assert result is not None
+        assert result["severity"] == Severity.LOW.value
+
+    def test_network_copyleft_network_facing_internal_returns_medium(self):
+        """AGPL with network-facing but internal-only returns MEDIUM."""
+        result = self._evaluate_with_policy(
+            "AGPL-3.0",
+            deployment_model=DeploymentModel.NETWORK_FACING,
+            distribution_model=DistributionModel.INTERNAL_ONLY,
+        )
+        assert result is not None
+        assert result["severity"] == Severity.MEDIUM.value
+        assert result["context_reason"] is not None
+        assert result["effective_severity"] == Severity.CRITICAL.value
+
+    def test_network_copyleft_network_facing_distributed_not_allowed_returns_critical(self):
+        """AGPL with network-facing + distributed + not allowed returns CRITICAL (unchanged)."""
+        result = self._evaluate_with_policy(
+            "AGPL-3.0",
+            deployment_model=DeploymentModel.NETWORK_FACING,
+            distribution_model=DistributionModel.DISTRIBUTED,
+            allow_network_copyleft=False,
+        )
+        assert result is not None
+        assert result["severity"] == Severity.CRITICAL.value
+
+    def test_network_copyleft_network_facing_allowed_returns_medium(self):
+        """AGPL with network-facing + allowed returns MEDIUM (unchanged)."""
+        result = self._evaluate_with_policy(
+            "AGPL-3.0",
+            deployment_model=DeploymentModel.NETWORK_FACING,
+            allow_network_copyleft=True,
+        )
+        assert result is not None
+        assert result["severity"] == Severity.MEDIUM.value
+
+    # --- Default policy = backward compatibility ---
+
+    def test_default_policy_matches_old_behavior_weak_copyleft(self):
+        """Default LicensePolicy produces same result as old code for weak copyleft."""
+        result = self._evaluate_with_policy("LGPL-3.0")
+        assert result is not None
+        assert result["severity"] == Severity.INFO.value
+
+    def test_default_policy_matches_old_behavior_strong_copyleft(self):
+        """Default LicensePolicy produces same result as old code for strong copyleft."""
+        result = self._evaluate_with_policy("GPL-3.0")
+        assert result is not None
+        assert result["severity"] == Severity.HIGH.value
+
+    def test_default_policy_matches_old_behavior_network_copyleft(self):
+        """Default LicensePolicy produces same result as old code for network copyleft."""
+        result = self._evaluate_with_policy("AGPL-3.0")
+        assert result is not None
+        assert result["severity"] == Severity.CRITICAL.value
+
+    def test_default_policy_matches_old_behavior_proprietary(self):
+        """Default LicensePolicy produces same result as old code for proprietary."""
+        result = self._evaluate_with_policy("CC-BY-NC-4.0")
+        assert result is not None
+        assert result["severity"] == Severity.HIGH.value
+
+    def test_default_policy_matches_old_behavior_permissive(self):
+        """Default LicensePolicy produces same result as old code for permissive."""
+        result = self._evaluate_with_policy("MIT")
+        assert result is None
+
+    # --- context_reason and effective_severity fields ---
+
+    def test_context_reason_absent_when_not_adjusted(self):
+        """No context_reason when severity is not adjusted by policy."""
+        result = self._evaluate_with_policy("GPL-3.0")
+        assert "context_reason" not in result
+
+    def test_effective_severity_absent_when_not_adjusted(self):
+        """No effective_severity when severity is not adjusted by policy."""
+        result = self._evaluate_with_policy("GPL-3.0")
+        assert "effective_severity" not in result
+
+    def test_context_fields_present_when_adjusted(self):
+        """Both context_reason and effective_severity present when severity is reduced."""
+        result = self._evaluate_with_policy(
+            "GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY
+        )
+        assert "context_reason" in result
+        assert "effective_severity" in result
+        assert result["effective_severity"] == Severity.HIGH.value

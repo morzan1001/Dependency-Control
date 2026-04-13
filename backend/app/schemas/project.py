@@ -1,11 +1,39 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import PROJECT_ROLES, PROJECT_ROLE_VIEWER
 from app.models.finding import FindingType, Severity
 from app.models.project import Project, Scan
+
+
+class LicensePolicySchema(BaseModel):
+    """License compliance policy for a project. Controls how copyleft findings are evaluated."""
+
+    distribution_model: Literal["internal_only", "distributed", "open_source"] = Field(
+        "distributed",
+        description="How the project is distributed: internal_only (no external distribution), "
+        "distributed (binary/source to third parties), open_source (project is open source)",
+    )
+    deployment_model: Literal["network_facing", "cli_batch", "desktop", "embedded"] = Field(
+        "network_facing",
+        description="How the project is deployed: network_facing (SaaS/web/API), "
+        "cli_batch (CLI/batch/daemon), desktop, embedded",
+    )
+    library_usage: Literal["unmodified", "modified", "mixed"] = Field(
+        "mixed",
+        description="How dependencies are used: unmodified (as-is via public API), "
+        "modified (forked/patched), mixed (some modified)",
+    )
+    allow_strong_copyleft: bool = Field(
+        False, description="Allow GPL-style licenses (reduces severity to INFO)"
+    )
+    allow_network_copyleft: bool = Field(
+        False, description="Allow AGPL/SSPL licenses (reduces severity)"
+    )
 
 
 class BranchInfo(BaseModel):
@@ -55,6 +83,9 @@ class ProjectCreate(BaseModel):
         "delete",
         description="Action when retention period expires: delete, archive, or none",
     )
+    license_policy: Optional[LicensePolicySchema] = Field(
+        None, description="License compliance policy controlling copyleft finding severity"
+    )
 
 
 class ProjectUpdate(BaseModel):
@@ -70,6 +101,9 @@ class ProjectUpdate(BaseModel):
     gitlab_mr_comments_enabled: Optional[bool] = Field(None, description="Post scan results as MR comments on GitLab")
     enforce_notification_settings: Optional[bool] = Field(
         None, description="Enforce admin notification settings for all members"
+    )
+    license_policy: Optional[LicensePolicySchema] = Field(
+        None, description="License compliance policy controlling copyleft finding severity"
     )
 
 

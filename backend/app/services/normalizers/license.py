@@ -39,6 +39,8 @@ def normalize_license(aggregator: "ResultAggregator", result: Dict[str, Any], so
                     "obligations": item.get("obligations") or [],
                     "risks": item.get("risks") or [],
                     "purl": item.get("purl"),
+                    **({"context_reason": item["context_reason"]} if item.get("context_reason") else {}),
+                    **({"effective_severity": item["effective_severity"]} if item.get("effective_severity") else {}),
                 },
             ),
             source=source,

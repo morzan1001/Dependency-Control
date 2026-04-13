@@ -69,6 +69,12 @@ class Project(BaseModel):
         None, description="GitHub repository path (owner/repo). For display purposes."
     )
 
+    # License Policy
+    license_policy: Optional[Dict[str, Any]] = Field(
+        None,
+        description="License compliance policy. Controls severity of copyleft findings based on project context.",
+    )
+
     # Branch Lifecycle
     deleted_branches: List[str] = Field(default_factory=list)
     branches_checked_at: Optional[datetime] = None

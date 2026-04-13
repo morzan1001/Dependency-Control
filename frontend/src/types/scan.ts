@@ -264,6 +264,8 @@ export interface FindingDetails {
   recommendation?: string;
   obligations?: string[];
   license_risks?: string[];
+  context_reason?: string;
+  effective_severity?: string;
   overall_score?: number;
   has_maintenance_issues?: boolean;
   issue_count?: number;

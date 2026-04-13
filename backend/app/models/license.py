@@ -21,6 +21,42 @@ class LicenseCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
+class DistributionModel(str, Enum):
+    """How the project is distributed."""
+
+    INTERNAL_ONLY = "internal_only"  # Not distributed outside the organization
+    DISTRIBUTED = "distributed"  # Distributed as binary or source to third parties
+    OPEN_SOURCE = "open_source"  # Project itself is open source
+
+
+class DeploymentModel(str, Enum):
+    """How the project is deployed."""
+
+    NETWORK_FACING = "network_facing"  # SaaS, web app, API — users interact over network
+    CLI_BATCH = "cli_batch"  # CLI tool, batch job, daemon — no network interaction
+    DESKTOP = "desktop"  # Desktop application distributed to users
+    EMBEDDED = "embedded"  # Embedded/IoT system
+
+
+class LibraryUsage(str, Enum):
+    """How dependencies are used in the project."""
+
+    UNMODIFIED = "unmodified"  # Libraries used as-is via public API
+    MODIFIED = "modified"  # Libraries are forked/patched
+    MIXED = "mixed"  # Some modified, some not
+
+
+@dataclass
+class LicensePolicy:
+    """Project-level license compliance policy that provides context for severity decisions."""
+
+    distribution_model: DistributionModel = DistributionModel.DISTRIBUTED
+    deployment_model: DeploymentModel = DeploymentModel.NETWORK_FACING
+    library_usage: LibraryUsage = LibraryUsage.MIXED
+    allow_strong_copyleft: bool = False
+    allow_network_copyleft: bool = False
+
+
 @dataclass
 class LicenseInfo:
     """Detailed information about a license."""

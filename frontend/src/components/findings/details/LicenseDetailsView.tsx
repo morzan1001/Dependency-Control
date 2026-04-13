@@ -8,6 +8,7 @@ import {
   Info,
   Lightbulb,
   Scale,
+  ShieldCheck,
   XCircle,
 } from 'lucide-react'
 
@@ -80,12 +81,29 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
   const recommendation = details.recommendation
   const obligations = (details.obligations as string[]) || []
   const risks = (details.license_risks as string[]) || []
+  const contextReason = details.context_reason as string | undefined
+  const effectiveSeverity = details.effective_severity as string | undefined
 
   const categoryConfig = LICENSE_CATEGORY_CONFIG[category] || LICENSE_CATEGORY_CONFIG.unknown
   const CategoryIcon = categoryConfig.icon
 
   return (
     <div className="space-y-4">
+      {/* Context-Aware Severity Banner */}
+      {contextReason && (
+        <div className="flex items-start gap-3 p-3 rounded-lg border border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/30">
+          <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <p className="text-emerald-800 dark:text-emerald-300">{contextReason}</p>
+            {effectiveSeverity && (
+              <p className="text-muted-foreground mt-1">
+                Without project context this would be <span className="font-medium uppercase">{effectiveSeverity}</span> severity.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* License & Category Header */}
       <div className="flex items-start gap-4 p-4 rounded-lg border bg-muted/30">
         <Scale className="h-8 w-8 text-muted-foreground flex-shrink-0" />

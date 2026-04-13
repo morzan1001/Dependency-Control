@@ -255,6 +255,7 @@ async def _process_sbom(
     aggregator: ResultAggregator,
     active_analyzers: List[str],
     system_settings: Any,
+    project_license_policy: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
     current_sbom = await _resolve_sbom(item, fs, aggregator)
@@ -277,6 +278,11 @@ async def _process_sbom(
         if analysis_sbom_parse_errors_total:
             analysis_sbom_parse_errors_total.inc()
 
+    # Build settings dict, merging project license_policy if available
+    analyzer_settings = system_settings.model_dump() if system_settings else {}
+    if project_license_policy:
+        analyzer_settings["license_policy"] = project_license_policy
+
     tasks = [
         process_analyzer(
             analyzer_name,
@@ -285,7 +291,7 @@ async def _process_sbom(
             scan_id,
             db,
             aggregator,
-            settings=system_settings.model_dump() if system_settings else None,
+            settings=analyzer_settings,
             fallback_source=fallback_source,
             parsed_components=(parsed_components if parsed_components else None),
         )
@@ -573,6 +579,13 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     settings_repo = SystemSettingsRepository(db)
     system_settings = await settings_repo.get()
 
+    # Merge project-level license_policy into system settings for analyzers
+    project_license_policy = None
+    if project_id:
+        project_doc = await project_repo.get_by_id(project_id)
+        if project_doc and getattr(project_doc, "license_policy", None):
+            project_license_policy = project_doc.license_policy
+
     # Initialize GridFS
     fs = AsyncIOMotorGridFSBucket(db)
 
@@ -587,6 +600,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             aggregator,
             active_analyzers,
             system_settings,
+            project_license_policy=project_license_policy,
         )
         results_summary.extend(sbom_results)
 
