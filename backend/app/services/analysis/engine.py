@@ -256,6 +256,7 @@ async def _process_sbom(
     active_analyzers: List[str],
     system_settings: Any,
     project_license_policy: Optional[Dict[str, Any]] = None,
+    project_analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[str]:
     """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
     current_sbom = await _resolve_sbom(item, fs, aggregator)
@@ -278,10 +279,19 @@ async def _process_sbom(
         if analysis_sbom_parse_errors_total:
             analysis_sbom_parse_errors_total.inc()
 
-    # Build settings dict, merging project license_policy if available
-    analyzer_settings = system_settings.model_dump() if system_settings else {}
+    # Build base settings dict, merging project license_policy if available
+    base_settings = system_settings.model_dump() if system_settings else {}
     if project_license_policy:
-        analyzer_settings["license_policy"] = project_license_policy
+        base_settings["license_policy"] = project_license_policy
+
+    def _settings_for(analyzer_name: str) -> Dict[str, Any]:
+        """Build per-analyzer settings dict, merging project_analyzer_settings overrides."""
+        merged = dict(base_settings)
+        if project_analyzer_settings:
+            overrides = project_analyzer_settings.get(analyzer_name)
+            if overrides:
+                merged.update(overrides)
+        return merged
 
     tasks = [
         process_analyzer(
@@ -291,7 +301,7 @@ async def _process_sbom(
             scan_id,
             db,
             aggregator,
-            settings=analyzer_settings,
+            settings=_settings_for(analyzer_name),
             fallback_source=fallback_source,
             parsed_components=(parsed_components if parsed_components else None),
         )
@@ -579,12 +589,16 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     settings_repo = SystemSettingsRepository(db)
     system_settings = await settings_repo.get()
 
-    # Merge project-level license_policy into system settings for analyzers
+    # Merge project-level analyzer settings into system settings for analyzers
     project_license_policy = None
+    project_analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = None
     if project_id:
         project_doc = await project_repo.get_by_id(project_id)
-        if project_doc and getattr(project_doc, "license_policy", None):
-            project_license_policy = project_doc.license_policy
+        if project_doc:
+            if getattr(project_doc, "license_policy", None):
+                project_license_policy = project_doc.license_policy
+            if getattr(project_doc, "analyzer_settings", None):
+                project_analyzer_settings = project_doc.analyzer_settings
 
     # Initialize GridFS
     fs = AsyncIOMotorGridFSBucket(db)
@@ -601,6 +615,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             active_analyzers,
             system_settings,
             project_license_policy=project_license_policy,
+            project_analyzer_settings=project_analyzer_settings,
         )
         results_summary.extend(sbom_results)
 

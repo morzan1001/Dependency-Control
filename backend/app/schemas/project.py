@@ -86,6 +86,9 @@ class ProjectCreate(BaseModel):
     license_policy: Optional[LicensePolicySchema] = Field(
         None, description="License compliance policy controlling copyleft finding severity"
     )
+    analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = Field(
+        None, description="Per-analyzer configuration overrides keyed by analyzer ID"
+    )
 
 
 class ProjectUpdate(BaseModel):
@@ -104,6 +107,9 @@ class ProjectUpdate(BaseModel):
     )
     license_policy: Optional[LicensePolicySchema] = Field(
         None, description="License compliance policy controlling copyleft finding severity"
+    )
+    analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = Field(
+        None, description="Per-analyzer configuration overrides keyed by analyzer ID"
     )
 
 

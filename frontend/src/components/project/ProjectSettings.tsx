@@ -8,6 +8,8 @@ import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@
 import { useGitLabInstances } from '@/hooks/queries/use-instances'
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
+import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-schemas'
+import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
 import { User } from '@/types/user'
 import { getErrorMessage } from '@/lib/utils'
 import { useAuth } from '@/context/useAuth'
@@ -27,7 +29,7 @@ import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { WebhookManager } from '@/components/WebhookManager'
-import { AlertTriangle, RefreshCw, Copy, Trash2, Info } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Copy, Trash2, Info, Settings } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from '@/lib/constants'
@@ -88,22 +90,25 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [gitlabProjectId, setGitlabProjectId] = useState<number | undefined>(project.gitlab_project_id)
   const [gitlabProjectPath, setGitlabProjectPath] = useState<string | undefined>(project.gitlab_project_path)
 
-  // License Policy state — defaults match backend conservative defaults
-  const [distributionModel, setDistributionModel] = useState<'internal_only' | 'distributed' | 'open_source'>(
-    project.license_policy?.distribution_model || 'distributed'
+  // Schema-driven analyzer settings: tracks which analyzer's dialog is open
+  const [openSettingsAnalyzer, setOpenSettingsAnalyzer] = useState<string | null>(null)
+  const [analyzerSettingsState, setAnalyzerSettingsState] = useState<Record<string, Record<string, unknown>>>(
+    project.analyzer_settings || {}
   )
-  const [deploymentModel, setDeploymentModel] = useState<'network_facing' | 'cli_batch' | 'desktop' | 'embedded'>(
-    project.license_policy?.deployment_model || 'network_facing'
+
+  // Backward-compat: hydrate license_compliance from the legacy license_policy field if present
+  const initialLicenseCompliance = analyzerSettingsState.license_compliance || (
+    project.license_policy ? { ...project.license_policy } as Record<string, unknown> : {}
   )
-  const [libraryUsage, setLibraryUsage] = useState<'unmodified' | 'modified' | 'mixed'>(
-    project.license_policy?.library_usage || 'mixed'
-  )
-  const [allowStrongCopyleft, setAllowStrongCopyleft] = useState<boolean>(
-    project.license_policy?.allow_strong_copyleft || false
-  )
-  const [allowNetworkCopyleft, setAllowNetworkCopyleft] = useState<boolean>(
-    project.license_policy?.allow_network_copyleft || false
-  )
+
+  const saveAnalyzerSettings = (analyzerId: string, values: Record<string, unknown>) => {
+    const updated = { ...analyzerSettingsState, [analyzerId]: values }
+    setAnalyzerSettingsState(updated)
+    updateProjectMutation.mutate(
+      { analyzer_settings: updated },
+      { onSuccess: () => setOpenSettingsAnalyzer(null) }
+    )
+  }
 
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
@@ -221,13 +226,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       gitlab_instance_id: gitlabInstanceId || null,
       gitlab_project_id: gitlabProjectId || null,
       gitlab_project_path: gitlabProjectPath || null,
-      license_policy: {
-        distribution_model: distributionModel,
-        deployment_model: deploymentModel,
-        library_usage: libraryUsage,
-        allow_strong_copyleft: allowStrongCopyleft,
-        allow_network_copyleft: allowNetworkCopyleft,
-      },
     })
   }
 
@@ -493,15 +491,17 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                               </div>
                               {categoryAnalyzers.map((analyzer) => {
                                 const hasRequiredDeps = !analyzer.dependsOn || analyzer.dependsOn.some(dep => analyzers.includes(dep));
+                                const analyzerEnabled = analyzers.includes(analyzer.id);
+                                const showConfigureButton = hasSettingsSchema(analyzer.id) && analyzerEnabled && canUpdate;
                                 return (
                                   <div key={analyzer.id} className="flex items-start space-x-2 py-2">
-                                    <Checkbox 
+                                    <Checkbox
                                       id={`settings-analyzer-${analyzer.id}`}
                                       checked={analyzers.includes(analyzer.id)}
                                       onCheckedChange={() => toggleAnalyzer(analyzer.id)}
                                       className="mt-1"
                                     />
-                                    <div className="flex flex-col gap-1">
+                                    <div className="flex flex-col gap-1 flex-1">
                                       <div className="flex items-center gap-2">
                                         <Label htmlFor={`settings-analyzer-${analyzer.id}`} className="font-medium cursor-pointer">
                                           {analyzer.label}
@@ -515,6 +515,18 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                           <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 rounded">
                                             Callgraph Required
                                           </span>
+                                        )}
+                                        {showConfigureButton && (
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="ml-auto h-7 px-2 text-xs"
+                                            onClick={() => setOpenSettingsAnalyzer(analyzer.id)}
+                                          >
+                                            <Settings className="h-3.5 w-3.5 mr-1" />
+                                            Configure
+                                          </Button>
                                         )}
                                       </div>
                                       <p className="text-xs text-muted-foreground">
@@ -544,115 +556,25 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-            <CardTitle>License Policy</CardTitle>
-            <CardDescription>
-                Configure how this project uses dependencies. The scanner uses this context to decide
-                which copyleft licenses are actually problematic for you — reducing noise from
-                findings that don't apply to your usage model.
-            </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-            <div className="space-y-2">
-                <Label htmlFor="distribution-model">Distribution Model</Label>
-                <Select
-                    value={distributionModel}
-                    onValueChange={(v) => setDistributionModel(v as 'internal_only' | 'distributed' | 'open_source')}
-                    disabled={!canUpdate}
-                >
-                    <SelectTrigger id="distribution-model">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="internal_only">Internal only — not distributed outside the organization</SelectItem>
-                        <SelectItem value="distributed">Distributed — binary or source shared with third parties</SelectItem>
-                        <SelectItem value="open_source">Open source — project itself is open source</SelectItem>
-                    </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                    GPL obligations only trigger on distribution. Internal-only projects don't need to worry about GPL dependencies.
-                </p>
-            </div>
-
-            <div className="space-y-2">
-                <Label htmlFor="deployment-model">Deployment Model</Label>
-                <Select
-                    value={deploymentModel}
-                    onValueChange={(v) => setDeploymentModel(v as 'network_facing' | 'cli_batch' | 'desktop' | 'embedded')}
-                    disabled={!canUpdate}
-                >
-                    <SelectTrigger id="deployment-model">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="network_facing">Network-facing — SaaS, web app, or API</SelectItem>
-                        <SelectItem value="cli_batch">CLI / Batch job / Daemon</SelectItem>
-                        <SelectItem value="desktop">Desktop application</SelectItem>
-                        <SelectItem value="embedded">Embedded / IoT system</SelectItem>
-                    </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                    AGPL/SSPL clauses only trigger on network interaction. CLI tools and batch jobs are not affected.
-                </p>
-            </div>
-
-            <div className="space-y-2">
-                <Label htmlFor="library-usage">Library Usage</Label>
-                <Select
-                    value={libraryUsage}
-                    onValueChange={(v) => setLibraryUsage(v as 'unmodified' | 'modified' | 'mixed')}
-                    disabled={!canUpdate}
-                >
-                    <SelectTrigger id="library-usage">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="unmodified">Unmodified — libraries used as-is via public API</SelectItem>
-                        <SelectItem value="modified">Modified — libraries are forked or patched</SelectItem>
-                        <SelectItem value="mixed">Mixed — some modified, some not (conservative)</SelectItem>
-                    </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                    Weak copyleft (LGPL, MPL) only requires source disclosure when you modify the library itself.
-                </p>
-            </div>
-
-            <div className="flex flex-row items-center justify-between rounded-lg border p-4">
-                <div className="space-y-0.5 pr-4">
-                    <Label className="text-base">Allow Strong Copyleft</Label>
-                    <div className="text-sm text-muted-foreground">
-                        Treat GPL-style licenses as informational instead of as compliance issues. Enable this if your legal team has approved GPL dependencies.
-                    </div>
-                </div>
-                <Switch
-                    checked={allowStrongCopyleft}
-                    onCheckedChange={setAllowStrongCopyleft}
-                    disabled={!canUpdate}
-                />
-            </div>
-
-            <div className="flex flex-row items-center justify-between rounded-lg border p-4">
-                <div className="space-y-0.5 pr-4">
-                    <Label className="text-base">Allow Network Copyleft</Label>
-                    <div className="text-sm text-muted-foreground">
-                        Treat AGPL/SSPL licenses as lower severity instead of critical. Enable this only if you understand the network-use source-disclosure obligations.
-                    </div>
-                </div>
-                <Switch
-                    checked={allowNetworkCopyleft}
-                    onCheckedChange={setAllowNetworkCopyleft}
-                    disabled={!canUpdate}
-                />
-            </div>
-
-            {canUpdate && (
-                <Button onClick={() => handleUpdate()} disabled={updateProjectMutation.isPending}>
-                    {updateProjectMutation.isPending ? "Saving..." : "Save License Policy"}
-                </Button>
-            )}
-        </CardContent>
-      </Card>
+      {openSettingsAnalyzer && (() => {
+        const schema = getSettingsSchema(openSettingsAnalyzer)
+        if (!schema) return null
+        // For license_compliance, hydrate with legacy license_policy as fallback
+        const currentValues = openSettingsAnalyzer === 'license_compliance'
+          ? initialLicenseCompliance
+          : (analyzerSettingsState[openSettingsAnalyzer] || {})
+        return (
+          <AnalyzerSettingsDialog
+            open={true}
+            onOpenChange={(isOpen) => { if (!isOpen) setOpenSettingsAnalyzer(null) }}
+            schema={schema}
+            currentValues={currentValues}
+            onSave={(values) => saveAnalyzerSettings(openSettingsAnalyzer, values)}
+            isSaving={updateProjectMutation.isPending}
+            canEdit={canUpdate}
+          />
+        )
+      })()}
 
       <Card>
         <CardHeader>

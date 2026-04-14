@@ -29,6 +29,11 @@ class EndOfLifeAnalyzer(Analyzer):
         components = self._get_components(sbom, parsed_components)
         results = []
 
+        # Configurable thresholds (defaults preserve existing behavior)
+        settings = settings or {}
+        self._high_after_days = int(settings.get("eol_high_after_days", 365))
+        self._medium_after_days = int(settings.get("eol_medium_after_days", 180))
+
         # Collect all unique products to check
         products_to_check: Dict[str, tuple] = {}  # product -> (component_name, version)
 
@@ -126,9 +131,11 @@ class EndOfLifeAnalyzer(Analyzer):
             try:
                 eol_dt = datetime.strptime(eol_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                 days_past_eol = (datetime.now(timezone.utc) - eol_dt).days
-                if days_past_eol > 365:
+                high_after = getattr(self, "_high_after_days", 365)
+                medium_after = getattr(self, "_medium_after_days", 180)
+                if days_past_eol > high_after:
                     severity = Severity.HIGH.value
-                elif days_past_eol > 180:
+                elif days_past_eol > medium_after:
                     severity = Severity.MEDIUM.value
                 else:
                     severity = Severity.LOW.value

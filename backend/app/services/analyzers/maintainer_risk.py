@@ -82,6 +82,11 @@ class MaintainerRiskAnalyzer(Analyzer):
         timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("maintainer_risk", 10)
 
+        # Configurable stale-package thresholds (defaults preserve existing behavior)
+        settings = settings or {}
+        self._stale_after_days = int(settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS))
+        self._warn_after_days = int(settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS))
+
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
             for i in range(0, len(components), batch_size):
                 batch = components[i : i + batch_size]
@@ -361,8 +366,10 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         # Check for stale packages
         days_since_release = info.get("days_since_release")
+        stale_after = getattr(self, "_stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS)
+        warn_after = getattr(self, "_warn_after_days", STALE_PACKAGE_WARNING_DAYS)
         if days_since_release:
-            if days_since_release > STALE_PACKAGE_THRESHOLD_DAYS:
+            if days_since_release > stale_after:
                 risks.append(
                     {
                         "type": "stale_package",
@@ -371,7 +378,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                         "detail": f"Last release: {info.get('latest_release_date')}",
                     }
                 )
-            elif days_since_release > STALE_PACKAGE_WARNING_DAYS:
+            elif days_since_release > warn_after:
                 risks.append(
                     {
                         "type": "infrequent_updates",
@@ -425,7 +432,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         # No recent activity
         days_since_push = gh_info.get("days_since_push")
-        if days_since_push and days_since_push > STALE_PACKAGE_THRESHOLD_DAYS:
+        if days_since_push and days_since_push > getattr(self, "_stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS):
             risks.append(
                 {
                     "type": "inactive_repo",

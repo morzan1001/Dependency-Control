@@ -646,8 +646,15 @@ class LicenseAnalyzer(Analyzer):
         ignore_dev = settings.get("ignore_dev_dependencies", True)
         ignore_transitive = settings.get("ignore_transitive", False)
 
-        # Build LicensePolicy from settings, with backward-compatible fallbacks
+        # Build LicensePolicy from settings.
+        # Precedence: settings (already merged from analyzer_settings.license_compliance by engine)
+        # falls back to legacy top-level "license_policy" key for backward compat.
         policy_raw = settings.get("license_policy", {})
+        if not policy_raw and any(k in settings for k in (
+            "distribution_model", "deployment_model", "library_usage"
+        )):
+            # New-style: settings come directly from analyzer_settings["license_compliance"]
+            policy_raw = settings
         policy = LicensePolicy(
             distribution_model=DistributionModel(policy_raw.get("distribution_model", "distributed")),
             deployment_model=DeploymentModel(policy_raw.get("deployment_model", "network_facing")),

@@ -180,6 +180,12 @@ class TyposquattingAnalyzer(Analyzer):
         components = self._get_components(sbom, parsed_components)
         issues = []
 
+        # Configurable thresholds (defaults preserve existing behavior)
+        settings = settings or {}
+        similarity_threshold = float(settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD))
+        critical_at = float(settings.get("critical_similarity", 0.95))
+        high_at = float(settings.get("high_similarity", 0.90))
+
         for component in components:
             name = component.get("name", "").lower()
             purl = component.get("purl", "")
@@ -209,12 +215,12 @@ class TyposquattingAnalyzer(Analyzer):
                 # Calculate similarity
                 ratio = difflib.SequenceMatcher(None, name, popular).ratio()
 
-                if ratio > TYPOSQUATTING_SIMILARITY_THRESHOLD:
+                if ratio > similarity_threshold:
                     if self._is_suspicious(name, popular):
                         # Higher similarity = more suspicious
-                        if ratio > 0.95:
+                        if ratio > critical_at:
                             severity = Severity.CRITICAL.value
-                        elif ratio > 0.90:
+                        elif ratio > high_at:
                             severity = Severity.HIGH.value
                         else:
                             severity = Severity.MEDIUM.value

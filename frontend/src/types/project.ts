@@ -30,6 +30,7 @@ export interface Project {
   retention_days?: number;
   retention_action?: 'delete' | 'archive' | 'none';
   license_policy?: LicensePolicy;
+  analyzer_settings?: Record<string, Record<string, unknown>>;
   default_branch?: string;
   enforce_notification_settings?: boolean;
   rescan_enabled?: boolean;
@@ -63,6 +64,7 @@ export interface ProjectUpdate {
   retention_days?: number;
   retention_action?: 'delete' | 'archive' | 'none';
   license_policy?: LicensePolicy;
+  analyzer_settings?: Record<string, Record<string, unknown>>;
   enforce_notification_settings?: boolean;
   default_branch?: string | null;
   rescan_enabled?: boolean;

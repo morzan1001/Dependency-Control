@@ -69,10 +69,16 @@ class Project(BaseModel):
         None, description="GitHub repository path (owner/repo). For display purposes."
     )
 
-    # License Policy
+    # License Policy (deprecated — use analyzer_settings["license_compliance"] instead, kept for backward compat)
     license_policy: Optional[Dict[str, Any]] = Field(
         None,
         description="License compliance policy. Controls severity of copyleft findings based on project context.",
+    )
+
+    # Per-analyzer settings: {analyzer_id: {setting_key: value}}
+    analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = Field(
+        None,
+        description="Per-analyzer configuration overrides keyed by analyzer ID.",
     )
 
     # Branch Lifecycle

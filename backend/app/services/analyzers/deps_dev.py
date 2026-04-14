@@ -21,6 +21,21 @@ from .purl_utils import parse_purl
 logger = logging.getLogger(__name__)
 
 
+def _validated_threshold(
+    settings: Optional[Dict[str, Any]], key: str, default: float, min_value: float = 0.0, max_value: float = 10.0
+) -> float:
+    """Extract and validate a numeric threshold from settings, falling back to default."""
+    if not settings or key not in settings:
+        return default
+    try:
+        value = float(settings[key])
+        if min_value <= value <= max_value:
+            return value
+    except (ValueError, TypeError):
+        pass
+    return default
+
+
 class DepsDevAnalyzer(Analyzer):
     """
     Analyzer that fetches package metadata and OpenSSF Scorecard data from deps.dev API.
@@ -55,11 +70,17 @@ class DepsDevAnalyzer(Analyzer):
         if settings and "scorecard_threshold" in settings:
             try:
                 custom_threshold = float(settings["scorecard_threshold"])
-                # Validate threshold is in valid range (0-10 for OpenSSF Scorecard)
                 if 0 <= custom_threshold <= 10:
                     threshold = custom_threshold
             except (ValueError, TypeError):
-                pass  # Keep default threshold
+                pass
+
+        # Configurable severity thresholds (defaults preserve existing behavior)
+        self._severity_thresholds = {
+            "high": _validated_threshold(settings, "scorecard_high_threshold", 2.0),
+            "medium": _validated_threshold(settings, "scorecard_medium_threshold", 4.0),
+            "low": _validated_threshold(settings, "scorecard_low_threshold", 5.0),
+        }
 
         # First, check Redis cache for all components
         cached_results, uncached_components = await self._get_cached_components(components)
@@ -395,7 +416,14 @@ class DepsDevAnalyzer(Analyzer):
                     critical_issues.append(check_name)
 
         # Determine severity based on score and critical issues
-        severity = self._calculate_scorecard_severity(overall_score, critical_issues)
+        thresholds = getattr(self, "_severity_thresholds", {"high": 2.0, "medium": 4.0, "low": 5.0})
+        severity = self._calculate_scorecard_severity(
+            overall_score,
+            critical_issues,
+            high_threshold=thresholds["high"],
+            medium_threshold=thresholds["medium"],
+            low_threshold=thresholds["low"],
+        )
 
         # Build warning message
         warning_parts = [f"Low OpenSSF Scorecard score: {overall_score:.1f}/10"]
@@ -429,7 +457,14 @@ class DepsDevAnalyzer(Analyzer):
             "warning": message,  # Keep for backward compatibility
         }
 
-    def _calculate_scorecard_severity(self, overall_score: float, critical_issues: List[str]) -> str:
+    def _calculate_scorecard_severity(
+        self,
+        overall_score: float,
+        critical_issues: List[str],
+        high_threshold: float = 2.0,
+        medium_threshold: float = 4.0,
+        low_threshold: float = 5.0,
+    ) -> str:
         """Calculate severity based on scorecard score and critical issues."""
         # Critical issues always elevate severity
         if "Vulnerabilities" in critical_issues or "Dangerous-Workflow" in critical_issues:
@@ -437,11 +472,11 @@ class DepsDevAnalyzer(Analyzer):
         if critical_issues:
             return Severity.MEDIUM.value
 
-        # Score-based severity
-        if overall_score < 2:
+        # Score-based severity (configurable thresholds)
+        if overall_score < high_threshold:
             return Severity.HIGH.value
-        elif overall_score < 4:
+        if overall_score < medium_threshold:
             return Severity.MEDIUM.value
-        elif overall_score < 5:
+        if overall_score < low_threshold:
             return Severity.LOW.value
         return Severity.INFO.value
