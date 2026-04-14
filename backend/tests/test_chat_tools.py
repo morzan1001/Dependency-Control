@@ -43,7 +43,10 @@ def test_user_with_chat_access_gets_basic_tools():
     assert "list_projects" in available
     assert "get_project_findings" in available
     assert "search_findings" in available
-    assert "get_recommendations" in available
+    assert "get_top_priority_findings" in available
+    assert "get_kev_findings" in available
+    assert "compare_scans" in available
+    assert "find_component_usage" in available
 
 
 def test_tool_definitions_match_registry():
