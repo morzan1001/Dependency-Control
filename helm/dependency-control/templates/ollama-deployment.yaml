@@ -25,6 +25,50 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+      initContainers:
+        - name: model-pull
+          image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Starting Ollama in background to pull model..."
+              ollama serve &
+              OLLAMA_PID=$!
+              # Wait for ollama to be reachable
+              until curl -sf http://localhost:11434/ > /dev/null 2>&1; do
+                sleep 2
+              done
+              echo "Pulling model: {{ .Values.ollama.model }}"
+              ollama pull {{ .Values.ollama.model }}
+              echo "Model pulled. Stopping background Ollama."
+              kill $OLLAMA_PID || true
+              wait $OLLAMA_PID 2>/dev/null || true
+              echo "Model pull complete."
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0"
+            - name: HOME
+              value: "/home/ollama"
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /home/ollama/.ollama
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
       containers:
         - name: ollama
           image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
@@ -60,11 +104,15 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
-            httpGet:
-              path: /
-              port: 11434
+            exec:
+              command:
+                - sh
+                - -c
+                - "ollama list | grep -q '{{ .Values.ollama.model }}'"
             initialDelaySeconds: 10
             periodSeconds: 10
+            failureThreshold: 30
+            timeoutSeconds: 5
           env:
             - name: OLLAMA_HOST
               value: "0.0.0.0"
