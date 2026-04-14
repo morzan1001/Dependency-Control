@@ -25,6 +25,32 @@ from app.repositories.waivers import WaiverRepository
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_LIMIT = 200  # Hard cap on LLM-supplied limit arguments to prevent DoS.
+MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
+
+# Finding fields that are actually useful for LLM reasoning. Trimming the
+# raw Mongo document to this subset keeps context small so the model can
+# fit multiple findings + its reasoning in one round.
+_FINDING_LLM_FIELDS = (
+    "finding_id",
+    "severity",
+    "type",
+    "description",
+    "component",
+    "component_name",
+    "component_version",
+    "package",
+    "package_name",
+    "package_version",
+    "cve_id",
+    "cvss_score",
+    "epss_score",
+    "reachable",
+    "fix_version",
+    "fixed_versions",
+    "references",
+    "project_id",
+    "scan_id",
+)
 
 
 def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
@@ -34,6 +60,72 @@ def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
     except (TypeError, ValueError):
         value = default
     return max(1, min(value, maximum))
+
+
+def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a compact, LLM-friendly projection of a finding document.
+
+    Strips verbose internal fields and keeps only what the model needs to
+    explain WHAT is wrong, WHERE it lives, and HOW to fix it.
+    """
+    if not doc:
+        return {}
+    out: Dict[str, Any] = {}
+    for key in _FINDING_LLM_FIELDS:
+        if key in doc and doc[key] is not None:
+            value = doc[key]
+            if hasattr(value, "isoformat"):
+                value = value.isoformat()
+            # Clip very long string fields (typically description or references)
+            if isinstance(value, str) and len(value) > 400:
+                value = value[:400] + "…"
+            if isinstance(value, list) and len(value) > 5:
+                value = value[:5] + ["…"]
+            out[key] = value
+    out["id"] = str(doc.get("_id", doc.get("id", "")))
+    return out
+
+
+def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
+    """If the JSON encoding exceeds MAX_TOOL_RESULT_BYTES, keep the first
+    items of the largest list and replace the rest with a hint. Prevents
+    a single tool result from blowing the LLM's context window."""
+    import json as _json
+    try:
+        encoded = _json.dumps(result, default=str)
+    except (TypeError, ValueError):
+        return result
+    if len(encoded) <= MAX_TOOL_RESULT_BYTES:
+        return result
+
+    # Find the biggest list in the result and truncate it.
+    biggest_key = None
+    biggest_len = 0
+    for k, v in result.items():
+        if isinstance(v, list) and len(v) > biggest_len:
+            biggest_key = k
+            biggest_len = len(v)
+    if biggest_key is None:
+        result["_truncated"] = True
+        return result
+
+    # Binary-search for the largest prefix that fits
+    original = result[biggest_key]
+    lo, hi = 0, len(original)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        result[biggest_key] = original[:mid]
+        if len(_json.dumps(result, default=str)) <= MAX_TOOL_RESULT_BYTES:
+            lo = mid
+        else:
+            hi = mid - 1
+    result[biggest_key] = original[:lo]
+    result["_truncated"] = True
+    result["_truncation_note"] = (
+        f"Result truncated from {biggest_len} to {lo} entries in '{biggest_key}'. "
+        f"Call this tool with a smaller limit or a narrower filter for more data."
+    )
+    return result
 
 
 # ── Tool metadata ──────────────────────────────────────────────────────────
@@ -394,6 +486,34 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "get_top_priority_findings",
+            "description": (
+                "Return the top N most urgent findings across ALL accessible projects, "
+                "sorted by severity (CRITICAL first) and EPSS score. Use this when the "
+                "user asks 'where should I start?', 'what should I fix first?' or "
+                "'which project has the biggest problem?'. Returns a compact list "
+                "with finding_id, severity, CVE, affected component and fix_version, "
+                "so you can give an actionable answer in a single turn."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "How many findings to return (default 5, max 20).",
+                    },
+                    "project_id": {
+                        "type": "string",
+                        "description": "Optional: restrict to a single project.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_recommendations",
             "description": "Get remediation recommendations for a project: what to fix first, suggested updates, priority order.",
             "parameters": {
@@ -597,7 +717,10 @@ class ChatToolRegistry:
             duration = time.time() - start
             chat_tool_calls_total.labels(tool_name=tool_name, status="success").inc()
             chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
-            return result
+            # Cap JSON size — large tool dumps (hundreds of projects / thousands
+            # of findings) blow the LLM's context budget and make it loop on
+            # the same tool trying to re-read data that is already there.
+            return _truncate_if_too_large(result) if isinstance(result, dict) else result
         except Exception as e:
             duration = time.time() - start
             chat_tool_calls_total.labels(tool_name=tool_name, status="error").inc()
@@ -897,6 +1020,71 @@ class ChatToolRegistry:
             return {"waivers": [_serialize_doc(w) for w in waivers]}
 
         # ── Recommendation tools ──
+        if tool_name == "get_top_priority_findings":
+            limit = _clamp_limit(args.get("limit"), 5, maximum=20)
+            # If a project_id is provided, restrict to that project; else span all
+            # projects the user can access.
+            match: Dict[str, Any] = {}
+            if args.get("project_id"):
+                proj = await self._get_authorized_project(
+                    args["project_id"], user_project_query, db
+                )
+                if not proj:
+                    return {"error": "Project not found or access denied"}
+                latest_scan_id = proj.get("latest_scan_id")
+                if not latest_scan_id:
+                    return {"findings": [], "message": "No scan data available for this project"}
+                match["scan_id"] = latest_scan_id
+                match["project_id"] = args["project_id"]
+            else:
+                # Collect latest scan per authorized project so we only look at
+                # current state, not historical findings.
+                project_ids = await self._get_authorized_project_ids(user_project_query, db)
+                if not project_ids:
+                    return {"findings": [], "message": "No accessible projects"}
+                latest_scans_pipe = [
+                    {"$match": {"project_id": {"$in": project_ids}}},
+                    {"$sort": {"created_at": -1}},
+                    {"$group": {"_id": "$project_id", "latest_scan_id": {"$first": "$_id"}}},
+                ]
+                latest = await db["scans"].aggregate(latest_scans_pipe).to_list(length=len(project_ids))
+                scan_ids = [row["latest_scan_id"] for row in latest if row.get("latest_scan_id")]
+                if not scan_ids:
+                    return {"findings": [], "message": "No scans found"}
+                match["scan_id"] = {"$in": scan_ids}
+            # Prefer CRITICAL, then HIGH — sort severity then EPSS desc for urgency.
+            match.setdefault("severity", {"$in": ["CRITICAL", "HIGH"]})
+            cursor = db["findings"].find(
+                match,
+                sort=[("severity", -1), ("epss_score", -1), ("cvss_score", -1)],
+                limit=limit,
+            )
+            findings = await cursor.to_list(length=limit)
+
+            # Enrich with project name so the model can tell the user exactly where to look.
+            project_ids_hit = list({f.get("project_id") for f in findings if f.get("project_id")})
+            project_names: Dict[str, str] = {}
+            if project_ids_hit:
+                async for p in db["projects"].find({"_id": {"$in": project_ids_hit}}, {"name": 1}):
+                    project_names[p["_id"]] = p.get("name", "")
+
+            trimmed = []
+            for f in findings:
+                slim = _serialize_finding_for_llm(f)
+                pid = f.get("project_id")
+                if pid and pid in project_names:
+                    slim["project_name"] = project_names[pid]
+                trimmed.append(slim)
+            return {
+                "findings": trimmed,
+                "count": len(trimmed),
+                "hint": (
+                    "Present these to the user as a short ordered list. For each item "
+                    "include project_name, CVE, component@version, severity, and the "
+                    "fix_version if present. Do not call further tools unless asked."
+                ),
+            }
+
         if tool_name in ("get_recommendations", "get_update_suggestions"):
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
