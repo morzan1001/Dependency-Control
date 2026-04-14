@@ -106,7 +106,9 @@ class ChatService:
         try:
             # Ollama interaction loop (tool calls may require multiple rounds)
             max_rounds = 10
+            rounds_used = 0
             for _ in range(max_rounds):
+                rounds_used += 1
                 round_tool_calls = 0
                 async for chunk in self.ollama.chat_stream(messages, tools=available_tools):
                     chunk_type = chunk["type"]
@@ -161,6 +163,22 @@ class ChatService:
                 # If no tool calls were made in this round, we're done
                 if round_tool_calls == 0:
                     break
+
+            # If we hit the max-rounds cap without ever producing text,
+            # the model got stuck in a tool-call loop. Synthesise an honest
+            # fallback message so the user sees something instead of a blank
+            # turn full of tool calls.
+            if not full_response and rounds_used >= max_rounds and all_tool_calls:
+                fallback = (
+                    "_I gathered data from "
+                    f"{total_tool_calls} tool call(s) but couldn't put together a "
+                    "final answer within my reasoning budget. The tool results "
+                    "above contain the raw data — please ask a more specific "
+                    "follow-up question and I'll try again._"
+                )
+                full_response = fallback
+                yield f"data: {json.dumps({'type': 'token', 'content': fallback})}\n\n"
+                chat_messages_total.labels(status="max_rounds_exhausted").inc()
 
             # Save assistant response (happy path)
             await self.repo.add_message(

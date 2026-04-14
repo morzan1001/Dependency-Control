@@ -19,6 +19,10 @@ export function useChatStream(
   });
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
+  const [pendingUserMessage, setPendingUserMessage] = useState<{
+    content: string;
+    images: string[];
+  } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const isStreamingRef = useRef(false);
 
@@ -32,6 +36,10 @@ export function useChatStream(
       setStreamState({ isStreaming: true, error: null, activeToolCall: null });
       setStreamingContent('');
       setStreamingToolCalls([]);
+      // Optimistically render the user's own message immediately so they
+      // don't stare at an empty UI while Ollama warms up; this is cleared
+      // once the conversation is refetched after the stream completes.
+      setPendingUserMessage({ content, images });
 
       try {
         for await (const event of chatApi.sendMessage(
@@ -89,11 +97,17 @@ export function useChatStream(
     abortControllerRef.current?.abort();
   }, []);
 
+  const clearPendingUserMessage = useCallback(() => {
+    setPendingUserMessage(null);
+  }, []);
+
   return {
     sendMessage,
     abort,
     streamingContent,
     streamingToolCalls,
+    pendingUserMessage,
+    clearPendingUserMessage,
     ...streamState,
   };
 }

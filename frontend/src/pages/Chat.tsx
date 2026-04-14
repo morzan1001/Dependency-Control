@@ -73,10 +73,31 @@ export default function Chat() {
     abort,
     streamingContent,
     streamingToolCalls,
+    pendingUserMessage,
+    clearPendingUserMessage,
     isStreaming,
     activeToolCall,
     error,
   } = useChatStream(activeConversationId, onMessageComplete);
+
+  // Drop the optimistic user message once the persisted version is back
+  // from the server (so we don't render it twice). On error, also drop it
+  // a moment after the stream ends so the UI doesn't hang on a pending bubble.
+  useEffect(() => {
+    if (isStreaming || !pendingUserMessage) return;
+    const lastMsg = conversationDetail?.messages?.[conversationDetail.messages.length - 1];
+    if (lastMsg?.role === 'user' && lastMsg.content === pendingUserMessage.content) {
+      clearPendingUserMessage();
+      return;
+    }
+    if (lastMsg?.role === 'assistant') {
+      clearPendingUserMessage();
+      return;
+    }
+    // Fallback — clear after a short grace period if nothing matched.
+    const t = setTimeout(clearPendingUserMessage, 1500);
+    return () => clearTimeout(t);
+  }, [isStreaming, pendingUserMessage, conversationDetail?.messages, clearPendingUserMessage]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -164,13 +185,27 @@ export default function Chat() {
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
-          {showEmptyState ? (
+          {showEmptyState && !pendingUserMessage ? (
             <EmptyState onPrompt={handleSend} />
           ) : (
             <>
               {messages.map((msg) => (
                 <ChatMessage key={msg.id} message={msg} />
               ))}
+              {pendingUserMessage && (
+                <ChatMessage
+                  message={{
+                    id: 'pending-user',
+                    conversation_id: activeConversationId ?? '',
+                    role: 'user',
+                    content: pendingUserMessage.content,
+                    images: pendingUserMessage.images,
+                    tool_calls: [],
+                    token_count: 0,
+                    created_at: new Date().toISOString(),
+                  }}
+                />
+              )}
               {isStreaming && (
                 <StreamingMessage
                   content={streamingContent}

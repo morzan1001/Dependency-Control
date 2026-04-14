@@ -258,6 +258,10 @@ spec:
               value: "http://{{ include "dependency-control.fullname" . }}-ollama:11434"
             - name: OLLAMA_MODEL
               value: {{ .Values.ollama.model | quote }}
+            # Cold-start of a 17 GB model on an L4 takes well over the
+            # 120s built-in default. Allow the full Pomerium-side budget.
+            - name: OLLAMA_TIMEOUT_SECONDS
+              value: {{ .Values.ollama.requestTimeoutSeconds | default 600 | quote }}
             {{- end }}
             {{- if .Values.global.tls.enabled }}
             # TLS environment variables

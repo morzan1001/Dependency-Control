@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Bot, User } from 'lucide-react';
 
 import { Card } from '@/components/ui/card';
@@ -37,10 +38,17 @@ function MessageBody({
         'prose-pre:my-2 prose-pre:rounded-md prose-pre:bg-muted prose-pre:text-foreground',
         'prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-xs prose-code:before:content-none prose-code:after:content-none',
         'prose-p:my-1 prose-ul:my-1 prose-ol:my-1',
+        // Table styling — react-markdown + remark-gfm renders <table> from
+        // GFM tables; default prose styles are too tight, so override here.
+        'prose-table:my-3 prose-table:w-full prose-table:border-collapse prose-table:overflow-hidden prose-table:rounded-md prose-table:border',
+        'prose-thead:bg-muted/60',
+        'prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:border-b',
+        'prose-td:px-3 prose-td:py-1.5 prose-td:align-top prose-td:border-b prose-td:last:border-b-0',
+        'prose-tr:border-0',
         className,
       )}
     >
-      <ReactMarkdown>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
 }
@@ -113,7 +121,11 @@ export function StreamingMessage({
   toolCalls,
   activeToolCall,
 }: StreamingMessageProps) {
-  const isWaiting = !content && !activeToolCall && toolCalls.length === 0;
+  // Show typing dots whenever the assistant has nothing visible right now:
+  //   - before any token / tool has come back (cold start)
+  //   - between rounds: a tool call just ended but the next content/tool is
+  //     still being decided by the model. Without this, the UI looks frozen.
+  const isThinking = !content && !activeToolCall;
   return (
     <div className="flex gap-3">
       <AvatarChip role="assistant" />
@@ -123,7 +135,7 @@ export function StreamingMessage({
         ))}
         {activeToolCall && <ToolCallLoading toolName={activeToolCall} />}
         {content && <MessageBody content={content} />}
-        {isWaiting && <TypingDots />}
+        {isThinking && <TypingDots />}
       </Card>
     </div>
   );
