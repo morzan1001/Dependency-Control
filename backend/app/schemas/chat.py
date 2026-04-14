@@ -1,7 +1,7 @@
 """Request/response schemas for the chat API."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,6 +25,8 @@ class ConversationListResponse(BaseModel):
     conversations: List[ConversationResponse]
     total: int
 
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
 
 class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
@@ -41,7 +43,7 @@ class ToolCallResponse(BaseModel):
 class MessageResponse(BaseModel):
     id: str
     conversation_id: str
-    role: str
+    role: Literal["user", "assistant", "tool"]
     content: str
     images: List[str]
     tool_calls: List[ToolCallResponse]
@@ -54,3 +56,5 @@ class MessageResponse(BaseModel):
 class ConversationDetailResponse(BaseModel):
     conversation: ConversationResponse
     messages: List[MessageResponse]
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)

@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -31,7 +31,7 @@ class Message(BaseModel):
         serialization_alias="_id",
     )
     conversation_id: str
-    role: str  # "user", "assistant", "tool"
+    role: Literal["user", "assistant", "tool"]
     content: str = ""
     images: List[str] = Field(default_factory=list)
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
