@@ -19,6 +19,7 @@ export function useChatStream(
   });
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
+  const [streamingInfo, setStreamingInfo] = useState<string | null>(null);
   const [pendingUserMessage, setPendingUserMessage] = useState<{
     content: string;
     images: string[];
@@ -36,6 +37,7 @@ export function useChatStream(
       setStreamState({ isStreaming: true, error: null, activeToolCall: null });
       setStreamingContent('');
       setStreamingToolCalls([]);
+      setStreamingInfo(null);
       // Optimistically render the user's own message immediately so they
       // don't stare at an empty UI while Ollama warms up; this is cleared
       // once the conversation is refetched after the stream completes.
@@ -52,9 +54,12 @@ export function useChatStream(
 
           switch (event.type) {
             case 'token':
+              // Any real output means warmup is done — clear the info banner.
+              setStreamingInfo(null);
               setStreamingContent((prev) => prev + event.content);
               break;
             case 'tool_call_start':
+              setStreamingInfo(null);
               setStreamState((prev) => ({ ...prev, activeToolCall: event.tool_name }));
               break;
             case 'tool_call_end':
@@ -68,6 +73,9 @@ export function useChatStream(
                 },
               ]);
               setStreamState((prev) => ({ ...prev, activeToolCall: null }));
+              break;
+            case 'info':
+              setStreamingInfo(event.message);
               break;
             case 'done':
               onMessageComplete();
@@ -87,6 +95,7 @@ export function useChatStream(
         }
       } finally {
         isStreamingRef.current = false;
+        setStreamingInfo(null);
         setStreamState((prev) => ({ ...prev, isStreaming: false, activeToolCall: null }));
       }
     },
@@ -106,6 +115,7 @@ export function useChatStream(
     abort,
     streamingContent,
     streamingToolCalls,
+    streamingInfo,
     pendingUserMessage,
     clearPendingUserMessage,
     ...streamState,

@@ -1,5 +1,6 @@
 """Chat service — orchestrates Ollama, tools, and SSE streaming."""
 
+import asyncio
 import json
 import logging
 import time
@@ -113,10 +114,61 @@ class ChatService:
                 or settings.CHAT_MAX_TOOL_ROUNDS
             )
             rounds_used = 0
+            warmup_info_sent = False
             for _ in range(max_rounds):
                 rounds_used += 1
                 round_tool_calls = 0
-                async for chunk in self.ollama.chat_stream(messages, tools=available_tools):
+                stream_iter = self.ollama.chat_stream(
+                    messages, tools=available_tools
+                ).__aiter__()
+                while True:
+                    try:
+                        # First chunk only: if Ollama doesn't produce output
+                        # quickly, the model is probably being loaded into VRAM
+                        # (first request after idle = 30-60s on L4). Surface
+                        # that as an SSE info event so the UI isn't silent.
+                        if (
+                            not warmup_info_sent
+                            and not first_token_recorded
+                            and total_tool_calls == 0
+                        ):
+                            try:
+                                chunk = await asyncio.wait_for(
+                                    stream_iter.__anext__(), timeout=5.0
+                                )
+                            except asyncio.TimeoutError:
+                                warmup_info_sent = True
+                                yield (
+                                    "data: "
+                                    + json.dumps({
+                                        "type": "info",
+                                        "message": (
+                                            "Loading the model into GPU memory — "
+                                            "the first request after idle usually "
+                                            "takes 30–60 seconds."
+                                        ),
+                                    })
+                                    + "\n\n"
+                                )
+                                try:
+                                    chunk = await asyncio.wait_for(
+                                        stream_iter.__anext__(), timeout=45.0
+                                    )
+                                except asyncio.TimeoutError:
+                                    yield (
+                                        "data: "
+                                        + json.dumps({
+                                            "type": "info",
+                                            "message": "Still warming up — hang tight.",
+                                        })
+                                        + "\n\n"
+                                    )
+                                    chunk = await stream_iter.__anext__()
+                        else:
+                            chunk = await stream_iter.__anext__()
+                    except StopAsyncIteration:
+                        break
+
                     chunk_type = chunk["type"]
 
                     if chunk_type == "token":
