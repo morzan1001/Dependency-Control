@@ -1,12 +1,18 @@
+import { useMemo, type ComponentProps } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { Bot, User } from 'lucide-react';
+import { Link as RouterLink } from 'react-router-dom';
 
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import type { Message, ToolCall } from '@/types/chat';
 
+import {
+  collectEntitiesFromToolCalls,
+  linkifyAssistantMarkdown,
+} from './chat-entities';
 import { ToolCallBlock, ToolCallLoading } from './ToolCallBlock';
 
 function AvatarChip({ role }: Readonly<{ role: 'user' | 'assistant' }>) {
@@ -25,13 +31,47 @@ function AvatarChip({ role }: Readonly<{ role: 'user' | 'assistant' }>) {
   );
 }
 
+function AssistantLink(props: Readonly<ComponentProps<'a'>>) {
+  const { href, children, ...rest } = props;
+  // Internal SPA links stay inside the app (no full reload).
+  if (typeof href === 'string' && href.startsWith('/')) {
+    return (
+      <RouterLink to={href} className="text-primary hover:underline">
+        {children}
+      </RouterLink>
+    );
+  }
+  return (
+    <a
+      {...rest}
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="text-primary hover:underline"
+    >
+      {children}
+    </a>
+  );
+}
+
 function MessageBody({
   content,
   className,
+  toolCalls,
 }: Readonly<{
   content: string;
   className?: string;
+  toolCalls?: ReadonlyArray<ToolCall>;
 }>) {
+  // Turn known project / team names into router links, and CVE IDs into NVD
+  // links — only for entities we actually saw in a tool result. Entities the
+  // model invents stay plain text.
+  const linkified = useMemo(() => {
+    if (!toolCalls || toolCalls.length === 0) return content;
+    const entities = collectEntitiesFromToolCalls(toolCalls);
+    return linkifyAssistantMarkdown(content, entities);
+  }, [content, toolCalls]);
+
   return (
     <div
       className={cn(
@@ -39,6 +79,7 @@ function MessageBody({
         'prose-pre:my-2 prose-pre:rounded-md prose-pre:bg-muted prose-pre:text-foreground',
         'prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-xs prose-code:before:content-none prose-code:after:content-none',
         'prose-p:my-1 prose-ul:my-1 prose-ol:my-1',
+        'prose-a:text-primary prose-a:no-underline hover:prose-a:underline',
         // Table styling — react-markdown + remark-gfm renders <table> from
         // GFM tables; default prose styles are too tight, so override here.
         'prose-table:my-3 prose-table:w-full prose-table:border-collapse prose-table:overflow-hidden prose-table:rounded-md prose-table:border',
@@ -49,7 +90,12 @@ function MessageBody({
         className,
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{content}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        components={{ a: AssistantLink }}
+      >
+        {linkified}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -105,7 +151,9 @@ export function ChatMessage({ message }: ChatMessageProps) {
         {message.tool_calls?.map((tc, i) => (
           <ToolCallBlock key={`${message.id}-tc-${i}-${tc.tool_name}`} toolCall={tc} />
         ))}
-        {message.content && <MessageBody content={message.content} />}
+        {message.content && (
+          <MessageBody content={message.content} toolCalls={message.tool_calls} />
+        )}
       </Card>
     </div>
   );
@@ -135,7 +183,7 @@ export function StreamingMessage({
           <ToolCallBlock key={`stream-tc-${i}-${tc.tool_name}`} toolCall={tc} />
         ))}
         {activeToolCall && <ToolCallLoading toolName={activeToolCall} />}
-        {content && <MessageBody content={content} />}
+        {content && <MessageBody content={content} toolCalls={toolCalls} />}
         {isThinking && <TypingDots />}
       </Card>
     </div>
