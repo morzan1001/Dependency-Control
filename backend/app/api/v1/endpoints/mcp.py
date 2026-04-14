@@ -23,6 +23,7 @@ server does not need to push notifications.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict
 
@@ -63,6 +64,15 @@ def _rpc_error(code: int, message: str, request_id: Any = None) -> Dict[str, Any
 
 def _rpc_result(result: Any, request_id: Any) -> Dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+
+class _RpcError(Exception):
+    """Raised inside dispatch to signal a JSON-RPC error response."""
+
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 async def _resolve_user_from_token(
@@ -122,26 +132,26 @@ async def _handle_tool_call(
     user: User,
     db,
 ) -> Dict[str, Any]:
-    """Execute a tool call and format the result for MCP."""
+    """Execute a tool call and format the result for MCP.
+
+    Protocol-level problems (bad params, unknown tool) are raised as
+    _RpcError so the caller emits a JSON-RPC error object. Tool-execution
+    problems are returned as a normal result with isError=true, per spec.
+    """
     name = params.get("name")
     if not isinstance(name, str) or not name:
-        return {"error": "Missing 'name' in tools/call params"}
+        raise _RpcError(_INVALID_PARAMS, "Missing 'name' in tools/call params")
     arguments = params.get("arguments") or {}
     if not isinstance(arguments, dict):
-        return {"error": "'arguments' must be an object"}
+        raise _RpcError(_INVALID_PARAMS, "'arguments' must be an object")
 
-    # Reuse the existing permission-gated executor — user isolation is applied
-    # inside each tool via build_user_project_query.
     available = registry.get_available_tool_names(user.permissions)
     if name not in available:
-        # Either the tool doesn't exist or the user doesn't have access.
-        return {"error": f"Tool '{name}' is not available to you"}
+        raise _RpcError(_METHOD_NOT_FOUND, f"Tool '{name}' is not available")
 
     result = await registry.execute_tool(name, arguments, user, db)
-    # MCP's tools/call result shape: { content: [{ type: "text", text: ... }], isError?: bool }
-    import json as _json
-    text = _json.dumps(result, default=str, ensure_ascii=False, indent=2)
-    is_error = isinstance(result, dict) and "error" in result and len(result) <= 2
+    text = json.dumps(result, default=str, ensure_ascii=False, indent=2)
+    is_error = isinstance(result, dict) and "error" in result
     return {
         "content": [{"type": "text", "text": text}],
         "isError": is_error,
@@ -229,12 +239,18 @@ async def mcp_rpc(
 
         try:
             result = await _dispatch(method, params, user, db)
+        except _RpcError as e:
+            if request_id is not None:
+                responses.append(_rpc_error(e.code, e.message, request_id))
+            continue
         except ValueError as e:
-            responses.append(_rpc_error(_METHOD_NOT_FOUND, str(e), request_id))
+            if request_id is not None:
+                responses.append(_rpc_error(_METHOD_NOT_FOUND, str(e), request_id))
             continue
         except Exception:
             logger.exception("MCP dispatch failed for method=%s", method)
-            responses.append(_rpc_error(_INTERNAL_ERROR, "Internal server error", request_id))
+            if request_id is not None:
+                responses.append(_rpc_error(_INTERNAL_ERROR, "Internal server error", request_id))
             continue
 
         # Notifications (no id) expect no response.
@@ -243,10 +259,10 @@ async def mcp_rpc(
 
         responses.append(_rpc_result(result, request_id))
 
-    if batched:
-        return JSONResponse(content=responses)
-    # Single-request path: if it was a notification, return 202 Accepted
-    # with no body per JSON-RPC convention.
+    # Notifications (no id) expect no response per JSON-RPC. If every item
+    # was a notification, return 202 Accepted regardless of batching.
     if not responses:
         return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=None)
+    if batched:
+        return JSONResponse(content=responses)
     return JSONResponse(content=responses[0])
