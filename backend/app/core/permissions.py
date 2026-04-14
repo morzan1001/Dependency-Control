@@ -62,6 +62,9 @@ class Permissions:
     CHAT_HISTORY_READ = "chat:history_read"
     CHAT_HISTORY_DELETE = "chat:history_delete"
 
+    # MCP (external LLM clients calling our tools via API key)
+    MCP_ACCESS = "mcp:access"
+
 
 # All permissions in the system (excluding internal/special permissions like auth:setup_2fa)
 ALL_PERMISSIONS: List[str] = [
@@ -115,6 +118,8 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.CHAT_ACCESS,
     Permissions.CHAT_HISTORY_READ,
     Permissions.CHAT_HISTORY_DELETE,
+    # MCP
+    Permissions.MCP_ACCESS,
 ]
 
 # Admin: All permissions
@@ -432,6 +437,18 @@ PERMISSION_GROUPS = [
                 "id": Permissions.CHAT_HISTORY_DELETE,
                 "name": "Delete Chat History",
                 "description": "Delete own chat conversations",
+            },
+        ],
+    },
+    {
+        "id": "mcp",
+        "name": "MCP (External LLM access)",
+        "description": "Lets a user mint API keys for external LLM clients (Claude Desktop, Cursor, custom bots) to call the DependencyControl tool surface over MCP.",
+        "permissions": [
+            {
+                "id": Permissions.MCP_ACCESS,
+                "name": "MCP Access",
+                "description": "Create and manage personal MCP API keys and use them against /api/v1/mcp",
             },
         ],
     },

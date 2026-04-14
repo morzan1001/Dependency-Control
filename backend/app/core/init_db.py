@@ -310,6 +310,25 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         name="conversation_cascade_delete",
     )
 
+    # MCP API keys
+    mcp_api_keys = database["mcp_api_keys"]
+    await mcp_api_keys.create_index(
+        [("user_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)],
+        name="mcp_keys_user_listing",
+    )
+    await mcp_api_keys.create_index(
+        [("token_hash", pymongo.ASCENDING)],
+        name="mcp_keys_token_lookup",
+        unique=True,
+    )
+    # TTL index: Mongo will remove docs automatically ~once per minute when
+    # expires_at has passed. No need for a housekeeping job.
+    await mcp_api_keys.create_index(
+        [("expires_at", pymongo.ASCENDING)],
+        name="mcp_keys_ttl",
+        expireAfterSeconds=0,
+    )
+
     logger.info("Database indexes created successfully.")
 
 

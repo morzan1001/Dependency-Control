@@ -5,9 +5,14 @@ import { UserDetailsCard } from '@/components/profile/UserDetailsCard';
 import { PasswordUpdateCard } from '@/components/profile/PasswordUpdateCard';
 import { TwoFactorAuthCard } from '@/components/profile/TwoFactorAuthCard';
 import { NotificationPreferencesCard } from '@/components/profile/NotificationPreferencesCard';
+import { MCPApiKeysCard } from '@/components/profile/MCPApiKeysCard';
+import { useAuth } from '@/context';
+import { Permissions } from '@/lib/permissions';
 
 export default function ProfilePage() {
   const { data: user, isLoading } = useCurrentUser();
+  const { hasPermission } = useAuth();
+  const canUseMcp = hasPermission(Permissions.MCP_ACCESS);
 
   const { data: notificationChannels } = useNotificationChannels();
   const { data: appConfig } = useAppConfig();
@@ -38,6 +43,8 @@ export default function ProfilePage() {
       </div>
 
       <NotificationPreferencesCard key={`notif-${user?.id}`} user={user} availableChannels={notificationChannels} />
+
+      {canUseMcp && <MCPApiKeysCard />}
     </div>
   );
 }

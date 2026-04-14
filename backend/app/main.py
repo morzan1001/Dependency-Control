@@ -21,6 +21,8 @@ from app.api.v1.endpoints import (
     ingest,
     integrations,
     invitations,
+    mcp,
+    mcp_keys,
     notifications,
     projects,
     scripts,
@@ -168,6 +170,8 @@ app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archive
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
+app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])
+app.include_router(mcp.router, prefix=f"{settings.API_V1_STR}/mcp", tags=["mcp"])
 
 
 @app.get("/")

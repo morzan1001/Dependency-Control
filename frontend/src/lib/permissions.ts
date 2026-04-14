@@ -58,6 +58,9 @@ export const Permissions = {
   CHAT_ACCESS: "chat:access",
   CHAT_HISTORY_READ: "chat:history_read",
   CHAT_HISTORY_DELETE: "chat:history_delete",
+
+  // MCP — issue API keys for external LLM clients
+  MCP_ACCESS: "mcp:access",
 } as const;
 
 export type Permission = (typeof Permissions)[keyof typeof Permissions];
@@ -109,6 +112,8 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.CHAT_ACCESS,
   Permissions.CHAT_HISTORY_READ,
   Permissions.CHAT_HISTORY_DELETE,
+  // MCP
+  Permissions.MCP_ACCESS,
 ];
 
 // Admin: All permissions
@@ -407,6 +412,20 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         id: Permissions.CHAT_HISTORY_DELETE,
         label: "Delete Chat History",
         description: "Delete own chat conversations",
+      },
+    ],
+  },
+  {
+    id: "mcp",
+    title: "MCP (External LLM access)",
+    description:
+      "Lets a user mint personal API keys for external LLM clients (Claude Desktop, Cursor, custom bots) to call the DependencyControl tool surface over MCP.",
+    permissions: [
+      {
+        id: Permissions.MCP_ACCESS,
+        label: "MCP Access",
+        description:
+          "Create and manage personal MCP API keys and use them against /api/v1/mcp",
       },
     ],
   },
