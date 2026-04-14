@@ -292,6 +292,24 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("project_id", pymongo.ASCENDING), ("archived_at", pymongo.DESCENDING)]
     )
 
+    # Chat Conversations
+    chat_conversations = database["chat_conversations"]
+    await chat_conversations.create_index(
+        [("user_id", pymongo.ASCENDING), ("updated_at", pymongo.DESCENDING)],
+        name="user_conversations_listing",
+    )
+
+    # Chat Messages
+    chat_messages = database["chat_messages"]
+    await chat_messages.create_index(
+        [("conversation_id", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)],
+        name="conversation_messages_chronological",
+    )
+    await chat_messages.create_index(
+        [("conversation_id", pymongo.ASCENDING)],
+        name="conversation_cascade_delete",
+    )
+
     logger.info("Database indexes created successfully.")
 
 
