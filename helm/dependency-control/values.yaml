@@ -528,7 +528,7 @@ ollama:
   enabled: true
   image:
     repository: ollama/ollama
-    tag: latest
+    tag: "0.5.7"  # pinned for reproducibility — see https://github.com/ollama/ollama/releases
   model: gemma4:27b-it-q4_K_M
   gpu:
     enabled: false

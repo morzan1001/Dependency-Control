@@ -58,7 +58,8 @@ export default function Chat() {
       // Auto-create conversation on first message
       createConversation.mutateAsync(undefined).then((conv) => {
         setActiveConversationId(conv.id);
-        setTimeout(() => sendMessage(content), 50);
+        // Pass the id explicitly — don't wait for state to propagate.
+        sendMessage(content, [], conv.id);
       });
       return;
     }

@@ -61,6 +61,8 @@ services:
       timeout: 10s
       retries: 5
     restart: unless-stopped
+    networks:
+      - dependencycontrol
 
   minio:
     image: minio/minio:latest

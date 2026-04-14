@@ -20,18 +20,21 @@ export function useChatStream(
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
   const abortRef = useRef(false);
+  const isStreamingRef = useRef(false);
 
   const sendMessage = useCallback(
-    async (content: string, images: string[] = []) => {
-      if (!conversationId || streamState.isStreaming) return;
+    async (content: string, images: string[] = [], conversationIdOverride?: string) => {
+      const effectiveId = conversationIdOverride ?? conversationId;
+      if (!effectiveId || isStreamingRef.current) return;
 
+      isStreamingRef.current = true;
       abortRef.current = false;
       setStreamState({ isStreaming: true, error: null, activeToolCall: null });
       setStreamingContent('');
       setStreamingToolCalls([]);
 
       try {
-        for await (const event of chatApi.sendMessage(conversationId, content, images)) {
+        for await (const event of chatApi.sendMessage(effectiveId, content, images)) {
           if (abortRef.current) break;
 
           switch (event.type) {
@@ -67,10 +70,11 @@ export function useChatStream(
           error: err instanceof Error ? err.message : 'Stream failed',
         }));
       } finally {
+        isStreamingRef.current = false;
         setStreamState((prev) => ({ ...prev, isStreaming: false, activeToolCall: null }));
       }
     },
-    [conversationId, streamState.isStreaming, onMessageComplete],
+    [conversationId, onMessageComplete],
   );
 
   const abort = useCallback(() => {
