@@ -5,8 +5,9 @@ authorization via the requesting user's context.
 """
 
 import logging
+import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -615,7 +616,7 @@ class ChatToolRegistry:
             query = {**user_project_query}
             search = args.get("search")
             if search:
-                query["name"] = {"$regex": search, "$options": "i"}
+                query["name"] = {"$regex": re.escape(search), "$options": "i"}
             cursor = db["projects"].find(query, sort=[("last_scan_at", -1)], limit=50)
             projects = await cursor.to_list(length=50)
             return {"projects": [_serialize_doc(p, ["_id", "name", "team_id", "stats", "last_scan_at", "created_at"]) for p in projects]}
@@ -661,7 +662,10 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
-            query: Dict[str, Any] = {"scan_id": args["scan_id"]}
+            scan = await db["scans"].find_one({"_id": args["scan_id"], "project_id": args["project_id"]})
+            if not scan:
+                return {"error": "Scan not found in this project"}
+            query: Dict[str, Any] = {"scan_id": args["scan_id"], "project_id": args["project_id"]}
             if args.get("severity"):
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
@@ -692,7 +696,7 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
-            finding = await db["findings"].find_one({"_id": args["finding_id"]})
+            finding = await db["findings"].find_one({"_id": args["finding_id"], "project_id": args["project_id"]})
             if not finding:
                 return {"error": "Finding not found"}
             return {"finding": _serialize_doc(finding)}
@@ -700,12 +704,13 @@ class ChatToolRegistry:
         if tool_name == "search_findings":
             search_query = args["query"]
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
+            escaped_search_query = re.escape(search_query)
             query = {
                 "project_id": {"$in": project_ids},
                 "$or": [
-                    {"finding_id": {"$regex": search_query, "$options": "i"}},
-                    {"description": {"$regex": search_query, "$options": "i"}},
-                    {"component": {"$regex": search_query, "$options": "i"}},
+                    {"finding_id": {"$regex": escaped_search_query, "$options": "i"}},
+                    {"description": {"$regex": escaped_search_query, "$options": "i"}},
+                    {"component": {"$regex": escaped_search_query, "$options": "i"}},
                 ],
             }
             if args.get("severity"):
@@ -769,10 +774,12 @@ class ChatToolRegistry:
         if tool_name == "get_risk_trends":
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
             days = args.get("days", 30)
-            from datetime import timedelta
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             match_query: Dict[str, Any] = {"project_id": {"$in": project_ids}, "created_at": {"$gte": cutoff}}
             if args.get("project_id"):
+                # Restrict to the requested project, but only if user has access
+                if args["project_id"] not in project_ids:
+                    return {"error": "Project not found or access denied"}
                 match_query["project_id"] = args["project_id"]
             pipeline = [
                 {"$match": match_query},
@@ -799,7 +806,7 @@ class ChatToolRegistry:
             if tool_name == "get_dependency_impact":
                 project_ids = await self._get_authorized_project_ids(user_project_query, db)
                 cursor = db["dependencies"].find(
-                    {"name": {"$regex": args["dependency_name"], "$options": "i"}, "project_id": {"$in": project_ids}},
+                    {"name": {"$regex": re.escape(args["dependency_name"]), "$options": "i"}, "project_id": {"$in": project_ids}},
                     limit=100,
                 )
                 deps = await cursor.to_list(length=100)
@@ -821,7 +828,7 @@ class ChatToolRegistry:
             if tool_name == "get_dependency_details":
                 dep = await db["dependency_enrichments"].find_one({"purl": args["dependency_name"]})
                 if not dep:
-                    dep = await db["dependency_enrichments"].find_one({"name": {"$regex": args["dependency_name"], "$options": "i"}})
+                    dep = await db["dependency_enrichments"].find_one({"name": {"$regex": re.escape(args["dependency_name"]), "$options": "i"}})
                 if not dep:
                     return {"error": "Dependency not found in enrichment data"}
                 return {"dependency": _serialize_doc(dep)}
@@ -847,7 +854,8 @@ class ChatToolRegistry:
             if not await team_repo.is_member(args["team_id"], str(user.id)):
                 if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
                     return {"error": "Access denied"}
-            cursor = db["projects"].find({"team_id": args["team_id"]}, limit=50)
+            query = {**user_project_query, "team_id": args["team_id"]}
+            cursor = db["projects"].find(query, limit=50)
             projects = await cursor.to_list(length=50)
             return {"projects": [_serialize_doc(p, ["_id", "name", "stats", "last_scan_at"]) for p in projects]}
 
@@ -927,11 +935,11 @@ class ChatToolRegistry:
         if tool_name == "get_archive_details":
             archive = await db["archive_metadata"].find_one({"_id": args["archive_id"]})
             if not archive:
-                return {"error": "Archive not found"}
+                return {"error": "Archive not found or access denied"}
             if not has_permission(user.permissions, Permissions.ARCHIVE_READ_ALL):
                 project = await self._get_authorized_project(archive.get("project_id", ""), user_project_query, db)
                 if not project:
-                    return {"error": "Access denied"}
+                    return {"error": "Archive not found or access denied"}
             return {"archive": _serialize_doc(archive)}
 
         # ── Webhook tools ──
