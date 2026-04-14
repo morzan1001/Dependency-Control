@@ -58,10 +58,10 @@ class ChatRepository:
             return True
         return False
 
-    async def update_conversation_title(self, conversation_id: str, title: str) -> None:
+    async def update_conversation_title(self, conversation_id: str, user_id: str, title: str) -> None:
         with track_db_operation(_CONV_COL, "update"):
             await self.conversations.update_one(
-                {"_id": conversation_id},
+                {"_id": conversation_id, "user_id": user_id},
                 {"$set": {"title": title, "updated_at": datetime.now(timezone.utc)}},
             )
 
