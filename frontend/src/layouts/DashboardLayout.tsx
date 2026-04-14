@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, MessageSquare, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context'
@@ -39,6 +39,12 @@ export default function DashboardLayout() {
       label: 'Analytics',
       icon: BarChart3,
       show: hasAnyPermission(ANALYTICS_PERMISSIONS)
+    },
+    {
+      href: '/chat',
+      label: 'Chat',
+      icon: MessageSquare,
+      show: hasPermission('chat:access')
     },
     {
       href: '/teams',
