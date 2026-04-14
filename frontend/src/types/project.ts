@@ -3,6 +3,14 @@ import type { EnhancedStats } from './scan';
 
 export type { EnhancedStats } from './scan';
 
+export interface LicensePolicy {
+  distribution_model: 'internal_only' | 'distributed' | 'open_source';
+  deployment_model: 'network_facing' | 'cli_batch' | 'desktop' | 'embedded';
+  library_usage: 'unmodified' | 'modified' | 'mixed';
+  allow_strong_copyleft: boolean;
+  allow_network_copyleft: boolean;
+}
+
 export interface ProjectMember {
   user_id: string;
   username?: string;
@@ -21,6 +29,7 @@ export interface Project {
   active_analyzers?: string[];
   retention_days?: number;
   retention_action?: 'delete' | 'archive' | 'none';
+  license_policy?: LicensePolicy;
   default_branch?: string;
   enforce_notification_settings?: boolean;
   rescan_enabled?: boolean;
@@ -44,6 +53,7 @@ export interface ProjectCreate {
   active_analyzers?: string[];
   retention_days?: number;
   retention_action?: 'delete' | 'archive' | 'none';
+  license_policy?: LicensePolicy;
 }
 
 export interface ProjectUpdate {
@@ -52,6 +62,7 @@ export interface ProjectUpdate {
   active_analyzers?: string[];
   retention_days?: number;
   retention_action?: 'delete' | 'archive' | 'none';
+  license_policy?: LicensePolicy;
   enforce_notification_settings?: boolean;
   default_branch?: string | null;
   rescan_enabled?: boolean;

@@ -88,6 +88,23 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [gitlabProjectId, setGitlabProjectId] = useState<number | undefined>(project.gitlab_project_id)
   const [gitlabProjectPath, setGitlabProjectPath] = useState<string | undefined>(project.gitlab_project_path)
 
+  // License Policy state — defaults match backend conservative defaults
+  const [distributionModel, setDistributionModel] = useState<'internal_only' | 'distributed' | 'open_source'>(
+    project.license_policy?.distribution_model || 'distributed'
+  )
+  const [deploymentModel, setDeploymentModel] = useState<'network_facing' | 'cli_batch' | 'desktop' | 'embedded'>(
+    project.license_policy?.deployment_model || 'network_facing'
+  )
+  const [libraryUsage, setLibraryUsage] = useState<'unmodified' | 'modified' | 'mixed'>(
+    project.license_policy?.library_usage || 'mixed'
+  )
+  const [allowStrongCopyleft, setAllowStrongCopyleft] = useState<boolean>(
+    project.license_policy?.allow_strong_copyleft || false
+  )
+  const [allowNetworkCopyleft, setAllowNetworkCopyleft] = useState<boolean>(
+    project.license_policy?.allow_network_copyleft || false
+  )
+
   const [apiKey, setApiKey] = useState<string | null>(null)
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
@@ -189,8 +206,8 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     refetchWebhooks()
   }
 
-  const handleUpdate = (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleUpdate = (e?: React.FormEvent) => {
+    e?.preventDefault()
     updateProjectMutation.mutate({
       name,
       team_id: teamId === "none" ? null : teamId,
@@ -204,6 +221,13 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       gitlab_instance_id: gitlabInstanceId || null,
       gitlab_project_id: gitlabProjectId || null,
       gitlab_project_path: gitlabProjectPath || null,
+      license_policy: {
+        distribution_model: distributionModel,
+        deployment_model: deploymentModel,
+        library_usage: libraryUsage,
+        allow_strong_copyleft: allowStrongCopyleft,
+        allow_network_copyleft: allowNetworkCopyleft,
+      },
     })
   }
 
@@ -517,6 +541,116 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     </Button>
                 )}
             </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+            <CardTitle>License Policy</CardTitle>
+            <CardDescription>
+                Configure how this project uses dependencies. The scanner uses this context to decide
+                which copyleft licenses are actually problematic for you — reducing noise from
+                findings that don't apply to your usage model.
+            </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+            <div className="space-y-2">
+                <Label htmlFor="distribution-model">Distribution Model</Label>
+                <Select
+                    value={distributionModel}
+                    onValueChange={(v) => setDistributionModel(v as 'internal_only' | 'distributed' | 'open_source')}
+                    disabled={!canUpdate}
+                >
+                    <SelectTrigger id="distribution-model">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="internal_only">Internal only — not distributed outside the organization</SelectItem>
+                        <SelectItem value="distributed">Distributed — binary or source shared with third parties</SelectItem>
+                        <SelectItem value="open_source">Open source — project itself is open source</SelectItem>
+                    </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                    GPL obligations only trigger on distribution. Internal-only projects don't need to worry about GPL dependencies.
+                </p>
+            </div>
+
+            <div className="space-y-2">
+                <Label htmlFor="deployment-model">Deployment Model</Label>
+                <Select
+                    value={deploymentModel}
+                    onValueChange={(v) => setDeploymentModel(v as 'network_facing' | 'cli_batch' | 'desktop' | 'embedded')}
+                    disabled={!canUpdate}
+                >
+                    <SelectTrigger id="deployment-model">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="network_facing">Network-facing — SaaS, web app, or API</SelectItem>
+                        <SelectItem value="cli_batch">CLI / Batch job / Daemon</SelectItem>
+                        <SelectItem value="desktop">Desktop application</SelectItem>
+                        <SelectItem value="embedded">Embedded / IoT system</SelectItem>
+                    </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                    AGPL/SSPL clauses only trigger on network interaction. CLI tools and batch jobs are not affected.
+                </p>
+            </div>
+
+            <div className="space-y-2">
+                <Label htmlFor="library-usage">Library Usage</Label>
+                <Select
+                    value={libraryUsage}
+                    onValueChange={(v) => setLibraryUsage(v as 'unmodified' | 'modified' | 'mixed')}
+                    disabled={!canUpdate}
+                >
+                    <SelectTrigger id="library-usage">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="unmodified">Unmodified — libraries used as-is via public API</SelectItem>
+                        <SelectItem value="modified">Modified — libraries are forked or patched</SelectItem>
+                        <SelectItem value="mixed">Mixed — some modified, some not (conservative)</SelectItem>
+                    </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                    Weak copyleft (LGPL, MPL) only requires source disclosure when you modify the library itself.
+                </p>
+            </div>
+
+            <div className="flex flex-row items-center justify-between rounded-lg border p-4">
+                <div className="space-y-0.5 pr-4">
+                    <Label className="text-base">Allow Strong Copyleft</Label>
+                    <div className="text-sm text-muted-foreground">
+                        Treat GPL-style licenses as informational instead of as compliance issues. Enable this if your legal team has approved GPL dependencies.
+                    </div>
+                </div>
+                <Switch
+                    checked={allowStrongCopyleft}
+                    onCheckedChange={setAllowStrongCopyleft}
+                    disabled={!canUpdate}
+                />
+            </div>
+
+            <div className="flex flex-row items-center justify-between rounded-lg border p-4">
+                <div className="space-y-0.5 pr-4">
+                    <Label className="text-base">Allow Network Copyleft</Label>
+                    <div className="text-sm text-muted-foreground">
+                        Treat AGPL/SSPL licenses as lower severity instead of critical. Enable this only if you understand the network-use source-disclosure obligations.
+                    </div>
+                </div>
+                <Switch
+                    checked={allowNetworkCopyleft}
+                    onCheckedChange={setAllowNetworkCopyleft}
+                    disabled={!canUpdate}
+                />
+            </div>
+
+            {canUpdate && (
+                <Button onClick={() => handleUpdate()} disabled={updateProjectMutation.isPending}>
+                    {updateProjectMutation.isPending ? "Saving..." : "Save License Policy"}
+                </Button>
+            )}
         </CardContent>
       </Card>
 
