@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Square } from 'lucide-react';
 import { useAuth } from '@/context'; // adjust if different
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { ChatMessage, StreamingMessage } from '@/components/chat/ChatMessage';
 import { ChatInput } from '@/components/chat/ChatInput';
+import { Button } from '@/components/ui/button';
 import {
   useConversations,
   useConversation,
@@ -29,6 +31,7 @@ export default function Chat() {
 
   const {
     sendMessage,
+    abort,
     streamingContent,
     streamingToolCalls,
     isStreaming,
@@ -103,6 +106,14 @@ export default function Chat() {
           )}
           <div ref={messagesEndRef} />
         </div>
+        {isStreaming && (
+          <div className="flex justify-center py-2">
+            <Button onClick={abort} variant="outline" size="sm">
+              <Square className="mr-2 h-3.5 w-3.5" />
+              Stop
+            </Button>
+          </div>
+        )}
         <ChatInput onSend={handleSend} disabled={isStreaming} />
       </div>
     </div>

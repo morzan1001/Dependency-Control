@@ -19,7 +19,7 @@ export function useChatStream(
   });
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
-  const abortRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const isStreamingRef = useRef(false);
 
   const sendMessage = useCallback(
@@ -28,14 +28,19 @@ export function useChatStream(
       if (!effectiveId || isStreamingRef.current) return;
 
       isStreamingRef.current = true;
-      abortRef.current = false;
+      abortControllerRef.current = new AbortController();
       setStreamState({ isStreaming: true, error: null, activeToolCall: null });
       setStreamingContent('');
       setStreamingToolCalls([]);
 
       try {
-        for await (const event of chatApi.sendMessage(effectiveId, content, images)) {
-          if (abortRef.current) break;
+        for await (const event of chatApi.sendMessage(
+          effectiveId,
+          content,
+          images,
+          abortControllerRef.current.signal,
+        )) {
+          if (abortControllerRef.current?.signal.aborted) break;
 
           switch (event.type) {
             case 'token':
@@ -49,7 +54,7 @@ export function useChatStream(
                 ...prev,
                 {
                   tool_name: event.tool_name,
-                  arguments: {},
+                  arguments: event.arguments,
                   result: event.result,
                   duration_ms: 0,
                 },
@@ -65,10 +70,13 @@ export function useChatStream(
           }
         }
       } catch (err) {
-        setStreamState((prev) => ({
-          ...prev,
-          error: err instanceof Error ? err.message : 'Stream failed',
-        }));
+        // Ignore AbortError — user intentionally cancelled
+        if (!(err instanceof DOMException && err.name === 'AbortError')) {
+          setStreamState((prev) => ({
+            ...prev,
+            error: err instanceof Error ? err.message : 'Stream failed',
+          }));
+        }
       } finally {
         isStreamingRef.current = false;
         setStreamState((prev) => ({ ...prev, isStreaming: false, activeToolCall: null }));
@@ -78,7 +86,7 @@ export function useChatStream(
   );
 
   const abort = useCallback(() => {
-    abortRef.current = true;
+    abortControllerRef.current?.abort();
   }, []);
 
   return {
