@@ -6,7 +6,12 @@ import { ChatMessage, StreamingMessage } from '@/components/chat/ChatMessage';
 import { ConversationHistoryDialog } from '@/components/chat/ConversationHistoryDialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useAuth } from '@/context';
 import {
   useConversation,
@@ -108,6 +113,7 @@ export default function Chat() {
   const conversationTitle = conversationDetail?.conversation.title ?? 'New chat';
 
   return (
+    <TooltipProvider delayDuration={200}>
     <div className="flex h-[calc(100vh-4rem)] flex-col">
       {/* Page header */}
       <header className="flex items-center justify-between gap-4 border-b bg-background px-6 py-4">
@@ -210,6 +216,7 @@ export default function Chat() {
         />
       )}
     </div>
+    </TooltipProvider>
   );
 }
 
