@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     archives,
     auth,
     callgraph,
+    chat,
     github_instances,
     gitlab_instances,
     ingest,
@@ -166,6 +167,7 @@ app.include_router(archives.router, prefix=f"{settings.API_V1_STR}/projects", ta
 app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archives", tags=["archives-admin"])
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
+app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 
 
 @app.get("/")
