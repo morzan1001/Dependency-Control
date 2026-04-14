@@ -11,7 +11,7 @@ def _approx_tokens(messages: List[Dict[str, Any]]) -> int:
     return sum(len(json.dumps(m, default=str)) for m in messages) // 4
 
 
-def _trim_to_token_budget(
+def trim_to_token_budget(
     messages: List[Dict[str, Any]], budget: int
 ) -> List[Dict[str, Any]]:
     """
@@ -114,7 +114,7 @@ def build_messages(
         new_entry["images"] = new_images
     messages.append(new_entry)
 
-    messages = _trim_to_token_budget(messages, settings.CHAT_MAX_TOKEN_BUDGET)
+    messages = trim_to_token_budget(messages, settings.CHAT_MAX_TOKEN_BUDGET)
     return messages
 
 

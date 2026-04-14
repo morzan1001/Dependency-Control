@@ -151,9 +151,13 @@ async def test_send_message_error_stops_stream():
     combined = "".join(events)
     assert "error" in combined
     assert "Ollama unavailable" in combined
-    # Assistant message NOT persisted on error
-    # (one add_message for the user message is expected)
-    assert service.repo.add_message.call_count == 1
+    # On error the finally block persists an interrupted-marker so the user
+    # doesn't see a dangling user turn on reload.
+    # Expected: 1 call for the user message + 1 call for the interrupted marker.
+    assert service.repo.add_message.call_count == 2
+    # Verify the interrupted marker was saved as the assistant role
+    last_call_kwargs = service.repo.add_message.call_args_list[-1]
+    assert last_call_kwargs.kwargs.get("role") == "assistant" or last_call_kwargs.args[1] == "assistant"
 
 
 @pytest.mark.asyncio

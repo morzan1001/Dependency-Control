@@ -1,7 +1,7 @@
 """Request/response schemas for the chat API."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,7 +30,10 @@ class ConversationListResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
-    images: List[str] = Field(default_factory=list)
+    # Limit: at most 4 images per message, at most ~1.5MB each (base64)
+    images: List[Annotated[str, Field(max_length=2_000_000)]] = Field(
+        default_factory=list, max_length=4
+    )
 
 
 class ToolCallResponse(BaseModel):
