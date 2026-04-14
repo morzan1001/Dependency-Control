@@ -78,6 +78,7 @@ class ChatService:
         full_response = ""
         all_tool_calls: List[Dict[str, Any]] = []
         assistant_saved = False
+        client_notified_of_error = False
 
         # Save user message
         await self.repo.add_message(
@@ -154,6 +155,7 @@ class ChatService:
                     elif chunk_type == "error":
                         yield f"data: {json.dumps({'type': 'error', 'message': chunk['message']})}\n\n"
                         chat_messages_total.labels(status="error").inc()
+                        client_notified_of_error = True
                         return
 
                 # If no tool calls were made in this round, we're done
@@ -179,28 +181,34 @@ class ChatService:
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         finally:
-            # Persist whatever we have so the conversation is not corrupted
-            if not assistant_saved and (full_response or all_tool_calls):
-                interrupted_content = (
-                    full_response + "\n\n_[stream interrupted]_"
-                    if full_response
-                    else "_[stream interrupted before any response]_"
-                )
-                await self.repo.add_message(
-                    conversation_id,
-                    role="assistant",
-                    content=interrupted_content,
-                    tool_calls=all_tool_calls,
-                    token_count=0,
-                )
-                chat_messages_total.labels(status="interrupted").inc()
-            elif not assistant_saved:
-                # Nothing produced at all — save a marker so no dangling user turn
-                await self.repo.add_message(
-                    conversation_id,
-                    role="assistant",
-                    content="_[stream interrupted before any response]_",
-                    tool_calls=[],
-                    token_count=0,
-                )
-                chat_messages_total.labels(status="interrupted").inc()
+            if not assistant_saved:
+                if full_response or all_tool_calls:
+                    # Partial content was streamed — persist it with an interrupted marker
+                    # regardless of whether an error was also notified, so the UI stays
+                    # consistent on reload.
+                    interrupted_content = (
+                        full_response + "\n\n_[stream interrupted]_"
+                        if full_response
+                        else "_[stream interrupted]_"
+                    )
+                    await self.repo.add_message(
+                        conversation_id,
+                        role="assistant",
+                        content=interrupted_content,
+                        tool_calls=all_tool_calls,
+                        token_count=0,
+                    )
+                    chat_messages_total.labels(status="interrupted").inc()
+                elif not client_notified_of_error:
+                    # Nothing streamed and no error event sent to client — save a minimal
+                    # marker so the conversation doesn't have a dangling user turn.
+                    await self.repo.add_message(
+                        conversation_id,
+                        role="assistant",
+                        content="_[stream interrupted before any response]_",
+                        tool_calls=[],
+                        token_count=0,
+                    )
+                    chat_messages_total.labels(status="interrupted").inc()
+                # else: error was already delivered to client and nothing was streamed
+                # — nothing to save; the client decides how to handle the error.
