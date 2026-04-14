@@ -526,10 +526,26 @@ class PrometheusMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        path = request.url.path
+
         # Skip metrics for the /metrics endpoint itself to avoid recursion
-        if request.url.path == "/metrics":
+        if path == "/metrics":
             response: Response = await call_next(request)
             return response
+
+        # BaseHTTPMiddleware is incompatible with long-lived StreamingResponse
+        # bodies — it buffers the response through an anyio task group, and
+        # when the generator yields slowly (or the client disconnects) the
+        # middleware raises RuntimeError("No response returned.") which then
+        # surfaces as a 500 to the client.
+        #
+        # The chat SSE endpoint (POST /api/v1/chat/conversations/{id}/messages)
+        # streams for up to several minutes while Ollama generates tokens.
+        # We bypass this middleware for that route — Chat already emits its
+        # own detailed Prometheus metrics (dc_chat_*), so we are not losing
+        # observability for the chat path.
+        if path.startswith("/api/v1/chat/") and path.endswith("/messages"):
+            return await call_next(request)
 
         method = request.method
         # Normalize endpoint path (remove IDs for better grouping)
