@@ -115,6 +115,22 @@ curl -X POST "https://api.dependencycontrol.local/api/v1/ingest" \
 
 👉 **See [ci-cd/](ci-cd/) for complete pipeline examples.**
 
+## 🤖 MCP Integration
+
+Dependency Control exposes its tool suite over [Model Context Protocol](https://modelcontextprotocol.io) so Claude Desktop, Cursor & Co. can query your security data directly. Create a token under **Profile → MCP API Keys** (requires `mcp:access`), then point your client at `POST /api/v1/mcp`:
+
+```json
+{
+  "mcpServers": {
+    "dependency-control": {
+      "type": "http",
+      "url": "https://your-dependency-control.example.com/api/v1/mcp",
+      "headers": { "Authorization": "Bearer mcp_YOUR_TOKEN_HERE" }
+    }
+  }
+}
+```
+
 ## ☸️ Kubernetes Deployment
 
 A Helm chart is available for production deployments.
