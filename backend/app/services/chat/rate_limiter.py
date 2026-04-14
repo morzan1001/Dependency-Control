@@ -10,7 +10,7 @@ import time
 
 import redis.asyncio as redis
 
-from app.core.metrics import chat_rate_limited_total
+from app.core.metrics import chat_rate_limit_remaining, chat_rate_limited_total
 
 
 class ChatRateLimiter:
@@ -54,6 +54,14 @@ class ChatRateLimiter:
         pipe.zadd(hour_key, {str(now): now})
         pipe.expire(hour_key, 7200)
         await pipe.execute()
+
+        # Observability: remaining window capacity
+        chat_rate_limit_remaining.labels(user_id=user_id, window="minute").set(
+            max(per_minute - await self.redis.zcard(minute_key), 0)
+        )
+        chat_rate_limit_remaining.labels(user_id=user_id, window="hour").set(
+            max(per_hour - await self.redis.zcard(hour_key), 0)
+        )
 
         return True, 0
 

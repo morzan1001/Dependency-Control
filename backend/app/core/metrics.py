@@ -485,6 +485,12 @@ chat_rate_limited_total = Counter(
     "Rate-limited chat requests",
 )
 
+chat_rate_limit_remaining = Gauge(
+    "dc_chat_rate_limit_remaining",
+    "Remaining requests in the current rate-limit window per user",
+    ["user_id", "window"],
+)
+
 uptime_seconds = Gauge(
     "uptime_seconds",
     "Application uptime in seconds",

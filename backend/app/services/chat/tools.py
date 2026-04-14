@@ -977,11 +977,19 @@ class ChatToolRegistry:
     async def _get_authorized_project(
         self, project_id: str, user_project_query: Dict[str, Any], db: AsyncIOMotorDatabase
     ) -> Optional[Dict[str, Any]]:
-        """Fetch a project only if user has access."""
-        query = {"_id": project_id}
-        if user_project_query:
-            query.update(user_project_query)
-        return await db["projects"].find_one(query)
+        """Fetch a project only if user has access.
+
+        NOTE: `user_project_query` comes from build_user_project_query(). If that
+        helper is ever refactored to return a dict containing an `_id` key,
+        the previous naive .update() merge would silently overwrite the
+        project filter and bypass authorization. Using $and here composes
+        both clauses safely.
+        """
+        if not user_project_query:
+            return await db["projects"].find_one({"_id": project_id})
+        return await db["projects"].find_one({
+            "$and": [{"_id": project_id}, user_project_query]
+        })
 
     async def _get_authorized_project_ids(
         self, user_project_query: Dict[str, Any], db: AsyncIOMotorDatabase

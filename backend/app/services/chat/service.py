@@ -134,7 +134,7 @@ class ChatService:
                         "duration_ms": int((time.time() - start_time) * 1000),
                     })
 
-                    yield f"data: {json.dumps({'type': 'tool_call_end', 'tool_name': tool_name, 'result': result}, default=str)}\n\n"
+                    yield f"data: {json.dumps({'type': 'tool_call_end', 'tool_name': tool_name, 'arguments': tool_args, 'result': result}, default=str)}\n\n"
 
                     # Add tool result to messages for next Ollama round
                     messages.append({"role": "assistant", "content": "", "tool_calls": [{"function": fn}]})

@@ -5,6 +5,36 @@ from typing import Any, Dict, List
 
 from app.core.config import settings
 
+
+def _approx_tokens(messages: List[Dict[str, Any]]) -> int:
+    """Rough token estimate: ~4 chars per token."""
+    return sum(len(json.dumps(m, default=str)) for m in messages) // 4
+
+
+def _trim_to_token_budget(
+    messages: List[Dict[str, Any]], budget: int
+) -> List[Dict[str, Any]]:
+    """
+    Remove the oldest non-system messages until the approximate token count
+    fits within the budget. The system prompt (index 0) and the final user
+    message are always kept.
+    """
+    if _approx_tokens(messages) <= budget:
+        return messages
+
+    if len(messages) <= 2:
+        # Nothing safe to trim (only system + user)
+        return messages
+
+    head = messages[0:1]  # system
+    tail = messages[-1:]  # latest user message
+    middle = list(messages[1:-1])
+
+    while middle and _approx_tokens(head + middle + tail) > budget:
+        middle.pop(0)
+
+    return head + middle + tail
+
 SYSTEM_PROMPT = """You are a security assistant for Dependency Control, a software supply chain security platform. You help users understand their SBOM (Software Bill of Materials) data, vulnerabilities, dependencies, and security posture.
 
 ## Your capabilities
@@ -33,18 +63,46 @@ def build_messages(
     """
     Build the message list for Ollama, respecting the token budget.
 
-    Includes: system prompt, recent history, new user message.
+    Replays stored assistant messages with tool_calls as Ollama-format
+    assistant+tool message pairs so multi-turn tool usage stays coherent.
     """
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
     ]
 
-    # Add conversation history (already limited by repository query)
     for msg in history:
         role = msg.get("role", "user")
         if role == "tool":
-            # Tool results are injected as assistant context
+            # Tool messages are rebuilt from the preceding assistant message's tool_calls.
             continue
+
+        stored_tool_calls = msg.get("tool_calls") or []
+
+        if role == "assistant" and stored_tool_calls:
+            # Emit the assistant turn with the structured tool_calls field, then
+            # emit one tool-result message per call so Ollama sees the full exchange.
+            assistant_entry: Dict[str, Any] = {
+                "role": "assistant",
+                "content": msg.get("content", ""),
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": tc.get("tool_name", ""),
+                            "arguments": tc.get("arguments", {}),
+                        }
+                    }
+                    for tc in stored_tool_calls
+                ],
+            }
+            messages.append(assistant_entry)
+
+            for tc in stored_tool_calls:
+                messages.append(build_tool_result_message(
+                    tc.get("tool_name", ""),
+                    tc.get("result", {}),
+                ))
+            continue
+
         entry: Dict[str, Any] = {"role": role, "content": msg.get("content", "")}
         if msg.get("images"):
             entry["images"] = msg["images"]
@@ -56,6 +114,7 @@ def build_messages(
         new_entry["images"] = new_images
     messages.append(new_entry)
 
+    messages = _trim_to_token_budget(messages, settings.CHAT_MAX_TOKEN_BUDGET)
     return messages
 
 

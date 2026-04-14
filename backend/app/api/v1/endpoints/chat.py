@@ -166,21 +166,20 @@ async def send_message(
 
     # Rate limiting (uses SystemSettings values — admin-tunable)
     try:
-        redis_client = redis.from_url(settings.REDIS_URL)
-        limiter = ChatRateLimiter(redis_client)
-        allowed, retry_after = await limiter.check_rate_limit(
-            str(current_user.id),
-            per_minute=system_settings.chat_rate_limit_per_minute,
-            per_hour=system_settings.chat_rate_limit_per_hour,
-        )
-        await redis_client.aclose()
+        async with redis.from_url(settings.REDIS_URL) as redis_client:
+            limiter = ChatRateLimiter(redis_client)
+            allowed, retry_after = await limiter.check_rate_limit(
+                str(current_user.id),
+                per_minute=system_settings.chat_rate_limit_per_minute,
+                per_hour=system_settings.chat_rate_limit_per_hour,
+            )
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Rate limit exceeded",
                 headers={"Retry-After": str(retry_after)},
             )
-    except redis.ConnectionError:
+    except redis.RedisError:
         logger.warning("Redis unavailable for rate limiting, allowing request")
 
     # Verify conversation exists and belongs to user
