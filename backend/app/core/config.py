@@ -75,6 +75,17 @@ class Settings(BaseSettings):
     # Archive Encryption (empty = archives not encrypted)
     ARCHIVE_ENCRYPTION_KEY: str = ""
 
+    # Ollama / LLM
+    OLLAMA_BASE_URL: str = "http://ollama:11434"
+    OLLAMA_MODEL: str = "gemma4:27b-it-q4_K_M"
+    OLLAMA_TIMEOUT_SECONDS: int = 120
+
+    # Chat
+    CHAT_MAX_HISTORY_MESSAGES: int = 20
+    CHAT_MAX_TOKEN_BUDGET: int = 8192
+    CHAT_RATE_LIMIT_PER_MINUTE: int = 10
+    CHAT_RATE_LIMIT_PER_HOUR: int = 60
+
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
 
 

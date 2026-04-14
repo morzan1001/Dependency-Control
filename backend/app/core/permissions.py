@@ -57,6 +57,11 @@ class Permissions:
     ARCHIVE_DOWNLOAD = "archive:download"
     ARCHIVE_READ_ALL = "archive:read_all"
 
+    # Chat
+    CHAT_ACCESS = "chat:access"
+    CHAT_HISTORY_READ = "chat:history_read"
+    CHAT_HISTORY_DELETE = "chat:history_delete"
+
 
 # All permissions in the system (excluding internal/special permissions like auth:setup_2fa)
 ALL_PERMISSIONS: List[str] = [
@@ -106,6 +111,10 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.ARCHIVE_RESTORE,
     Permissions.ARCHIVE_DOWNLOAD,
     Permissions.ARCHIVE_READ_ALL,
+    # Chat
+    Permissions.CHAT_ACCESS,
+    Permissions.CHAT_HISTORY_READ,
+    Permissions.CHAT_HISTORY_DELETE,
 ]
 
 # Admin: All permissions
@@ -401,6 +410,28 @@ PERMISSION_GROUPS = [
                 "id": Permissions.ARCHIVE_READ_ALL,
                 "name": "Read All Archives",
                 "description": "View archives across all projects",
+            },
+        ],
+    },
+    {
+        "id": "chat",
+        "name": "Chat",
+        "description": "Permissions for the AI security assistant",
+        "permissions": [
+            {
+                "id": Permissions.CHAT_ACCESS,
+                "name": "Chat Access",
+                "description": "Use the AI chat assistant and create conversations",
+            },
+            {
+                "id": Permissions.CHAT_HISTORY_READ,
+                "name": "Read Chat History",
+                "description": "View own past chat conversations",
+            },
+            {
+                "id": Permissions.CHAT_HISTORY_DELETE,
+                "name": "Delete Chat History",
+                "description": "Delete own chat conversations",
             },
         ],
     },
