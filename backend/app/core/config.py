@@ -77,7 +77,7 @@ class Settings(BaseSettings):
 
     # Ollama / LLM
     OLLAMA_BASE_URL: str = "http://ollama:11434"
-    OLLAMA_MODEL: str = "gemma4:27b-it-q4_K_M"
+    OLLAMA_MODEL: str = "gemma4:26b"
     OLLAMA_TIMEOUT_SECONDS: int = 120
 
     # Chat

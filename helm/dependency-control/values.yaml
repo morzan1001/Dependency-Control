@@ -529,7 +529,7 @@ ollama:
   image:
     repository: ollama/ollama
     tag: "0.5.7"  # pinned for reproducibility — see https://github.com/ollama/ollama/releases
-  model: gemma4:27b-it-q4_K_M
+  model: gemma4:26b
   gpu:
     enabled: false
     count: 1
