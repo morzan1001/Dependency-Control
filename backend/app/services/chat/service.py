@@ -104,8 +104,14 @@ class ChatService:
         messages = build_messages(history, content, images or [], len(available_tools))
 
         try:
-            # Ollama interaction loop (tool calls may require multiple rounds)
-            max_rounds = 10
+            # Ollama interaction loop (tool calls may require multiple rounds).
+            # Admin can tune this via SystemSettings.chat_max_tool_rounds at
+            # runtime; otherwise the startup default from config.py applies.
+            system_doc = await self.db["system_settings"].find_one({"_id": "current"})
+            max_rounds = (
+                (system_doc or {}).get("chat_max_tool_rounds")
+                or settings.CHAT_MAX_TOOL_ROUNDS
+            )
             rounds_used = 0
             for _ in range(max_rounds):
                 rounds_used += 1

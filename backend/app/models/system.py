@@ -88,5 +88,6 @@ class SystemSettings(BaseModel):
     chat_enabled: bool = False
     chat_rate_limit_per_minute: int = 10
     chat_rate_limit_per_hour: int = 60
+    chat_max_tool_rounds: int = 20
 
     model_config = ConfigDict(populate_by_name=True)

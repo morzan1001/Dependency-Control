@@ -40,6 +40,7 @@ export interface SystemSettings {
   chat_enabled?: boolean;
   chat_rate_limit_per_minute?: number;
   chat_rate_limit_per_hour?: number;
+  chat_max_tool_rounds?: number;
 }
 
 export interface PublicConfig {

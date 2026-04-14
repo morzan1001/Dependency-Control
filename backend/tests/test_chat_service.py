@@ -31,6 +31,9 @@ async def _async_gen(chunks: List[Dict[str, Any]]) -> AsyncIterator[Dict[str, An
 def _make_service() -> ChatService:
     """Build a ChatService with all collaborators replaced by mocks."""
     db = MagicMock()
+    # send_message reads chat_max_tool_rounds from system_settings at runtime;
+    # stub it to return an empty doc so the config.py default applies.
+    db["system_settings"].find_one = AsyncMock(return_value=None)
     service = ChatService(db)
 
     # Replace repo methods

@@ -16,11 +16,19 @@ import { SettingsTabProps } from '@/types/system';
 
 const MAX_RATE_LIMIT = 1000;
 const MIN_RATE_LIMIT = 1;
+const MIN_TOOL_ROUNDS = 1;
+const MAX_TOOL_ROUNDS = 50;
 
 function clampRate(raw: string, fallback: number): number {
   const parsed = Number.parseInt(raw, 10);
   if (Number.isNaN(parsed)) return fallback;
   return Math.min(Math.max(parsed, MIN_RATE_LIMIT), MAX_RATE_LIMIT);
+}
+
+function clampRounds(raw: string, fallback: number): number {
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.min(Math.max(parsed, MIN_TOOL_ROUNDS), MAX_TOOL_ROUNDS);
 }
 
 export function ChatSettingsTab({
@@ -33,6 +41,7 @@ export function ChatSettingsTab({
   const enabled = formData.chat_enabled ?? false;
   const perMinute = formData.chat_rate_limit_per_minute ?? 10;
   const perHour = formData.chat_rate_limit_per_hour ?? 60;
+  const maxRounds = formData.chat_max_tool_rounds ?? 20;
   const canManage = hasPermission('system:manage');
 
   return (
@@ -143,6 +152,50 @@ export function ChatSettingsTab({
             disabled={!canManage || isPending}
           >
             {isPending ? 'Saving…' : 'Save chat settings'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Reasoning budget</CardTitle>
+          <CardDescription>
+            How many rounds of LLM ↔ tool-call iteration the assistant is
+            allowed per message before we give up and show a fallback.
+            Higher values let the model chain more tools but increase the
+            worst-case latency.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2 sm:max-w-xs">
+            <Label htmlFor="chat-max-tool-rounds">Max tool-call rounds</Label>
+            <Input
+              id="chat-max-tool-rounds"
+              type="number"
+              min={MIN_TOOL_ROUNDS}
+              max={MAX_TOOL_ROUNDS}
+              value={maxRounds}
+              disabled={!canManage || !enabled}
+              onChange={(e) =>
+                handleInputChange(
+                  'chat_max_tool_rounds',
+                  clampRounds(e.target.value, maxRounds),
+                )
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Default: 20. Clamped to {MIN_TOOL_ROUNDS}–{MAX_TOOL_ROUNDS}.
+              Each round is one Ollama call and can include multiple tool
+              invocations — a single round can already fire several tools
+              in parallel.
+            </p>
+          </div>
+
+          <Button
+            onClick={handleSave}
+            disabled={!canManage || isPending}
+          >
+            {isPending ? 'Saving…' : 'Save reasoning budget'}
           </Button>
         </CardContent>
       </Card>
