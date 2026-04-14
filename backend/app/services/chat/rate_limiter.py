@@ -14,6 +14,41 @@ from app.core.metrics import chat_rate_limit_remaining, chat_rate_limited_total
 
 
 class ChatRateLimiter:
+    # Atomic Lua script: removes expired entries, checks count, and conditionally
+    # adds the new entry — all in a single Redis round-trip to avoid TOCTOU races
+    # where two concurrent requests both observe count < max and both get admitted.
+    _WINDOW_LUA = """
+-- KEYS[1] = window sorted set key
+-- ARGV[1] = now (unix seconds, float)
+-- ARGV[2] = window seconds
+-- ARGV[3] = max requests
+-- ARGV[4] = member to add (str(now))
+-- Returns: {allowed (0|1), retry_after_seconds_or_remaining}
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local max_reqs = tonumber(ARGV[3])
+local member = ARGV[4]
+
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, now - window)
+local count = redis.call('ZCARD', KEYS[1])
+
+if count >= max_reqs then
+    -- Compute retry-after from oldest remaining entry
+    local oldest = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+    local retry = window
+    if #oldest >= 2 then
+        local oldest_score = tonumber(oldest[2])
+        retry = math.floor(oldest_score + window - now) + 1
+        if retry < 1 then retry = 1 end
+    end
+    return {0, retry}
+end
+
+redis.call('ZADD', KEYS[1], now, member)
+redis.call('EXPIRE', KEYS[1], math.floor(window * 2))
+return {1, max_reqs - count - 1}
+"""
+
     def __init__(self, redis_client: redis.Redis, prefix: str = "dc:chat:rl:"):
         self.redis = redis_client
         self.prefix = prefix
@@ -24,69 +59,32 @@ class ChatRateLimiter:
         """
         Check if user is within rate limits.
 
+        Uses a Lua script evaluated atomically on Redis to avoid TOCTOU races.
+        The minute window is checked-and-incremented first; if the hour window
+        then denies, the minute slot was already consumed — this is an acceptable
+        minor accounting asymmetry given the hour limit is the rarer trigger.
+
         Returns:
             (allowed, retry_after_seconds)
         """
         now = time.time()
+        member = f"{user_id}:{now}"
 
-        # Check minute window
         minute_key = f"{self.prefix}{user_id}:minute"
-        minute_allowed, minute_retry = await self._check_window(
-            minute_key, now, window_seconds=60, max_requests=per_minute
-        )
-        if not minute_allowed:
+        result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)
+        allowed, retry_or_remaining = int(result[0]), int(result[1])
+        if not allowed:
             chat_rate_limited_total.inc()
-            return False, minute_retry
+            return False, retry_or_remaining
+        # Update remaining metric
+        chat_rate_limit_remaining.labels(user_id=user_id, window="minute").set(retry_or_remaining)
 
-        # Check hour window
         hour_key = f"{self.prefix}{user_id}:hour"
-        hour_allowed, hour_retry = await self._check_window(
-            hour_key, now, window_seconds=3600, max_requests=per_hour
-        )
-        if not hour_allowed:
+        result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)
+        allowed, retry_or_remaining = int(result[0]), int(result[1])
+        if not allowed:
             chat_rate_limited_total.inc()
-            return False, hour_retry
-
-        # Record this request in both windows
-        pipe = self.redis.pipeline()
-        pipe.zadd(minute_key, {str(now): now})
-        pipe.expire(minute_key, 120)
-        pipe.zadd(hour_key, {str(now): now})
-        pipe.expire(hour_key, 7200)
-        await pipe.execute()
-
-        # Observability: remaining window capacity
-        chat_rate_limit_remaining.labels(user_id=user_id, window="minute").set(
-            max(per_minute - await self.redis.zcard(minute_key), 0)
-        )
-        chat_rate_limit_remaining.labels(user_id=user_id, window="hour").set(
-            max(per_hour - await self.redis.zcard(hour_key), 0)
-        )
-
-        return True, 0
-
-    async def _check_window(
-        self, key: str, now: float, window_seconds: int, max_requests: int
-    ) -> tuple[bool, int]:
-        """Check a single sliding window."""
-        window_start = now - window_seconds
-
-        # Remove expired entries and count remaining
-        pipe = self.redis.pipeline()
-        pipe.zremrangebyscore(key, 0, window_start)
-        pipe.zcard(key)
-        pipe.zrange(key, 0, 0, withscores=True)
-        results = await pipe.execute()
-
-        count = results[1]
-        if count >= max_requests:
-            # Calculate retry-after from oldest entry in window
-            oldest_entries = results[2]
-            if oldest_entries:
-                oldest_time = oldest_entries[0][1]
-                retry_after = int(oldest_time + window_seconds - now) + 1
-            else:
-                retry_after = window_seconds
-            return False, retry_after
+            return False, retry_or_remaining
+        chat_rate_limit_remaining.labels(user_id=user_id, window="hour").set(retry_or_remaining)
 
         return True, 0

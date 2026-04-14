@@ -24,6 +24,17 @@ from app.repositories.waivers import WaiverRepository
 
 logger = logging.getLogger(__name__)
 
+MAX_TOOL_LIMIT = 200  # Hard cap on LLM-supplied limit arguments to prevent DoS.
+
+
+def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
+    """Coerce LLM-supplied `limit` to a safe integer, clamped to [1, maximum]."""
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(value, maximum))
+
 
 # ── Tool metadata ──────────────────────────────────────────────────────────
 
@@ -644,7 +655,7 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
-            limit = args.get("limit", 10)
+            limit = _clamp_limit(args.get("limit"), 10)
             cursor = db["scans"].find({"project_id": args["project_id"]}, sort=[("created_at", -1)], limit=limit)
             scans = await cursor.to_list(length=limit)
             return {"scans": [_serialize_doc(s, ["_id", "status", "branch", "commit_hash", "created_at", "completed_at", "stats"]) for s in scans]}
@@ -670,7 +681,7 @@ class ChatToolRegistry:
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
                 query["type"] = args["type"]
-            limit = args.get("limit", 50)
+            limit = _clamp_limit(args.get("limit"), 50)
             cursor = db["findings"].find(query, sort=[("severity", -1)], limit=limit)
             findings = await cursor.to_list(length=limit)
             return {"findings": [_serialize_doc(f) for f in findings], "count": len(findings)}
@@ -687,7 +698,7 @@ class ChatToolRegistry:
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
                 query["type"] = args["type"]
-            limit = args.get("limit", 50)
+            limit = _clamp_limit(args.get("limit"), 50)
             cursor = db["findings"].find(query, sort=[("severity", -1)], limit=limit)
             findings = await cursor.to_list(length=limit)
             return {"findings": [_serialize_doc(f) for f in findings], "count": len(findings)}
@@ -717,7 +728,7 @@ class ChatToolRegistry:
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
                 query["type"] = args["type"]
-            limit = args.get("limit", 50)
+            limit = _clamp_limit(args.get("limit"), 50)
             cursor = db["findings"].find(query, limit=limit)
             findings = await cursor.to_list(length=limit)
             return {"findings": [_serialize_doc(f) for f in findings], "count": len(findings)}
@@ -814,7 +825,7 @@ class ChatToolRegistry:
 
             if tool_name == "get_hotspots":
                 project_ids = await self._get_authorized_project_ids(user_project_query, db)
-                limit = args.get("limit", 10)
+                limit = _clamp_limit(args.get("limit"), 10)
                 pipeline = [
                     {"$match": {"project_id": {"$in": project_ids}}},
                     {"$sort": {"created_at": -1}},
@@ -927,7 +938,7 @@ class ChatToolRegistry:
             elif not has_permission(user.permissions, Permissions.ARCHIVE_READ_ALL):
                 project_ids = await self._get_authorized_project_ids(user_project_query, db)
                 query["project_id"] = {"$in": project_ids}
-            limit = args.get("limit", 20)
+            limit = _clamp_limit(args.get("limit"), 20)
             cursor = db["archive_metadata"].find(query, sort=[("archived_at", -1)], limit=limit)
             archives = await cursor.to_list(length=limit)
             return {"archives": [_serialize_doc(a) for a in archives]}
@@ -979,13 +990,20 @@ class ChatToolRegistry:
     ) -> Optional[Dict[str, Any]]:
         """Fetch a project only if user has access.
 
-        NOTE: `user_project_query` comes from build_user_project_query(). If that
-        helper is ever refactored to return a dict containing an `_id` key,
-        the previous naive .update() merge would silently overwrite the
-        project filter and bypass authorization. Using $and here composes
-        both clauses safely.
+        Contract: `user_project_query` must be the result of
+        build_user_project_query(user, team_repo). That helper is the single
+        source of truth for authorization — it returns {} only for users with
+        PROJECT_READ_ALL permission. Any caller bypassing that helper MUST
+        enforce equivalent checks; otherwise an empty dict here is a security
+        bypass. DO NOT refactor this to compute the query inline without
+        auditing every caller.
+
+        NOTE: Using $and to compose the project ID and user-scoped query avoids
+        the silent authorization bypass that would occur if user_project_query
+        ever contained an `_id` key and we used a naive .update() merge.
         """
         if not user_project_query:
+            # Empty query => build_user_project_query confirmed PROJECT_READ_ALL.
             return await db["projects"].find_one({"_id": project_id})
         return await db["projects"].find_one({
             "$and": [{"_id": project_id}, user_project_query]
