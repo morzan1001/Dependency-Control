@@ -23,7 +23,7 @@ from prometheus_client import (
     Info,
     generate_latest,
 )
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -517,79 +517,76 @@ async def metrics_endpoint(_request: Request) -> Response:
     return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
 
 
-class PrometheusMiddleware(BaseHTTPMiddleware):
+class PrometheusMiddleware:
     """
-    Middleware to automatically collect HTTP request metrics.
+    Pure-ASGI middleware to automatically collect HTTP request metrics.
 
-    This middleware is designed to work correctly in a multi-pod environment
-    where each pod maintains its own metrics that are scraped independently.
+    Implemented as a raw ASGI app (not Starlette's BaseHTTPMiddleware) because
+    BaseHTTPMiddleware wraps each request in an anyio task group that buffers
+    the response body, which is incompatible with long-lived StreamingResponse
+    generators (e.g. the chat SSE endpoint) and surfaces as
+    `RuntimeError("No response returned.")` whenever the stream is slow or
+    the client disconnects.
+
+    We tap into the ASGI send channel so we can observe the response status
+    without touching the body, which keeps streaming responses intact.
     """
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        path = request.url.path
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path: str = scope.get("path", "")
 
         # Skip metrics for the /metrics endpoint itself to avoid recursion
         if path == "/metrics":
-            response: Response = await call_next(request)
-            return response
+            await self.app(scope, receive, send)
+            return
 
-        # BaseHTTPMiddleware is incompatible with long-lived StreamingResponse
-        # bodies — it buffers the response through an anyio task group, and
-        # when the generator yields slowly (or the client disconnects) the
-        # middleware raises RuntimeError("No response returned.") which then
-        # surfaces as a 500 to the client.
-        #
-        # The chat SSE endpoint (POST /api/v1/chat/conversations/{id}/messages)
-        # streams for up to several minutes while Ollama generates tokens.
-        # We bypass this middleware for that route — Chat already emits its
-        # own detailed Prometheus metrics (dc_chat_*), so we are not losing
-        # observability for the chat path.
-        if path.startswith("/api/v1/chat/") and path.endswith("/messages"):
-            return await call_next(request)
+        method: str = scope.get("method", "")
+        endpoint = self._normalize_path(path)
 
-        method = request.method
-        # Normalize endpoint path (remove IDs for better grouping)
-        endpoint = self._normalize_path(request.url.path)
-
-        # Track request size
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                http_request_size_bytes.labels(method=method, endpoint=endpoint).observe(int(content_length))
-            except ValueError:
-                pass
-
-        # Track in-progress requests
-        http_requests_in_progress.labels(method=method, endpoint=endpoint).inc()
-
-        # Measure request duration
-        start_time = time.time()
-
-        try:
-            response = await call_next(request)
-            status = response.status_code
-
-            # Track response size via Content-Length header
-            # (response.body is unavailable on StreamingResponse from call_next)
-            resp_content_length = response.headers.get("content-length")
-            if resp_content_length:
+        # Track request size from Content-Length header
+        for name, value in scope.get("headers", []):
+            if name == b"content-length":
                 try:
-                    http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(int(resp_content_length))
+                    http_request_size_bytes.labels(method=method, endpoint=endpoint).observe(int(value))
                 except ValueError:
                     pass
+                break
 
-        except Exception as e:
-            status = 500
-            logger.error(f"Error in PrometheusMiddleware: {e}")
+        http_requests_in_progress.labels(method=method, endpoint=endpoint).inc()
+        start_time = time.time()
+        status_code = 500  # default if the app crashes before sending a response
+
+        async def wrapped_send(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 500)
+                # Record response size if Content-Length is present (skipped on streaming responses)
+                for name, value in message.get("headers", []):
+                    if name == b"content-length":
+                        try:
+                            http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(int(value))
+                        except ValueError:
+                            pass
+                        break
+            await send(message)
+
+        try:
+            await self.app(scope, receive, wrapped_send)
+        except Exception:
+            status_code = 500
             raise
         finally:
-            # Record metrics
             duration = time.time() - start_time
             http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
-            http_requests_total.labels(method=method, endpoint=endpoint, status=status).inc()
+            http_requests_total.labels(method=method, endpoint=endpoint, status=status_code).inc()
             http_requests_in_progress.labels(method=method, endpoint=endpoint).dec()
-
-        return response
 
     def _normalize_path(self, path: str) -> str:
         """

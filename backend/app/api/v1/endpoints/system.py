@@ -124,6 +124,7 @@ async def get_app_config(
         notifications=notifications,
         slack_client_id=settings.slack_client_id,
         slack_oauth_scopes=settings.slack_oauth_scopes,
+        chat_enabled=settings.chat_enabled,
     )
 
 

@@ -44,7 +44,7 @@ export default function DashboardLayout() {
       href: '/chat',
       label: 'Chat',
       icon: MessageSquare,
-      show: hasPermission('chat:access')
+      show: hasPermission('chat:access') && (appConfig?.chat_enabled ?? false)
     },
     {
       href: '/teams',

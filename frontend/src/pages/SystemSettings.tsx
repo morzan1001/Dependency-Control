@@ -13,6 +13,7 @@ import {
   SecuritySettingsTab,
   NotificationsSettingsTab,
   IntegrationsSettingsTab,
+  ChatSettingsTab,
 } from "@/components/settings"
 
 // Inner component that handles the form state
@@ -82,6 +83,7 @@ function SystemSettingsForm({ settings }: { settings: SystemSettingsType }) {
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
+          <TabsTrigger value="chat">Chat</TabsTrigger>
         </TabsList>
 
         <TabsContent value="general">
@@ -107,6 +109,10 @@ function SystemSettingsForm({ settings }: { settings: SystemSettingsType }) {
         
         <TabsContent value="integrations">
           <IntegrationsSettingsTab {...tabProps} />
+        </TabsContent>
+
+        <TabsContent value="chat">
+          <ChatSettingsTab {...tabProps} />
         </TabsContent>
       </Tabs>
     </div>

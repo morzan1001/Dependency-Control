@@ -66,6 +66,11 @@ class SystemSettingsBase(BaseModel):
     global_rescan_enabled: bool = False
     global_rescan_interval: int = 24  # Hours
 
+    # Chat / AI Assistant
+    chat_enabled: bool = False
+    chat_rate_limit_per_minute: int = 10
+    chat_rate_limit_per_hour: int = 60
+
 
 class SystemSettingsUpdate(SystemSettingsBase):
     pass
@@ -124,3 +129,6 @@ class AppConfig(BaseModel):
     # Slack OAuth (non-sensitive, needed for "Add to Slack" button)
     slack_client_id: Optional[str] = None
     slack_oauth_scopes: Optional[str] = None
+
+    # Chat / AI Assistant feature flag
+    chat_enabled: bool = False

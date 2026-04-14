@@ -37,6 +37,9 @@ export interface SystemSettings {
   github_token?: string;
   open_source_malware_api_key?: string;
   default_active_analyzers?: string[];
+  chat_enabled?: boolean;
+  chat_rate_limit_per_minute?: number;
+  chat_rate_limit_per_hour?: number;
 }
 
 export interface PublicConfig {
@@ -65,6 +68,7 @@ export interface AppConfig {
   notifications: NotificationChannels;
   slack_client_id?: string;
   slack_oauth_scopes?: string;
+  chat_enabled?: boolean;
 }
 
 export interface SettingsTabProps {
