@@ -37,6 +37,30 @@ spec:
     - protocol: TCP
       port: 27017
 
+{{- if .Values.ollama.enabled }}
+---
+# Allow Backend to talk to Ollama (chat/LLM)
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-backend-to-ollama
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: ollama
+          {{- include "dependency-control.selectorLabels" . | nindent 10 }}
+    ports:
+    - protocol: TCP
+      port: 11434
+{{- end }}
 ---
 # Allow Backend to talk to Internet (for Scanners & Updates)
 kind: NetworkPolicy

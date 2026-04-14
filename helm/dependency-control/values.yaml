@@ -520,3 +520,38 @@ grypeDbUpdater:
   schedule: "0 */6 * * *"
   # GCS bucket for shared Grype DB (mounted via GCSFuse)
   gcsBucket: ""
+
+# -----------------------------------------------------------------------------
+# Ollama LLM Service
+# -----------------------------------------------------------------------------
+ollama:
+  enabled: true
+  image:
+    repository: ollama/ollama
+    tag: latest
+  model: gemma4:27b-it-q4_K_M
+  gpu:
+    enabled: false
+    count: 1
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "2"
+    limits:
+      memory: "12Gi"
+      cpu: "4"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -----------------------------------------------------------------------------
+# Chat Feature
+# -----------------------------------------------------------------------------
+chat:
+  enabled: false
+  rateLimitPerMinute: 10
+  rateLimitPerHour: 60

@@ -1,0 +1,30 @@
+{{- if and .Values.ollama.enabled .Values.networkPolicy.enabled }}
+# Deny all traffic to/from Ollama by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "dependency-control.fullname" . }}-ollama-deny-all
+  labels:
+    app.kubernetes.io/component: ollama
+    {{- include "dependency-control.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: ollama
+      {{- include "dependency-control.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  # No egress rules = Ollama cannot make any outbound connections
+  egress: []
+  # Only allow ingress from backend
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+              {{- include "dependency-control.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 11434
+{{- end }}
