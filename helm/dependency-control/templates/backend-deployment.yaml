@@ -252,6 +252,13 @@ spec:
             - name: GRYPE_DB_SHARED
               value: "true"
             {{- end }}
+            {{- if .Values.ollama.enabled }}
+            # Ollama: point to the in-cluster service (default "http://ollama:11434" does not match the service name)
+            - name: OLLAMA_BASE_URL
+              value: "http://{{ include "dependency-control.fullname" . }}-ollama:11434"
+            - name: OLLAMA_MODEL
+              value: {{ .Values.ollama.model | quote }}
+            {{- end }}
             {{- if .Values.global.tls.enabled }}
             # TLS environment variables
             - name: TLS_ENABLED

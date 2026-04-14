@@ -51,6 +51,19 @@ services:
       timeout: 5s
       retries: 5
 
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - dependencycontrol
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -80,6 +93,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      ollama:
+        condition: service_started
     healthcheck:
       test: curl --fail http://localhost:8000/health/live || exit 1
       interval: 10s
@@ -101,6 +116,8 @@ services:
       - S3_REGION=us-east-1
       - S3_USE_SSL=false
       - ARCHIVE_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=gemma4:12b
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     labels:
       traefik.enable: "true"
@@ -189,3 +206,4 @@ volumes:
   redis_data:
   minio_data:
   pg_data:
+  ollama_data:

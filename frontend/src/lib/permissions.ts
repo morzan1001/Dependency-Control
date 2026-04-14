@@ -53,6 +53,11 @@ export const Permissions = {
   WEBHOOK_READ: "webhook:read",
   WEBHOOK_UPDATE: "webhook:update",
   WEBHOOK_DELETE: "webhook:delete",
+
+  // Chat
+  CHAT_ACCESS: "chat:access",
+  CHAT_HISTORY_READ: "chat:history_read",
+  CHAT_HISTORY_DELETE: "chat:history_delete",
 } as const;
 
 export type Permission = (typeof Permissions)[keyof typeof Permissions];
@@ -100,6 +105,10 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.WEBHOOK_READ,
   Permissions.WEBHOOK_UPDATE,
   Permissions.WEBHOOK_DELETE,
+  // Chat
+  Permissions.CHAT_ACCESS,
+  Permissions.CHAT_HISTORY_READ,
+  Permissions.CHAT_HISTORY_DELETE,
 ];
 
 // Admin: All permissions
@@ -376,6 +385,28 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         id: Permissions.WEBHOOK_DELETE,
         label: "Delete Webhooks",
         description: "Delete any webhook",
+      },
+    ],
+  },
+  {
+    id: "chat",
+    title: "Chat",
+    description: "Permissions for the AI security assistant",
+    permissions: [
+      {
+        id: Permissions.CHAT_ACCESS,
+        label: "Chat Access",
+        description: "Use the AI chat assistant and create conversations",
+      },
+      {
+        id: Permissions.CHAT_HISTORY_READ,
+        label: "Read Chat History",
+        description: "View own past chat conversations",
+      },
+      {
+        id: Permissions.CHAT_HISTORY_DELETE,
+        label: "Delete Chat History",
+        description: "Delete own chat conversations",
       },
     ],
   },

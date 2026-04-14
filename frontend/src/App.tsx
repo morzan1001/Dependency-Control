@@ -21,6 +21,7 @@ import SearchPage from './pages/Search'
 import AnalyticsPage from './pages/Analytics'
 import ArchivesPage from './pages/Archives'
 import GlobalWaivers from './pages/GlobalWaivers'
+import Chat from './pages/Chat'
 import DashboardLayout from './layouts/DashboardLayout'
 import { AuthProvider, RequirePermission, useAuth } from './context'
 import { Toaster } from "@/components/ui/sonner"
@@ -195,6 +196,11 @@ function AppRoutes() {
         <Route path="/waivers" element={
           <RequirePermission permission="waiver:manage">
             <GlobalWaivers />
+          </RequirePermission>
+        } />
+        <Route path="/chat" element={
+          <RequirePermission permission="chat:access">
+            <Chat />
           </RequirePermission>
         } />
         {/* Add other routes here */}
