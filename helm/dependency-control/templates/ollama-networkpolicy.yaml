@@ -27,13 +27,13 @@ spec:
     - Ingress
     - Egress
   egress:
-    # DNS — required for registry hostname resolution
-    - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
+    # DNS — required for registry hostname resolution.
+    # Port-only rule (no peer restriction) so that this works across all GKE
+    # DNS configurations: kube-dns ClusterIP, NodeLocal DNS Cache via the
+    # link-local 169.254.20.10 address, or a future CoreDNS-based setup.
+    # DNS answers only return to the requesting pod, so this does not
+    # meaningfully widen the attack surface.
+    - ports:
         - protocol: UDP
           port: 53
         - protocol: TCP

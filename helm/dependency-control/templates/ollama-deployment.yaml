@@ -28,16 +28,25 @@ spec:
       initContainers:
         - name: model-pull
           image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
-          command:
-            - sh
-            - -c
-            - |
+          command: ["/bin/sh", "-c"]
+          args:
+            - |-
               set -e
               echo "Starting Ollama in background to pull model..."
               /bin/ollama serve &
               OLLAMA_PID=$!
-              # Wait for ollama to be reachable
-              until curl -sf http://localhost:11434/ > /dev/null 2>&1; do
+              # Wait for ollama API to be reachable. The official ollama image
+              # does not include curl, so use the ollama CLI itself which talks
+              # to the local server via OLLAMA_HOST.
+              for i in $(seq 1 60); do
+                if /bin/ollama list >/dev/null 2>&1; then
+                  echo "Ollama API ready after ${i} attempts."
+                  break
+                fi
+                if [ "$i" = "60" ]; then
+                  echo "Timed out waiting for ollama serve to start." >&2
+                  exit 1
+                fi
                 sleep 2
               done
               echo "Pulling model: {{ .Values.ollama.model }}"
