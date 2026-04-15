@@ -128,42 +128,45 @@ class ChatService:
                         # (first request after idle = 30-60s on L4). Surface
                         # that as an SSE info event so the UI isn't silent.
                         if (
-                            not warmup_info_sent
-                            and not first_token_recorded
+                            not first_token_recorded
                             and total_tool_calls == 0
                         ):
-                            try:
-                                chunk = await asyncio.wait_for(
-                                    stream_iter.__anext__(), timeout=5.0
-                                )
-                            except asyncio.TimeoutError:
-                                warmup_info_sent = True
-                                yield (
-                                    "data: "
-                                    + json.dumps({
-                                        "type": "info",
-                                        "message": (
-                                            "Loading the model into GPU memory — "
-                                            "the first request after idle usually "
-                                            "takes 30–60 seconds."
-                                        ),
-                                    })
-                                    + "\n\n"
-                                )
+                            # Cold-start warmup: the model has to be loaded
+                            # into VRAM on the first request after idle (T4
+                            # + gemma4 ≈ 60–90 s). Poll the stream in short
+                            # slices and emit periodic keepalive info events
+                            # so (a) the UI isn't silent, and (b) upstream
+                            # SSE proxies (Pomerium/Traefik) don't idle-
+                            # timeout the connection, cancel the request,
+                            # and abort the load before it finishes.
+                            chunk = None
+                            waited = 0.0
+                            slice_seconds = 10.0
+                            while chunk is None:
                                 try:
                                     chunk = await asyncio.wait_for(
-                                        stream_iter.__anext__(), timeout=45.0
+                                        stream_iter.__anext__(),
+                                        timeout=slice_seconds,
                                     )
                                 except asyncio.TimeoutError:
+                                    waited += slice_seconds
+                                    if not warmup_info_sent:
+                                        warmup_info_sent = True
+                                        msg = (
+                                            "Loading the model into GPU memory — "
+                                            "the first request after idle usually "
+                                            "takes 30–90 seconds."
+                                        )
+                                    else:
+                                        msg = (
+                                            f"Still warming up ({int(waited)}s) — "
+                                            "hang tight."
+                                        )
                                     yield (
                                         "data: "
-                                        + json.dumps({
-                                            "type": "info",
-                                            "message": "Still warming up — hang tight.",
-                                        })
+                                        + json.dumps({"type": "info", "message": msg})
                                         + "\n\n"
                                     )
-                                    chunk = await stream_iter.__anext__()
                         else:
                             chunk = await stream_iter.__anext__()
                     except StopAsyncIteration:
