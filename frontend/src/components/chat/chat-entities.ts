@@ -59,6 +59,39 @@ function collectFromToolResult(
       obj.team_name.length,
     );
   }
+  // Finding — deep-link to the scan page with the drawer auto-opened. We
+  // need project_id + scan_id + a finding identifier. The backend emits
+  // `id` (internal UUID) for vulnerability findings; `finding_id` for the
+  // stable human string. Prefer the UUID (guaranteed unique); fall back
+  // to finding_id so we still link license/quality items.
+  if (
+    typeof obj.project_id === 'string' &&
+    typeof obj.scan_id === 'string' &&
+    (typeof obj.id === 'string' || typeof obj.finding_id === 'string')
+  ) {
+    const fid = typeof obj.id === 'string' ? obj.id : (obj.finding_id as string);
+    const href = `/projects/${obj.project_id}/scans/${obj.scan_id}?finding=${encodeURIComponent(fid)}`;
+    // Prefer a CVE mention as link anchor (user-recognisable), then
+    // component@version, then the raw finding_id as last resort.
+    if (typeof obj.cve === 'string' && obj.cve) {
+      add(
+        `finding:${fid}:cve`,
+        obj.cve,
+        `[${obj.cve}](${href})`,
+        obj.cve.length + 2,
+      );
+    }
+    if (typeof obj.component === 'string' && obj.component) {
+      const version = typeof obj.version === 'string' ? obj.version : '';
+      const label = version ? `${obj.component}@${version}` : obj.component;
+      add(
+        `finding:${fid}:comp`,
+        label,
+        `[${label}](${href})`,
+        label.length,
+      );
+    }
+  }
   // Standalone project/team objects with id + name (no prefix)
   if (typeof obj.id === 'string' && typeof obj.name === 'string') {
     // Can't tell what entity type without more context — skip to avoid wrong links.

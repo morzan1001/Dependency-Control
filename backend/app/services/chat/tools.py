@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.projects import build_user_project_query
+from app.core.config import settings
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
@@ -183,6 +184,38 @@ def _breaking_risk(current: Optional[str], target: Optional[str]) -> str:
         # 0.x: any minor bump can break per semver convention.
         return "medium"
     return "low"
+
+
+def _inject_urls(node: Any) -> None:
+    """Walk a tool result tree and add a 'url' field to any dict that has
+    enough identifiers to deep-link into the UI. The frontend chat linkifier
+    turns `project_name` / `cve` / `component` mentions into links pointing
+    at this URL — so the model doesn't need to construct URLs itself.
+
+    Rules, longest-path wins:
+      - project_id + scan_id + id (internal finding UUID) → scan details
+        with finding drawer auto-opened.
+      - project_id + scan_id → scan details.
+      - project_id only → project details page.
+    """
+    base = settings.FRONTEND_BASE_URL.rstrip("/")
+    if isinstance(node, list):
+        for item in node:
+            _inject_urls(item)
+        return
+    if not isinstance(node, dict):
+        return
+    pid = node.get("project_id")
+    sid = node.get("scan_id")
+    fid = node.get("id")
+    if isinstance(pid, str) and isinstance(sid, str) and isinstance(fid, str):
+        node.setdefault("url", f"{base}/projects/{pid}/scans/{sid}?finding={fid}")
+    elif isinstance(pid, str) and isinstance(sid, str):
+        node.setdefault("url", f"{base}/projects/{pid}/scans/{sid}")
+    elif isinstance(pid, str):
+        node.setdefault("url", f"{base}/projects/{pid}")
+    for value in node.values():
+        _inject_urls(value)
 
 
 def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -1046,6 +1079,10 @@ class ChatToolRegistry:
             duration = time.time() - start
             chat_tool_calls_total.labels(tool_name=tool_name, status="success").inc()
             chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
+            # Inject deep-link URLs for identifiable entities so the model
+            # can surface them to the user verbatim.
+            if isinstance(result, dict):
+                _inject_urls(result)
             # Cap JSON size — large tool dumps (hundreds of projects / thousands
             # of findings) blow the LLM's context budget and make it loop on
             # the same tool trying to re-read data that is already there.

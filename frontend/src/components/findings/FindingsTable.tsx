@@ -1,5 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { scanApi } from '@/api/scans'
 import { Finding } from '@/types/scan'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -41,6 +42,49 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null)
     const [sortBy, setSortBy] = useState("severity")
     const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+    const [searchParams, setSearchParams] = useSearchParams()
+    const deepLinkFindingId = searchParams.get('finding')
+    // Guard so we only auto-open once per deep-link value — otherwise the
+    // effect would re-trigger every time selectedFinding changes.
+    const openedDeepLinkRef = useRef<string | null>(null)
+
+    useEffect(() => {
+        if (!deepLinkFindingId) {
+            openedDeepLinkRef.current = null
+            return
+        }
+        if (openedDeepLinkRef.current === deepLinkFindingId) return
+        let cancelled = false
+        ;(async () => {
+            try {
+                // Try the internal UUID first (what the backend emits as .id),
+                // fall back to the stable finding_id string (e.g. "CVE-X").
+                let res = await scanApi.getFindings(scanId, { search: deepLinkFindingId, skip: 0, limit: 200 })
+                let found = res.items.find(f => f.id === deepLinkFindingId)
+                    || res.items.find(f => (f as { finding_id?: string }).finding_id === deepLinkFindingId)
+                if (!found && res.items.length === 1) found = res.items[0]
+                if (!cancelled && found) {
+                    openedDeepLinkRef.current = deepLinkFindingId
+                    setSelectedFinding(found)
+                }
+            } catch (err) {
+                console.error('Failed to open deep-linked finding:', err)
+            }
+        })()
+        return () => { cancelled = true }
+    }, [deepLinkFindingId, scanId])
+
+    // Strip the ?finding=… param once the user closes the drawer so the
+    // deep-link doesn't immediately reopen it.
+    const closeSelectedFinding = () => {
+        setSelectedFinding(null)
+        if (searchParams.has('finding')) {
+            setSearchParams(prev => {
+                prev.delete('finding')
+                return prev
+            }, { replace: true })
+        }
+    }
 
     const {
         data,
@@ -335,7 +379,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     scanId={scanId}
                     scanContext={scanContext}
                     isOpen={!!selectedFinding}
-                    onClose={() => setSelectedFinding(null)}
+                    onClose={closeSelectedFinding}
                     onSelectFinding={async (id) => {
                         // First try exact match by ID
                         let found = allRows.find(f => f.id === id);
