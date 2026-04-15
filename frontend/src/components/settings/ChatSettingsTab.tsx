@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { SettingsTabProps } from '@/types/system';
 
 const MAX_RATE_LIMIT = 1000;
@@ -38,7 +37,6 @@ export function ChatSettingsTab({
   hasPermission,
   isPending,
 }: Readonly<SettingsTabProps>) {
-  const enabled = formData.chat_enabled ?? false;
   const perMinute = formData.chat_rate_limit_per_minute ?? 10;
   const perHour = formData.chat_rate_limit_per_hour ?? 60;
   const maxRounds = formData.chat_max_tool_rounds ?? 20;
@@ -50,27 +48,13 @@ export function ChatSettingsTab({
         <CardHeader>
           <CardTitle>AI Chat Assistant</CardTitle>
           <CardDescription>
-            Enable the AI chat feature backed by Ollama and configure per-user
-            rate limits.
+            The chat feature is enabled at deploy-time via the Helm value{' '}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">chat.enabled</code>
+            {' '}(which also deploys Ollama). Use the controls below to tune
+            runtime limits.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between space-x-2">
-            <div className="space-y-0.5">
-              <Label className="text-base">Enable chat feature</Label>
-              <p className="text-sm text-muted-foreground">
-                Users still need the <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">chat:access</code> permission
-                to see the chat menu. Disabling this flag hides the feature
-                globally regardless of permissions.
-              </p>
-            </div>
-            <Switch
-              checked={enabled}
-              onCheckedChange={(checked) => handleInputChange('chat_enabled', checked)}
-              disabled={!canManage}
-            />
-          </div>
-
           <Alert>
             <Info className="h-4 w-4" />
             <AlertTitle>Permissions</AlertTitle>
@@ -112,7 +96,7 @@ export function ChatSettingsTab({
                 min={MIN_RATE_LIMIT}
                 max={MAX_RATE_LIMIT}
                 value={perMinute}
-                disabled={!canManage || !enabled}
+                disabled={!canManage}
                 onChange={(e) =>
                   handleInputChange(
                     'chat_rate_limit_per_minute',
@@ -133,7 +117,7 @@ export function ChatSettingsTab({
                 min={MIN_RATE_LIMIT}
                 max={MAX_RATE_LIMIT}
                 value={perHour}
-                disabled={!canManage || !enabled}
+                disabled={!canManage}
                 onChange={(e) =>
                   handleInputChange(
                     'chat_rate_limit_per_hour',
@@ -175,7 +159,7 @@ export function ChatSettingsTab({
               min={MIN_TOOL_ROUNDS}
               max={MAX_TOOL_ROUNDS}
               value={maxRounds}
-              disabled={!canManage || !enabled}
+              disabled={!canManage}
               onChange={(e) =>
                 handleInputChange(
                   'chat_max_tool_rounds',

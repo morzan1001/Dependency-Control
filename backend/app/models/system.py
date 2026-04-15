@@ -84,8 +84,7 @@ class SystemSettings(BaseModel):
     global_retention_days: int = 90  # 0 means keep forever
     global_retention_action: str = "delete"  # "delete", "archive", or "none"
 
-    # Chat / AI Assistant
-    chat_enabled: bool = False
+    # Chat / AI Assistant — feature flag is deployment-time (settings.CHAT_ENABLED)
     chat_rate_limit_per_minute: int = 10
     chat_rate_limit_per_hour: int = 60
     chat_max_tool_rounds: int = 20

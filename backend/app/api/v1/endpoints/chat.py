@@ -34,8 +34,8 @@ async def _get_system_settings(db) -> SystemSettings:
     return SystemSettings()
 
 
-def _check_chat_enabled(system_settings: SystemSettings) -> None:
-    if not system_settings.chat_enabled:
+def _check_chat_enabled() -> None:
+    if not settings.CHAT_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Chat feature is currently disabled",
@@ -57,8 +57,7 @@ async def create_conversation(
     db: DatabaseDep,
 ):
     """Create a new chat conversation."""
-    system_settings = await _get_system_settings(db)
-    _check_chat_enabled(system_settings)
+    _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)
 
     service = ChatService(db)
@@ -79,8 +78,7 @@ async def list_conversations(
     db: DatabaseDep,
 ):
     """List the current user's chat conversations."""
-    system_settings = await _get_system_settings(db)
-    _check_chat_enabled(system_settings)
+    _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)
     _check_permission(current_user, Permissions.CHAT_HISTORY_READ)
 
@@ -109,8 +107,7 @@ async def get_conversation(
     db: DatabaseDep,
 ):
     """Get a conversation with its messages."""
-    system_settings = await _get_system_settings(db)
-    _check_chat_enabled(system_settings)
+    _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)
     _check_permission(current_user, Permissions.CHAT_HISTORY_READ)
 
@@ -140,8 +137,7 @@ async def delete_conversation(
     db: DatabaseDep,
 ):
     """Delete a conversation and all its messages."""
-    system_settings = await _get_system_settings(db)
-    _check_chat_enabled(system_settings)
+    _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_HISTORY_DELETE)
 
     service = ChatService(db)
@@ -160,9 +156,9 @@ async def send_message(
     db: DatabaseDep,
 ):
     """Send a message and stream the AI response via SSE."""
-    system_settings = await _get_system_settings(db)
-    _check_chat_enabled(system_settings)
+    _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)
+    system_settings = await _get_system_settings(db)
 
     # Rate limiting (uses SystemSettings values — admin-tunable)
     try:

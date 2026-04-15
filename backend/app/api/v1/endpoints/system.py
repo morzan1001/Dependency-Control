@@ -8,6 +8,7 @@ from app.api.v1.helpers.responses import RESP_AUTH
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.v1.helpers import get_available_channels
+from app.core.config import settings as app_settings
 from app.core.s3 import is_archive_enabled
 from app.core.constants import (
     NOTIFICATION_CHANNEL_EMAIL,
@@ -124,7 +125,7 @@ async def get_app_config(
         notifications=notifications,
         slack_client_id=settings.slack_client_id,
         slack_oauth_scopes=settings.slack_oauth_scopes,
-        chat_enabled=settings.chat_enabled,
+        chat_enabled=app_settings.CHAT_ENABLED,
     )
 
 

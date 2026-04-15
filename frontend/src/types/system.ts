@@ -37,7 +37,6 @@ export interface SystemSettings {
   github_token?: string;
   open_source_malware_api_key?: string;
   default_active_analyzers?: string[];
-  chat_enabled?: boolean;
   chat_rate_limit_per_minute?: number;
   chat_rate_limit_per_hour?: number;
   chat_max_tool_rounds?: number;

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { useSystemSettings, useUpdateSystemSettings } from "@/hooks/queries/use-system"
+import { useSystemSettings, useUpdateSystemSettings, useAppConfig } from "@/hooks/queries/use-system"
 import { useGlobalWebhooks, useCreateGlobalWebhook, useDeleteWebhook } from "@/hooks/queries/use-webhooks"
 import { SystemSettings as SystemSettingsType } from "@/types/system"
 import { useAuth } from "@/context/useAuth"
@@ -17,7 +17,9 @@ import {
 } from "@/components/settings"
 
 // Inner component that handles the form state
-function SystemSettingsForm({ settings }: { settings: SystemSettingsType }) {
+function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsType }>) {
+  const { data: appConfig } = useAppConfig();
+  const chatEnabled = appConfig?.chat_enabled ?? false;
   const [formData, setFormData] = useState<Partial<SystemSettingsType>>(settings)
   const [slackAuthMode, setSlackAuthMode] = useState(() => {
     if (settings.slack_bot_token && !settings.slack_client_id) {
@@ -83,7 +85,7 @@ function SystemSettingsForm({ settings }: { settings: SystemSettingsType }) {
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
-          <TabsTrigger value="chat">Chat</TabsTrigger>
+          {chatEnabled && <TabsTrigger value="chat">Chat</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="general">
@@ -111,9 +113,11 @@ function SystemSettingsForm({ settings }: { settings: SystemSettingsType }) {
           <IntegrationsSettingsTab {...tabProps} />
         </TabsContent>
 
-        <TabsContent value="chat">
-          <ChatSettingsTab {...tabProps} />
-        </TabsContent>
+        {chatEnabled && (
+          <TabsContent value="chat">
+            <ChatSettingsTab {...tabProps} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   )

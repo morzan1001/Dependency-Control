@@ -89,14 +89,14 @@ export function ConversationHistoryDialog({
                     <li
                       key={conv.id}
                       className={cn(
-                        'group flex items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted/60',
+                        'group flex min-w-0 items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted/60',
                         isActive && 'bg-muted',
                       )}
                     >
                       <button
                         type="button"
                         onClick={() => handleSelect(conv.id)}
-                        className="flex flex-1 flex-col items-start overflow-hidden text-left"
+                        className="flex min-w-0 flex-1 flex-col items-start overflow-hidden text-left"
                       >
                         <span className="w-full truncate font-medium text-foreground">
                           {conv.title}

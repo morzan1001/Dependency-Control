@@ -66,8 +66,7 @@ class SystemSettingsBase(BaseModel):
     global_rescan_enabled: bool = False
     global_rescan_interval: int = 24  # Hours
 
-    # Chat / AI Assistant
-    chat_enabled: bool = False
+    # Chat / AI Assistant — feature flag is deployment-time (settings.CHAT_ENABLED)
     chat_rate_limit_per_minute: int = 10
     chat_rate_limit_per_hour: int = 60
     chat_max_tool_rounds: int = 20

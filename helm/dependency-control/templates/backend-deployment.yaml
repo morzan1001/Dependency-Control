@@ -252,6 +252,13 @@ spec:
             - name: GRYPE_DB_SHARED
               value: "true"
             {{- end }}
+            {{- if .Values.chat.enabled }}
+            # Chat feature flag — gates all /api/v1/chat endpoints. Only set
+            # true when ollama is also deployed; otherwise the UI shows a
+            # chat menu that 403s on every call.
+            - name: CHAT_ENABLED
+              value: "true"
+            {{- end }}
             {{- if .Values.ollama.enabled }}
             # Ollama: point to the in-cluster service (default "http://ollama:11434" does not match the service name)
             - name: OLLAMA_BASE_URL
