@@ -133,21 +133,26 @@ class ChatService:
                         ):
                             # Cold-start warmup: the model has to be loaded
                             # into VRAM on the first request after idle (T4
-                            # + gemma4 ≈ 60–90 s). Poll the stream in short
-                            # slices and emit periodic keepalive info events
-                            # so (a) the UI isn't silent, and (b) upstream
-                            # SSE proxies (Pomerium/Traefik) don't idle-
-                            # timeout the connection, cancel the request,
-                            # and abort the load before it finishes.
-                            chunk = None
+                            # + gemma4 ≈ 60–90 s). We need to emit periodic
+                            # keepalive info events so (a) the UI isn't
+                            # silent, and (b) upstream SSE proxies (Pomerium/
+                            # Traefik) don't idle-timeout and drop the
+                            # connection. CRITICAL: asyncio.wait_for cancels
+                            # its inner coroutine on timeout, which would
+                            # tear down the httpx stream and make ollama
+                            # abort the load. Use asyncio.shield + a single
+                            # persistent task so the fetch keeps running
+                            # across keepalive slices.
+                            pending = asyncio.ensure_future(stream_iter.__anext__())
                             waited = 0.0
                             slice_seconds = 10.0
-                            while chunk is None:
+                            while True:
                                 try:
                                     chunk = await asyncio.wait_for(
-                                        stream_iter.__anext__(),
+                                        asyncio.shield(pending),
                                         timeout=slice_seconds,
                                     )
+                                    break
                                 except asyncio.TimeoutError:
                                     waited += slice_seconds
                                     if not warmup_info_sent:
