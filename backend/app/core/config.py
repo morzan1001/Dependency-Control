@@ -84,8 +84,8 @@ class Settings(BaseSettings):
     # ollama sub-chart is also deployed). Runtime tunables (rate limits, tool
     # rounds) stay in SystemSettings so admins can adjust them via the UI.
     CHAT_ENABLED: bool = False
-    CHAT_MAX_HISTORY_MESSAGES: int = 20
-    CHAT_MAX_TOKEN_BUDGET: int = 8192
+    CHAT_MAX_HISTORY_MESSAGES: int = 15
+    CHAT_MAX_TOKEN_BUDGET: int = 12000
     CHAT_RATE_LIMIT_PER_MINUTE: int = 10
     CHAT_RATE_LIMIT_PER_HOUR: int = 60
     # Maximum rounds of the LLM ↔ tool call loop before we synthesise a

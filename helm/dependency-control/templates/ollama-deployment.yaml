@@ -127,6 +127,14 @@ spec:
               value: "0.0.0.0"
             - name: HOME
               value: "/home/ollama"
+            {{- if .Values.ollama.numCtx }}
+            - name: OLLAMA_NUM_CTX
+              value: {{ .Values.ollama.numCtx | quote }}
+            {{- end }}
+            {{- if .Values.ollama.keepAlive }}
+            - name: OLLAMA_KEEP_ALIVE
+              value: {{ .Values.ollama.keepAlive | quote }}
+            {{- end }}
       volumes:
         - name: ollama-data
           {{- if .Values.ollama.persistence.enabled }}
