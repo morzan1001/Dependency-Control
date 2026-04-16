@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://ollama:11434"
     OLLAMA_MODEL: str = "gemma4:26b"
     OLLAMA_TIMEOUT_SECONDS: int = 120
+    OLLAMA_NUM_CTX: int = 16384
 
     # Chat — feature flag is deployment-time (set true in Helm only when the
     # ollama sub-chart is also deployed). Runtime tunables (rate limits, tool

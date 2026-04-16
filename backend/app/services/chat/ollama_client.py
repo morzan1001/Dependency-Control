@@ -46,6 +46,9 @@ class OllamaClient:
             "model": self.model,
             "messages": messages,
             "stream": True,
+            "options": {
+                "num_ctx": settings.OLLAMA_NUM_CTX,
+            },
         }
         if tools:
             payload["tools"] = tools
