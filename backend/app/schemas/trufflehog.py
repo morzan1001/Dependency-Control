@@ -1,16 +1,25 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.ingest import BaseIngest
 
 
 class TruffleHogFinding(BaseModel):
     SourceMetadata: Optional[Dict[str, Any]] = None
-    SourceID: Optional[str] = None
-    SourceType: Optional[str] = None
+    SourceID: Optional[Union[str, int]] = None
+    SourceType: Optional[Union[str, int]] = None
     SourceName: Optional[str] = None
-    DetectorType: str
+    DetectorType: Union[str, int]
+
+    @field_validator("SourceID", "SourceType", "DetectorType", mode="before")
+    @classmethod
+    def _coerce_to_str(cls, v: Any) -> Any:
+        """TruffleHog >= 3.x emits these as integers (enum ordinals).
+        Coerce to str so downstream code stays uniform."""
+        if isinstance(v, int):
+            return str(v)
+        return v
     DecoderName: Optional[str] = None
     Verified: Optional[bool] = None
     Raw: Optional[str] = None
