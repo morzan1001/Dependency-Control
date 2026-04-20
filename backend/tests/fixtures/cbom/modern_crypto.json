@@ -1,0 +1,33 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "components": [
+    {
+      "type": "cryptographic-asset",
+      "bom-ref": "algo-aes",
+      "name": "AES",
+      "cryptoProperties": {
+        "assetType": "algorithm",
+        "algorithmProperties": {"primitive": "block-cipher", "parameterSetIdentifier": "256", "mode": "GCM"}
+      }
+    },
+    {
+      "type": "cryptographic-asset",
+      "bom-ref": "algo-rsa4096",
+      "name": "RSA",
+      "cryptoProperties": {
+        "assetType": "algorithm",
+        "algorithmProperties": {"primitive": "pke", "parameterSetIdentifier": "4096", "padding": "OAEP"}
+      }
+    },
+    {
+      "type": "cryptographic-asset",
+      "bom-ref": "proto-tls13",
+      "name": "TLS",
+      "cryptoProperties": {
+        "assetType": "protocol",
+        "protocolProperties": {"type": "tls", "version": "1.3"}
+      }
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "components": [
+    {
+      "type": "cryptographic-asset",
+      "bom-ref": "algo-md5",
+      "name": "MD5",
+      "cryptoProperties": {
+        "assetType": "algorithm",
+        "algorithmProperties": {
+          "primitive": "hash",
+          "parameterSetIdentifier": "128",
+          "cryptoFunctions": ["digest"]
+        },
+        "oid": "1.2.840.113549.2.5"
+      }
+    },
+    {
+      "type": "cryptographic-asset",
+      "bom-ref": "algo-rsa1024",
+      "name": "RSA",
+      "cryptoProperties": {
+        "assetType": "algorithm",
+        "algorithmProperties": {
+          "primitive": "pke",
+          "parameterSetIdentifier": "1024",
+          "padding": "PKCS1v15"
+        }
+      }
+    },
+    {
+      "type": "cryptographic-asset",
+      "bom-ref": "proto-tls10",
+      "name": "TLS",
+      "cryptoProperties": {
+        "assetType": "protocol",
+        "protocolProperties": {
+          "type": "tls",
+          "version": "1.0",
+          "cipherSuites": ["TLS_RSA_WITH_RC4_128_SHA"]
+        }
+      }
+    }
+  ]
+}
