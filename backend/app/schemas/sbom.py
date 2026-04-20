@@ -6,9 +6,12 @@ Supports CycloneDX, SPDX, and Syft formats.
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from app.schemas.cbom import ParsedCryptoAsset
 
 
 class SBOMFormat(Enum):
@@ -104,3 +107,6 @@ class ParsedSBOM(BaseModel):
     total_components: int = 0
     parsed_components: int = 0
     skipped_components: int = 0
+
+    # CBOM extension — populated if SBOM contains cryptographic-asset components
+    crypto_assets: List["ParsedCryptoAsset"] = Field(default_factory=list)
