@@ -30,6 +30,9 @@ class TestFindingTypeEnum:
             "system_warning",
             "outdated",
             "quality",
+            "crypto_weak_algorithm",
+            "crypto_weak_key",
+            "crypto_quantum_vulnerable",
             "other",
         }
         actual = {t.value for t in FindingType}

@@ -25,6 +25,9 @@ class FindingType(str, Enum):
     SYSTEM_WARNING = "system_warning"
     OUTDATED = "outdated"
     QUALITY = "quality"  # Supply chain quality issues (maintainer risk, etc.)
+    CRYPTO_WEAK_ALGORITHM = "crypto_weak_algorithm"
+    CRYPTO_WEAK_KEY = "crypto_weak_key"
+    CRYPTO_QUANTUM_VULNERABLE = "crypto_quantum_vulnerable"
     OTHER = "other"
 
 
