@@ -11,6 +11,7 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.broadcasts import BroadcastRepository
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.crypto_asset import CryptoAssetRepository  # noqa: F401
+from app.repositories.crypto_policy import CryptoPolicyRepository  # noqa: F401
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
@@ -34,6 +35,7 @@ __all__ = [
     "BroadcastRepository",
     "CallgraphRepository",
     "CryptoAssetRepository",
+    "CryptoPolicyRepository",
     "DependencyRepository",
     "DependencyEnrichmentRepository",
     "DistributedLocksRepository",
