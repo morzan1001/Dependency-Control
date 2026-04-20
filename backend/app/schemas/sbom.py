@@ -6,12 +6,11 @@ Supports CycloneDX, SPDX, and Syft formats.
 """
 
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from app.schemas.cbom import ParsedCryptoAsset
+from app.schemas.cbom import ParsedCryptoAsset
 
 
 class SBOMFormat(Enum):
