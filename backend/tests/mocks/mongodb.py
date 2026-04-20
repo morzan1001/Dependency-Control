@@ -8,7 +8,8 @@ def create_mock_collection(**method_returns):
 
     Args:
         **method_returns: Override default return values.
-            Supported keys: find_one, find (list), count_documents (int).
+            Supported keys: find_one, find (list), count_documents (int),
+            bulk_write (int), aggregate (list).
     """
     collection = MagicMock()
     collection.find_one = AsyncMock(return_value=method_returns.get("find_one"))
@@ -18,6 +19,8 @@ def create_mock_collection(**method_returns):
     collection.update_many = AsyncMock(return_value=MagicMock(modified_count=1))
     collection.delete_one = AsyncMock(return_value=MagicMock(deleted_count=1))
     collection.count_documents = AsyncMock(return_value=method_returns.get("count_documents", 0))
+    collection.bulk_write = AsyncMock(return_value=MagicMock(modified_count=method_returns.get("bulk_write", 0)))
+    collection.create_index = AsyncMock(return_value=None)
 
     # find() returns a chainable cursor mock
     cursor = MagicMock()
@@ -26,6 +29,25 @@ def create_mock_collection(**method_returns):
     cursor.sort.return_value = cursor
     cursor.to_list = AsyncMock(return_value=method_returns.get("find", []))
     collection.find = MagicMock(return_value=cursor)
+
+    # aggregate() returns an async cursor mock
+    class AsyncIteratorMock:
+        def __init__(self, items):
+            self.items = items
+            self.index = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.index >= len(self.items):
+                raise StopAsyncIteration
+            item = self.items[self.index]
+            self.index += 1
+            return item
+
+    agg_cursor = AsyncIteratorMock(method_returns.get("aggregate", []))
+    collection.aggregate = MagicMock(return_value=agg_cursor)
 
     return collection
 
