@@ -64,7 +64,7 @@ class ScopeResolver:
         from app.api.v1.helpers.projects import check_project_access
 
         try:
-            await check_project_access(self.db, self.user, project_id, required_role="viewer")
+            await check_project_access(project_id, self.user, self.db, required_role="viewer")
             return True
         except Exception:
             return False
