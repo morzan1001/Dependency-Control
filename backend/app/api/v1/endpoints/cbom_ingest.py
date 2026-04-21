@@ -122,7 +122,9 @@ async def ingest_cbom(
 
 
 async def _persist_crypto_assets(db, project_id: str, scan_id: str, parsed) -> None:
-    """Background task: bulk-upsert CryptoAsset records and update scan status."""
+    """Background task: bulk-upsert CryptoAsset records then dispatch analysis."""
+    from app.core.worker import worker_manager
+
     scan_repo = ScanRepository(db)
     try:
         assets = parsed.assets
@@ -147,15 +149,25 @@ async def _persist_crypto_assets(db, project_id: str, scan_id: str, parsed) -> N
 
         await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
 
-        final_status = "partial" if partial else "completed"
-        await scan_repo.update_raw(scan_id, {"$set": {"status": final_status}})
-
         logger.info(
-            "cbom_ingest: persisted %d assets for scan %s (status=%s)",
+            "cbom_ingest: persisted %d assets for scan %s%s; queuing analysis",
             len(crypto_assets),
             scan_id,
-            final_status,
+            " (partial)" if partial else "",
         )
+
+        # Keep status as "pending" and hand the scan to the analysis worker so
+        # the crypto analyzers run via the standard engine dispatch path.
+        # The engine marks the scan "completed" (or "failed") when done.
+        queued = await worker_manager.add_job(scan_id)
+        if not queued:
+            # Worker is shutting down — mark the scan so housekeeping re-queues it.
+            logger.warning(
+                "cbom_ingest: worker rejected job for scan %s (shutting down); "
+                "scan remains pending for recovery",
+                scan_id,
+            )
+
     except Exception as exc:
         logger.exception("cbom_ingest background task failed for scan %s: %s", scan_id, exc)
         await scan_repo.update_raw(scan_id, {"$set": {"status": "failed"}})

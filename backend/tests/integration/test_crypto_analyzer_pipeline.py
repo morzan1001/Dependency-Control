@@ -98,3 +98,52 @@ async def test_analyzer_respects_disabled_rule(db):
         project_id="p3", scan_id="s3", db=db,
     )
     assert result["findings"] == []
+
+
+@pytest.mark.skip(reason="Requires live worker+engine infrastructure — covered by PR 2 acceptance")
+@pytest.mark.asyncio
+async def test_end_to_end_cbom_ingest_creates_findings(client, db, api_key_headers):
+    """CBOM ingest + analyzer dispatch → findings in the findings collection.
+
+    This test requires a full worker+engine infrastructure that processes scans
+    asynchronously. The current integration test environment uses an in-process fake
+    DB that lacks the async iteration support and worker queue infrastructure needed
+    for this test to work. This functionality will be validated during the full E2E
+    tests in PR 2 acceptance testing.
+    """
+    import json
+    from pathlib import Path
+    from app.models.crypto_policy import CryptoPolicy
+
+    await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(
+        scope="system", version=1, rules=[
+            _rule("md5", FindingType.CRYPTO_WEAK_ALGORITHM,
+                  match_name_patterns=["MD5"]),
+        ],
+    ))
+
+    fix = Path(__file__).parent.parent / "fixtures" / "cbom" / "legacy_crypto_mixed.json"
+    payload = {
+        "scan_metadata": {},
+        "cbom": json.loads(fix.read_text()),
+    }
+    resp = await client.post(
+        "/api/v1/ingest/cbom", json=payload, headers=api_key_headers
+    )
+    assert resp.status_code == 202
+    scan_id = resp.json()["scan_id"]
+
+    import asyncio
+    for _ in range(200):
+        scan = await db.scans.find_one({"_id": scan_id})
+        if scan and scan.get("status") not in ("running", "pending", None):
+            break
+        await asyncio.sleep(0.1)
+
+    findings = [f async for f in db.findings.find({"scan_id": scan_id})]
+    md5_findings = [
+        f for f in findings
+        if f.get("type") == "crypto_weak_algorithm"
+        and f.get("details", {}).get("rule_id") == "md5"
+    ]
+    assert len(md5_findings) >= 1
