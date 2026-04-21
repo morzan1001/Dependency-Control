@@ -4,6 +4,8 @@ import { CryptoAssetTable } from "@/components/crypto/CryptoAssetTable";
 import { CryptoAssetDetailDrawer } from "@/components/crypto/CryptoAssetDetailDrawer";
 import { CryptoSummaryHeader } from "@/components/crypto/CryptoSummaryHeader";
 import { CryptoFindingsView } from "@/components/crypto/CryptoFindingsView";
+import { CryptoHotspotsPage } from "./CryptoHotspotsPage";
+import { CryptoTrendsPage } from "./CryptoTrendsPage";
 import { useProjectScans } from "@/hooks/queries/use-scans";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { CryptoAsset } from "@/types/crypto";
@@ -50,12 +52,20 @@ export function CryptographyTab({ projectId }: Props) {
         <TabsList>
           <TabsTrigger value="inventory">Inventory</TabsTrigger>
           <TabsTrigger value="findings">Findings</TabsTrigger>
+          <TabsTrigger value="hotspots">Hotspots</TabsTrigger>
+          <TabsTrigger value="trends">Trends</TabsTrigger>
         </TabsList>
         <TabsContent value="inventory">
           <CryptoAssetTable projectId={projectId} scanId={latestScanId} onSelect={setSelected} />
         </TabsContent>
         <TabsContent value="findings">
           <CryptoFindingsView projectId={projectId} scanId={latestScanId} />
+        </TabsContent>
+        <TabsContent value="hotspots">
+          <CryptoHotspotsPage projectIdOverride={projectId} />
+        </TabsContent>
+        <TabsContent value="trends">
+          <CryptoTrendsPage projectIdOverride={projectId} />
         </TabsContent>
       </Tabs>
       <CryptoAssetDetailDrawer asset={selected} onClose={() => setSelected(null)} />
