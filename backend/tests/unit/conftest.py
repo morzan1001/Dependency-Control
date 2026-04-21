@@ -10,6 +10,10 @@ from unittest.mock import MagicMock
 import pytest_asyncio
 
 
+_EXISTS = "$exists"
+_REGEX = "$regex"
+
+
 class _FakeCursor:
     """Chainable cursor returned by _FakeCollection.find()."""
 
@@ -18,6 +22,7 @@ class _FakeCursor:
         self._query = query
         self._skip_n = 0
         self._limit_n = 0
+        self._iter: list | None = None
 
     def skip(self, n: int) -> "_FakeCursor":
         self._skip_n = n
@@ -30,20 +35,40 @@ class _FakeCursor:
     def _matches(self, doc: dict) -> bool:
         import re
         for k, v in self._query.items():
-            if isinstance(v, dict) and "$regex" in v:
+            if not isinstance(v, dict):
+                if doc.get(k) != v:
+                    return False
+            elif _REGEX in v:
                 flags = re.IGNORECASE if v.get("$options") == "i" else 0
-                if not re.search(v["$regex"], str(doc.get(k, "")), flags):
+                if not re.search(v[_REGEX], str(doc.get(k, "")), flags):
+                    return False
+            elif _EXISTS in v:
+                field_present = k in doc
+                if bool(v[_EXISTS]) != field_present:
                     return False
             elif doc.get(k) != v:
                 return False
         return True
 
-    async def to_list(self, length=None) -> list:  # noqa: S7503
+    def _filtered(self) -> list:
         results = [d for d in self._docs.values() if self._matches(d)]
         results = results[self._skip_n:]
         if self._limit_n:
             results = results[: self._limit_n]
         return results
+
+    async def to_list(self, length=None) -> list:
+        return self._filtered()
+
+    def __aiter__(self) -> "_FakeCursor":
+        self._iter = iter(self._filtered())
+        return self
+
+    async def __anext__(self) -> dict:
+        try:
+            return next(self._iter)  # type: ignore[arg-type]
+        except StopIteration:
+            raise StopAsyncIteration
 
 
 class _FakeCollection:
@@ -80,7 +105,14 @@ class _FakeCollection:
         result.modified_count = 1
         return result
 
-    async def find_one(self, query):
+    async def insert_one(self, doc: dict):
+        key = doc.get("_id", str(len(self._docs)))
+        self._docs[key] = dict(doc)
+        result = MagicMock()
+        result.inserted_id = key
+        return result
+
+    async def find_one(self, query, projection=None):
         # search by _id
         key = query.get("_id")
         if key:
@@ -99,6 +131,7 @@ class _FakeCollection:
         return count
 
     async def bulk_write(self, ops, ordered=True):
+        modified = 0
         for op in ops:
             # Each op is a pymongo UpdateOne
             flt = op._filter
@@ -110,6 +143,7 @@ class _FakeCollection:
                 key = matched[0]
                 set_ops = upd.get("$set", {})
                 self._docs[key].update(set_ops)
+                modified += 1
             elif upsert:
                 on_insert = upd.get("$setOnInsert", {})
                 set_ops = upd.get("$set", {})
@@ -119,13 +153,13 @@ class _FakeCollection:
                 key = doc.get("_id") or flt.get("bom_ref", str(len(self._docs)))
                 self._docs[key] = doc
         result = MagicMock()
-        result.modified_count = len(ops)
+        result.modified_count = modified
         return result
 
     async def create_index(self, *args, **kwargs):
         return None
 
-    def find(self, query=None):
+    def find(self, query=None, projection=None, **kwargs):
         """Return a chainable cursor over matching documents."""
         return _FakeCursor(self._docs, query or {})
 
@@ -148,6 +182,7 @@ class _FakeDb:
         self.dependencies = _FakeCollection()
         self.system_settings = _FakeCollection()
         self.scans = _FakeCollection()
+        self.findings = _FakeCollection()
 
     def __getattr__(self, name):
         # Return a fresh collection for any collection the dep chain happens to

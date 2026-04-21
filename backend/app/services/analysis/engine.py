@@ -713,6 +713,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     del dependency_enrichments
 
     # 3. Prepare finding records for insertion
+    scan_created_at: Optional[datetime] = getattr(scan_doc, "created_at", None)
     findings_to_insert: List[Dict[str, Any]] = []
     vulnerability_findings: List[Dict[str, Any]] = []
     for f in aggregated_findings:
@@ -721,6 +722,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         record["project_id"] = project_id
         record["finding_id"] = f.id
         record["_id"] = str(uuid.uuid4())
+        record.setdefault("scan_created_at", scan_created_at)
         findings_to_insert.append(record)
         if record.get("type") == "vulnerability":
             vulnerability_findings.append(record)
