@@ -38,9 +38,7 @@ class _FakeCursor:
                 return False
         return True
 
-    async def to_list(self, length=None) -> list:
-        import asyncio
-        await asyncio.sleep(0)  # yield to event loop — keeps this a genuine coroutine
+    async def to_list(self, length=None) -> list:  # noqa: S7503
         results = [d for d in self._docs.values() if self._matches(d)]
         results = results[self._skip_n:]
         if self._limit_n:
