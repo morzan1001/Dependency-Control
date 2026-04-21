@@ -8,7 +8,7 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.core.config import settings
 from app.core.metrics import PrometheusMiddleware, metrics_endpoint
-from app.db.mongodb import close_mongo_connection, connect_to_mongo
+from app.db.mongodb import close_mongo_connection, connect_to_mongo, get_database
 from app.api import health
 from app.api.v1.endpoints import (
     analytics,
@@ -34,6 +34,9 @@ from app.api.v1.endpoints import (
 )
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.services.crypto_policy.seeder import seed_crypto_policies
 
 # Configure logging
 logging.basicConfig(
@@ -93,6 +96,12 @@ async def startup_event() -> None:
         try:
             await connect_to_mongo()
             await init_db()  # Creates indexes + initial admin user
+
+            # CBOM: ensure crypto collection indexes and seed built-in policies
+            db = await get_database()
+            await CryptoAssetRepository(db).ensure_indexes()
+            await CryptoPolicyRepository(db).ensure_indexes()
+            await seed_crypto_policies(db)
 
             # Initialize S3 bucket for archive storage (if configured)
             from app.core.s3 import ensure_bucket_exists, is_archive_enabled
