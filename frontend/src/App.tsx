@@ -23,6 +23,7 @@ import ArchivesPage from './pages/Archives'
 import GlobalWaivers from './pages/GlobalWaivers'
 import Chat from './pages/Chat'
 import CryptoPolicyPage from './pages/admin/CryptoPolicyPage'
+import { CryptoGlobalAnalyticsPage } from './pages/admin/CryptoGlobalAnalyticsPage'
 import DashboardLayout from './layouts/DashboardLayout'
 import { AuthProvider, RequirePermission, useAuth } from './context'
 import { Toaster } from "@/components/ui/sonner"
@@ -207,6 +208,11 @@ function AppRoutes() {
         <Route path="/settings/crypto-policy" element={
           <RequirePermission permission="system:manage">
             <CryptoPolicyPage />
+          </RequirePermission>
+        } />
+        <Route path="/settings/crypto-analytics" element={
+          <RequirePermission permission="system:manage">
+            <CryptoGlobalAnalyticsPage />
           </RequirePermission>
         } />
         {/* Add other routes here */}
