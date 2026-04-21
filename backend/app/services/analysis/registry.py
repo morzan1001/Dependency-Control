@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Set
 from app.models.finding import FindingType
 from app.services.analyzers import (
     Analyzer,
+    CertificateLifecycleAnalyzer,
     CryptoRuleAnalyzer,
     DepsDevAnalyzer,
     EndOfLifeAnalyzer,
@@ -21,6 +22,7 @@ from app.services.analyzers import (
     OpenSourceMalwareAnalyzer,
     OSVAnalyzer,
     OutdatedAnalyzer,
+    ProtocolCipherSuiteAnalyzer,
     ReachabilityAnalyzer,
     TrivyAnalyzer,
     TyposquattingAnalyzer,
@@ -51,6 +53,8 @@ analyzers: Dict[str, Analyzer] = {
         name="crypto_quantum_vulnerable",
         finding_types={FindingType.CRYPTO_QUANTUM_VULNERABLE},
     ),
+    "crypto_certificate_lifecycle": CertificateLifecycleAnalyzer(),
+    "crypto_protocol_cipher":       ProtocolCipherSuiteAnalyzer(),
 }
 
 # Post-processing analyzers that enrich existing findings
@@ -65,7 +69,11 @@ VULNERABILITY_ANALYZERS: Set[str] = {"trivy", "grype", "osv", "deps_dev"}
 
 # Crypto analyzer names
 CRYPTO_ANALYZERS: Set[str] = {
-    "crypto_weak_algorithm", "crypto_weak_key", "crypto_quantum_vulnerable",
+    "crypto_weak_algorithm",
+    "crypto_weak_key",
+    "crypto_quantum_vulnerable",
+    "crypto_certificate_lifecycle",
+    "crypto_protocol_cipher",
 }
 
 
