@@ -10,6 +10,44 @@ from unittest.mock import MagicMock
 import pytest_asyncio
 
 
+class _FakeCursor:
+    """Chainable cursor returned by _FakeCollection.find()."""
+
+    def __init__(self, docs: dict, query: dict):
+        self._docs = docs
+        self._query = query
+        self._skip_n = 0
+        self._limit_n = 0
+
+    def skip(self, n: int) -> "_FakeCursor":
+        self._skip_n = n
+        return self
+
+    def limit(self, n: int) -> "_FakeCursor":
+        self._limit_n = n
+        return self
+
+    def _matches(self, doc: dict) -> bool:
+        import re
+        for k, v in self._query.items():
+            if isinstance(v, dict) and "$regex" in v:
+                flags = re.IGNORECASE if v.get("$options") == "i" else 0
+                if not re.search(v["$regex"], str(doc.get(k, "")), flags):
+                    return False
+            elif doc.get(k) != v:
+                return False
+        return True
+
+    async def to_list(self, length=None) -> list:
+        import asyncio
+        await asyncio.sleep(0)  # yield to event loop — keeps this a genuine coroutine
+        results = [d for d in self._docs.values() if self._matches(d)]
+        results = results[self._skip_n:]
+        if self._limit_n:
+            results = results[: self._limit_n]
+        return results
+
+
 class _FakeCollection:
     """Minimal in-process collection that supports the operations used by
     repositories."""
@@ -88,6 +126,10 @@ class _FakeCollection:
 
     async def create_index(self, *args, **kwargs):
         return None
+
+    def find(self, query=None):
+        """Return a chainable cursor over matching documents."""
+        return _FakeCursor(self._docs, query or {})
 
     async def delete_one(self, query):
         key = query.get("_id")
