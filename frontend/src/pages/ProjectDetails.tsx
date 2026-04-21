@@ -14,6 +14,9 @@ import { ProjectMembers } from '@/components/project/ProjectMembers'
 import { ProjectSettings } from '@/components/project/ProjectSettings'
 import { ProjectArchives } from '@/components/project/ProjectArchives'
 import { CryptographyTab } from '@/pages/project/CryptographyTab'
+import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePage'
+import { isProjectAdmin } from '@/lib/project-roles'
+import { useAuth } from '@/context'
 import { useState, useEffect, useMemo } from 'react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -34,6 +37,7 @@ export default function ProjectDetails() {
   const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
 
+  const { permissions } = useAuth()
   const { data: project, isLoading: isLoadingProject } = useProject(id!)
 
   const { data: branches } = useProjectBranches(id!)
@@ -162,6 +166,7 @@ export default function ProjectDetails() {
             <TabsTrigger value="members">Members</TabsTrigger>
             <TabsTrigger value="archives">Archives</TabsTrigger>
             <TabsTrigger value="cryptography">Cryptography</TabsTrigger>
+            <TabsTrigger value="crypto-policy">Crypto Policy</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
           
@@ -262,6 +267,13 @@ export default function ProjectDetails() {
 
         <TabsContent value="cryptography" className="space-y-4">
           <CryptographyTab projectId={project.id} />
+        </TabsContent>
+
+        <TabsContent value="crypto-policy" className="space-y-4">
+          <CryptoPolicyOverridePage
+            projectId={project.id}
+            canEdit={user ? isProjectAdmin(project, user.id, permissions) : false}
+          />
         </TabsContent>
 
         {user && (
