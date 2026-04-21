@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     archives,
     auth,
     callgraph,
+    cbom_ingest,
     chat,
     github_instances,
     gitlab_instances,
@@ -142,6 +143,7 @@ app.get("/metrics", include_in_schema=False)(metrics_endpoint)
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}", tags=["auth"])
 app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest"])
+app.include_router(cbom_ingest.router, prefix=f"{settings.API_V1_STR}", tags=["cbom-ingest"])
 app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(teams.router, prefix=f"{settings.API_V1_STR}/teams", tags=["teams"])
