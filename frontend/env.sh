@@ -15,4 +15,10 @@ fi
 # Read specific environment variables and add them to the config file
 echo "  VITE_API_URL: \"$VITE_API_URL\"," >> /usr/share/nginx/html/env-config.js
 
+# VITE_METABASE_CRYPTO_DASHBOARD_URL (optional)
+#   Deep-link URL to a Metabase dashboard for crypto analytics.
+#   When set, a button appears on /settings/crypto-analytics linking to it.
+#   When empty or unset, the button is hidden.
+echo "  VITE_METABASE_CRYPTO_DASHBOARD_URL: \"$VITE_METABASE_CRYPTO_DASHBOARD_URL\"," >> /usr/share/nginx/html/env-config.js
+
 echo "};" >> /usr/share/nginx/html/env-config.js
