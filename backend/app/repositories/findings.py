@@ -18,6 +18,10 @@ class FindingRepository(BaseRepository[FindingRecord]):
     collection_name = "findings"
     model_class = FindingRecord
 
+    async def ensure_indexes(self) -> None:
+        await self.collection.create_index([("project_id", 1), ("scan_created_at", 1)])
+        await self.collection.create_index([("type", 1), ("scan_created_at", 1)])
+
     async def apply_vulnerability_waiver(
         self,
         scan_id: str,
