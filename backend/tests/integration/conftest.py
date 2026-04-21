@@ -126,9 +126,23 @@ class _FakeCollection:
                 on_insert = upd.get(_SET_ON_INSERT, {})
                 set_ops = upd.get("$set", {})
                 doc = {}
-                doc.update(set_ops)
+                # On upsert, setOnInsert provides the initial values (includes _id from model)
                 doc.update(on_insert)
-                key = doc.get("_id") or flt.get("bom_ref", str(len(self._docs)))
+                # Then $set applies (model_dump with exclude={"id"} means _id is not here)
+                doc.update(set_ops)
+                # The key should be the _id (either from on_insert or generated)
+                # Since model_dump(exclude={"id"}) removes _id, but the model itself has an id
+                # We need to extract it from somewhere. In real MongoDB, bulk_upsert would
+                # include _id in $setOnInsert. For testing, we'll reconstruct from filter.
+                if "_id" not in doc:
+                    # Fallback: try to find _id in set_ops or generate from unique index
+                    if "_id" in set_ops:
+                        doc["_id"] = set_ops["_id"]
+                    else:
+                        # For crypto assets, create a unique key from project:scan:bom_ref
+                        # This matches the unique index in the repository
+                        doc["_id"] = f"{flt.get('project_id')}:{flt.get('scan_id')}:{flt.get('bom_ref')}"
+                key = doc.get("_id", str(len(self._docs)))
                 self._docs[key] = doc
         result = MagicMock()
         result.modified_count = len(ops)
@@ -191,7 +205,7 @@ class _FakeCollection:
 
 class _FakeDb:
     """Minimal in-process database exposing only the collections needed by the
-    CBOM ingest path."""
+    CBOM ingest path and project access checks."""
 
     def __init__(self):
         self.scans = _FakeCollection()
@@ -199,6 +213,8 @@ class _FakeDb:
         self.projects = _FakeCollection()
         self.dependencies = _FakeCollection()
         self.system_settings = _FakeCollection()
+        self.teams = _FakeCollection()
+        self.users = _FakeCollection()
 
     def __getattr__(self, name):
         # Return a fresh collection for any collection the dep chain happens to
@@ -231,8 +247,13 @@ async def db():
 async def client(db, _project):
     """AsyncClient wired to the real FastAPI app with auth and DB overridden."""
     from app.main import app
-    from app.api.deps import get_project_for_ingest
-    from app.db.mongodb import get_database
+    from app.api.deps import (
+        get_project_for_ingest,
+        get_database,
+        get_current_user,
+        get_current_active_user,
+    )
+    from app.models.user import User
 
     async def _fake_project_for_ingest():
         return _project
@@ -240,13 +261,51 @@ async def client(db, _project):
     async def _fake_get_database():
         return db
 
+    async def _fake_get_current_user(token: str) -> User:
+        """Parse JWT token and return user. Used by member auth tests."""
+        try:
+            from jose import jwt
+            from app.core.config import settings
+
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            username = payload.get("sub")
+            permissions = payload.get("permissions", [])
+
+            if not username:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=401, detail="Invalid token")
+
+            # Create a user object matching the token
+            user = User(
+                id=username,
+                username=username,
+                email=f"{username}@test.com",
+                permissions=permissions,
+                is_active=True,
+            )
+            return user
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail=str(e)) from e
+
+    async def _fake_get_current_active_user(current_user: User) -> User:
+        """Just return the user from get_current_user."""
+        if not current_user.is_active:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Inactive user")
+        return current_user
+
     app.dependency_overrides[get_project_for_ingest] = _fake_project_for_ingest
     app.dependency_overrides[get_database] = _fake_get_database
+    app.dependency_overrides[get_current_user] = _fake_get_current_user
+    app.dependency_overrides[get_current_active_user] = _fake_get_current_active_user
 
     # Pre-populate the project so tests can look it up
+    # Store the full project document with all fields
+    project_doc = _project.model_dump(by_alias=True)
     await db.projects.update_one(
         {"_id": str(_project.id)},
-        {_SET_ON_INSERT: {"_id": str(_project.id), "name": _project.name}},
+        {_SET_ON_INSERT: project_doc},
         upsert=True,
     )
 
@@ -256,9 +315,59 @@ async def client(db, _project):
     # Clean up overrides after each test
     app.dependency_overrides.pop(get_project_for_ingest, None)
     app.dependency_overrides.pop(get_database, None)
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_current_active_user, None)
 
 
 @pytest.fixture
 def api_key_headers():
     """Dummy API key header value — auth is bypassed via dep override."""
     return {"X-API-Key": "test-project-id.dummy-secret"}
+
+
+@pytest.fixture
+def member_auth_headers(_project):
+    """Create auth headers for a user who is a project member."""
+    from app.models.user import User
+    from app.models.project import ProjectMember
+    from app.core.permissions import Permissions
+    from jose import jwt
+    from app.core.config import settings
+
+    # Create a user that is a member of the test project
+    user = User(
+        id="test-user-1",
+        username="testuser",
+        email="test@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.PROJECT_CREATE],
+        is_active=True,
+    )
+
+    # Add the user as a project member
+    member = ProjectMember(user_id=str(user.id), role="viewer")
+    if not _project.members:
+        _project.members = []
+    _project.members.append(member)
+
+    # Create JWT token
+    payload = {
+        "sub": user.username,
+        "permissions": user.permissions,
+    }
+    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def regular_user_no_access():
+    """Create a user who is NOT a project member."""
+    from app.models.user import User
+    from app.core.permissions import PRESET_USER
+
+    return User(
+        id="test-user-no-access",
+        username="noaccess",
+        email="noaccess@example.com",
+        permissions=list(PRESET_USER),
+        is_active=True,
+    )
