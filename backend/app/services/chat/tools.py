@@ -260,6 +260,108 @@ def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+# ── Crypto / CBOM standalone helpers (importable for direct use / testing) ──
+
+async def list_crypto_assets(
+    db,
+    *,
+    project_id: str,
+    scan_id: str,
+    asset_type: Optional[str] = None,
+    primitive: Optional[str] = None,
+    name_search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> Dict[str, Any]:
+    """List cryptographic assets for a scan with optional filters."""
+    from app.repositories.crypto_asset import CryptoAssetRepository
+
+    repo = CryptoAssetRepository(db)
+    items = await repo.list_by_scan(
+        project_id,
+        scan_id,
+        limit=min(limit, 500),
+        skip=skip,
+        asset_type=asset_type,
+        primitive=primitive,
+        name_search=name_search,
+    )
+    total = await repo.count_by_scan(project_id, scan_id)
+    return {
+        "items": [i.model_dump(by_alias=True) for i in items],
+        "total": total,
+    }
+
+
+async def get_crypto_asset_details(
+    db,
+    *,
+    project_id: str,
+    asset_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Return a single crypto asset by ID, or None if not found."""
+    from app.repositories.crypto_asset import CryptoAssetRepository
+
+    asset = await CryptoAssetRepository(db).get(project_id, asset_id)
+    return asset.model_dump(by_alias=True) if asset else None
+
+
+async def get_crypto_summary(
+    db,
+    *,
+    project_id: str,
+    scan_id: str,
+) -> Dict[str, Any]:
+    """Return a type-breakdown summary of crypto assets for a scan."""
+    from app.repositories.crypto_asset import CryptoAssetRepository
+
+    return await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
+
+
+async def get_project_crypto_policy(
+    db,
+    *,
+    project_id: str,
+) -> Dict[str, Any]:
+    """Return the effective crypto policy for a project."""
+    from app.services.crypto_policy.resolver import CryptoPolicyResolver
+
+    effective = await CryptoPolicyResolver(db).resolve(project_id)
+    return {
+        "system_version": effective.system_version,
+        "override_version": effective.override_version,
+        "rules": [r.model_dump() for r in effective.rules],
+    }
+
+
+async def suggest_crypto_policy_override(
+    db,
+    *,
+    project_id: str,
+    scan_id: str,
+) -> Dict[str, Any]:
+    """Advisory: returns rule_ids that produce the most findings for this scan.
+
+    Does NOT write; caller decides whether to craft an override.
+    """
+    cursor = db.findings.aggregate([
+        {"$match": {"project_id": project_id, "scan_id": scan_id,
+                    "type": {"$regex": "^crypto_"}}},
+        {"$group": {"_id": "$details.rule_id", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 10},
+    ])
+    top = [{"rule_id": row["_id"], "findings": row["count"]} async for row in cursor]
+    return {
+        "top_noisy_rules": top,
+        "advice": (
+            "Rules producing many findings may be candidates for project-scoped "
+            "overrides (disable or adjust severity) if the codebase has accepted "
+            "legacy risk. Review each rule before disabling."
+        ),
+    }
+
+
 # ── Tool metadata ──────────────────────────────────────────────────────────
 
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
@@ -987,6 +1089,96 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                     "webhook_id": {"type": "string", "description": "The webhook ID"},
                 },
                 "required": ["webhook_id"],
+            },
+        },
+    },
+    # ── Crypto / CBOM ──
+    {
+        "type": "function",
+        "function": {
+            "name": "list_crypto_assets",
+            "description": (
+                "List cryptographic assets ingested for a scan. "
+                "Supports filtering by asset_type, primitive, and name_search."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "The project ID"},
+                    "scan_id": {"type": "string", "description": "The scan ID"},
+                    "asset_type": {"type": "string", "description": "Optional filter by asset type (e.g. 'algorithm')"},
+                    "primitive": {"type": "string", "description": "Optional filter by primitive (e.g. 'hash')"},
+                    "name_search": {"type": "string", "description": "Optional substring filter on asset name"},
+                    "skip": {"type": "integer", "description": "Number of items to skip (default 0)"},
+                    "limit": {"type": "integer", "description": "Max results (default 100, max 500)"},
+                },
+                "required": ["project_id", "scan_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_crypto_asset_details",
+            "description": "Get full details of a single cryptographic asset by its ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "The project ID"},
+                    "asset_id": {"type": "string", "description": "The crypto asset ID"},
+                },
+                "required": ["project_id", "asset_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_crypto_summary",
+            "description": "Get a summary of cryptographic assets for a scan, broken down by asset type.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "The project ID"},
+                    "scan_id": {"type": "string", "description": "The scan ID"},
+                },
+                "required": ["project_id", "scan_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_project_crypto_policy",
+            "description": (
+                "Get the effective cryptographic policy for a project, "
+                "including system-level rules and any project-specific overrides."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "The project ID"},
+                },
+                "required": ["project_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "suggest_crypto_policy_override",
+            "description": (
+                "Advisory: returns the crypto policy rule IDs that produce the most findings "
+                "for a scan. Does NOT make any changes — the caller decides whether to craft "
+                "a project-scoped override based on the suggestions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string", "description": "The project ID"},
+                    "scan_id": {"type": "string", "description": "The scan ID"},
+                },
+                "required": ["project_id", "scan_id"],
             },
         },
     },
@@ -2191,6 +2383,49 @@ class ChatToolRegistry:
             from app.core.cache import cache_service
             cache_health = await cache_service.health_check()
             return {"database": "connected", "cache": cache_health}
+
+        # ── Crypto / CBOM tools ──
+        if tool_name == "list_crypto_assets":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            return await list_crypto_assets(
+                db,
+                project_id=args["project_id"],
+                scan_id=args["scan_id"],
+                asset_type=args.get("asset_type"),
+                primitive=args.get("primitive"),
+                name_search=args.get("name_search"),
+                skip=int(args.get("skip") or 0),
+                limit=_clamp_limit(args.get("limit"), 100, 500),
+            )
+
+        if tool_name == "get_crypto_asset_details":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            result = await get_crypto_asset_details(db, project_id=args["project_id"], asset_id=args["asset_id"])
+            return result if result is not None else {"error": "Crypto asset not found"}
+
+        if tool_name == "get_crypto_summary":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            return await get_crypto_summary(db, project_id=args["project_id"], scan_id=args["scan_id"])
+
+        if tool_name == "get_project_crypto_policy":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            return await get_project_crypto_policy(db, project_id=args["project_id"])
+
+        if tool_name == "suggest_crypto_policy_override":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            return await suggest_crypto_policy_override(
+                db, project_id=args["project_id"], scan_id=args["scan_id"]
+            )
 
         return {"error": f"Unknown tool: {tool_name}"}
 
