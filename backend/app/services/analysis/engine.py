@@ -257,6 +257,7 @@ async def _process_sbom(
     system_settings: Any,
     project_license_policy: Optional[Dict[str, Any]] = None,
     project_analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = None,
+    project_id: Optional[str] = None,
 ) -> List[str]:
     """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
     current_sbom = await _resolve_sbom(item, fs, aggregator)
@@ -266,6 +267,7 @@ async def _process_sbom(
     fallback_source = f"SBOM #{index + 1}"
 
     parsed_components: List[Dict[str, Any]] = []
+    parsed_sbom = None
     try:
         parsed_sbom = parse_sbom(current_sbom)
         parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
@@ -278,6 +280,35 @@ async def _process_sbom(
         logger.warning(f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing")
         if analysis_sbom_parse_errors_total:
             analysis_sbom_parse_errors_total.inc()
+
+    # Persist embedded CBOM crypto assets when the SBOM contained any
+    if parsed_sbom is not None and parsed_sbom.crypto_assets and project_id:
+        try:
+            from app.models.crypto_asset import CryptoAsset
+            from app.repositories.crypto_asset import CryptoAssetRepository
+
+            crypto_assets = [
+                CryptoAsset(
+                    project_id=project_id,
+                    scan_id=scan_id,
+                    **a.model_dump(),
+                )
+                for a in parsed_sbom.crypto_assets
+            ]
+            persisted = await CryptoAssetRepository(db).bulk_upsert(
+                project_id, scan_id, crypto_assets
+            )
+            logger.info(
+                "engine: persisted %d crypto assets from embedded CBOM (scan=%s)",
+                persisted,
+                scan_id,
+            )
+        except Exception as cbom_err:
+            logger.warning(
+                "engine: failed to persist embedded CBOM crypto assets for scan %s: %s",
+                scan_id,
+                cbom_err,
+            )
 
     # Build base settings dict, merging project license_policy if available
     base_settings = system_settings.model_dump() if system_settings else {}
@@ -616,6 +647,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             system_settings,
             project_license_policy=project_license_policy,
             project_analyzer_settings=project_analyzer_settings,
+            project_id=project_id,
         )
         results_summary.extend(sbom_results)
 
