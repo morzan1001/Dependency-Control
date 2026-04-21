@@ -39,6 +39,7 @@ class Permissions:
     ANALYTICS_HOTSPOTS = "analytics:hotspots"
     ANALYTICS_SEARCH = "analytics:search"
     ANALYTICS_RECOMMENDATIONS = "analytics:recommendations"
+    ANALYTICS_GLOBAL = "analytics:global"
 
     NOTIFICATIONS_BROADCAST = "notifications:broadcast"
 
@@ -97,6 +98,7 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.ANALYTICS_HOTSPOTS,
     Permissions.ANALYTICS_SEARCH,
     Permissions.ANALYTICS_RECOMMENDATIONS,
+    Permissions.ANALYTICS_GLOBAL,
     # Notifications
     Permissions.NOTIFICATIONS_BROADCAST,
     # Waivers
@@ -322,6 +324,11 @@ PERMISSION_GROUPS = [
                 "id": Permissions.ANALYTICS_RECOMMENDATIONS,
                 "name": "View Recommendations",
                 "description": "View security recommendations",
+            },
+            {
+                "id": Permissions.ANALYTICS_GLOBAL,
+                "name": "Global Analytics",
+                "description": "Query analytics across all projects system-wide",
             },
         ],
     },
