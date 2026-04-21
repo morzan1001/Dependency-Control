@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from fastapi import Depends
 from httpx import AsyncClient, ASGITransport
 
 from app.models.project import Project
@@ -148,6 +149,19 @@ class _FakeCollection:
         result.modified_count = len(ops)
         return result
 
+    async def delete_one(self, query):
+        await asyncio.sleep(0)  # yield to event loop — keeps this a true coroutine
+        matched_key = None
+        for k, doc in self._docs.items():
+            if all(doc.get(fk) == fv for fk, fv in query.items()):
+                matched_key = k
+                break
+        if matched_key is not None:
+            del self._docs[matched_key]
+        result = MagicMock()
+        result.deleted_count = 1 if matched_key is not None else 0
+        return result
+
     async def create_index(self, *args, **kwargs):
         return None
 
@@ -261,7 +275,9 @@ async def client(db, _project):
     async def _fake_get_database():
         return db
 
-    async def _fake_get_current_user(token: str) -> User:
+    from app.api.deps import oauth2_scheme
+
+    async def _fake_get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         """Parse JWT token and return user. Used by member auth tests."""
         try:
             from jose import jwt
@@ -288,7 +304,7 @@ async def client(db, _project):
             from fastapi import HTTPException
             raise HTTPException(status_code=401, detail=str(e)) from e
 
-    async def _fake_get_current_active_user(current_user: User) -> User:
+    async def _fake_get_current_active_user(current_user: User = Depends(_fake_get_current_user)) -> User:
         """Just return the user from get_current_user."""
         if not current_user.is_active:
             from fastapi import HTTPException
@@ -371,3 +387,53 @@ def regular_user_no_access():
         permissions=list(PRESET_USER),
         is_active=True,
     )
+
+
+@pytest.fixture
+def admin_auth_headers():
+    """Create auth headers for a system admin (has system:manage permission)."""
+    from app.core.permissions import PRESET_ADMIN
+    from jose import jwt
+    from app.core.config import settings
+
+    payload = {
+        "sub": "admin-user",
+        "permissions": list(PRESET_ADMIN),
+    }
+    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def owner_auth_headers_proj(client, db):
+    """Auth headers for a user who owns project 'p' (project-level admin role).
+
+    The username doubles as the user id because _fake_get_current_user sets id=username.
+    """
+    from app.models.project import ProjectMember, Project
+    from app.core.permissions import PRESET_USER, Permissions
+    from jose import jwt
+    from app.core.config import settings
+
+    # username == id because _fake_get_current_user decodes sub -> id=username
+    username = "ownerp"
+    permissions = list(PRESET_USER) + [Permissions.PROJECT_READ]
+
+    # Create project "p" with this user as project-admin member
+    project_p = Project(id="p", name="project-p")
+    member = ProjectMember(user_id=username, role="admin")
+    project_p.members = [member]
+
+    project_doc = project_p.model_dump(by_alias=True)
+    await db.projects.update_one(
+        {"_id": "p"},
+        {_SET_ON_INSERT: project_doc},
+        upsert=True,
+    )
+
+    payload = {
+        "sub": username,
+        "permissions": permissions,
+    }
+    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return {"Authorization": f"Bearer {token}"}

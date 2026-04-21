@@ -18,6 +18,7 @@ from app.api.v1.endpoints import (
     cbom_ingest,
     chat,
     crypto_assets,
+    crypto_policies,
     github_instances,
     gitlab_instances,
     ingest,
@@ -181,6 +182,7 @@ app.include_router(archives.router, prefix=f"{settings.API_V1_STR}/projects", ta
 app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archives", tags=["archives-admin"])
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(crypto_assets.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-assets"])
+app.include_router(crypto_policies.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-policies"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])
