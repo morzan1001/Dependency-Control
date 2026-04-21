@@ -1,0 +1,59 @@
+# NIST SP 800-131A Rev. 3 (Transitioning the Use of Cryptographic Algorithms and Key Lengths)
+# https://csrc.nist.gov/pubs/sp/800/131/a/r3/final
+
+rules:
+  - rule_id: nist-131a-md5
+    name: MD5 is disallowed for cryptographic use
+    description: >
+      MD5 is cryptographically broken. NIST disallows MD5 for digital signatures
+      and any context where collision resistance is required.
+    finding_type: crypto_weak_algorithm
+    default_severity: HIGH
+    match_name_patterns: ["MD5", "MD-5", "md5"]
+    match_primitive: hash
+    source: nist-sp-800-131a
+    references:
+      - https://csrc.nist.gov/pubs/sp/800/131/a/r3/final
+
+  - rule_id: nist-131a-sha1
+    name: SHA-1 is disallowed for digital signatures
+    description: >
+      SHA-1 is deprecated per NIST SP 800-131A. Disallowed for new digital
+      signature generation after 2013; disallowed for signature verification
+      after 2030.
+    finding_type: crypto_weak_algorithm
+    default_severity: MEDIUM
+    match_name_patterns: ["SHA-1", "SHA1", "sha-1"]
+    match_primitive: hash
+    source: nist-sp-800-131a
+
+  - rule_id: nist-131a-des
+    name: DES and 2-key 3DES are disallowed
+    description: DES (56-bit) and 2-key Triple-DES are disallowed.
+    finding_type: crypto_weak_algorithm
+    default_severity: HIGH
+    match_name_patterns: ["DES", "3DES", "TripleDES"]
+    match_primitive: block-cipher
+    source: nist-sp-800-131a
+
+  - rule_id: nist-131a-rsa-min-2048
+    name: RSA keys shorter than 2048 bits are disallowed
+    description: >
+      RSA key sizes below 2048 bits do not provide adequate security per
+      NIST SP 800-131A and SP 800-57.
+    finding_type: crypto_weak_key
+    default_severity: HIGH
+    match_name_patterns: ["RSA"]
+    match_primitive: pke
+    match_min_key_size_bits: 2048
+    source: nist-sp-800-131a
+
+  - rule_id: nist-131a-aes-min-128
+    name: AES keys below 128 bits are not compliant
+    description: AES keys must be 128, 192, or 256 bits.
+    finding_type: crypto_weak_key
+    default_severity: HIGH
+    match_name_patterns: ["AES"]
+    match_primitive: block-cipher
+    match_min_key_size_bits: 128
+    source: nist-sp-800-131a
