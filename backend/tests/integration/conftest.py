@@ -141,6 +141,53 @@ class _FakeCollection:
         """Return a chainable cursor over matching documents."""
         return _FakeCursor(self._docs, query or {})
 
+    def aggregate(self, pipeline):
+        """Minimal in-process aggregate: handles $match + $group by a single field.
+
+        Covers the shape used by CryptoAssetRepository.summary_for_scan:
+          [ {$match: {...}}, {$group: {_id: "$field", count: {$sum: 1}}} ]
+        """
+        # Resolve $match filter
+        match_query: dict = {}
+        group_field: str | None = None
+        for stage in pipeline:
+            if "$match" in stage:
+                match_query = stage["$match"]
+            elif "$group" in stage:
+                group_spec = stage["$group"].get("_id", "")
+                if isinstance(group_spec, str) and group_spec.startswith("$"):
+                    group_field = group_spec[1:]
+
+        matched = [
+            doc for doc in self._docs.values()
+            if all(doc.get(k) == v for k, v in match_query.items())
+        ]
+
+        # Group by the resolved field
+        counts: dict = {}
+        for doc in matched:
+            key = doc.get(group_field) if group_field else None
+            counts[key] = counts.get(key, 0) + 1
+
+        rows = [{"_id": k, "count": v} for k, v in counts.items()]
+
+        class _AggCursor:
+            def __init__(self, items):
+                self._items = items
+                self._idx = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if self._idx >= len(self._items):
+                    raise StopAsyncIteration
+                item = self._items[self._idx]
+                self._idx += 1
+                return item
+
+        return _AggCursor(rows)
+
 
 class _FakeDb:
     """Minimal in-process database exposing only the collections needed by the

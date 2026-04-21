@@ -21,11 +21,13 @@ from pydantic import BaseModel, Field
 from app.api.deps import DatabaseDep
 from app.api import deps
 from app.api.router import CustomAPIRouter
+from app.core.constants import WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
 from app.services.cbom_parser import parse_cbom
+from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,27 @@ async def _persist_crypto_assets(db, project_id: str, scan_id: str, parsed) -> N
             scan_id,
             " (partial)" if partial else "",
         )
+
+        # Fire crypto_asset.ingested webhook (best-effort; never blocks ingest)
+        try:
+            summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
+            await webhook_service.trigger_webhooks(
+                db,
+                WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
+                {
+                    "scan_id": scan_id,
+                    "project_id": project_id,
+                    "total": summary["total"],
+                    "by_type": summary["by_type"],
+                },
+                project_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "cbom_ingest: webhook dispatch failed for scan %s (non-fatal): %s",
+                scan_id,
+                exc,
+            )
 
         # Keep status as "pending" and hand the scan to the analysis worker so
         # the crypto analyzers run via the standard engine dispatch path.

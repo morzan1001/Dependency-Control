@@ -703,11 +703,13 @@ WEBHOOK_BACKOFF_BASE: int = 2  # Exponential backoff base (2^n seconds)
 WEBHOOK_EVENT_SCAN_COMPLETED = "scan_completed"
 WEBHOOK_EVENT_VULNERABILITY_FOUND = "vulnerability_found"
 WEBHOOK_EVENT_ANALYSIS_FAILED = "analysis_failed"
+WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED = "crypto_asset.ingested"
 
 WEBHOOK_VALID_EVENTS = [
     WEBHOOK_EVENT_SCAN_COMPLETED,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
     WEBHOOK_EVENT_ANALYSIS_FAILED,
+    WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
 ]
 
 # Webhook permissions - Use Permissions class from app.core.permissions instead
