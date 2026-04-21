@@ -17,6 +17,7 @@ from httpx import AsyncClient, ASGITransport
 
 from app.models.project import Project
 
+_SET_ON_INSERT = "$setOnInsert"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -24,6 +25,42 @@ from app.models.project import Project
 
 def _make_project(project_id: str = "test-project-id", name: str = "test-project") -> Project:
     return Project(id=project_id, name=name)
+
+
+class _FakeCursor:
+    """Chainable cursor returned by _FakeCollection.find()."""
+
+    def __init__(self, docs: dict, query: dict):
+        self._docs = docs
+        self._query = query
+        self._skip_n = 0
+        self._limit_n = 0
+
+    def skip(self, n: int) -> "_FakeCursor":
+        self._skip_n = n
+        return self
+
+    def limit(self, n: int) -> "_FakeCursor":
+        self._limit_n = n
+        return self
+
+    def _matches(self, doc: dict) -> bool:
+        for k, v in self._query.items():
+            if isinstance(v, dict) and "$regex" in v:
+                import re
+                flags = re.IGNORECASE if v.get("$options") == "i" else 0
+                if not re.search(v["$regex"], str(doc.get(k, "")), flags):
+                    return False
+            elif doc.get(k) != v:
+                return False
+        return True
+
+    async def to_list(self, length=None) -> list:
+        results = [d for d in self._docs.values() if self._matches(d)]
+        results = results[self._skip_n:]
+        if self._limit_n:
+            results = results[: self._limit_n]
+        return results
 
 
 class _FakeCollection:
@@ -34,17 +71,24 @@ class _FakeCollection:
         self._docs: dict = {}
 
     async def update_one(self, query, update, upsert=False):
-        key = query.get("_id")
-        if key and upsert and key not in self._docs:
-            doc = {"_id": key}
-            on_insert = update.get("$setOnInsert", {})
+        # Find existing doc matching the query by any fields
+        matched_key = None
+        for k, doc in self._docs.items():
+            if all(doc.get(fk) == fv for fk, fv in query.items()):
+                matched_key = k
+                break
+
+        if matched_key is not None:
+            set_ops = update.get("$set", {})
+            self._docs[matched_key].update(set_ops)
+        elif upsert:
+            doc = dict(query)
+            on_insert = update.get(_SET_ON_INSERT, {})
             doc.update(on_insert)
             set_ops = update.get("$set", {})
             doc.update(set_ops)
+            key = doc.get("_id") or str(len(self._docs))
             self._docs[key] = doc
-        elif key and key in self._docs:
-            set_ops = update.get("$set", {})
-            self._docs[key].update(set_ops)
         result = MagicMock()
         result.modified_count = 1
         return result
@@ -79,7 +123,7 @@ class _FakeCollection:
                 set_ops = upd.get("$set", {})
                 self._docs[key].update(set_ops)
             elif upsert:
-                on_insert = upd.get("$setOnInsert", {})
+                on_insert = upd.get(_SET_ON_INSERT, {})
                 set_ops = upd.get("$set", {})
                 doc = {}
                 doc.update(set_ops)
@@ -92,6 +136,10 @@ class _FakeCollection:
 
     async def create_index(self, *args, **kwargs):
         return None
+
+    def find(self, query=None):
+        """Return a chainable cursor over matching documents."""
+        return _FakeCursor(self._docs, query or {})
 
 
 class _FakeDb:
@@ -151,7 +199,7 @@ async def client(db, _project):
     # Pre-populate the project so tests can look it up
     await db.projects.update_one(
         {"_id": str(_project.id)},
-        {"$setOnInsert": {"_id": str(_project.id), "name": _project.name}},
+        {_SET_ON_INSERT: {"_id": str(_project.id), "name": _project.name}},
         upsert=True,
     )
 
