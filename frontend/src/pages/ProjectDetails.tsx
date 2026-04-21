@@ -13,6 +13,7 @@ import { ProjectWaivers } from '@/components/project/ProjectWaivers'
 import { ProjectMembers } from '@/components/project/ProjectMembers'
 import { ProjectSettings } from '@/components/project/ProjectSettings'
 import { ProjectArchives } from '@/components/project/ProjectArchives'
+import { CryptographyTab } from '@/pages/project/CryptographyTab'
 import { useState, useEffect, useMemo } from 'react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -160,6 +161,7 @@ export default function ProjectDetails() {
             <TabsTrigger value="waivers">Waivers</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
             <TabsTrigger value="archives">Archives</TabsTrigger>
+            <TabsTrigger value="cryptography">Cryptography</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
           
@@ -256,6 +258,10 @@ export default function ProjectDetails() {
 
         <TabsContent value="archives" className="space-y-4">
           <ProjectArchives projectId={project.id} />
+        </TabsContent>
+
+        <TabsContent value="cryptography" className="space-y-4">
+          <CryptographyTab projectId={project.id} />
         </TabsContent>
 
         {user && (
