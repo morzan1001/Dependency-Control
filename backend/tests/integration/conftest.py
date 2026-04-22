@@ -101,7 +101,13 @@ def _fake_group(docs: list, group_spec: dict) -> list:
             for acc_name, acc_expr in accumulators.items():
                 op = list(acc_expr.keys())[0]
                 if op == "$sum":
-                    groups[hashable][acc_name] = 0
+                    val = acc_expr["$sum"]
+                    # Literal numeric $sum (e.g. {$sum: 1}): resolve on first doc
+                    # so the first document contributes its value immediately.
+                    if isinstance(val, (int, float)):
+                        groups[hashable][acc_name] = val
+                    else:
+                        groups[hashable][acc_name] = _resolve_field(doc, val) or 0
                 elif op == "$first":
                     groups[hashable][acc_name] = _resolve_field(doc, acc_expr["$first"])
                 elif op in ("$addToSet",):
