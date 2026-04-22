@@ -89,6 +89,36 @@ async def test_scan_delta_endpoint(client, db, owner_auth_headers_proj):
 
 
 @pytest.mark.asyncio
+async def test_hotspots_user_scope_accepted(client, db, owner_auth_headers_proj):
+    """scope=user must pass the Query regex (regression guard)."""
+    resp = await client.get(
+        "/api/v1/analytics/crypto/hotspots",
+        params={"scope": "user", "group_by": "name"},
+        headers=owner_auth_headers_proj,
+    )
+    # Accept 200 (resolved to project list) or 403 (no access). NOT 422.
+    assert resp.status_code != 422, resp.text
+
+
+@pytest.mark.asyncio
+async def test_trends_user_scope_accepted(client, db, owner_auth_headers_proj):
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    resp = await client.get(
+        "/api/v1/analytics/crypto/trends",
+        params={
+            "scope": "user",
+            "metric": "total_crypto_findings",
+            "bucket": "week",
+            "range_start": (now - timedelta(days=30)).isoformat(),
+            "range_end": now.isoformat(),
+        },
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code != 422, resp.text
+
+
+@pytest.mark.asyncio
 async def test_cache_hit_on_second_call(client, db, owner_auth_headers_proj):
     params = {"scope": "project", "scope_id": "p", "group_by": "name"}
     await client.get(
