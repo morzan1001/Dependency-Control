@@ -53,6 +53,17 @@ async def test_global_scope_requires_permission():
 
 
 @pytest.mark.asyncio
+async def test_user_scope_expands_to_accessible_projects():
+    db = MagicMock()
+    user = MagicMock(id="u1", permissions=frozenset())
+    resolver = ScopeResolver(db, user)
+    resolver._list_user_project_ids = AsyncMock(return_value=["p1", "p2", "p3"])
+    result = await resolver.resolve(scope="user", scope_id=None)
+    assert result.scope == "user"
+    assert result.project_ids == ["p1", "p2", "p3"]
+
+
+@pytest.mark.asyncio
 async def test_unknown_scope_errors():
     resolver = ScopeResolver(MagicMock(), MagicMock(id="u", permissions=frozenset()))
     with pytest.raises(ScopeResolutionError):

@@ -11,8 +11,9 @@ import { Recommendations } from '@/components/analytics/Recommendations'
 import { UpdateFrequency } from '@/components/analytics/UpdateFrequency'
 import { UpdateFrequencyComparison } from '@/components/analytics/UpdateFrequencyComparison'
 import { AnalyticsDependencyModal } from '@/components/analytics/AnalyticsDependencyModal'
-import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert, RefreshCw } from 'lucide-react'
+import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert, RefreshCw, KeyRound } from 'lucide-react'
 import { useAuth } from '@/context/useAuth'
+import { CryptoAnalyticsTab } from '@/components/analytics/CryptoAnalyticsTab'
 
 export default function AnalyticsPage() {
   const [selectedComponent, setSelectedComponent] = useState<{ name: string; version?: string } | null>(null)
@@ -26,6 +27,7 @@ export default function AnalyticsPage() {
   const canViewHotspots = hasPermission('analytics:read') || hasPermission('analytics:hotspots')
   const canViewSearch = hasPermission('analytics:read') || hasPermission('analytics:search')
   const canViewRecommendations = hasPermission('analytics:read') || hasPermission('analytics:recommendations')
+  const canViewCrypto = hasPermission('analytics:read') || hasPermission('analytics:crypto')
 
   // Determine available tabs
   const availableTabs = useMemo(() => {
@@ -38,8 +40,9 @@ export default function AnalyticsPage() {
     if (canViewRecommendations) tabs.push({ id: 'update-frequency', label: 'Update Frequency', icon: RefreshCw })
     if (canViewSearch) tabs.push({ id: 'search-deps', label: 'Dependencies', icon: Package })
     if (canViewSearch) tabs.push({ id: 'search-vulns', label: 'Vulnerabilities', icon: ShieldAlert })
+    if (canViewCrypto) tabs.push({ id: 'cryptography', label: 'Cryptography', icon: KeyRound })
     return tabs
-  }, [canViewSummary, canViewTree, canViewImpact, canViewHotspots, canViewRecommendations, canViewSearch])
+  }, [canViewSummary, canViewTree, canViewImpact, canViewHotspots, canViewRecommendations, canViewSearch, canViewCrypto])
 
   const defaultTab = availableTabs.length > 0 ? availableTabs[0].id : 'overview'
 
@@ -144,6 +147,13 @@ export default function AnalyticsPage() {
         {canViewSearch && (
           <TabsContent value="search-vulns">
             <VulnerabilitySearch />
+          </TabsContent>
+        )}
+
+        {/* Cryptography Tab */}
+        {canViewCrypto && (
+          <TabsContent value="cryptography">
+            <CryptoAnalyticsTab />
           </TabsContent>
         )}
       </Tabs>

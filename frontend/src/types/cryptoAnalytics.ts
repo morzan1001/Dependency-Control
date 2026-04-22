@@ -1,4 +1,4 @@
-export type AnalyticsScope = "project" | "team" | "global";
+export type AnalyticsScope = "project" | "team" | "global" | "user";
 
 export type GroupingDimension =
   | "name" | "primitive" | "asset_type" | "weakness_tag" | "severity";

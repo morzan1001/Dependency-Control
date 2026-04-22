@@ -13,7 +13,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import PERMISSION_ANALYTICS_GLOBAL
 
-Scope = Literal["project", "team", "global"]
+Scope = Literal["project", "team", "global", "user"]
 
 
 class ScopeResolutionError(PermissionError):
@@ -36,29 +36,41 @@ class ScopeResolver:
 
     async def resolve(self, *, scope: Scope, scope_id: Optional[str]) -> ResolvedScope:
         if scope == "project":
-            if not scope_id:
-                raise ScopeResolutionError("project scope requires scope_id")
-            if not await self._check_project_member(scope_id):
-                raise ScopeResolutionError(f"User not authorised for project {scope_id}")
-            return ResolvedScope(scope="project", scope_id=scope_id, project_ids=[scope_id])
-
+            return await self._resolve_project(scope_id)
         if scope == "team":
-            if not scope_id:
-                raise ScopeResolutionError("team scope requires scope_id")
-            if not await self._check_team_member(scope_id):
-                raise ScopeResolutionError(f"User not authorised for team {scope_id}")
-            project_ids = await self._list_team_project_ids(scope_id)
-            return ResolvedScope(scope="team", scope_id=scope_id, project_ids=project_ids)
-
+            return await self._resolve_team(scope_id)
         if scope == "global":
-            perms = getattr(self.user, "permissions", frozenset()) or frozenset()
-            if PERMISSION_ANALYTICS_GLOBAL not in perms and self.SYSTEM_MANAGE not in perms:
-                raise ScopeResolutionError(
-                    "Global analytics requires analytics:global or system:manage"
-                )
-            return ResolvedScope(scope="global", scope_id=None, project_ids=None)
-
+            return self._resolve_global()
+        if scope == "user":
+            return await self._resolve_user()
         raise ScopeResolutionError(f"Unknown scope: {scope!r}")
+
+    async def _resolve_project(self, scope_id: Optional[str]) -> ResolvedScope:
+        if not scope_id:
+            raise ScopeResolutionError("project scope requires scope_id")
+        if not await self._check_project_member(scope_id):
+            raise ScopeResolutionError(f"User not authorised for project {scope_id}")
+        return ResolvedScope(scope="project", scope_id=scope_id, project_ids=[scope_id])
+
+    async def _resolve_team(self, scope_id: Optional[str]) -> ResolvedScope:
+        if not scope_id:
+            raise ScopeResolutionError("team scope requires scope_id")
+        if not await self._check_team_member(scope_id):
+            raise ScopeResolutionError(f"User not authorised for team {scope_id}")
+        project_ids = await self._list_team_project_ids(scope_id)
+        return ResolvedScope(scope="team", scope_id=scope_id, project_ids=project_ids)
+
+    def _resolve_global(self) -> ResolvedScope:
+        perms = getattr(self.user, "permissions", frozenset()) or frozenset()
+        if PERMISSION_ANALYTICS_GLOBAL not in perms and self.SYSTEM_MANAGE not in perms:
+            raise ScopeResolutionError(
+                "Global analytics requires analytics:global or system:manage"
+            )
+        return ResolvedScope(scope="global", scope_id=None, project_ids=None)
+
+    async def _resolve_user(self) -> ResolvedScope:
+        project_ids = await self._list_user_project_ids()
+        return ResolvedScope(scope="user", scope_id=None, project_ids=project_ids)
 
     async def _check_project_member(self, project_id: str) -> bool:
         from app.api.v1.helpers.projects import check_project_access
@@ -83,3 +95,21 @@ class ScopeResolver:
 
         projects = await ProjectRepository(self.db).list_by_team(team_id, limit=1000)
         return [str(p.id) for p in projects]
+
+    async def _list_user_project_ids(self) -> List[str]:
+        """Return all project IDs the current user has any access to."""
+        from app.repositories.teams import TeamRepository
+
+        team_repo = TeamRepository(self.db)
+        user_teams = await team_repo.find_by_member(str(self.user.id))
+        team_ids = [t.id for t in user_teams]
+
+        query: dict = {
+            "$or": [
+                {"members.user_id": str(self.user.id)},
+                {"team_id": {"$in": team_ids}},
+            ]
+        }
+        cursor = self.db.projects.find(query, {"_id": 1}).limit(10000)
+        docs = await cursor.to_list(length=10000)
+        return [str(d["_id"]) for d in docs]
