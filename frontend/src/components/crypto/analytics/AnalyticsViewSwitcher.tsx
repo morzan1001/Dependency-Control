@@ -2,7 +2,7 @@ import { useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 
 export type AnalyticsView =
-  | "table" | "heatmap" | "treemap" | "bar" | "network";
+  | "table" | "heatmap" | "treemap" | "bar";
 
 interface Props {
   availableViews: AnalyticsView[];
@@ -14,7 +14,6 @@ const LABEL: Record<AnalyticsView, string> = {
   heatmap: "Heatmap",
   treemap: "Treemap",
   bar: "Top-N",
-  network: "Cross-project",
 };
 
 export function AnalyticsViewSwitcher({ availableViews, defaultView = "table" }: Props) {
