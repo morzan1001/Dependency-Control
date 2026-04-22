@@ -296,8 +296,12 @@ class _FakeCollection:
     async def create_index(self, *args, **kwargs):
         return None
 
-    def find(self, query=None):
-        """Return a chainable cursor over matching documents."""
+    def find(self, query=None, projection=None):
+        """Return a chainable cursor over matching documents.
+
+        The ``projection`` argument is accepted for API compatibility with Motor
+        but is not applied — the fake cursor returns full documents.
+        """
         return _FakeCursor(self._docs, query or {})
 
     def aggregate(self, pipeline):

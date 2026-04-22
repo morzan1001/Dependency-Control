@@ -425,7 +425,7 @@ class HotspotEntry(BaseModel):
 class HotspotResponse(BaseModel):
     """Paginated hotspot response for a given scope."""
 
-    scope: Literal["project", "team", "global"]
+    scope: Literal["project", "team", "global", "user"]
     scope_id: Optional[str] = None
     grouping_dimension: str
     items: List[HotspotEntry] = Field(default_factory=list)
