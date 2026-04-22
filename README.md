@@ -81,8 +81,6 @@ docker compose up -d --build
 
 *Note: Accept the self-signed certificate warning in your browser.*
 
-To surface a Metabase crypto dashboard directly inside the frontend, set the optional `VITE_METABASE_CRYPTO_DASHBOARD_URL` environment variable to your dashboard's URL before starting the frontend container. When set, a **View in Metabase** button appears on the `/settings/crypto-analytics` page. When the variable is empty or unset, the button is hidden.
-
 ## 📦 CI/CD Integration
 
 Dependency Control is designed to sit in your CI/CD pipeline.

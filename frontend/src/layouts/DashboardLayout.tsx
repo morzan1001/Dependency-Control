@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, MessageSquare, ShieldCheck, Activity, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, MessageSquare, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context'
@@ -88,12 +88,6 @@ export default function DashboardLayout() {
       href: '/settings/crypto-policy',
       label: 'Crypto Policy',
       icon: ShieldCheck,
-      show: hasPermission('system:manage')
-    },
-    {
-      href: '/settings/crypto-analytics',
-      label: 'Crypto Analytics',
-      icon: Activity,
       show: hasPermission('system:manage')
     },
   ].filter(item => item.show)

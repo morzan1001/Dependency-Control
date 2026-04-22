@@ -28,10 +28,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { TEAM_ROLES } from '@/lib/constants';
-import { CryptoTeamAnalyticsPage } from '@/pages/team/CryptoTeamAnalyticsPage';
 
 interface TeamMembersDialogProps {
   team: Team | null;
@@ -53,111 +51,98 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl">
+      <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Team - {team?.name}</DialogTitle>
+            <DialogTitle>Manage Members - {team?.name}</DialogTitle>
             <DialogDescription>
-              Manage team members and view crypto analytics.
+              Manage team members and their roles.
             </DialogDescription>
           </DialogHeader>
-          <Tabs defaultValue="members">
-            <TabsList>
-              <TabsTrigger value="members">Members</TabsTrigger>
-              <TabsTrigger value="crypto-analytics">Crypto Analytics</TabsTrigger>
-            </TabsList>
-            <TabsContent value="members">
-              <div className="py-4">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>User</TableHead>
-                      <TableHead>Role</TableHead>
-                      {canManage && <TableHead className="w-[100px]">Actions</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {team?.members.map((member) => {
-                      const isSelf = member.user_id === currentUser?.id;
-                      const canEditRole = canManage && !isSelf;
-                      return (
-                        <TableRow key={member.user_id}>
-                          <TableCell>
-                            <div className="flex flex-col">
-                              <span className="font-medium">{member.username || 'Unknown'}</span>
-                              <span className="text-xs text-muted-foreground">{member.user_id}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Select
-                              value={member.role}
-                              onValueChange={(value) => {
+          <div className="py-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Role</TableHead>
+                  {canManage && <TableHead className="w-[100px]">Actions</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {team?.members.map((member) => {
+                  const isSelf = member.user_id === currentUser?.id;
+                  const canEditRole = canManage && !isSelf;
+                  return (
+                    <TableRow key={member.user_id}>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{member.username || 'Unknown'}</span>
+                          <span className="text-xs text-muted-foreground">{member.user_id}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={member.role}
+                          onValueChange={(value) => {
+                              if (team) {
+                                  updateMemberMutation.mutate(
+                                    { teamId: team.id, userId: member.user_id, role: value },
+                                    { onSuccess: () => toast.success("Member role updated") }
+                                  );
+                              }
+                          }}
+                          disabled={!canEditRole || updateMemberMutation.isPending}
+                        >
+                          <SelectTrigger className="w-[120px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TEAM_ROLES.map((role) => (
+                              <SelectItem key={role.value} value={role.value}>
+                                {role.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      {canManage && (
+                        <TableCell>
+                          {!isSelf && canManage && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              disabled={removeMemberMutation.isPending}
+                              onClick={() => {
                                   if (team) {
-                                      updateMemberMutation.mutate(
-                                        { teamId: team.id, userId: member.user_id, role: value },
-                                        { onSuccess: () => toast.success("Member role updated") }
+                                      removeMemberMutation.mutate(
+                                        { teamId: team.id, userId: member.user_id },
+                                        { onSuccess: () => toast.success("Member removed") }
                                       );
                                   }
                               }}
-                              disabled={!canEditRole || updateMemberMutation.isPending}
                             >
-                              <SelectTrigger className="w-[120px]">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {TEAM_ROLES.map((role) => (
-                                  <SelectItem key={role.value} value={role.value}>
-                                    {role.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          {canManage && (
-                            <TableCell>
-                              {!isSelf && canManage && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="text-destructive"
-                                  disabled={removeMemberMutation.isPending}
-                                  onClick={() => {
-                                      if (team) {
-                                          removeMemberMutation.mutate(
-                                            { teamId: team.id, userId: member.user_id },
-                                            { onSuccess: () => toast.success("Member removed") }
-                                          );
-                                      }
-                                  }}
-                                >
-                                  {removeMemberMutation.isPending ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <UserMinus className="h-4 w-4" />
-                                  )}
-                                </Button>
+                              {removeMemberMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <UserMinus className="h-4 w-4" />
                               )}
-                            </TableCell>
+                            </Button>
                           )}
-                        </TableRow>
-                      );
-                    })}
-                    {team?.members.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={canManage ? 3 : 2} className="text-center text-muted-foreground">
-                          No members in this team.
                         </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </TabsContent>
-            <TabsContent value="crypto-analytics">
-              <div className="py-4">
-                {team && <CryptoTeamAnalyticsPage teamIdOverride={team.id} />}
-              </div>
-            </TabsContent>
-          </Tabs>
+                      )}
+                    </TableRow>
+                  );
+                })}
+                {team?.members.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={canManage ? 3 : 2} className="text-center text-muted-foreground">
+                      No members in this team.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
           <DialogFooter>
               <Button onClick={onClose}>Close</Button>
           </DialogFooter>
