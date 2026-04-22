@@ -27,7 +27,7 @@ export default function AnalyticsPage() {
   const canViewHotspots = hasPermission('analytics:read') || hasPermission('analytics:hotspots')
   const canViewSearch = hasPermission('analytics:read') || hasPermission('analytics:search')
   const canViewRecommendations = hasPermission('analytics:read') || hasPermission('analytics:recommendations')
-  const canViewCrypto = hasPermission('analytics:read') || hasPermission('analytics:crypto')
+  const canViewCrypto = hasPermission('analytics:read')
 
   // Determine available tabs
   const availableTabs = useMemo(() => {
