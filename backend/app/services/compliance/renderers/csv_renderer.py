@@ -34,7 +34,12 @@ class CsvRenderer:
                 "title": c.title,
                 "status": status_val,
                 "severity": sev_val,
-                "evidence_count": len(c.evidence_finding_ids),
+                # Sum both evidence lists: default evaluator populates
+                # evidence_finding_ids; custom evaluators (e.g. FIPS disallowed
+                # categories) emit evidence only in evidence_asset_bom_refs.
+                "evidence_count": (
+                    len(c.evidence_finding_ids) + len(c.evidence_asset_bom_refs)
+                ),
                 "waived": "true" if status_val == "waived" else "false",
                 "remediation": c.remediation,
             })

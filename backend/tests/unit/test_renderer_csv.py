@@ -19,7 +19,11 @@ def test_csv_renderer_outputs_rows_per_control():
     assert rows[0]["control_id"] == "NIST-131A-01"
     assert rows[0]["status"] == "failed"
     assert rows[0]["severity"] == "HIGH"
-    assert rows[0]["evidence_count"] == "1"
+    # Fixture has evidence_finding_ids=["f1"] + evidence_asset_bom_refs=["a1"].
+    # Custom evaluators (e.g. FIPS disallowed categories) emit evidence only
+    # in evidence_asset_bom_refs — the CSV renderer must sum both lists so
+    # FAILED controls with real evidence don't show as "0".
+    assert rows[0]["evidence_count"] == "2"
 
 
 def test_csv_header_present():
