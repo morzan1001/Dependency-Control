@@ -75,6 +75,17 @@ def load_mappings() -> PQCMappings:
     )
 
 
+def clear_mappings_cache() -> None:
+    """Clear the in-process ``load_mappings`` cache.
+
+    Test-only helper: because ``load_mappings`` uses ``@lru_cache(maxsize=1)``,
+    patching the YAML file or swapping ``_MAPPINGS_PATH`` within a single
+    process will not take effect until the cache is invalidated. Call this
+    helper from test setup/teardown to force a re-read.
+    """
+    load_mappings.cache_clear()
+
+
 def _parse_date(s: str) -> datetime:
     from datetime import timezone
     return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)

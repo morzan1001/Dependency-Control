@@ -1,6 +1,7 @@
 from app.services.pqc_migration.mappings_loader import (
     CURRENT_MAPPINGS_VERSION,
     PQCMapping,
+    clear_mappings_cache,
     load_mappings,
     normalise_family,
 )
@@ -37,3 +38,20 @@ def test_family_alias_normalises():
 def test_entry_types():
     m = load_mappings()
     assert isinstance(m.mappings[0], PQCMapping)
+
+
+def test_clear_mappings_cache_forces_reload():
+    """``load_mappings`` is ``@lru_cache(maxsize=1)``. Without an explicit
+    cache-clear, tests that patch the YAML or _MAPPINGS_PATH would keep
+    seeing the first-process result. ``clear_mappings_cache`` exposes the
+    underlying ``cache_clear`` so test setup can invalidate stale results."""
+    # Prime the cache.
+    first = load_mappings()
+    assert load_mappings.cache_info().currsize == 1
+    # Clear — next call repopulates.
+    clear_mappings_cache()
+    assert load_mappings.cache_info().currsize == 0
+    second = load_mappings()
+    # Same content (YAML unchanged), fresh object with full population.
+    assert second.version == first.version
+    assert load_mappings.cache_info().currsize == 1
