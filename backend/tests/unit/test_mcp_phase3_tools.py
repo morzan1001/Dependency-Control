@@ -61,9 +61,12 @@ async def test_get_framework_evaluation_summary_returns_counts():
     ) as registry:
         engine_instance = MagicMock(_gather_inputs=AsyncMock(return_value=MagicMock()))
         engine_cls.return_value = engine_instance
-        fake_framework = MagicMock(evaluate=MagicMock(return_value=MagicMock(
+        # spec=["evaluate"] so hasattr(fw, "evaluate_async") is False — the
+        # chat tool dispatches on that attribute for the PQC framework.
+        fake_framework = MagicMock(spec=["evaluate"])
+        fake_framework.evaluate = MagicMock(return_value=MagicMock(
             summary=fake_summary, framework_name="NIST SP 800-131A",
-        )))
+        ))
         registry.__getitem__.return_value = fake_framework
 
         user = MagicMock(id="u1", permissions=frozenset())

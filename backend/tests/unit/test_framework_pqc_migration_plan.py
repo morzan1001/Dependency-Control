@@ -62,7 +62,8 @@ def test_framework_identity():
     assert fw.name == "PQC Migration Plan"
 
 
-def test_evaluate_turns_plan_items_into_controls():
+@pytest.mark.asyncio
+async def test_evaluate_async_turns_plan_items_into_controls():
     fw = PQCMigrationPlanFramework()
     db = MagicMock()
     plan = _plan()
@@ -71,7 +72,7 @@ def test_evaluate_turns_plan_items_into_controls():
     ) as gen_cls:
         gen_instance = MagicMock(generate=AsyncMock(return_value=plan))
         gen_cls.return_value = gen_instance
-        result = fw.evaluate(_input(db=db))
+        result = await fw.evaluate_async(_input(db=db))
 
     assert len(result.controls) == 2
     statuses = {c.control_id: (c.status if isinstance(c.status, str) else c.status.value)
@@ -80,7 +81,8 @@ def test_evaluate_turns_plan_items_into_controls():
     assert any(v == "not_applicable" for v in statuses.values())
 
 
-def test_scope_description_echoes_input():
+@pytest.mark.asyncio
+async def test_scope_description_echoes_input():
     fw = PQCMigrationPlanFramework()
     db = MagicMock()
     plan = _plan()
@@ -90,5 +92,14 @@ def test_scope_description_echoes_input():
         gen_cls.return_value = MagicMock(generate=AsyncMock(return_value=plan))
         inp = _input(db=db)
         inp.scope_description = "project 'payments'"
-        result = fw.evaluate(inp)
+        result = await fw.evaluate_async(inp)
     assert result.scope_description == "project 'payments'"
+
+
+def test_sync_evaluate_raises_runtime_error():
+    """Sync entry point must fail loudly — it used to call asyncio.run(...)
+    inside the FastAPI BackgroundTask event loop and crash in production."""
+    fw = PQCMigrationPlanFramework()
+    db = MagicMock()
+    with pytest.raises(RuntimeError, match="evaluate_async"):
+        fw.evaluate(_input(db=db))

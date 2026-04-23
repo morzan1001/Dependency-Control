@@ -31,7 +31,11 @@ async def test_engine_marks_report_completed_on_success():
 
     inputs = MagicMock(policy_version=1, iana_catalog_version=2)
     evaluation = MagicMock(summary={"total": 0})
-    fw = MagicMock(evaluate=MagicMock(return_value=evaluation))
+    # Use spec=["evaluate"] so hasattr(fw, "evaluate_async") is False — the
+    # engine dispatches on that attribute (async path is exercised by the
+    # PQC framework unit test).
+    fw = MagicMock(spec=["evaluate"])
+    fw.evaluate = MagicMock(return_value=evaluation)
 
     resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(
         scope="user", scope_id=None, project_ids=[])))
@@ -52,6 +56,45 @@ async def test_engine_marks_report_completed_on_success():
         await engine.generate(report=report, db=db, user=user)
 
     assert update_mock.call_count >= 2
+    final_call = update_mock.call_args_list[-1]
+    assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_engine_awaits_evaluate_async_when_available():
+    """Regression: the PQC framework is async-only. The engine must dispatch
+    on hasattr(framework, "evaluate_async") and await it, not call .evaluate
+    synchronously (which raises RuntimeError on the PQC framework)."""
+    db = MagicMock()
+    update_mock = AsyncMock()
+    engine = ComplianceReportEngine()
+    report = _report()
+    user = MagicMock(id="u1", permissions=frozenset())
+
+    inputs = MagicMock(policy_version=1, iana_catalog_version=2)
+    evaluation = MagicMock(summary={"total": 0})
+    fw = MagicMock(spec=["evaluate_async"])
+    fw.evaluate_async = AsyncMock(return_value=evaluation)
+
+    resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(
+        scope="user", scope_id=None, project_ids=[])))
+
+    with patch(
+        "app.services.compliance.engine.ComplianceReportRepository",
+        return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
+    ), patch(
+        "app.services.compliance.engine.ScopeResolver",
+        return_value=resolver,
+    ), patch.dict(
+        "app.services.compliance.engine.FRAMEWORK_REGISTRY",
+        {ReportFramework.NIST_SP_800_131A: fw},
+        clear=False,
+    ), patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)
+    ), patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")
+    ), patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")):
+        await engine.generate(report=report, db=db, user=user)
+
+    fw.evaluate_async.assert_awaited_once()
     final_call = update_mock.call_args_list[-1]
     assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
 

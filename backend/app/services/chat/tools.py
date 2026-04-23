@@ -510,7 +510,10 @@ async def get_framework_evaluation_summary(
     fake_report = SimpleNamespace(scope=scope, scope_id=scope_id)
     inputs = await engine._gather_inputs(db, resolved, fake_report)
     framework_obj = FRAMEWORK_REGISTRY[fw_enum]
-    eval_result = framework_obj.evaluate(inputs)
+    if hasattr(framework_obj, "evaluate_async"):
+        eval_result = await framework_obj.evaluate_async(inputs)
+    else:
+        eval_result = framework_obj.evaluate(inputs)
     return {
         "framework": framework,
         "framework_name": eval_result.framework_name,

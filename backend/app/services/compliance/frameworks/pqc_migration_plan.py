@@ -7,9 +7,12 @@ item becomes one ControlResult:
   - migrate_soon   -> failed (MEDIUM severity)
   - plan_migration -> not_applicable (informational)
   - monitor        -> not_applicable
+
+This framework is async-only because the underlying generator issues DB
+queries. The sync `evaluate(...)` entry point raises RuntimeError — callers
+must dispatch on `hasattr(framework, "evaluate_async")` and await it.
 """
 
-import asyncio
 from datetime import datetime, timezone
 from typing import Dict, List
 
@@ -51,13 +54,21 @@ class PQCMigrationPlanFramework:
     controls: List[ControlDefinition] = []
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
+        """Sync entry point is not supported — see module docstring.
+
+        Callers must dispatch on ``hasattr(framework, "evaluate_async")`` and
+        await the async variant. Keeping a loud error here protects against
+        accidental sync use from a running event loop, where the previous
+        ``asyncio.run(...)`` implementation would crash with RuntimeError.
+        """
+        raise RuntimeError("Use evaluate_async for PQC framework")
+
+    async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
         if data.db is None:
             raise ValueError("EvaluationInput.db is required for PQC meta-framework")
 
-        plan = asyncio.run(
-            PQCMigrationPlanGenerator(data.db).generate(
-                resolved=data.resolved, limit=1000,
-            )
+        plan = await PQCMigrationPlanGenerator(data.db).generate(
+            resolved=data.resolved, limit=1000,
         )
 
         controls = [_item_to_control(item) for item in plan.items]

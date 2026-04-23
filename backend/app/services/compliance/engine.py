@@ -56,7 +56,10 @@ class ComplianceReportEngine:
             )
             inputs = await self._gather_inputs(db, resolved, report)
             framework = FRAMEWORK_REGISTRY[report.framework]
-            evaluation = framework.evaluate(inputs)
+            if hasattr(framework, "evaluate_async"):
+                evaluation = await framework.evaluate_async(inputs)
+            else:
+                evaluation = framework.evaluate(inputs)
             artifact_bytes, filename, mime = self._render(
                 report.format, framework, evaluation, report,
             )
