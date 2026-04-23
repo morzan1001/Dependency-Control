@@ -28,6 +28,7 @@ markdown = "^3.10"
 prometheus-client = "^0.25.0"
 aiosmtplib = "^5.1.0"
 aiobotocore = "^3.4.0"
+weasyprint = "^65.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"

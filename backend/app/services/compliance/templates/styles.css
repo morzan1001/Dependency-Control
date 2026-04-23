@@ -1,0 +1,41 @@
+@page { size: A4; margin: 20mm; }
+body { font-family: "Helvetica", "Arial", sans-serif; font-size: 10pt; color: #222; }
+h1 { font-size: 28pt; margin-bottom: 0.2em; }
+h2 { font-size: 16pt; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 1.5em; }
+h3 { font-size: 12pt; }
+.cover { page-break-after: always; }
+.metadata { margin-top: 1em; width: 100%; border-collapse: collapse; }
+.metadata th { text-align: left; width: 180px; padding: 4px 8px; background: #f4f4f4; }
+.metadata td { padding: 4px 8px; }
+.metadata .fingerprint { font-family: monospace; font-size: 8pt; word-break: break-all; }
+.disclaimer { margin-top: 2em; padding: 8px 12px; background: #fffbea; border-left: 4px solid #e0a800; }
+.summary-grid { display: flex; gap: 8px; margin: 12px 0; }
+.summary-grid .card { flex: 1; padding: 12px; border: 1px solid #ddd; text-align: center; border-radius: 4px; }
+.summary-grid .card .count { font-size: 22pt; font-weight: bold; }
+.summary-grid .card .label { font-size: 9pt; color: #666; margin-top: 4px; }
+.summary-grid .passed { border-left: 4px solid #2e7d32; }
+.summary-grid .failed { border-left: 4px solid #c62828; }
+.summary-grid .waived { border-left: 4px solid #f57c00; }
+.summary-grid .na { border-left: 4px solid #9e9e9e; }
+.summary-grid .total { border-left: 4px solid #1565c0; }
+.bar { height: 14px; border-radius: 4px; overflow: hidden; display: flex; margin-top: 10px; }
+.bar .seg.passed { background: #66bb6a; }
+.bar .seg.failed { background: #ef5350; }
+.bar .seg.waived { background: #ffa726; }
+.bar .seg.na { background: #bdbdbd; }
+.control-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.control-table th { background: #f4f4f4; padding: 6px; text-align: left; font-size: 9pt; }
+.control-table td { padding: 6px; border-top: 1px solid #eee; font-size: 9pt; }
+.control-table .control-id { font-family: monospace; font-size: 8pt; }
+.control-table tr.status-failed .status { color: #c62828; font-weight: bold; }
+.control-table tr.status-passed .status { color: #2e7d32; font-weight: bold; }
+.control-table tr.status-waived .status { color: #f57c00; }
+.control-table tr.status-not_applicable .status { color: #9e9e9e; }
+.control-detail { margin-top: 1em; padding: 10px; border-left: 3px solid #ccc; }
+.control-detail.status-failed { border-left-color: #c62828; }
+.control-detail.status-passed { border-left-color: #2e7d32; }
+.control-detail.status-waived { border-left-color: #f57c00; }
+.control-detail.status-not_applicable { border-left-color: #9e9e9e; }
+.control-detail .remediation, .control-detail .evidence, .control-detail .waivers { font-size: 9pt; margin-top: 4px; }
+.residuals li { margin-bottom: 4px; }
+footer { margin-top: 2em; color: #888; font-size: 8pt; text-align: center; }
