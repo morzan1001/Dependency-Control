@@ -41,6 +41,14 @@ describe("MigrationPlanTable", () => {
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ asset_bom_ref: "rsa-1" }));
   });
 
+  it("invokes onSelect on Enter keydown", () => {
+    const onSelect = vi.fn();
+    render(<MigrationPlanTable items={items} onSelect={onSelect} />);
+    const row = screen.getByText("RSA").closest("tr")!;
+    fireEvent.keyDown(row, { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ asset_bom_ref: "rsa-1" }));
+  });
+
   it("renders priority score visibly", () => {
     render(<MigrationPlanTable items={items} onSelect={() => {}} />);
     expect(screen.getByText("88")).toBeInTheDocument();

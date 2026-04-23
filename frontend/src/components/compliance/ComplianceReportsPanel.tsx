@@ -65,8 +65,16 @@ export function ComplianceReportsPanel() {
             ) : reports.map((r) => (
               <tr
                 key={r._id}
-                className="cursor-pointer border-t hover:bg-muted/30"
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer border-t hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 onClick={() => setSelected(r)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelected(r);
+                  }
+                }}
               >
                 <td className="p-2 font-mono">{r.framework}</td>
                 <td className="p-2">{r.format.toUpperCase()}</td>

@@ -43,8 +43,16 @@ export function MigrationPlanTable({ items, onSelect }: Props) {
           {items.map((it) => (
             <tr
               key={it.asset_bom_ref}
-              className="cursor-pointer border-t hover:bg-muted/30"
+              role="button"
+              tabIndex={0}
+              className="cursor-pointer border-t hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               onClick={() => onSelect(it)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(it);
+                }
+              }}
             >
               <td className="p-2">
                 <span className={`rounded px-2 py-0.5 text-xs ${STATUS_COLOR[it.status]}`}>
