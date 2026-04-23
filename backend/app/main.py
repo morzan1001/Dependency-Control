@@ -46,6 +46,7 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.services.audit.retention import prune_old_audit_entries
+from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.analytics.migrations import backfill_scan_created_at
 
@@ -117,6 +118,7 @@ async def startup_event() -> None:
             await seed_crypto_policies(db)
             await backfill_scan_created_at(db)
             await prune_old_audit_entries(db)
+            await sweep_expired_compliance_reports(db)
 
             # WeasyPrint health-check: non-fatal, PDF reports depend on it
             try:
