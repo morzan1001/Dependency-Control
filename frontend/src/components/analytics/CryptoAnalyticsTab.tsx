@@ -11,6 +11,8 @@ import { HotspotHeatmap } from "@/components/crypto/analytics/HotspotHeatmap";
 import { HotspotTable } from "@/components/crypto/analytics/HotspotTable";
 import { HotspotTreemap } from "@/components/crypto/analytics/HotspotTreemap";
 import { TrendsTimeSeriesChart } from "@/components/crypto/analytics/TrendsTimeSeriesChart";
+import { PQCMigrationPanel } from "@/components/pqc/PQCMigrationPanel";
+import { ComplianceReportsPanel } from "@/components/compliance/ComplianceReportsPanel";
 import type { GroupingDimension, TrendBucket, TrendMetric } from "@/types/cryptoAnalytics";
 
 const GROUPINGS: GroupingDimension[] = [
@@ -49,6 +51,8 @@ export function CryptoAnalyticsTab() {
         <TabsTrigger value="trends">Trends</TabsTrigger>
         <TabsTrigger value="inventory">Inventory</TabsTrigger>
         <TabsTrigger value="findings">Findings</TabsTrigger>
+        <TabsTrigger value="pqc-migration">PQC Migration</TabsTrigger>
+        <TabsTrigger value="compliance-reports">Compliance Reports</TabsTrigger>
       </TabsList>
 
       <TabsContent value="hotspots">
@@ -62,6 +66,12 @@ export function CryptoAnalyticsTab() {
       </TabsContent>
       <TabsContent value="findings">
         <FindingsSection />
+      </TabsContent>
+      <TabsContent value="pqc-migration">
+        <PQCMigrationPanel />
+      </TabsContent>
+      <TabsContent value="compliance-reports">
+        <ComplianceReportsPanel />
       </TabsContent>
     </Tabs>
   );
