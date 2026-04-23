@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import pytest
 
 from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import FindingType, Severity

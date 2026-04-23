@@ -4,7 +4,7 @@ Bump CURRENT_MAPPINGS_VERSION and regenerate snapshot_date when NIST
 publishes new standards.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path

@@ -10,7 +10,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.schemas.cbom import CryptoAssetType
 from tests.mocks.mongodb import create_mock_collection
 
 

@@ -23,13 +23,13 @@ existing waiver infrastructure without needing a live engine.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
-from app.models.finding import FindingType, Severity
+from app.models.finding import FindingType
 from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
 from app.services.stats import _build_waiver_query
-from tests.mocks.mongodb import create_mock_collection, create_mock_db
+from tests.mocks.mongodb import create_mock_collection
 
 
 # ---------------------------------------------------------------------------

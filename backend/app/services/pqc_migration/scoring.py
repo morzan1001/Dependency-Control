@@ -4,7 +4,7 @@ Higher = migrate sooner. Status bucket thresholds: 80 / 50 / 25.
 """
 
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List
 
 from app.services.pqc_migration.mappings_loader import Timeline

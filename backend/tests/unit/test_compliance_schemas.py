@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 
-import pytest
 
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
@@ -11,7 +10,6 @@ from app.schemas.compliance import (
     ReportFormat,
     ReportFramework,
     ReportStatus,
-    ResidualRisk,
 )
 
 

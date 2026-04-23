@@ -13,7 +13,6 @@ Auth and database dependencies are overridden via the shared conftest so
 no live MongoDB is required.
 """
 
-import asyncio
 import json
 from pathlib import Path
 

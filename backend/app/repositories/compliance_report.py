@@ -10,7 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import DESCENDING
 
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.schemas.compliance import ReportFramework, ReportStatus
 
 
 class ComplianceReportRepository:

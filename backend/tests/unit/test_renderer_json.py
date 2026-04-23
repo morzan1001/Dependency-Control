@@ -1,7 +1,6 @@
 import json
 from datetime import datetime, timezone
 
-import pytest
 
 from app.models.compliance_report import ComplianceReport
 from app.models.finding import Severity

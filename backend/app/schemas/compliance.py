@@ -6,7 +6,7 @@ evaluation result, residual risks. Pure data types, no I/O.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Callable, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 

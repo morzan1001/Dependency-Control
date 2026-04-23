@@ -5,7 +5,7 @@ REST endpoints for crypto analytics (hotspots, trends, scan-delta).
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.schemas.analytics import HotspotResponse, ScanDelta, TrendSeries

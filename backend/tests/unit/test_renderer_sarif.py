@@ -1,6 +1,5 @@
 import json
 
-import pytest
 
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
 from tests.unit.test_renderer_json import _evaluation, _report

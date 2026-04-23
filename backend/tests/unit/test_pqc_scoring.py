@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
-from app.services.pqc_migration.mappings_loader import Timeline, load_mappings
+from app.services.pqc_migration.mappings_loader import Timeline
 from app.services.pqc_migration.scoring import (
     EXPOSURE_WEIGHT,
     KEY_WEAKNESS_WEIGHT,

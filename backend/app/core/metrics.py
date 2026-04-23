@@ -11,7 +11,7 @@ import re
 import time
 from contextlib import AbstractContextManager, contextmanager
 from importlib.metadata import version as get_version
-from typing import Any, Callable, Generator
+from typing import Any, Generator
 
 from fastapi import Request, Response
 from prometheus_client import (

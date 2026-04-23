@@ -1,6 +1,4 @@
-from datetime import datetime, timezone
 
-import pytest
 
 from app.schemas.compliance import (
     ControlStatus,

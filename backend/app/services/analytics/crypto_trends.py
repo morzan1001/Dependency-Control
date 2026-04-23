@@ -3,7 +3,7 @@ CryptoTrendService — time-bucketed crypto finding + asset aggregations.
 """
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase

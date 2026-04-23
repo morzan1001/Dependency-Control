@@ -13,7 +13,6 @@ from typing import Optional, Tuple
 from app.models.compliance_report import ComplianceReport
 from app.models.finding import Severity
 from app.schemas.compliance import (
-    ControlStatus,
     FrameworkEvaluation,
     ReportFormat,
 )

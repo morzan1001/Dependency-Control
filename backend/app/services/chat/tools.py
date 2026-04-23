@@ -19,11 +19,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.repositories.projects import ProjectRepository
-from app.repositories.scans import ScanRepository
-from app.repositories.findings import FindingRepository
 from app.repositories.teams import TeamRepository
-from app.repositories.waivers import WaiverRepository
 from app.schemas.compliance import ReportFramework
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
@@ -1635,10 +1631,6 @@ class ChatToolRegistry:
     ) -> Dict[str, Any]:
         """Route tool call to the appropriate repository/service method."""
         team_repo = TeamRepository(db)
-        project_repo = ProjectRepository(db)
-        finding_repo = FindingRepository(db)
-        scan_repo = ScanRepository(db)
-        waiver_repo = WaiverRepository(db)
 
         # Build user-scoped project query for data isolation
         user_project_query = await build_user_project_query(user, team_repo)

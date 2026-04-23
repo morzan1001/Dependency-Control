@@ -18,7 +18,6 @@ from app.core.constants import WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED
 from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.schemas.crypto_policy import CryptoRule
 from app.schemas.policy_audit import PolicyAuditAction
 
 logger = logging.getLogger(__name__)
