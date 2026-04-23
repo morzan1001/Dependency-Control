@@ -243,7 +243,7 @@ class _FakeCollection:
     async def count_documents(self, query):
         count = 0
         for doc in self._docs.values():
-            if all(doc.get(k) == v for k, v in query.items()):
+            if self._doc_matches_query(doc, query):
                 count += 1
         return count
 
@@ -291,6 +291,8 @@ class _FakeCollection:
         for fk, fv in query.items():
             val = doc.get(fk)
             if isinstance(fv, dict):
+                if "$in" in fv and val not in fv["$in"]:
+                    return False
                 for op_key, cmp_fn in _CMP.items():
                     if op_key in fv and not (val is not None and cmp_fn(val, fv[op_key])):
                         return False
