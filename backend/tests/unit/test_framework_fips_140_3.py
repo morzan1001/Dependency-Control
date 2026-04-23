@@ -49,4 +49,7 @@ def test_fips_approved_algorithm_passes():
 
 def test_fips_control_count_reasonable():
     fw = Fips1403Framework()
-    assert len(fw.controls) >= 5
+    # 3 disallowed-category controls (hashes, ciphers, kdfs) + 1 RSA-min-2048.
+    # The previous ECDSA-APPROVED-CURVES phantom control was removed because
+    # its empty rule_id filter meant it either never matched or double-counted.
+    assert len(fw.controls) >= 4

@@ -74,21 +74,11 @@ class Fips1403Framework:
             maps_to_rule_ids=["nist-131a-rsa-min-2048"],
             maps_to_finding_types=[FindingType.CRYPTO_WEAK_KEY],
         ))
-        out.append(ControlDefinition(
-            control_id="FIPS-140-3-ECDSA-APPROVED-CURVES",
-            title="ECDSA approved curves",
-            description=(
-                "Per NIST SP 800-140D, ECDSA signatures must use one of the "
-                "approved curves: P-256, P-384, P-521."
-            ),
-            severity=Severity.HIGH,
-            remediation=(
-                "Re-issue ECDSA keys using an approved NIST curve "
-                "(P-256, P-384, or P-521)."
-            ),
-            maps_to_rule_ids=[],
-            maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
-        ))
+        # NOTE: A prior FIPS-140-3-ECDSA-APPROVED-CURVES control was removed
+        # here — with an empty maps_to_rule_ids it would either match nothing
+        # (always NOT_APPLICABLE) or, if broadened, double-count every weak-
+        # algorithm finding globally. Disallowed-category controls above
+        # already cover non-approved ECDSA curves via weak_algorithm findings.
         return out
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
