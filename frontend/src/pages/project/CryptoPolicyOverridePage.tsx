@@ -4,6 +4,7 @@ import {
   getProjectPolicy, putProjectPolicy, deleteProjectPolicy, getEffectivePolicy,
 } from "@/api/cryptoPolicy";
 import { CryptoPolicyEditor } from "@/components/crypto/CryptoPolicyEditor";
+import { PolicyAuditTimeline } from "@/components/audit/PolicyAuditTimeline";
 import type { CryptoRule } from "@/types/cryptoPolicy";
 
 interface Props {
@@ -64,6 +65,11 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
             ? async () => { await reset.mutateAsync(); }
             : undefined
         }
+      />
+      <PolicyAuditTimeline
+        policyScope="project"
+        projectId={projectId}
+        canRevert={canEdit}
       />
     </div>
   );
