@@ -25,8 +25,30 @@ _SET_ON_INSERT = "$setOnInsert"
 # ---------------------------------------------------------------------------
 
 
+def _match_range_ops(value, ops_dict: dict) -> bool:
+    """Evaluate Mongo $gte/$lte/$gt/$lt operators against ``value``.
+
+    Consolidates what used to be two independent implementations (one here,
+    one on _FakeCollection) so every fake-DB matcher agrees. If a range op
+    is present but ``value`` is None the doc does not match — mirroring
+    MongoDB's behaviour with missing fields.
+    """
+    import operator as _op
+    _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
+    for op_key, cmp_fn in _CMP.items():
+        if op_key in ops_dict:
+            if value is None:
+                return False
+            try:
+                if not cmp_fn(value, ops_dict[op_key]):
+                    return False
+            except TypeError:
+                return False
+    return True
+
+
 def _fake_match_doc(doc: dict, query: dict) -> bool:
-    """Return True if doc matches a simple MongoDB query (field equality + $in + $regex)."""
+    """Return True if doc matches a simple MongoDB query (field equality + $in + $regex + range ops)."""
     for key, condition in query.items():
         value = doc.get(key)
         if isinstance(condition, dict):
@@ -38,9 +60,8 @@ def _fake_match_doc(doc: dict, query: dict) -> bool:
                 flags = re.IGNORECASE if condition.get("$options") == "i" else 0
                 if not re.search(condition["$regex"], str(value or ""), flags):
                     return False
-            if "$gte" in condition or "$lte" in condition or "$gt" in condition or "$lt" in condition:
-                # For date range matching, always pass (trend tests use empty data anyway)
-                pass
+            if not _match_range_ops(value, condition):
+                return False
         else:
             if value != condition:
                 return False
@@ -178,10 +199,16 @@ class _FakeCursor:
 
     def _matches(self, doc: dict) -> bool:
         for k, v in self._query.items():
-            if isinstance(v, dict) and "$regex" in v:
-                import re
-                flags = re.IGNORECASE if v.get("$options") == "i" else 0
-                if not re.search(v["$regex"], str(doc.get(k, "")), flags):
+            if isinstance(v, dict):
+                val = doc.get(k)
+                if "$regex" in v:
+                    import re
+                    flags = re.IGNORECASE if v.get("$options") == "i" else 0
+                    if not re.search(v["$regex"], str(val or ""), flags):
+                        return False
+                if "$in" in v and val not in v["$in"]:
+                    return False
+                if not _match_range_ops(val, v):
                     return False
             elif doc.get(k) != v:
                 return False
@@ -286,16 +313,13 @@ class _FakeCollection:
         return result
 
     def _doc_matches_query(self, doc: dict, query: dict) -> bool:
-        import operator as _op
-        _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
         for fk, fv in query.items():
             val = doc.get(fk)
             if isinstance(fv, dict):
                 if "$in" in fv and val not in fv["$in"]:
                     return False
-                for op_key, cmp_fn in _CMP.items():
-                    if op_key in fv and not (val is not None and cmp_fn(val, fv[op_key])):
-                        return False
+                if not _match_range_ops(val, fv):
+                    return False
             elif val != fv:
                 return False
         return True
