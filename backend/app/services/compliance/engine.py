@@ -108,6 +108,7 @@ class ComplianceReportEngine:
             policy_version=policy_version,
             iana_catalog_version=CURRENT_IANA_CATALOG_VERSION,
             scan_ids=scan_ids,
+            db=db,
         )
 
     async def _pick_scan_ids(self, db, resolved: ResolvedScope) -> List[str]:

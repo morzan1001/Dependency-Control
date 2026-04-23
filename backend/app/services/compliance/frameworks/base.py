@@ -35,6 +35,9 @@ class EvaluationInput:
     policy_version: Optional[int]
     iana_catalog_version: Optional[int]
     scan_ids: List[str]
+    # Populated by engine._gather_inputs for meta-frameworks that need to run
+    # their own queries (e.g. PQC migration plan delegates to a generator).
+    db: Optional[object] = None
 
 
 class ComplianceFramework(Protocol):

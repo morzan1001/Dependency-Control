@@ -16,6 +16,7 @@ from app.services.compliance.frameworks.bsi_tr_02102 import BsiTr02102Framework
 from app.services.compliance.frameworks.cnsa_2_0 import Cnsa20Framework
 from app.services.compliance.frameworks.fips_140_3 import Fips1403Framework
 from app.services.compliance.frameworks.iso_19790 import Iso19790Framework
+from app.services.compliance.frameworks.pqc_migration_plan import PQCMigrationPlanFramework
 
 FRAMEWORK_REGISTRY: "dict[ReportFramework, ComplianceFramework]" = {
     ReportFramework.NIST_SP_800_131A: NistSp800_131aFramework(),
@@ -23,7 +24,7 @@ FRAMEWORK_REGISTRY: "dict[ReportFramework, ComplianceFramework]" = {
     ReportFramework.CNSA_2_0: Cnsa20Framework(),
     ReportFramework.FIPS_140_3: Fips1403Framework(),
     ReportFramework.ISO_19790: Iso19790Framework(),
-    # PQC_MIGRATION_PLAN registered in Phase-3 PR E
+    ReportFramework.PQC_MIGRATION_PLAN: PQCMigrationPlanFramework(),
 }
 
 __all__ = [
