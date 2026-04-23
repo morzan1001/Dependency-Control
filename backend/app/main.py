@@ -30,6 +30,7 @@ from app.api.v1.endpoints import (
     mcp_keys,
     notifications,
     policy_audit,
+    pqc_migration,
     projects,
     scripts,
     system,
@@ -206,6 +207,7 @@ app.include_router(crypto_policies.router, prefix=f"{settings.API_V1_STR}", tags
 app.include_router(policy_audit.router, prefix=f"{settings.API_V1_STR}", tags=["policy-audit"])
 app.include_router(crypto_analytics.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-analytics"])
 app.include_router(compliance_reports.router, prefix=f"{settings.API_V1_STR}", tags=["compliance-reports"])
+app.include_router(pqc_migration.router, prefix=f"{settings.API_V1_STR}", tags=["pqc-migration"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])
