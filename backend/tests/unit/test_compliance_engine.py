@@ -7,6 +7,7 @@ from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.frameworks.base import EvaluationInput
 
 
 def _report(**overrides):
@@ -29,7 +30,15 @@ async def test_engine_marks_report_completed_on_success():
     report = _report()
     user = MagicMock(id="u1", permissions=frozenset())
 
-    inputs = MagicMock(policy_version=1, iana_catalog_version=2)
+    # Real EvaluationInput — previously this was a bare MagicMock, so the
+    # engine could have passed anything to framework.evaluate without
+    # detection. Real instance guarantees the engine wires the correct shape.
+    inputs = EvaluationInput(
+        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=[]),
+        scope_description="u",
+        crypto_assets=[], findings=[], policy_rules=[],
+        policy_version=1, iana_catalog_version=2, scan_ids=["s1"],
+    )
     evaluation = MagicMock(summary={"total": 0})
     # Use spec=["evaluate"] so hasattr(fw, "evaluate_async") is False — the
     # engine dispatches on that attribute (async path is exercised by the
@@ -58,6 +67,15 @@ async def test_engine_marks_report_completed_on_success():
     assert update_mock.call_count >= 2
     final_call = update_mock.call_args_list[-1]
     assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
+
+    # Guard the framework contract: the engine must pass a real
+    # EvaluationInput — not an arbitrary object — so framework evaluators
+    # can rely on the documented attributes (resolved, crypto_assets, …).
+    fw.evaluate.assert_called_once()
+    passed_arg = fw.evaluate.call_args.args[0]
+    assert isinstance(passed_arg, EvaluationInput)
+    assert passed_arg.policy_version == 1
+    assert passed_arg.iana_catalog_version == 2
 
 
 @pytest.mark.asyncio
