@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     callgraph,
     cbom_ingest,
     chat,
+    compliance_reports,
     crypto_analytics,
     crypto_assets,
     crypto_policies,
@@ -39,6 +40,7 @@ from app.api.v1.endpoints import (
 )
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
+from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
@@ -110,9 +112,19 @@ async def startup_event() -> None:
             await CryptoAssetRepository(db).ensure_indexes()
             await CryptoPolicyRepository(db).ensure_indexes()
             await PolicyAuditRepository(db).ensure_indexes()
+            await ComplianceReportRepository(db).ensure_indexes()
             await seed_crypto_policies(db)
             await backfill_scan_created_at(db)
             await prune_old_audit_entries(db)
+
+            # WeasyPrint health-check: non-fatal, PDF reports depend on it
+            try:
+                import weasyprint  # noqa: F401
+                logger.info("WeasyPrint is available")
+            except Exception as e:
+                logger.warning(
+                    "WeasyPrint is NOT available - PDF compliance reports will fail: %s", e,
+                )
 
             # Initialize S3 bucket for archive storage (if configured)
             from app.core.s3 import ensure_bucket_exists, is_archive_enabled
@@ -193,6 +205,7 @@ app.include_router(crypto_assets.router, prefix=f"{settings.API_V1_STR}", tags=[
 app.include_router(crypto_policies.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-policies"])
 app.include_router(policy_audit.router, prefix=f"{settings.API_V1_STR}", tags=["policy-audit"])
 app.include_router(crypto_analytics.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-analytics"])
+app.include_router(compliance_reports.router, prefix=f"{settings.API_V1_STR}", tags=["compliance-reports"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])
