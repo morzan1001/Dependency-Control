@@ -622,3 +622,34 @@ async def owner_auth_headers_proj(client, db):
     }
     token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def owner_auth_headers_proj_p2(client, db):
+    """Auth headers for a user who owns project 'p2' (project-level admin role)."""
+    from app.models.project import ProjectMember, Project
+    from app.core.permissions import PRESET_USER, Permissions
+    from jose import jwt
+    from app.core.config import settings
+
+    username = "ownerp2"
+    permissions = list(PRESET_USER) + [Permissions.PROJECT_READ]
+
+    # Create project "p2" with this user as project-admin member
+    project_p2 = Project(id="p2", name="project-p2")
+    member = ProjectMember(user_id=username, role="admin")
+    project_p2.members = [member]
+
+    project_doc = project_p2.model_dump(by_alias=True)
+    await db.projects.update_one(
+        {"_id": "p2"},
+        {_SET_ON_INSERT: project_doc},
+        upsert=True,
+    )
+
+    payload = {
+        "sub": username,
+        "permissions": permissions,
+    }
+    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return {"Authorization": f"Bearer {token}"}
