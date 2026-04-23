@@ -565,6 +565,10 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
           : (analyzerSettingsState[openSettingsAnalyzer] || {})
         return (
           <AnalyzerSettingsDialog
+            // `key` forces the dialog to remount whenever the selected
+            // analyzer changes, so its internal `values` state is re-initialized
+            // from `currentValues` without needing a setState-in-effect.
+            key={openSettingsAnalyzer}
             open={true}
             onOpenChange={(isOpen) => { if (!isOpen) setOpenSettingsAnalyzer(null) }}
             schema={schema}

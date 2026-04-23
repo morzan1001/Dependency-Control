@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -46,16 +46,14 @@ export function AnalyzerSettingsDialog({
   isSaving,
   canEdit,
 }: Readonly<AnalyzerSettingsDialogProps>) {
+  // Values are initialized lazily from the schema + currentValues the first
+  // time the dialog mounts. To "reset" values when the dialog is reopened or
+  // when the analyzer changes, the parent passes a `key` prop that forces a
+  // remount (see ProjectSettings.tsx). Avoids the setState-in-effect anti-pattern:
+  // https://react.dev/learn/you-might-not-need-an-effect
   const [values, setValues] = useState<Record<string, SettingValue>>(() =>
     initializeValues(schema, currentValues)
   )
-
-  // Reset values when dialog opens with fresh data
-  useEffect(() => {
-    if (open) {
-      setValues(initializeValues(schema, currentValues))
-    }
-  }, [open, schema, currentValues])
 
   const handleChange = (key: string, value: SettingValue) => {
     setValues(prev => ({ ...prev, [key]: value }))
