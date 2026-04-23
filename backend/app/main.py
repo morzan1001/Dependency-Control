@@ -123,10 +123,12 @@ async def startup_event() -> None:
             # WeasyPrint health-check: non-fatal, PDF reports depend on it
             try:
                 import weasyprint  # noqa: F401
+
                 logger.info("WeasyPrint is available")
             except Exception as e:
                 logger.warning(
-                    "WeasyPrint is NOT available - PDF compliance reports will fail: %s", e,
+                    "WeasyPrint is NOT available - PDF compliance reports will fail: %s",
+                    e,
                 )
 
             # Initialize S3 bucket for archive storage (if configured)

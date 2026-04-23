@@ -25,9 +25,7 @@ class CryptoAssetRepository:
         await self._col.create_index([("project_id", 1), ("asset_type", 1)])
         await self._col.create_index([("project_id", 1), ("name", 1)])
         await self._col.create_index([("project_id", 1), ("primitive", 1)])
-        await self._col.create_index(
-            [("project_id", 1), ("scan_id", 1), ("bom_ref", 1)], unique=True
-        )
+        await self._col.create_index([("project_id", 1), ("scan_id", 1), ("bom_ref", 1)], unique=True)
         await self._col.create_index([("project_id", 1), ("asset_type", 1), ("primitive", 1)])
 
     async def bulk_upsert(
@@ -85,13 +83,9 @@ class CryptoAssetRepository:
         return CryptoAsset.model_validate(doc) if doc else None
 
     async def count_by_scan(self, project_id: str, scan_id: str) -> int:
-        return await self._col.count_documents(
-            {"project_id": project_id, "scan_id": scan_id}
-        )
+        return await self._col.count_documents({"project_id": project_id, "scan_id": scan_id})
 
-    async def summary_for_scan(
-        self, project_id: str, scan_id: str
-    ) -> Dict[str, Any]:
+    async def summary_for_scan(self, project_id: str, scan_id: str) -> Dict[str, Any]:
         pipeline = [
             {"$match": {"project_id": project_id, "scan_id": scan_id}},
             {"$group": {"_id": "$asset_type", "count": {"$sum": 1}}},

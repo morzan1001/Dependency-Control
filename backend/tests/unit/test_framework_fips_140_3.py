@@ -9,8 +9,11 @@ def _eval_input(assets=None):
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
         scope_description="user",
         crypto_assets=assets or [],
-        findings=[], policy_rules=[],
-        policy_version=1, iana_catalog_version=1, scan_ids=["s1"],
+        findings=[],
+        policy_rules=[],
+        policy_version=1,
+        iana_catalog_version=1,
+        scan_ids=["s1"],
     )
 
 
@@ -23,25 +26,31 @@ def test_fips_framework_identity():
 
 def test_fips_disallowed_algorithm_fails():
     fw = Fips1403Framework()
+
     class A:
         name = "MD5"
         asset_type = "algorithm"
+
     result = fw.evaluate(_eval_input(assets=[A()]))
     disallowed_hash_control = next(
-        c for c in result.controls if "hash" in c.title.lower() and ("md5" in c.description.lower() or "md5" in c.title.lower())
+        c
+        for c in result.controls
+        if "hash" in c.title.lower() and ("md5" in c.description.lower() or "md5" in c.title.lower())
     )
-    assert disallowed_hash_control.status == ControlStatus.FAILED.value or \
-           disallowed_hash_control.status == "failed"
+    assert disallowed_hash_control.status == ControlStatus.FAILED.value or disallowed_hash_control.status == "failed"
 
 
 def test_fips_approved_algorithm_passes():
     fw = Fips1403Framework()
+
     class A:
         name = "AES-256"
         asset_type = "algorithm"
+
     result = fw.evaluate(_eval_input(assets=[A()]))
     disallowed_failed = [
-        c for c in result.controls
+        c
+        for c in result.controls
         if "disallowed" in c.title.lower() and (c.status == "failed" or c.status == ControlStatus.FAILED.value)
     ]
     assert disallowed_failed == []

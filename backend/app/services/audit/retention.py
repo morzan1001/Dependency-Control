@@ -35,17 +35,22 @@ async def prune_old_audit_entries(db: AsyncIOMotorDatabase) -> int:
 
     total = 0
     total += await repo.delete_older_than(
-        policy_scope="system", project_id=None, cutoff=cutoff,
+        policy_scope="system",
+        project_id=None,
+        cutoff=cutoff,
     )
     # Per-project retention: iterate distinct project_ids
     distinct = await db[PolicyAuditRepository.COLLECTION].distinct(
-        "project_id", {"policy_scope": "project"},
+        "project_id",
+        {"policy_scope": "project"},
     )
     for pid in distinct:
         if pid is None:
             continue
         total += await repo.delete_older_than(
-            policy_scope="project", project_id=pid, cutoff=cutoff,
+            policy_scope="project",
+            project_id=pid,
+            cutoff=cutoff,
         )
     logger.info("Policy audit retention pruned %d entries (days=%d)", total, days)
     return total

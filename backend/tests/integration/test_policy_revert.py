@@ -6,7 +6,9 @@ from app.repositories.policy_audit_entry import PolicyAuditRepository
 
 def _rule_dict(rule_id: str) -> dict:
     return {
-        "rule_id": rule_id, "name": rule_id, "description": "",
+        "rule_id": rule_id,
+        "name": rule_id,
+        "description": "",
         "finding_type": "crypto_weak_algorithm",
         "default_severity": "HIGH",
         "source": "custom",
@@ -16,7 +18,9 @@ def _rule_dict(rule_id: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_revert_system_policy_creates_new_version(
-    client, db, admin_auth_headers,
+    client,
+    db,
+    admin_auth_headers,
 ):
     # v1: rules=[alpha]
     await client.put(
@@ -35,8 +39,7 @@ async def test_revert_system_policy_creates_new_version(
     entries = await PolicyAuditRepository(db).list(policy_scope="system", limit=10)
     # Find the version with the "alpha" rule
     target_version = next(
-        e.version for e in entries
-        if any(r.get("rule_id") == "alpha" for r in e.snapshot.get("rules", []))
+        e.version for e in entries if any(r.get("rule_id") == "alpha" for r in e.snapshot.get("rules", []))
     )
 
     resp = await client.post(
@@ -60,7 +63,9 @@ async def test_revert_system_policy_creates_new_version(
 
 @pytest.mark.asyncio
 async def test_list_audit_entries_endpoint(
-    client, db, admin_auth_headers,
+    client,
+    db,
+    admin_auth_headers,
 ):
     await client.put(
         "/api/v1/crypto-policies/system",
@@ -79,7 +84,9 @@ async def test_list_audit_entries_endpoint(
 
 @pytest.mark.asyncio
 async def test_get_single_audit_entry(
-    client, db, admin_auth_headers,
+    client,
+    db,
+    admin_auth_headers,
 ):
     await client.put(
         "/api/v1/crypto-policies/system",
@@ -100,7 +107,9 @@ async def test_get_single_audit_entry(
 
 @pytest.mark.asyncio
 async def test_revert_denied_for_non_admin(
-    client, db, member_auth_headers,
+    client,
+    db,
+    member_auth_headers,
 ):
     resp = await client.post(
         "/api/v1/crypto-policies/system/revert",

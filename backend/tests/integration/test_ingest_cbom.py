@@ -38,9 +38,7 @@ async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
         "scan_metadata": {"git_ref": "main", "commit_sha": "abc123"},
         "cbom": _load("legacy_crypto_mixed.json"),
     }
-    resp = await client.post(
-        "/api/v1/ingest/cbom", json=payload, headers=api_key_headers
-    )
+    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
     assert resp.status_code == 202, resp.text
     body = resp.json()
     scan_id = body["scan_id"]
@@ -61,9 +59,7 @@ async def test_ingest_cbom_rejects_empty_cbom(client, db, api_key_headers):
     payload = {
         "cbom": {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []},
     }
-    resp = await client.post(
-        "/api/v1/ingest/cbom", json=payload, headers=api_key_headers
-    )
+    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
     assert resp.status_code == 400, resp.text
 
 

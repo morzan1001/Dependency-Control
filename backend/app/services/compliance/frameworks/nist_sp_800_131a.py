@@ -14,13 +14,11 @@ import yaml
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import ControlDefinition, FrameworkEvaluation, ReportFramework
 from app.services.compliance.frameworks.base import (
-    EvaluationInput, evaluate_framework,
+    EvaluationInput,
+    evaluate_framework,
 )
 
-_SEED_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "services" / "crypto_policy" / "seed" / "nist_sp_800_131a.yaml"
-)
+_SEED_PATH = Path(__file__).resolve().parents[3] / "services" / "crypto_policy" / "seed" / "nist_sp_800_131a.yaml"
 
 
 class NistSp800_131aFramework:
@@ -42,7 +40,9 @@ class NistSp800_131aFramework:
 
 
 def _derive_controls_from_seed(
-    yaml_path: Path, *, control_id_prefix: str,
+    yaml_path: Path,
+    *,
+    control_id_prefix: str,
 ) -> List[ControlDefinition]:
     """Turn a seed-rule file into ControlDefinitions.
 
@@ -66,13 +66,15 @@ def _derive_controls_from_seed(
             severity = Severity(sev_value)
         except ValueError:
             severity = Severity.MEDIUM
-        controls.append(ControlDefinition(
-            control_id=f"{control_id_prefix}-{rule_id}",
-            title=rule.get("name", rule_id),
-            description=rule.get("description", "").strip() or rule.get("name", ""),
-            severity=severity,
-            remediation=rule.get("description", "").strip(),
-            maps_to_rule_ids=[rule_id],
-            maps_to_finding_types=[finding_type],
-        ))
+        controls.append(
+            ControlDefinition(
+                control_id=f"{control_id_prefix}-{rule_id}",
+                title=rule.get("name", rule_id),
+                description=rule.get("description", "").strip() or rule.get("name", ""),
+                severity=severity,
+                remediation=rule.get("description", "").strip(),
+                maps_to_rule_ids=[rule_id],
+                maps_to_finding_types=[finding_type],
+            )
+        )
     return controls

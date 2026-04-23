@@ -19,7 +19,9 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
-    FrameworkEvaluation, ReportFormat, ReportStatus,
+    FrameworkEvaluation,
+    ReportFormat,
+    ReportStatus,
 )
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
 from app.services.analyzers.crypto.catalogs.loader import CURRENT_IANA_CATALOG_VERSION
@@ -45,26 +47,36 @@ class ComplianceReportEngine:
     """
 
     async def generate(
-        self, *, report: ComplianceReport,
-        db: AsyncIOMotorDatabase, user,
+        self,
+        *,
+        report: ComplianceReport,
+        db: AsyncIOMotorDatabase,
+        user,
     ) -> None:
         repo = ComplianceReportRepository(db)
         await repo.update_status(report.id, status=ReportStatus.GENERATING)
         try:
             resolved = await ScopeResolver(db, user).resolve(
-                scope=report.scope, scope_id=report.scope_id,
+                scope=report.scope,
+                scope_id=report.scope_id,
             )
-            inputs = await self._gather_inputs(db, resolved, report)
+            inputs = await self._gather_inputs(db, resolved)
             framework = FRAMEWORK_REGISTRY[report.framework]
             if hasattr(framework, "evaluate_async"):
                 evaluation = await framework.evaluate_async(inputs)
             else:
                 evaluation = framework.evaluate(inputs)
             artifact_bytes, filename, mime = self._render(
-                report.format, framework, evaluation, report,
+                report.format,
+                framework,
+                evaluation,
+                report,
             )
             gridfs_id = await self._store_artifact(
-                db, artifact_bytes, filename, mime,
+                db,
+                artifact_bytes,
+                filename,
+                mime,
             )
             await repo.update_status(
                 report.id,
@@ -90,7 +102,9 @@ class ComplianceReportEngine:
             )
 
     async def _gather_inputs(
-        self, db, resolved: ResolvedScope, report: ComplianceReport,
+        self,
+        db,
+        resolved: ResolvedScope,
     ) -> EvaluationInput:
         scan_ids = await self._pick_scan_ids(db, resolved)
         assets = await self._collect_crypto_assets(db, resolved, scan_ids)
@@ -98,9 +112,7 @@ class ComplianceReportEngine:
         policy_repo = CryptoPolicyRepository(db)
         system = await policy_repo.get_system_policy()
         policy_version = getattr(system, "version", None) if system else None
-        policy_rules = (
-            [r.model_dump() for r in system.rules] if system else []
-        )
+        policy_rules = [r.model_dump() for r in system.rules] if system else []
         scope_desc = self._scope_description(resolved)
         return EvaluationInput(
             resolved=resolved,
@@ -160,7 +172,10 @@ class ComplianceReportEngine:
         return "global (all projects)"
 
     def _render(
-        self, fmt: ReportFormat, framework, evaluation: FrameworkEvaluation,
+        self,
+        fmt: ReportFormat,
+        framework,
+        evaluation: FrameworkEvaluation,
         report: ComplianceReport,
     ) -> Tuple[bytes, str, str]:
         renderer = RENDERER_REGISTRY[fmt]
@@ -168,11 +183,16 @@ class ComplianceReportEngine:
         return renderer.render(evaluation, report, disclaimer=disclaimer)
 
     async def _store_artifact(
-        self, db, artifact_bytes: bytes, filename: str, mime: str,
+        self,
+        db,
+        artifact_bytes: bytes,
+        filename: str,
+        mime: str,
     ) -> str:
         bucket = AsyncIOMotorGridFSBucket(db)
         gridfs_id = await bucket.upload_from_stream(
-            filename, artifact_bytes,
+            filename,
+            artifact_bytes,
             metadata={"content_type": mime, "kind": "compliance_report"},
         )
         return str(gridfs_id)

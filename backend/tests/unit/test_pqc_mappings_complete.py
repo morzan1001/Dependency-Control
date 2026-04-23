@@ -8,10 +8,7 @@ from app.services.pqc_migration.mappings_loader import load_mappings
 def test_all_quantum_vulnerable_families_have_a_mapping():
     """Every family listed as quantum-vulnerable in the Phase-1 seed rule
     `pqc-quantum-vulnerable-pke` must have at least one entry in mappings.yaml."""
-    seed_path = (
-        Path(__file__).resolve().parents[2]
-        / "app" / "services" / "crypto_policy" / "seed" / "nist_pqc.yaml"
-    )
+    seed_path = Path(__file__).resolve().parents[2] / "app" / "services" / "crypto_policy" / "seed" / "nist_pqc.yaml"
     with seed_path.open() as f:
         seed = yaml.safe_load(f)
     rule = next(r for r in seed["rules"] if r["rule_id"] == "pqc-quantum-vulnerable-pke")

@@ -5,7 +5,9 @@ from app.repositories.policy_audit_entry import PolicyAuditRepository
 
 def _rule_dict(rule_id: str) -> dict:
     return {
-        "rule_id": rule_id, "name": rule_id, "description": "",
+        "rule_id": rule_id,
+        "name": rule_id,
+        "description": "",
         "finding_type": "crypto_weak_algorithm",
         "default_severity": "HIGH",
         "source": "custom",
@@ -16,7 +18,9 @@ def _rule_dict(rule_id: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_put_system_policy_writes_audit_entry(
-    client, db, admin_auth_headers,
+    client,
+    db,
+    admin_auth_headers,
 ):
     resp = await client.put(
         "/api/v1/crypto-policies/system",
@@ -27,7 +31,8 @@ async def test_put_system_policy_writes_audit_entry(
     version = resp.json()["version"]
 
     entries = await PolicyAuditRepository(db).list(
-        policy_scope="system", limit=10,
+        policy_scope="system",
+        limit=10,
     )
     assert any(e.version == version for e in entries)
     latest = entries[0]
@@ -37,7 +42,9 @@ async def test_put_system_policy_writes_audit_entry(
 
 @pytest.mark.asyncio
 async def test_put_project_policy_writes_audit_entry(
-    client, db, owner_auth_headers_proj,
+    client,
+    db,
+    owner_auth_headers_proj,
 ):
     resp = await client.put(
         "/api/v1/projects/p/crypto-policy",
@@ -47,7 +54,9 @@ async def test_put_project_policy_writes_audit_entry(
     assert resp.status_code == 200
 
     entries = await PolicyAuditRepository(db).list(
-        policy_scope="project", project_id="p", limit=10,
+        policy_scope="project",
+        project_id="p",
+        limit=10,
     )
     assert len(entries) >= 1
     assert entries[0].project_id == "p"
@@ -55,7 +64,9 @@ async def test_put_project_policy_writes_audit_entry(
 
 @pytest.mark.asyncio
 async def test_delete_project_policy_writes_audit_entry(
-    client, db, owner_auth_headers_proj_p2,
+    client,
+    db,
+    owner_auth_headers_proj_p2,
 ):
     # Seed a project policy first
     await client.put(
@@ -71,10 +82,9 @@ async def test_delete_project_policy_writes_audit_entry(
     assert resp.status_code in (200, 204)
 
     entries = await PolicyAuditRepository(db).list(
-        policy_scope="project", project_id="p2", limit=10,
+        policy_scope="project",
+        project_id="p2",
+        limit=10,
     )
-    actions = [
-        (e.action.value if hasattr(e.action, "value") else e.action)
-        for e in entries
-    ]
+    actions = [(e.action.value if hasattr(e.action, "value") else e.action) for e in entries]
     assert "delete" in actions

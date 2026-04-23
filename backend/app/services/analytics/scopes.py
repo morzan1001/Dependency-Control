@@ -63,9 +63,7 @@ class ScopeResolver:
     def _resolve_global(self) -> ResolvedScope:
         perms = getattr(self.user, "permissions", frozenset()) or frozenset()
         if PERMISSION_ANALYTICS_GLOBAL not in perms and self.SYSTEM_MANAGE not in perms:
-            raise ScopeResolutionError(
-                "Global analytics requires analytics:global or system:manage"
-            )
+            raise ScopeResolutionError("Global analytics requires analytics:global or system:manage")
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 
     async def _resolve_user(self) -> ResolvedScope:

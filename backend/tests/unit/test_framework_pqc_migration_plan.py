@@ -5,8 +5,10 @@ import pytest
 
 from app.schemas.compliance import ReportFramework
 from app.schemas.pqc_migration import (
-    MigrationItem, MigrationItemStatus,
-    MigrationPlanResponse, MigrationPlanSummary,
+    MigrationItem,
+    MigrationItemStatus,
+    MigrationPlanResponse,
+    MigrationPlanSummary,
 )
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.frameworks.base import EvaluationInput
@@ -19,37 +21,54 @@ def _input(db=None):
     return EvaluationInput(
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
         scope_description="user",
-        crypto_assets=[], findings=[], policy_rules=[],
-        policy_version=1, iana_catalog_version=1, scan_ids=["s1"],
+        crypto_assets=[],
+        findings=[],
+        policy_rules=[],
+        policy_version=1,
+        iana_catalog_version=1,
+        scan_ids=["s1"],
         db=db,
     )
 
 
 def _plan():
     return MigrationPlanResponse(
-        scope="user", scope_id=None,
+        scope="user",
+        scope_id=None,
         generated_at=datetime.now(timezone.utc),
         items=[
             MigrationItem(
-                asset_bom_ref="r1", asset_name="RSA",
-                project_ids=["p"], asset_count=1,
-                source_family="RSA", source_primitive="pke", use_case="key-exchange",
-                recommended_pqc="ML-KEM-768", recommended_standard="FIPS 203",
-                notes="...", priority_score=95,
+                asset_bom_ref="r1",
+                asset_name="RSA",
+                project_ids=["p"],
+                asset_count=1,
+                source_family="RSA",
+                source_primitive="pke",
+                use_case="key-exchange",
+                recommended_pqc="ML-KEM-768",
+                recommended_standard="FIPS 203",
+                notes="...",
+                priority_score=95,
                 status=MigrationItemStatus.MIGRATE_NOW,
             ),
             MigrationItem(
-                asset_bom_ref="r2", asset_name="ECDSA",
-                project_ids=["p"], asset_count=1,
-                source_family="ECDSA", source_primitive="signature",
+                asset_bom_ref="r2",
+                asset_name="ECDSA",
+                project_ids=["p"],
+                asset_count=1,
+                source_family="ECDSA",
+                source_primitive="signature",
                 use_case="digital-signature",
-                recommended_pqc="ML-DSA-65", recommended_standard="FIPS 204",
-                notes="...", priority_score=15,
+                recommended_pqc="ML-DSA-65",
+                recommended_standard="FIPS 204",
+                notes="...",
+                priority_score=15,
                 status=MigrationItemStatus.MONITOR,
             ),
         ],
         summary=MigrationPlanSummary(
-            total_items=2, status_counts={"migrate_now": 1, "monitor": 1},
+            total_items=2,
+            status_counts={"migrate_now": 1, "monitor": 1},
             earliest_deadline=None,
         ),
         mappings_version=1,
@@ -75,8 +94,7 @@ async def test_evaluate_async_turns_plan_items_into_controls():
         result = await fw.evaluate_async(_input(db=db))
 
     assert len(result.controls) == 2
-    statuses = {c.control_id: (c.status if isinstance(c.status, str) else c.status.value)
-                for c in result.controls}
+    statuses = {c.control_id: (c.status if isinstance(c.status, str) else c.status.value) for c in result.controls}
     assert any(v == "failed" for v in statuses.values())
     assert any(v == "not_applicable" for v in statuses.values())
 

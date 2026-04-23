@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 async def backfill_scan_created_at(
-    db: AsyncIOMotorDatabase, batch_size: int = 1000,
+    db: AsyncIOMotorDatabase,
+    batch_size: int = 1000,
 ) -> int:
     """Backfill `findings.scan_created_at` from the owning scan's `created_at`.
 
@@ -41,10 +42,12 @@ async def backfill_scan_created_at(
         ts = scan_cache[scan_id]
         if ts is None:
             continue
-        batch.append(UpdateOne(
-            {"_id": doc["_id"]},
-            {"$set": {"scan_created_at": ts}},
-        ))
+        batch.append(
+            UpdateOne(
+                {"_id": doc["_id"]},
+                {"$set": {"scan_created_at": ts}},
+            )
+        )
         if len(batch) >= batch_size:
             result = await db.findings.bulk_write(batch, ordered=False)
             patched += result.modified_count

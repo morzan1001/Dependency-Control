@@ -79,8 +79,7 @@ def parse_crypto_components(
             if asset is not None:
                 out.append(asset)
         except Exception as e:
-            logger.warning("cbom_parser: skipped component %s: %s",
-                           comp.get("bom-ref") or comp.get("name"), e)
+            logger.warning("cbom_parser: skipped component %s: %s", comp.get("bom-ref") or comp.get("name"), e)
     return out
 
 
@@ -98,8 +97,7 @@ def _parse_one(comp: Dict[str, Any], idx: int) -> Optional[ParsedCryptoAsset]:
     try:
         asset_type = CryptoAssetType(asset_type_raw)
     except ValueError:
-        logger.debug("cbom_parser: unknown assetType %r on %s, skipping",
-                     asset_type_raw, name)
+        logger.debug("cbom_parser: unknown assetType %r on %s, skipping", asset_type_raw, name)
         return None
 
     bom_ref = comp.get("bom-ref") or _synthesize_bom_ref(comp, idx)
@@ -167,10 +165,7 @@ def _populate_protocol(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
 
 def _populate_evidence(asset: ParsedCryptoAsset, evidence: Dict[str, Any]) -> None:
     occurrences = evidence.get("occurrences") or []
-    asset.occurrence_locations = [
-        o.get("location") for o in occurrences
-        if isinstance(o, dict) and o.get("location")
-    ]
+    asset.occurrence_locations = [o.get("location") for o in occurrences if isinstance(o, dict) and o.get("location")]
     detection = evidence.get("detectionContext")
     if isinstance(detection, str):
         asset.detection_context = detection

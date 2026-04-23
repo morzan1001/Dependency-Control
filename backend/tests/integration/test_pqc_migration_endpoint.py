@@ -20,18 +20,37 @@ def _clear_analytics_cache():
 @pytest.mark.asyncio
 async def test_pqc_endpoint_returns_items(client, db, owner_auth_headers_proj):
     repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert("p", "s1", [
-        CryptoAsset(project_id="p", scan_id="s1", bom_ref="rsa1",
-                    name="RSA", asset_type=CryptoAssetType.ALGORITHM,
-                    primitive=CryptoPrimitive.PKE, key_size_bits=1024),
-        CryptoAsset(project_id="p", scan_id="s1", bom_ref="ecdsa1",
-                    name="ECDSA", asset_type=CryptoAssetType.ALGORITHM,
-                    primitive=CryptoPrimitive.SIGNATURE),
-    ])
-    await db.scans.insert_one({
-        "_id": "s1", "project_id": "p",
-        "status": "completed", "created_at": datetime.now(timezone.utc),
-    })
+    await repo.bulk_upsert(
+        "p",
+        "s1",
+        [
+            CryptoAsset(
+                project_id="p",
+                scan_id="s1",
+                bom_ref="rsa1",
+                name="RSA",
+                asset_type=CryptoAssetType.ALGORITHM,
+                primitive=CryptoPrimitive.PKE,
+                key_size_bits=1024,
+            ),
+            CryptoAsset(
+                project_id="p",
+                scan_id="s1",
+                bom_ref="ecdsa1",
+                name="ECDSA",
+                asset_type=CryptoAssetType.ALGORITHM,
+                primitive=CryptoPrimitive.SIGNATURE,
+            ),
+        ],
+    )
+    await db.scans.insert_one(
+        {
+            "_id": "s1",
+            "project_id": "p",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
 
     resp = await client.get(
         "/api/v1/analytics/crypto/pqc-migration?scope=project&scope_id=p",
@@ -47,7 +66,9 @@ async def test_pqc_endpoint_returns_items(client, db, owner_auth_headers_proj):
 
 @pytest.mark.asyncio
 async def test_pqc_endpoint_respects_scope_permission(
-    client, db, member_auth_headers,
+    client,
+    db,
+    member_auth_headers,
 ):
     resp = await client.get(
         "/api/v1/analytics/crypto/pqc-migration?scope=global",
@@ -58,7 +79,9 @@ async def test_pqc_endpoint_respects_scope_permission(
 
 @pytest.mark.asyncio
 async def test_pqc_endpoint_cache_hit_on_second_call(
-    client, db, owner_auth_headers_proj,
+    client,
+    db,
+    owner_auth_headers_proj,
 ):
     url = "/api/v1/analytics/crypto/pqc-migration?scope=user"
     r1 = await client.get(url, headers=owner_auth_headers_proj)

@@ -31,8 +31,13 @@ async def list_crypto_assets(
 
     repo = CryptoAssetRepository(db)
     items = await repo.list_by_scan(
-        project_id, scan_id, limit=limit, skip=skip,
-        asset_type=asset_type, primitive=primitive, name_search=name_search,
+        project_id,
+        scan_id,
+        limit=limit,
+        skip=skip,
+        asset_type=asset_type,
+        primitive=primitive,
+        name_search=name_search,
     )
     total = await repo.count_by_scan(project_id, scan_id)
     return {

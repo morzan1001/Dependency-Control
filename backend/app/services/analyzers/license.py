@@ -44,7 +44,10 @@ _SPDX_AND_SPLIT = re.compile(r"\s+AND\s+")
 # Known license incompatibilities: (license_a, license_b) → explanation
 # Both directions are checked automatically
 _LICENSE_INCOMPATIBILITIES: Dict[tuple, str] = {
-    ("GPL-2.0-only", "GPL-3.0-only"): "GPL-2.0-only and GPL-3.0-only are not compatible — code cannot satisfy both simultaneously.",
+    (
+        "GPL-2.0-only",
+        "GPL-3.0-only",
+    ): "GPL-2.0-only and GPL-3.0-only are not compatible — code cannot satisfy both simultaneously.",
     ("GPL-2.0-only", "GPL-3.0"): "GPL-2.0-only cannot be combined with GPL-3.0 code.",
     ("GPL-2.0-only", "AGPL-3.0"): "GPL-2.0-only is not compatible with AGPL-3.0.",
     ("GPL-2.0-only", "AGPL-3.0-only"): "GPL-2.0-only is not compatible with AGPL-3.0-only.",
@@ -71,9 +74,7 @@ _SEVERITY_RANK = {
 }
 
 
-def _check_pair_conflict(
-    a: Dict[str, str], b: Dict[str, str], seen: set
-) -> Optional[Dict[str, Any]]:
+def _check_pair_conflict(a: Dict[str, str], b: Dict[str, str], seen: set) -> Optional[Dict[str, Any]]:
     """Check if two component-license entries conflict. Returns an issue dict or None."""
     if a["license"] == b["license"]:
         return None
@@ -82,9 +83,7 @@ def _check_pair_conflict(
     if pair in seen:
         return None
 
-    explanation = _LICENSE_INCOMPATIBILITIES.get(
-        (a["license"], b["license"])
-    ) or _LICENSE_INCOMPATIBILITIES.get(
+    explanation = _LICENSE_INCOMPATIBILITIES.get((a["license"], b["license"])) or _LICENSE_INCOMPATIBILITIES.get(
         (b["license"], a["license"])
     )
     if not explanation:
@@ -650,18 +649,14 @@ class LicenseAnalyzer(Analyzer):
         # Precedence: settings (already merged from analyzer_settings.license_compliance by engine)
         # falls back to legacy top-level "license_policy" key for backward compat.
         policy_raw = settings.get("license_policy", {})
-        if not policy_raw and any(k in settings for k in (
-            "distribution_model", "deployment_model", "library_usage"
-        )):
+        if not policy_raw and any(k in settings for k in ("distribution_model", "deployment_model", "library_usage")):
             # New-style: settings come directly from analyzer_settings["license_compliance"]
             policy_raw = settings
         policy = LicensePolicy(
             distribution_model=DistributionModel(policy_raw.get("distribution_model", "distributed")),
             deployment_model=DeploymentModel(policy_raw.get("deployment_model", "network_facing")),
             library_usage=LibraryUsage(policy_raw.get("library_usage", "mixed")),
-            allow_strong_copyleft=policy_raw.get(
-                "allow_strong_copyleft", settings.get("allow_strong_copyleft", False)
-            ),
+            allow_strong_copyleft=policy_raw.get("allow_strong_copyleft", settings.get("allow_strong_copyleft", False)),
             allow_network_copyleft=policy_raw.get(
                 "allow_network_copyleft", settings.get("allow_network_copyleft", False)
             ),
@@ -730,7 +725,11 @@ class LicenseAnalyzer(Analyzer):
             # Track stats for the best choice
             self._track_expression_stats(or_groups, stats)
             issue = self._evaluate_expression(
-                comp_name, comp_version, comp_purl, or_groups, policy,
+                comp_name,
+                comp_version,
+                comp_purl,
+                or_groups,
+                policy,
             )
             if issue:
                 issue["spdx_expression"] = spdx_expr
@@ -770,9 +769,7 @@ class LicenseAnalyzer(Analyzer):
                 if self._should_include_finding(issue, is_transitive):
                     issues.append(issue)
 
-    def _track_expression_stats(
-        self, or_groups: List[List[str]], stats: Dict[str, int]
-    ) -> None:
+    def _track_expression_stats(self, or_groups: List[List[str]], stats: Dict[str, int]) -> None:
         """Track license category stats for the best OR alternative."""
         # Find the least restrictive OR group to track
         best_rank = 999
@@ -831,9 +828,7 @@ class LicenseAnalyzer(Analyzer):
             existing_reason = issue.get("context_reason", "")
             transitive_note = "Severity reduced: transitive dependency (not directly included)."
             issue["context_reason"] = (
-                f"{existing_reason} {transitive_note}".strip()
-                if existing_reason
-                else transitive_note
+                f"{existing_reason} {transitive_note}".strip() if existing_reason else transitive_note
             )
 
     @staticmethod
@@ -873,12 +868,14 @@ class LicenseAnalyzer(Analyzer):
             for lic_id, _ in self._extract_licenses(comp):
                 normalized = self._normalize_license(lic_id)
                 if normalized in self.LICENSE_DATABASE:
-                    result.append({
-                        "component": comp.get("name", "unknown"),
-                        "version": comp.get("version", "unknown"),
-                        "license": normalized,
-                        "purl": comp.get("purl", ""),
-                    })
+                    result.append(
+                        {
+                            "component": comp.get("name", "unknown"),
+                            "version": comp.get("version", "unknown"),
+                            "license": normalized,
+                            "purl": comp.get("purl", ""),
+                        }
+                    )
         return result
 
     @staticmethod
@@ -890,7 +887,7 @@ class LicenseAnalyzer(Analyzer):
         seen_conflicts: set = set()
 
         for i, a in enumerate(component_licenses):
-            for b in component_licenses[i + 1:]:
+            for b in component_licenses[i + 1 :]:
                 conflict = _check_pair_conflict(a, b, seen_conflicts)
                 if conflict:
                     issues.append(conflict)
@@ -1105,21 +1102,15 @@ class LicenseAnalyzer(Analyzer):
 
         # Weak copyleft — context: only relevant when library is modified
         if license_info.category == LicenseCategory.WEAK_COPYLEFT:
-            return self._evaluate_weak_copyleft(
-                component, version, license_info, lic_url, purl, policy
-            )
+            return self._evaluate_weak_copyleft(component, version, license_info, lic_url, purl, policy)
 
         # Strong copyleft — context: only relevant when distributing
         if license_info.category == LicenseCategory.STRONG_COPYLEFT:
-            return self._evaluate_strong_copyleft(
-                component, version, license_info, lic_url, purl, policy
-            )
+            return self._evaluate_strong_copyleft(component, version, license_info, lic_url, purl, policy)
 
         # Network copyleft — context: only relevant for network-facing services
         if license_info.category == LicenseCategory.NETWORK_COPYLEFT:
-            return self._evaluate_network_copyleft(
-                component, version, license_info, lic_url, purl, policy
-            )
+            return self._evaluate_network_copyleft(component, version, license_info, lic_url, purl, policy)
 
         # Proprietary (e.g., NC licenses) — always problematic regardless of context
         if license_info.category == LicenseCategory.PROPRIETARY:
@@ -1163,8 +1154,7 @@ class LicenseAnalyzer(Analyzer):
         context_reason = None
         if policy.library_usage == LibraryUsage.MODIFIED:
             context_reason = (
-                "Library is marked as modified — modifications to this library "
-                "must be shared under the same license."
+                "Library is marked as modified — modifications to this library must be shared under the same license."
             )
 
         return self._create_issue(
@@ -1217,8 +1207,7 @@ class LicenseAnalyzer(Analyzer):
                 purl=purl,
                 license_url=lic_url,
                 context_reason=(
-                    "Severity reduced: project is internal-only, "
-                    "GPL distribution obligations do not apply."
+                    "Severity reduced: project is internal-only, GPL distribution obligations do not apply."
                 ),
                 effective_severity=Severity.HIGH.value,
             )
@@ -1234,15 +1223,13 @@ class LicenseAnalyzer(Analyzer):
                 message=f"Strong copyleft license (open source project): {license_info.name}",
                 explanation=license_info.description,
                 recommendation=(
-                    "This project is open source. Ensure your project license is "
-                    "GPL-compatible if distributing."
+                    "This project is open source. Ensure your project license is GPL-compatible if distributing."
                 ),
                 obligations=license_info.obligations,
                 purl=purl,
                 license_url=lic_url,
                 context_reason=(
-                    "Severity reduced: project is open source, "
-                    "GPL source disclosure is already satisfied."
+                    "Severity reduced: project is open source, GPL source disclosure is already satisfied."
                 ),
                 effective_severity=Severity.HIGH.value,
             )
@@ -1355,8 +1342,7 @@ class LicenseAnalyzer(Analyzer):
                 purl=purl,
                 license_url=lic_url,
                 context_reason=(
-                    "Severity reduced: project is internal-only, but network clause "
-                    "may still apply for internal users."
+                    "Severity reduced: project is internal-only, but network clause may still apply for internal users."
                 ),
                 effective_severity=Severity.CRITICAL.value,
             )

@@ -11,7 +11,9 @@ from app.services.audit.history import record_policy_change
 
 def _rule(rule_id):
     return CryptoRule(
-        rule_id=rule_id, name=rule_id, description="",
+        rule_id=rule_id,
+        name=rule_id,
+        description="",
         finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
         default_severity=Severity.HIGH,
         source=CryptoPolicySource.CUSTOM,
@@ -22,13 +24,19 @@ def _rule(rule_id):
 async def test_record_policy_change_persists_entry():
     db = MagicMock()
     insert_mock = AsyncMock()
-    with patch(
-        "app.services.audit.history.PolicyAuditRepository",
-        return_value=MagicMock(insert=insert_mock),
-    ), patch(
-        "app.services.audit.history._dispatch_webhook", new=AsyncMock(),
-    ), patch(
-        "app.services.audit.history._notify_relevant_users", new=AsyncMock(),
+    with (
+        patch(
+            "app.services.audit.history.PolicyAuditRepository",
+            return_value=MagicMock(insert=insert_mock),
+        ),
+        patch(
+            "app.services.audit.history._dispatch_webhook",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.audit.history._notify_relevant_users",
+            new=AsyncMock(),
+        ),
     ):
         new = CryptoPolicy(scope="system", version=2, rules=[_rule("a")])
         entry = await record_policy_change(
@@ -55,13 +63,19 @@ async def test_record_policy_change_survives_webhook_failure():
     insert_mock = AsyncMock()
     dispatch_mock = AsyncMock(side_effect=RuntimeError("webhook down"))
     notify_mock = AsyncMock()
-    with patch(
-        "app.services.audit.history.PolicyAuditRepository",
-        return_value=MagicMock(insert=insert_mock),
-    ), patch(
-        "app.services.audit.history._dispatch_webhook", new=dispatch_mock,
-    ), patch(
-        "app.services.audit.history._notify_relevant_users", new=notify_mock,
+    with (
+        patch(
+            "app.services.audit.history.PolicyAuditRepository",
+            return_value=MagicMock(insert=insert_mock),
+        ),
+        patch(
+            "app.services.audit.history._dispatch_webhook",
+            new=dispatch_mock,
+        ),
+        patch(
+            "app.services.audit.history._notify_relevant_users",
+            new=notify_mock,
+        ),
     ):
         new = CryptoPolicy(scope="system", version=1, rules=[])
         # Should not raise
@@ -86,13 +100,19 @@ async def test_record_policy_change_denormalises_actor():
     db = MagicMock()
     insert_mock = AsyncMock()
     actor = MagicMock(id="u42", display_name="alice", email="alice@example.com")
-    with patch(
-        "app.services.audit.history.PolicyAuditRepository",
-        return_value=MagicMock(insert=insert_mock),
-    ), patch(
-        "app.services.audit.history._dispatch_webhook", new=AsyncMock(),
-    ), patch(
-        "app.services.audit.history._notify_relevant_users", new=AsyncMock(),
+    with (
+        patch(
+            "app.services.audit.history.PolicyAuditRepository",
+            return_value=MagicMock(insert=insert_mock),
+        ),
+        patch(
+            "app.services.audit.history._dispatch_webhook",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.audit.history._notify_relevant_users",
+            new=AsyncMock(),
+        ),
     ):
         new = CryptoPolicy(scope="project", project_id="p", version=3, rules=[_rule("a")])
         entry = await record_policy_change(

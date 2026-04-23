@@ -43,7 +43,8 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
     if existing is not None and existing.version >= CURRENT_SEED_VERSION:
         logger.info(
             "crypto_policy_seed: skipping, existing version %s >= %s",
-            existing.version, CURRENT_SEED_VERSION,
+            existing.version,
+            CURRENT_SEED_VERSION,
         )
         return
     rules = load_seed_rules()
@@ -61,5 +62,6 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
     )
     logger.info(
         "crypto_policy_seed: upserted system policy with %d rules (version %d)",
-        len(rules), CURRENT_SEED_VERSION,
+        len(rules),
+        CURRENT_SEED_VERSION,
     )

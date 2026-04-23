@@ -20,7 +20,9 @@ def _load_fixture(name: str) -> dict:
         return json.load(f)
 
 
-@pytest.mark.skip(reason="requires full ingest worker — mock DB lacks find_one_and_update; unit coverage in test_sast_normalizer_crypto_misuse.py is the primary proof")
+@pytest.mark.skip(
+    reason="requires full ingest worker — mock DB lacks find_one_and_update; unit coverage in test_sast_normalizer_crypto_misuse.py is the primary proof"
+)
 @pytest.mark.asyncio
 async def test_sast_ingest_tags_crypto_misuse_findings(client, db, api_key_headers):
     """Finding with rule_id starting with 'crypto-misuse-' must be tagged
@@ -41,6 +43,7 @@ async def test_sast_ingest_tags_crypto_misuse_findings(client, db, api_key_heade
     scan_id = resp.json()["scan_id"]
 
     import asyncio
+
     for _ in range(100):
         scan = await db.scans.find_one({"_id": scan_id})
         if scan and scan.get("status") not in ("running", "pending", None):

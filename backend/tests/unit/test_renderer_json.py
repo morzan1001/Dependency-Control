@@ -6,8 +6,12 @@ import pytest
 from app.models.compliance_report import ComplianceReport
 from app.models.finding import Severity
 from app.schemas.compliance import (
-    ControlResult, ControlStatus,
-    FrameworkEvaluation, ReportFormat, ReportFramework, ReportStatus,
+    ControlResult,
+    ControlStatus,
+    FrameworkEvaluation,
+    ReportFormat,
+    ReportFramework,
+    ReportStatus,
 )
 from app.services.compliance.renderers.json_renderer import JsonRenderer
 
@@ -21,10 +25,14 @@ def _evaluation():
         scope_description="project 'x'",
         controls=[
             ControlResult(
-                control_id="NIST-131A-01", title="MD5 disallowed",
-                description="...", status=ControlStatus.FAILED,
-                severity=Severity.HIGH, evidence_finding_ids=["f1"],
-                evidence_asset_bom_refs=["a1"], waiver_reasons=[],
+                control_id="NIST-131A-01",
+                title="MD5 disallowed",
+                description="...",
+                status=ControlStatus.FAILED,
+                severity=Severity.HIGH,
+                evidence_finding_ids=["f1"],
+                evidence_asset_bom_refs=["a1"],
+                waiver_reasons=[],
                 remediation="Replace MD5 with SHA-256.",
             ),
         ],
@@ -36,7 +44,8 @@ def _evaluation():
 
 def _report():
     return ComplianceReport(
-        scope="project", scope_id="p1",
+        scope="project",
+        scope_id="p1",
         framework=ReportFramework.NIST_SP_800_131A,
         format=ReportFormat.JSON,
         status=ReportStatus.GENERATING,

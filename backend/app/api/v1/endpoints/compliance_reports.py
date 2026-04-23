@@ -62,7 +62,8 @@ async def create_report(
 ):
     try:
         await ScopeResolver(db, current_user).resolve(
-            scope=req.scope, scope_id=req.scope_id,
+            scope=req.scope,
+            scope_id=req.scope_id,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -79,8 +80,10 @@ async def create_report(
         )
 
     report = ComplianceReport(
-        scope=req.scope, scope_id=req.scope_id,
-        framework=req.framework, format=req.format,
+        scope=req.scope,
+        scope_id=req.scope_id,
+        framework=req.framework,
+        format=req.format,
         status=ReportStatus.PENDING,
         requested_by=current_user.id,
         requested_at=datetime.now(timezone.utc),
@@ -105,9 +108,12 @@ async def list_reports(
 ):
     repo = ComplianceReportRepository(db)
     reports = await repo.list(
-        scope=scope, scope_id=scope_id,
-        framework=framework, status=status,
-        skip=skip, limit=limit,
+        scope=scope,
+        scope_id=scope_id,
+        framework=framework,
+        status=status,
+        skip=skip,
+        limit=limit,
     )
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 

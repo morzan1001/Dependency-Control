@@ -28,24 +28,34 @@ def test_sarif_passed_control_emits_pass_result():
     from datetime import datetime, timezone
     from app.models.finding import Severity
     from app.schemas.compliance import (
-        ControlResult, ControlStatus,
-        FrameworkEvaluation, ReportFramework,
+        ControlResult,
+        ControlStatus,
+        FrameworkEvaluation,
+        ReportFramework,
     )
+
     eval_ = FrameworkEvaluation(
         framework_key=ReportFramework.BSI_TR_02102,
-        framework_name="BSI TR-02102", framework_version="2024",
+        framework_name="BSI TR-02102",
+        framework_version="2024",
         generated_at=datetime.now(timezone.utc),
         scope_description="x",
         controls=[
             ControlResult(
-                control_id="BSI-02102-X", title="X", description="d",
-                status=ControlStatus.PASSED, severity=Severity.LOW,
-                evidence_finding_ids=[], evidence_asset_bom_refs=[],
-                waiver_reasons=[], remediation="n/a",
+                control_id="BSI-02102-X",
+                title="X",
+                description="d",
+                status=ControlStatus.PASSED,
+                severity=Severity.LOW,
+                evidence_finding_ids=[],
+                evidence_asset_bom_refs=[],
+                waiver_reasons=[],
+                remediation="n/a",
             ),
         ],
         summary={"passed": 1, "failed": 0, "waived": 0, "not_applicable": 0, "total": 1},
-        residual_risks=[], inputs_fingerprint="sha256:z",
+        residual_risks=[],
+        inputs_fingerprint="sha256:z",
     )
     r = SarifRenderer()
     out, _, _ = r.render(eval_, _report())

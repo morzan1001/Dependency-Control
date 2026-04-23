@@ -34,6 +34,7 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
     MongoDB's behaviour with missing fields.
     """
     import operator as _op
+
     _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
     for op_key, cmp_fn in _CMP.items():
         if op_key in ops_dict:
@@ -57,6 +58,7 @@ def _fake_match_doc(doc: dict, query: dict) -> bool:
                     return False
             if "$regex" in condition:
                 import re
+
                 flags = re.IGNORECASE if condition.get("$options") == "i" else 0
                 if not re.search(condition["$regex"], str(value or ""), flags):
                     return False
@@ -110,7 +112,7 @@ def _fake_group(docs: list, group_spec: dict) -> list:
     id_expr = group_spec.get("_id")
     accumulators = {k: v for k, v in group_spec.items() if k != "_id"}
 
-    groups: dict = {}   # key -> accumulated state
+    groups: dict = {}  # key -> accumulated state
     key_order: list = []
 
     for doc in docs:
@@ -203,6 +205,7 @@ class _FakeCursor:
                 val = doc.get(k)
                 if "$regex" in v:
                     import re
+
                     flags = re.IGNORECASE if v.get("$options") == "i" else 0
                     if not re.search(v["$regex"], str(val or ""), flags):
                         return False
@@ -221,7 +224,7 @@ class _FakeCursor:
                 key=lambda d: (d.get(self._sort_key) is None, d.get(self._sort_key)),
                 reverse=(self._sort_dir == -1),
             )
-        results = results[self._skip_n:]
+        results = results[self._skip_n :]
         if self._limit_n:
             results = results[: self._limit_n]
         return results
@@ -339,9 +342,7 @@ class _FakeCollection:
 
     async def delete_many(self, query):
         await asyncio.sleep(0)  # yield to event loop — keeps this a true coroutine
-        keys_to_delete = [
-            k for k, doc in self._docs.items() if self._doc_matches_query(doc, query)
-        ]
+        keys_to_delete = [k for k, doc in self._docs.items() if self._doc_matches_query(doc, query)]
         for k in keys_to_delete:
             del self._docs[k]
         result = MagicMock()
@@ -467,6 +468,7 @@ class _FakeDb:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def _project():
     return _make_project()
@@ -510,6 +512,7 @@ async def client(db, _project):
 
             if not username:
                 from fastapi import HTTPException
+
                 raise HTTPException(status_code=401, detail="Invalid token")
 
             # Create a user object matching the token
@@ -523,12 +526,14 @@ async def client(db, _project):
             return user
         except Exception as e:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=401, detail=str(e)) from e
 
     async def _fake_get_current_active_user(current_user: User = Depends(_fake_get_current_user)) -> User:
         """Just return the user from get_current_user."""
         if not current_user.is_active:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=400, detail="Inactive user")
         return current_user
 

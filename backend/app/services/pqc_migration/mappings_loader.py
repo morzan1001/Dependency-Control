@@ -88,6 +88,7 @@ def clear_mappings_cache() -> None:
 
 def _parse_date(s: str) -> datetime:
     from datetime import timezone
+
     return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
 
 

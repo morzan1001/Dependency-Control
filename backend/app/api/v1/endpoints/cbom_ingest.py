@@ -101,11 +101,7 @@ async def ingest_cbom(
         },
         "$set": {
             "updated_at": now,
-            **{
-                k: v
-                for k, v in payload.scan_metadata.items()
-                if k not in ("git_ref", "commit_sha")
-            },
+            **{k: v for k, v in payload.scan_metadata.items() if k not in ("git_ref", "commit_sha")},
         },
     }
 
@@ -186,8 +182,7 @@ async def _persist_crypto_assets(db, project_id: str, scan_id: str, parsed) -> N
         if not queued:
             # Worker is shutting down — mark the scan so housekeeping re-queues it.
             logger.warning(
-                "cbom_ingest: worker rejected job for scan %s (shutting down); "
-                "scan remains pending for recovery",
+                "cbom_ingest: worker rejected job for scan %s (shutting down); scan remains pending for recovery",
                 scan_id,
             )
 

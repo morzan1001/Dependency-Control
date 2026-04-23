@@ -12,11 +12,13 @@ from app.services.compliance.frameworks.base import EvaluationInput
 
 def _report(**overrides):
     base = dict(
-        scope="user", scope_id=None,
+        scope="user",
+        scope_id=None,
         framework=ReportFramework.NIST_SP_800_131A,
         format=ReportFormat.JSON,
         status=ReportStatus.PENDING,
-        requested_by="u1", requested_at=datetime.now(timezone.utc),
+        requested_by="u1",
+        requested_at=datetime.now(timezone.utc),
     )
     base.update(overrides)
     return ComplianceReport(**base)
@@ -36,8 +38,12 @@ async def test_engine_marks_report_completed_on_success():
     inputs = EvaluationInput(
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=[]),
         scope_description="u",
-        crypto_assets=[], findings=[], policy_rules=[],
-        policy_version=1, iana_catalog_version=2, scan_ids=["s1"],
+        crypto_assets=[],
+        findings=[],
+        policy_rules=[],
+        policy_version=1,
+        iana_catalog_version=2,
+        scan_ids=["s1"],
     )
     evaluation = MagicMock(summary={"total": 0})
     # Use spec=["evaluate"] so hasattr(fw, "evaluate_async") is False — the
@@ -46,22 +52,26 @@ async def test_engine_marks_report_completed_on_success():
     fw = MagicMock(spec=["evaluate"])
     fw.evaluate = MagicMock(return_value=evaluation)
 
-    resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(
-        scope="user", scope_id=None, project_ids=[])))
+    resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(scope="user", scope_id=None, project_ids=[])))
 
-    with patch(
-        "app.services.compliance.engine.ComplianceReportRepository",
-        return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
-    ), patch(
-        "app.services.compliance.engine.ScopeResolver",
-        return_value=resolver,
-    ), patch.dict(
-        "app.services.compliance.engine.FRAMEWORK_REGISTRY",
-        {ReportFramework.NIST_SP_800_131A: fw},
-        clear=False,
-    ), patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)
-    ), patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")
-    ), patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")):
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=resolver,
+        ),
+        patch.dict(
+            "app.services.compliance.engine.FRAMEWORK_REGISTRY",
+            {ReportFramework.NIST_SP_800_131A: fw},
+            clear=False,
+        ),
+        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)),
+        patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")),
+        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
+    ):
         await engine.generate(report=report, db=db, user=user)
 
     assert update_mock.call_count >= 2
@@ -94,22 +104,26 @@ async def test_engine_awaits_evaluate_async_when_available():
     fw = MagicMock(spec=["evaluate_async"])
     fw.evaluate_async = AsyncMock(return_value=evaluation)
 
-    resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(
-        scope="user", scope_id=None, project_ids=[])))
+    resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(scope="user", scope_id=None, project_ids=[])))
 
-    with patch(
-        "app.services.compliance.engine.ComplianceReportRepository",
-        return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
-    ), patch(
-        "app.services.compliance.engine.ScopeResolver",
-        return_value=resolver,
-    ), patch.dict(
-        "app.services.compliance.engine.FRAMEWORK_REGISTRY",
-        {ReportFramework.NIST_SP_800_131A: fw},
-        clear=False,
-    ), patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)
-    ), patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")
-    ), patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")):
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=resolver,
+        ),
+        patch.dict(
+            "app.services.compliance.engine.FRAMEWORK_REGISTRY",
+            {ReportFramework.NIST_SP_800_131A: fw},
+            clear=False,
+        ),
+        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)),
+        patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")),
+        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
+    ):
         await engine.generate(report=report, db=db, user=user)
 
     fw.evaluate_async.assert_awaited_once()
@@ -126,12 +140,15 @@ async def test_engine_marks_failed_on_exception():
     user = MagicMock(id="u1", permissions=frozenset())
 
     resolver = MagicMock(resolve=AsyncMock(side_effect=RuntimeError("boom")))
-    with patch(
-        "app.services.compliance.engine.ComplianceReportRepository",
-        return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
-    ), patch(
-        "app.services.compliance.engine.ScopeResolver",
-        return_value=resolver,
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=resolver,
+        ),
     ):
         await engine.generate(report=report, db=db, user=user)
 
@@ -169,19 +186,19 @@ async def test_engine_gather_inputs_builds_evaluation_input():
     policy_repo_mock = MagicMock(get_system_policy=AsyncMock(return_value=None))
 
     resolved = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
-    report = MagicMock()
-    report.scope = "user"
-    report.scope_id = None
 
     engine = ComplianceReportEngine()
-    with patch(
-        "app.services.compliance.engine.CryptoAssetRepository",
-        return_value=asset_repo_mock,
-    ), patch(
-        "app.services.compliance.engine.CryptoPolicyRepository",
-        return_value=policy_repo_mock,
+    with (
+        patch(
+            "app.services.compliance.engine.CryptoAssetRepository",
+            return_value=asset_repo_mock,
+        ),
+        patch(
+            "app.services.compliance.engine.CryptoPolicyRepository",
+            return_value=policy_repo_mock,
+        ),
     ):
-        result = await engine._gather_inputs(db, resolved, report)
+        result = await engine._gather_inputs(db, resolved)
 
     assert result.resolved is resolved
     assert "user scope" in result.scope_description

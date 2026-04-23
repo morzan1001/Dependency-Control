@@ -53,9 +53,7 @@ return {1, max_reqs - count - 1}
         self.redis = redis_client
         self.prefix = prefix
 
-    async def check_rate_limit(
-        self, user_id: str, per_minute: int, per_hour: int
-    ) -> tuple[bool, int]:
+    async def check_rate_limit(self, user_id: str, per_minute: int, per_hour: int) -> tuple[bool, int]:
         """
         Check if user is within rate limits.
 

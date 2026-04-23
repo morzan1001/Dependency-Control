@@ -8,7 +8,6 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -157,6 +156,7 @@ def _compare_versions(a: str, b: str) -> int:
     """Naive tuple comparison of numeric version parts. Returns -1/0/1.
     Falls back to lexicographic when parts are non-numeric — good enough to
     pick the 'largest' fix_version from a candidate list, not a full semver."""
+
     def parts(v: str) -> List[Any]:
         out: List[Any] = []
         for token in v.lstrip("vV=^~ ").split("."):
@@ -231,6 +231,7 @@ def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
     items of the largest list and replace the rest with a hint. Prevents
     a single tool result from blowing the LLM's context window."""
     import json as _json
+
     try:
         encoded = _json.dumps(result, default=str)
     except (TypeError, ValueError):
@@ -269,6 +270,7 @@ def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ── Crypto / CBOM standalone helpers (importable for direct use / testing) ──
+
 
 async def list_crypto_assets(
     db,
@@ -352,13 +354,14 @@ async def suggest_crypto_policy_override(
 
     Does NOT write; caller decides whether to craft an override.
     """
-    cursor = db.findings.aggregate([
-        {"$match": {"project_id": project_id, "scan_id": scan_id,
-                    "type": {"$regex": "^crypto_"}}},
-        {"$group": {"_id": "$details.rule_id", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-        {"$limit": 10},
-    ])
+    cursor = db.findings.aggregate(
+        [
+            {"$match": {"project_id": project_id, "scan_id": scan_id, "type": {"$regex": "^crypto_"}}},
+            {"$group": {"_id": "$details.rule_id", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 10},
+        ]
+    )
     top = [{"rule_id": row["_id"], "findings": row["count"]} async for row in cursor]
     return {
         "top_noisy_rules": top,
@@ -371,6 +374,7 @@ async def suggest_crypto_policy_override(
 
 
 # ── Crypto analytics standalone helpers ───────────────────────────────────
+
 
 async def get_crypto_hotspots(
     db,
@@ -385,7 +389,9 @@ async def get_crypto_hotspots(
 
     resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     resp = await CryptoHotspotService(db).hotspots(
-        resolved=resolved, group_by=group_by, limit=limit,
+        resolved=resolved,
+        group_by=group_by,
+        limit=limit,
     )
     return resp.model_dump()
 
@@ -406,8 +412,11 @@ async def get_crypto_trends(
     days = max(1, min(days, 365))
     bucket = "day" if days <= 14 else "week" if days <= 90 else "month"
     series = await CryptoTrendService(db).trend(
-        resolved=resolved, metric=metric, bucket=bucket,
-        range_start=now - timedelta(days=days), range_end=now,
+        resolved=resolved,
+        metric=metric,
+        bucket=bucket,
+        range_start=now - timedelta(days=days),
+        range_end=now,
     )
     return series.model_dump()
 
@@ -423,7 +432,10 @@ async def get_scan_delta(
     from app.services.analytics.crypto_delta import compute_scan_delta
 
     delta = await compute_scan_delta(
-        db, project_id, from_scan=from_scan_id, to_scan=to_scan_id,
+        db,
+        project_id,
+        from_scan=from_scan_id,
+        to_scan=to_scan_id,
     )
     return {
         "from_scan_id": delta.from_scan_id,
@@ -436,6 +448,7 @@ async def get_scan_delta(
 
 # ── Compliance / PQC-migration standalone helpers ─────────────────────────
 
+
 async def generate_pqc_migration_plan(
     db,
     *,
@@ -444,7 +457,9 @@ async def generate_pqc_migration_plan(
 ) -> Dict[str, Any]:
     """MCP tool: generate the PQC migration plan for one project."""
     resolved = ResolvedScope(
-        scope="project", scope_id=project_id, project_ids=[project_id],
+        scope="project",
+        scope_id=project_id,
+        project_ids=[project_id],
     )
     gen = PQCMigrationPlanGenerator(db)
     resp = await gen.generate(resolved=resolved, limit=limit)
@@ -507,8 +522,7 @@ async def get_framework_evaluation_summary(
     resolved = await resolver.resolve(scope=scope, scope_id=scope_id)
 
     engine = ComplianceReportEngine()
-    fake_report = SimpleNamespace(scope=scope, scope_id=scope_id)
-    inputs = await engine._gather_inputs(db, resolved, fake_report)
+    inputs = await engine._gather_inputs(db, resolved)
     framework_obj = FRAMEWORK_REGISTRY[fw_enum]
     if hasattr(framework_obj, "evaluate_async"):
         eval_result = await framework_obj.evaluate_async(inputs)
@@ -538,7 +552,10 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "search": {"type": "string", "description": "Optional case-insensitive substring filter on project name."},
+                    "search": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter on project name.",
+                    },
                     "limit": {"type": "integer", "description": "Max projects (default 15, max 50)."},
                 },
                 "required": [],
@@ -628,8 +645,14 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "properties": {
                     "scan_id": {"type": "string", "description": "The scan ID"},
                     "project_id": {"type": "string", "description": "The project ID"},
-                    "severity": {"type": "string", "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO"},
-                    "type": {"type": "string", "description": "Filter by type: vulnerability, secret, sast, malware, license, typosquat"},
+                    "severity": {
+                        "type": "string",
+                        "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Filter by type: vulnerability, secret, sast, malware, license, typosquat",
+                    },
                     "limit": {"type": "integer", "description": "Max findings to return (default 50)"},
                 },
                 "required": ["scan_id", "project_id"],
@@ -645,8 +668,14 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": "The project ID"},
-                    "severity": {"type": "string", "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO"},
-                    "type": {"type": "string", "description": "Filter by type: vulnerability, secret, sast, malware, license, typosquat"},
+                    "severity": {
+                        "type": "string",
+                        "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Filter by type: vulnerability, secret, sast, malware, license, typosquat",
+                    },
                     "limit": {"type": "integer", "description": "Max findings to return (default 50)"},
                 },
                 "required": ["project_id"],
@@ -676,7 +705,10 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search term (CVE ID, package name, description keyword)"},
+                    "query": {
+                        "type": "string",
+                        "description": "Search term (CVE ID, package name, description keyword)",
+                    },
                     "severity": {"type": "string", "description": "Filter by severity"},
                     "type": {"type": "string", "description": "Filter by type"},
                     "limit": {"type": "integer", "description": "Max results (default 50)"},
@@ -1021,7 +1053,10 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "component_name": {"type": "string", "description": "Package name (substring match, case-insensitive)."},
+                    "component_name": {
+                        "type": "string",
+                        "description": "Package name (substring match, case-insensitive).",
+                    },
                     "version": {"type": "string", "description": "Optional: exact version."},
                 },
                 "required": ["component_name"],
@@ -1081,7 +1116,10 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "properties": {
                     "days_open": {"type": "integer", "description": "Minimum open age in days (default 30)."},
                     "project_id": {"type": "string", "description": "Optional: restrict to one project."},
-                    "severity_min": {"type": "string", "description": "Min severity, one of CRITICAL/HIGH/MEDIUM/LOW (default HIGH)."},
+                    "severity_min": {
+                        "type": "string",
+                        "description": "Min severity, one of CRITICAL/HIGH/MEDIUM/LOW (default HIGH).",
+                    },
                     "limit": {"type": "integer", "description": "Max findings (default 10, max 25)."},
                 },
                 "required": [],
@@ -1615,9 +1653,13 @@ class ChatToolRegistry:
             cursor = db["projects"].find(query, sort=[("last_scan_at", -1)], limit=limit)
             projects = await cursor.to_list(length=limit)
             return {
-                "projects": [_serialize_doc(
-                    p, ["_id", "name", "team_id", "stats", "last_scan_at", "created_at"],
-                ) for p in projects],
+                "projects": [
+                    _serialize_doc(
+                        p,
+                        ["_id", "name", "team_id", "stats", "last_scan_at", "created_at"],
+                    )
+                    for p in projects
+                ],
                 "count": len(projects),
             }
 
@@ -1637,7 +1679,19 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
-            return {"settings": _serialize_doc(project, ["retention_days", "retention_action", "rescan_enabled", "rescan_interval", "active_analyzers", "license_policy"])}
+            return {
+                "settings": _serialize_doc(
+                    project,
+                    [
+                        "retention_days",
+                        "retention_action",
+                        "rescan_enabled",
+                        "rescan_interval",
+                        "active_analyzers",
+                        "license_policy",
+                    ],
+                )
+            }
 
         # ── Scan tools ──
         if tool_name == "get_scan_history":
@@ -1647,7 +1701,12 @@ class ChatToolRegistry:
             limit = _clamp_limit(args.get("limit"), 10)
             cursor = db["scans"].find({"project_id": args["project_id"]}, sort=[("created_at", -1)], limit=limit)
             scans = await cursor.to_list(length=limit)
-            return {"scans": [_serialize_doc(s, ["_id", "status", "branch", "commit_hash", "created_at", "completed_at", "stats"]) for s in scans]}
+            return {
+                "scans": [
+                    _serialize_doc(s, ["_id", "status", "branch", "commit_hash", "created_at", "completed_at", "stats"])
+                    for s in scans
+                ]
+            }
 
         if tool_name == "get_scan_details":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -1712,15 +1771,18 @@ class ChatToolRegistry:
             details = finding.get("details") or {}
             vulns = (details.get("vulnerabilities") or [])[:5]
             if vulns:
-                slim["vulnerabilities"] = [{
-                    "id": v.get("id"),
-                    "severity": v.get("severity"),
-                    "cvss_score": v.get("cvss_score"),
-                    "fixed_version": v.get("fixed_version"),
-                    "epss_score": v.get("epss_score"),
-                    "description": _clip_value(v.get("description") or ""),
-                    "references": (v.get("references") or [])[:3],
-                } for v in vulns]
+                slim["vulnerabilities"] = [
+                    {
+                        "id": v.get("id"),
+                        "severity": v.get("severity"),
+                        "cvss_score": v.get("cvss_score"),
+                        "fixed_version": v.get("fixed_version"),
+                        "epss_score": v.get("epss_score"),
+                        "description": _clip_value(v.get("description") or ""),
+                        "references": (v.get("references") or [])[:3],
+                    }
+                    for v in vulns
+                ]
             return {"finding": slim}
 
         if tool_name == "search_findings":
@@ -1787,11 +1849,13 @@ class ChatToolRegistry:
             pipeline = [
                 {"$match": {"project_id": {"$in": project_ids}}},
                 {"$sort": {"created_at": -1}},
-                {"$group": {
-                    "_id": "$project_id",
-                    "latest_scan_id": {"$first": "$_id"},
-                    "stats": {"$first": "$stats"},
-                }},
+                {
+                    "$group": {
+                        "_id": "$project_id",
+                        "latest_scan_id": {"$first": "$_id"},
+                        "stats": {"$first": "$stats"},
+                    }
+                },
             ]
             latest_scans = await db["scans"].aggregate(pipeline).to_list(length=len(project_ids))
             scan_ids = [s["latest_scan_id"] for s in latest_scans]
@@ -1807,15 +1871,16 @@ class ChatToolRegistry:
                 key=lambda s: (s.get("stats") or {}).get("critical", 0),
                 reverse=True,
             )[:3]
-            project_names_map = await self._project_names(
-                db, [s["_id"] for s in ranked]
-            )
-            top3 = [{
-                "project_id": s["_id"],
-                "project_name": project_names_map.get(s["_id"], ""),
-                "critical": (s.get("stats") or {}).get("critical", 0),
-                "high": (s.get("stats") or {}).get("high", 0),
-            } for s in ranked]
+            project_names_map = await self._project_names(db, [s["_id"] for s in ranked])
+            top3 = [
+                {
+                    "project_id": s["_id"],
+                    "project_name": project_names_map.get(s["_id"], ""),
+                    "critical": (s.get("stats") or {}).get("critical", 0),
+                    "high": (s.get("stats") or {}).get("high", 0),
+                }
+                for s in ranked
+            ]
             return {
                 "total_projects": len(project_ids),
                 "severity_breakdown": {r["_id"]: r["count"] for r in sev_results},
@@ -1875,12 +1940,14 @@ class ChatToolRegistry:
                 names[p["_id"]] = p.get("name", "")
             hotspots = []
             for r in results:
-                hotspots.append({
-                    "project_id": r.get("_id"),
-                    "project_name": names.get(r.get("_id"), ""),
-                    "latest_scan_id": r.get("latest_scan_id"),
-                    "stats": r.get("stats"),
-                })
+                hotspots.append(
+                    {
+                        "project_id": r.get("_id"),
+                        "project_name": names.get(r.get("_id"), ""),
+                        "latest_scan_id": r.get("latest_scan_id"),
+                        "stats": r.get("stats"),
+                    }
+                )
             return {"hotspots": hotspots}
 
         if tool_name == "get_dependency_details":
@@ -1905,7 +1972,14 @@ class ChatToolRegistry:
             if not await team_repo.is_member(args["team_id"], str(user.id)):
                 if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
                     return {"error": "Access denied"}
-            return {"team": {"id": team.id, "name": team.name, "description": team.description, "members": [m.model_dump() for m in team.members]}}
+            return {
+                "team": {
+                    "id": team.id,
+                    "name": team.name,
+                    "description": team.description,
+                    "members": [m.model_dump() for m in team.members],
+                }
+            }
 
         if tool_name == "get_team_projects":
             team = await team_repo.get_by_id(args["team_id"])
@@ -1952,9 +2026,7 @@ class ChatToolRegistry:
             # projects the user can access.
             match: Dict[str, Any] = {}
             if args.get("project_id"):
-                proj = await self._get_authorized_project(
-                    args["project_id"], user_project_query, db
-                )
+                proj = await self._get_authorized_project(args["project_id"], user_project_query, db)
                 if not proj:
                     return {"error": "Project not found or access denied"}
                 latest_scan_id = proj.get("latest_scan_id")
@@ -2059,12 +2131,7 @@ class ChatToolRegistry:
             # Group findings by component.
             groups: Dict[str, Dict[str, Any]] = {}
             for f in findings:
-                comp = (
-                    f.get("component")
-                    or f.get("component_name")
-                    or f.get("package")
-                    or f.get("package_name")
-                )
+                comp = f.get("component") or f.get("component_name") or f.get("package") or f.get("package_name")
                 if not comp:
                     continue
                 key = comp.lower()
@@ -2072,16 +2139,14 @@ class ChatToolRegistry:
                     key,
                     {
                         "component": comp,
-                        "current_version": f.get("component_version")
-                        or f.get("package_version")
-                        or f.get("version"),
+                        "current_version": f.get("component_version") or f.get("package_version") or f.get("version"),
                         "findings": [],
                         "fix_candidates": [],
                     },
                 )
                 g["findings"].append(f)
                 # Collect any fix_version hint from this finding.
-                for fv in (f.get("fixed_versions") or []):
+                for fv in f.get("fixed_versions") or []:
                     if isinstance(fv, str) and fv:
                         g["fix_candidates"].append(fv)
                 single = f.get("fix_version")
@@ -2161,9 +2226,7 @@ class ChatToolRegistry:
                 "findings_resolved": sum(s["resolves_count"] for s in steps),
                 "critical_resolved": sum(s["critical_count"] for s in steps),
                 "steps_without_fix": sum(1 for s in steps if not s["has_fix"]),
-                "breaking_changes": sum(
-                    1 for s in steps if s["breaking_change_risk"] == "high"
-                ),
+                "breaking_changes": sum(1 for s in steps if s["breaking_change_risk"] == "high"),
             }
 
             return {
@@ -2271,11 +2334,15 @@ class ChatToolRegistry:
             scan_b_id = args.get("scan_id_b")
             if not scan_a_id or not scan_b_id:
                 # Default: the two most recent scans
-                recent = await db["scans"].find(
-                    {"project_id": args["project_id"]},
-                    sort=[("created_at", -1)],
-                    limit=2,
-                ).to_list(length=2)
+                recent = (
+                    await db["scans"]
+                    .find(
+                        {"project_id": args["project_id"]},
+                        sort=[("created_at", -1)],
+                        limit=2,
+                    )
+                    .to_list(length=2)
+                )
                 if len(recent) < 2:
                     return {"error": "Need at least two scans to compare"}
                 scan_b_id = recent[0]["_id"]
@@ -2284,6 +2351,7 @@ class ChatToolRegistry:
             scan_b = await db["scans"].find_one({"_id": scan_b_id, "project_id": args["project_id"]})
             if not scan_a or not scan_b:
                 return {"error": "Scan not found in this project"}
+
             # Pull (finding_id, severity) pairs for each side
             async def _ids(scan_id: str) -> Dict[str, str]:
                 items: Dict[str, str] = {}
@@ -2314,12 +2382,16 @@ class ChatToolRegistry:
             return {
                 "scan_a": {
                     "id": scan_a_id,
-                    "created_at": scan_a.get("created_at").isoformat() if hasattr(scan_a.get("created_at"), "isoformat") else scan_a.get("created_at"),
+                    "created_at": scan_a.get("created_at").isoformat()
+                    if hasattr(scan_a.get("created_at"), "isoformat")
+                    else scan_a.get("created_at"),
                     "branch": scan_a.get("branch"),
                 },
                 "scan_b": {
                     "id": scan_b_id,
-                    "created_at": scan_b.get("created_at").isoformat() if hasattr(scan_b.get("created_at"), "isoformat") else scan_b.get("created_at"),
+                    "created_at": scan_b.get("created_at").isoformat()
+                    if hasattr(scan_b.get("created_at"), "isoformat")
+                    else scan_b.get("created_at"),
                     "branch": scan_b.get("branch"),
                 },
                 "new_findings_count": len(new_keys),
@@ -2355,10 +2427,7 @@ class ChatToolRegistry:
             return {
                 "findings": out,
                 "count": len(out),
-                "hint": (
-                    "All of these have real-world exploits. Prioritise above plain CVSS-only "
-                    "critical findings."
-                ),
+                "hint": ("All of these have real-world exploits. Prioritise above plain CVSS-only critical findings."),
             }
 
         if tool_name == "find_component_usage":
@@ -2382,15 +2451,17 @@ class ChatToolRegistry:
             names = await self._project_names(db, list({r.get("project_id") for r in rows}))
             matches = []
             for r in rows:
-                matches.append({
-                    "project_id": r.get("project_id"),
-                    "project_name": names.get(r.get("project_id"), ""),
-                    "component": r.get("name"),
-                    "version": r.get("version"),
-                    "direct_dependency": bool(r.get("direct")),
-                    "purl": r.get("purl"),
-                    "license": r.get("license"),
-                })
+                matches.append(
+                    {
+                        "project_id": r.get("project_id"),
+                        "project_name": names.get(r.get("project_id"), ""),
+                        "component": r.get("name"),
+                        "version": r.get("version"),
+                        "direct_dependency": bool(r.get("direct")),
+                        "purl": r.get("purl"),
+                        "license": r.get("license"),
+                    }
+                )
             return {"matches": matches, "count": len(matches)}
 
         if tool_name == "get_findings_by_cve":
@@ -2410,11 +2481,14 @@ class ChatToolRegistry:
             by_project: Dict[str, Dict[str, Any]] = {}
             for f in rows:
                 pid = f.get("project_id")
-                slot = by_project.setdefault(pid, {
-                    "project_id": pid,
-                    "project_name": names.get(pid, ""),
-                    "findings": [],
-                })
+                slot = by_project.setdefault(
+                    pid,
+                    {
+                        "project_id": pid,
+                        "project_name": names.get(pid, ""),
+                        "findings": [],
+                    },
+                )
                 slot["findings"].append(_serialize_finding_for_llm(f))
             return {
                 "cve_id": cve,
@@ -2451,17 +2525,21 @@ class ChatToolRegistry:
                 "description": _clip_value(vuln.get("description") or ""),
                 "fixed_version": vuln.get("fixed_version") or details.get("fixed_version"),
                 "references": (vuln.get("references") or [])[:5],
-                "affected_component": f"{finding.get('component','')}@{finding.get('version','')}",
+                "affected_component": f"{finding.get('component', '')}@{finding.get('version', '')}",
                 "source_scanners": vuln.get("scanners"),
             }
 
         if tool_name == "get_stale_findings":
             from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
             days = _clamp_limit(args.get("days_open"), 30, maximum=365)
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
             sev_min = (args.get("severity_min") or "HIGH").upper()
-            allowed_sev = [s for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-                           if _SEVERITY_RANK.get(s, 0) >= _SEVERITY_RANK.get(sev_min, 3)]
+            allowed_sev = [
+                s
+                for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+                if _SEVERITY_RANK.get(s, 0) >= _SEVERITY_RANK.get(sev_min, 3)
+            ]
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
                 return {"findings": [], "message": "No scan data available"}
@@ -2526,6 +2604,7 @@ class ChatToolRegistry:
 
         if tool_name == "get_expiring_waivers":
             from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
             days = _clamp_limit(args.get("days"), 30, maximum=365)
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
             now = _dt.now(_tz.utc)
@@ -2544,15 +2623,17 @@ class ChatToolRegistry:
             out = []
             for w in rows:
                 expires = w.get("expiration_date")
-                out.append({
-                    "project_id": w.get("project_id"),
-                    "project_name": names.get(w.get("project_id"), ""),
-                    "finding_id": w.get("finding_id"),
-                    "vulnerability_id": w.get("vulnerability_id"),
-                    "reason": _clip_value(w.get("reason") or ""),
-                    "expires_at": expires.isoformat() if hasattr(expires, "isoformat") else expires,
-                    "package": f"{w.get('package_name','')}@{w.get('package_version','')}",
-                })
+                out.append(
+                    {
+                        "project_id": w.get("project_id"),
+                        "project_name": names.get(w.get("project_id"), ""),
+                        "finding_id": w.get("finding_id"),
+                        "vulnerability_id": w.get("vulnerability_id"),
+                        "reason": _clip_value(w.get("reason") or ""),
+                        "expires_at": expires.isoformat() if hasattr(expires, "isoformat") else expires,
+                        "package": f"{w.get('package_name', '')}@{w.get('package_version', '')}",
+                    }
+                )
             return {"waivers": out, "count": len(out), "window_days": days}
 
         if tool_name == "get_team_risk_overview":
@@ -2562,7 +2643,9 @@ class ChatToolRegistry:
             if not await team_repo.is_member(args["team_id"], str(user.id)):
                 if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
                     return {"error": "Access denied"}
-            cursor = db["projects"].find({"team_id": args["team_id"]}, {"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1})
+            cursor = db["projects"].find(
+                {"team_id": args["team_id"]}, {"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1}
+            )
             projects = await cursor.to_list(length=500)
             totals: Dict[str, int] = {}
             risky = []
@@ -2570,16 +2653,17 @@ class ChatToolRegistry:
                 stats = p.get("stats") or {}
                 for sev in ("critical", "high", "medium", "low"):
                     totals[sev] = totals.get(sev, 0) + int(stats.get(sev, 0) or 0)
-                risky.append((
-                    int(stats.get("critical", 0) or 0),
-                    int(stats.get("high", 0) or 0),
-                    p.get("_id"),
-                    p.get("name", ""),
-                ))
+                risky.append(
+                    (
+                        int(stats.get("critical", 0) or 0),
+                        int(stats.get("high", 0) or 0),
+                        p.get("_id"),
+                        p.get("name", ""),
+                    )
+                )
             risky.sort(reverse=True)
             top3 = [
-                {"project_id": pid, "project_name": name, "critical": c, "high": h}
-                for c, h, pid, name in risky[:3]
+                {"project_id": pid, "project_name": name, "critical": c, "high": h} for c, h, pid, name in risky[:3]
             ]
             return {
                 "team_id": args["team_id"],
@@ -2591,6 +2675,7 @@ class ChatToolRegistry:
 
         if tool_name == "get_projects_without_recent_scan":
             from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
             days = _clamp_limit(args.get("days"), 14, maximum=365)
             limit = _clamp_limit(args.get("limit"), 10, maximum=50)
             cutoff = _dt.now(_tz.utc) - _td(days=days)
@@ -2608,12 +2693,14 @@ class ChatToolRegistry:
             out = []
             for p in rows:
                 last = p.get("last_scan_at")
-                out.append({
-                    "project_id": p.get("_id"),
-                    "project_name": p.get("name", ""),
-                    "last_scan_at": last.isoformat() if hasattr(last, "isoformat") else last,
-                    "never_scanned": last is None,
-                })
+                out.append(
+                    {
+                        "project_id": p.get("_id"),
+                        "project_name": p.get("name", ""),
+                        "last_scan_at": last.isoformat() if hasattr(last, "isoformat") else last,
+                        "never_scanned": last is None,
+                    }
+                )
             return {"projects": out, "count": len(out), "threshold_days": days}
 
         # ── Reachability tools ──
@@ -2672,7 +2759,9 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(webhook.get("project_id", ""), user_project_query, db)
             if not project:
                 return {"error": "Access denied"}
-            cursor = db["webhook_deliveries"].find({"webhook_id": args["webhook_id"]}, sort=[("timestamp", -1)], limit=20)
+            cursor = db["webhook_deliveries"].find(
+                {"webhook_id": args["webhook_id"]}, sort=[("timestamp", -1)], limit=20
+            )
             deliveries = await cursor.to_list(length=20)
             return {"deliveries": [_serialize_doc(d) for d in deliveries]}
 
@@ -2683,6 +2772,7 @@ class ChatToolRegistry:
 
         if tool_name == "get_system_health":
             from app.core.cache import cache_service
+
             cache_health = await cache_service.health_check()
             return {"database": "connected", "cache": cache_health}
 
@@ -2725,9 +2815,7 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
-            return await suggest_crypto_policy_override(
-                db, project_id=args["project_id"], scan_id=args["scan_id"]
-            )
+            return await suggest_crypto_policy_override(db, project_id=args["project_id"], scan_id=args["scan_id"])
 
         # ── Crypto Analytics tools ──
         if tool_name == "get_crypto_hotspots":
@@ -2837,9 +2925,7 @@ class ChatToolRegistry:
         if not user_project_query:
             # Empty query => build_user_project_query confirmed PROJECT_READ_ALL.
             return await db["projects"].find_one({"_id": project_id})
-        return await db["projects"].find_one({
-            "$and": [{"_id": project_id}, user_project_query]
-        })
+        return await db["projects"].find_one({"$and": [{"_id": project_id}, user_project_query]})
 
     async def _get_authorized_project_ids(
         self, user_project_query: Dict[str, Any], db: AsyncIOMotorDatabase
@@ -2861,9 +2947,7 @@ class ChatToolRegistry:
         scope and only that single entry is returned (empty dict on access denial).
         """
         if restrict_to_project_id:
-            proj = await self._get_authorized_project(
-                restrict_to_project_id, user_project_query, db
-            )
+            proj = await self._get_authorized_project(restrict_to_project_id, user_project_query, db)
             if not proj or not proj.get("latest_scan_id"):
                 return {}
             return {restrict_to_project_id: proj["latest_scan_id"]}
@@ -2880,9 +2964,7 @@ class ChatToolRegistry:
         return {row["_id"]: row["latest_scan_id"] for row in rows if row.get("latest_scan_id")}
 
     @staticmethod
-    async def _project_names(
-        db: AsyncIOMotorDatabase, project_ids: List[str]
-    ) -> Dict[str, str]:
+    async def _project_names(db: AsyncIOMotorDatabase, project_ids: List[str]) -> Dict[str, str]:
         """Bulk lookup project name by id, skipping None/empty inputs."""
         cleaned = [pid for pid in project_ids if pid]
         if not cleaned:

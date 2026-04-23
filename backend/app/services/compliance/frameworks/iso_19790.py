@@ -32,16 +32,18 @@ class Iso19790Framework:
         iso_controls: List[ControlDefinition] = []
         for c in self._fips.controls:
             iso_id = c.control_id.replace("FIPS-140-3-", "ISO-19790-")
-            iso_controls.append(ControlDefinition(
-                control_id=iso_id,
-                title=c.title,
-                description=c.description,
-                severity=c.severity,
-                remediation=c.remediation,
-                maps_to_rule_ids=c.maps_to_rule_ids,
-                maps_to_finding_types=c.maps_to_finding_types,
-                custom_evaluator=c.custom_evaluator,
-            ))
+            iso_controls.append(
+                ControlDefinition(
+                    control_id=iso_id,
+                    title=c.title,
+                    description=c.description,
+                    severity=c.severity,
+                    remediation=c.remediation,
+                    maps_to_rule_ids=c.maps_to_rule_ids,
+                    maps_to_finding_types=c.maps_to_finding_types,
+                    custom_evaluator=c.custom_evaluator,
+                )
+            )
         return iso_controls
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:

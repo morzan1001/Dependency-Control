@@ -34,6 +34,7 @@ def _load(name):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _MinimalAggregator:
     """Stub aggregator that discards results — we only care about DB side-effects."""
 
@@ -50,6 +51,7 @@ class _MinimalAggregator:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
@@ -68,6 +70,7 @@ async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
 
     # _process_sbom needs a minimal fs mock for GridFS (not used for inline dicts)
     from unittest.mock import MagicMock, AsyncMock
+
     fs = MagicMock()
     fs.open_download_stream = AsyncMock()
 
@@ -78,15 +81,13 @@ async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
         db=db,
         fs=fs,
         aggregator=aggregator,
-        active_analyzers=[],       # no vuln analyzers needed for this test
+        active_analyzers=[],  # no vuln analyzers needed for this test
         system_settings=None,
         project_id=project_id,
     )
 
     count = await CryptoAssetRepository(db).count_by_scan(project_id, scan_id)
-    assert count == 1, (
-        f"Expected 1 CryptoAsset (SHA-1) from embedded CBOM, got {count}"
-    )
+    assert count == 1, f"Expected 1 CryptoAsset (SHA-1) from embedded CBOM, got {count}"
 
 
 @pytest.mark.asyncio
@@ -111,6 +112,7 @@ async def test_sbom_without_crypto_components_persists_no_crypto_assets(db):
     scan_id = "scan-no-crypto-001"
 
     from unittest.mock import MagicMock, AsyncMock
+
     fs = MagicMock()
     fs.open_download_stream = AsyncMock()
 

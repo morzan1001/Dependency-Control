@@ -47,9 +47,7 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
         asset_prim = _coerce_primitive(asset.primitive)
         if asset_prim not in _QUANTUM_VULNERABLE_PRIMITIVES:
             return False
-        if rule.match_name_patterns and not _name_or_variant_matches(
-            asset, rule.match_name_patterns
-        ):
+        if rule.match_name_patterns and not _name_or_variant_matches(asset, rule.match_name_patterns):
             return False
 
     return True

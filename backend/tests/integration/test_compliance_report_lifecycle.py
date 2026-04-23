@@ -15,12 +15,15 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_report_post_then_get_then_download(
-    client, db, owner_auth_headers_proj,
+    client,
+    db,
+    owner_auth_headers_proj,
 ):
     resp = await client.post(
         "/api/v1/compliance/reports",
         json={
-            "scope": "project", "scope_id": "p",
+            "scope": "project",
+            "scope_id": "p",
             "framework": "nist-sp-800-131a",
             "format": "json",
         },
@@ -62,8 +65,7 @@ async def test_list_reports(client, db, owner_auth_headers_proj):
     for _ in range(2):
         resp = await client.post(
             "/api/v1/compliance/reports",
-            json={"scope": "project", "scope_id": "p",
-                  "framework": "bsi-tr-02102", "format": "csv"},
+            json={"scope": "project", "scope_id": "p", "framework": "bsi-tr-02102", "format": "csv"},
             headers=owner_auth_headers_proj,
         )
         assert resp.status_code == 202, resp.text
@@ -81,8 +83,7 @@ async def test_list_reports(client, db, owner_auth_headers_proj):
 async def test_delete_report(client, db, owner_auth_headers_proj):
     resp = await client.post(
         "/api/v1/compliance/reports",
-        json={"scope": "project", "scope_id": "p",
-              "framework": "cnsa-2.0", "format": "json"},
+        json={"scope": "project", "scope_id": "p", "framework": "cnsa-2.0", "format": "json"},
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 202, resp.text

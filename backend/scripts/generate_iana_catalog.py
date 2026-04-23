@@ -112,15 +112,17 @@ def main() -> int:
             if "Reserved" in (row.get("Recommended", "") + row.get("Description", "")):
                 continue
             comps = parse_components(name)
-            entries.append({
-                "name": name,
-                "value": value,
-                "key_exchange": comps["key_exchange"],
-                "authentication": comps["authentication"],
-                "cipher": comps["cipher"],
-                "mac": comps["mac"],
-                "weaknesses": derive_weaknesses(name),
-            })
+            entries.append(
+                {
+                    "name": name,
+                    "value": value,
+                    "key_exchange": comps["key_exchange"],
+                    "authentication": comps["authentication"],
+                    "cipher": comps["cipher"],
+                    "mac": comps["mac"],
+                    "weaknesses": derive_weaknesses(name),
+                }
+            )
 
     doc = {
         "version": 1,

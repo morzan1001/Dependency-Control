@@ -6,7 +6,9 @@ from app.services.audit.history import compute_change_summary
 
 def _rule(rule_id, enabled=True, severity=Severity.HIGH):
     return CryptoRule(
-        rule_id=rule_id, name=rule_id, description="",
+        rule_id=rule_id,
+        name=rule_id,
+        description="",
         finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
         default_severity=severity,
         source=CryptoPolicySource.CUSTOM,

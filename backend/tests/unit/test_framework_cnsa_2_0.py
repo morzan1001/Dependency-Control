@@ -8,8 +8,12 @@ def _input():
     return EvaluationInput(
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
         scope_description="user scope",
-        crypto_assets=[], findings=[], policy_rules=[],
-        policy_version=1, iana_catalog_version=1, scan_ids=["s1"],
+        crypto_assets=[],
+        findings=[],
+        policy_rules=[],
+        policy_version=1,
+        iana_catalog_version=1,
+        scan_ids=["s1"],
     )
 
 

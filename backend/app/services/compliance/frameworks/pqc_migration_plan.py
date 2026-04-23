@@ -18,8 +18,12 @@ from typing import Dict, List
 
 from app.models.finding import Severity
 from app.schemas.compliance import (
-    ControlDefinition, ControlResult, ControlStatus,
-    FrameworkEvaluation, ReportFramework, ResidualRisk,
+    ControlDefinition,
+    ControlResult,
+    ControlStatus,
+    FrameworkEvaluation,
+    ReportFramework,
+    ResidualRisk,
 )
 from app.schemas.pqc_migration import MigrationItem, MigrationPlanResponse
 from app.services.compliance.frameworks.base import EvaluationInput
@@ -68,7 +72,8 @@ class PQCMigrationPlanFramework:
             raise ValueError("EvaluationInput.db is required for PQC meta-framework")
 
         plan = await PQCMigrationPlanGenerator(data.db).generate(
-            resolved=data.resolved, limit=1000,
+            resolved=data.resolved,
+            limit=1000,
         )
 
         controls = [_item_to_control(item) for item in plan.items]
@@ -103,10 +108,7 @@ def _item_to_control(item: MigrationItem) -> ControlResult:
         evidence_finding_ids=[],
         evidence_asset_bom_refs=[item.asset_bom_ref],
         waiver_reasons=[],
-        remediation=(
-            f"Replace {item.source_family} with {item.recommended_pqc} "
-            f"per {item.recommended_standard}."
-        ),
+        remediation=(f"Replace {item.source_family} with {item.recommended_pqc} per {item.recommended_standard}."),
     )
 
 
@@ -120,7 +122,10 @@ def _status_value(status) -> str:
 
 def _summary(controls: List[ControlResult]) -> Dict[str, int]:
     counts = {
-        "passed": 0, "failed": 0, "waived": 0, "not_applicable": 0,
+        "passed": 0,
+        "failed": 0,
+        "waived": 0,
+        "not_applicable": 0,
         "total": len(controls),
     }
     for c in controls:
@@ -132,8 +137,10 @@ def _summary(controls: List[ControlResult]) -> Dict[str, int]:
 def _residual_risks(controls: List[ControlResult]) -> List[ResidualRisk]:
     return [
         ResidualRisk(
-            control_id=c.control_id, title=c.title,
-            severity=c.severity, description=c.description,
+            control_id=c.control_id,
+            title=c.title,
+            severity=c.severity,
+            description=c.description,
         )
         for c in controls
         if _status_value(c.status) == "failed"

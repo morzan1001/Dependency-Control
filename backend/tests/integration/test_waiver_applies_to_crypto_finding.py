@@ -36,6 +36,7 @@ from tests.mocks.mongodb import create_mock_collection, create_mock_db
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _crypto_waiver(finding_type: FindingType, **extra) -> Waiver:
     """Build a type-scoped Waiver targeting the given FindingType."""
     return Waiver(
@@ -51,6 +52,7 @@ def _crypto_waiver(finding_type: FindingType, **extra) -> Waiver:
 # Tests: _build_waiver_query (pure function, no DB required)
 # ---------------------------------------------------------------------------
 
+
 def test_build_waiver_query_crypto_weak_algorithm():
     """_build_waiver_query maps finding_type → 'type' field in the query dict.
 
@@ -62,9 +64,7 @@ def test_build_waiver_query_crypto_weak_algorithm():
     query = _build_waiver_query(waiver)
 
     # The 'finding_type' waiver field maps to the 'type' field on findings
-    assert "type" in query, (
-        f"Expected 'type' key in query, got: {query!r}"
-    )
+    assert "type" in query, f"Expected 'type' key in query, got: {query!r}"
     assert query["type"] == "crypto_weak_algorithm", (
         f"Expected query['type'] == 'crypto_weak_algorithm', got: {query['type']!r}"
     )
@@ -101,6 +101,7 @@ def test_build_waiver_query_component_scoped():
 # ---------------------------------------------------------------------------
 # Tests: FindingRepository.apply_finding_waiver (uses mock collection)
 # ---------------------------------------------------------------------------
+
 
 def _make_repo_with_mock_col(modified_count: int):
     """Create a FindingRepository backed by a mock collection.

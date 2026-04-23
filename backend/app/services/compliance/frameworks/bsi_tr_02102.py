@@ -10,10 +10,7 @@ from app.services.compliance.frameworks.nist_sp_800_131a import (
     _derive_controls_from_seed,
 )
 
-_SEED_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "services" / "crypto_policy" / "seed" / "bsi_tr_02102.yaml"
-)
+_SEED_PATH = Path(__file__).resolve().parents[3] / "services" / "crypto_policy" / "seed" / "bsi_tr_02102.yaml"
 
 
 class BsiTr02102Framework:
@@ -21,8 +18,7 @@ class BsiTr02102Framework:
     name = "BSI TR-02102-1 (Cryptographic Mechanisms: Recommendations and Key Lengths)"
     version = "2024"
     source_url = (
-        "https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/"
-        "TechGuidelines/TG02102/BSI-TR-02102-1.html"
+        "https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html"
     )
     disclaimer = None
 

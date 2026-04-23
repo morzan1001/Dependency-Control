@@ -24,22 +24,28 @@ async def get_pqc_migration_plan(
 ):
     try:
         resolved = await ScopeResolver(db, current_user).resolve(
-            scope=scope, scope_id=scope_id,
+            scope=scope,
+            scope_id=scope_id,
         )
     except ScopeResolutionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     cache = get_analytics_cache()
     cache_key = (
-        "pqc-migration", scope, scope_id, current_user.id,
-        limit, CURRENT_MAPPINGS_VERSION,
+        "pqc-migration",
+        scope,
+        scope_id,
+        current_user.id,
+        limit,
+        CURRENT_MAPPINGS_VERSION,
     )
     hit, cached = cache.get(cache_key)
     if hit:
         return cached
 
     resp = await PQCMigrationPlanGenerator(db).generate(
-        resolved=resolved, limit=limit,
+        resolved=resolved,
+        limit=limit,
     )
     cache.set(cache_key, resp)
     return resp

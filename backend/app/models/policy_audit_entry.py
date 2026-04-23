@@ -20,23 +20,14 @@ class PolicyAuditEntry(BaseModel):
         validation_alias="_id",
         serialization_alias="_id",
     )
-    policy_scope: Literal["system", "project"] = Field(
-        ..., description="Scope of the audited policy"
-    )
-    project_id: Optional[str] = Field(
-        None, description="Project ID when scope='project', None for system policy"
-    )
-    version: int = Field(
-        ..., ge=0, description="Version of the CryptoPolicy at time of save"
-    )
+    policy_scope: Literal["system", "project"] = Field(..., description="Scope of the audited policy")
+    project_id: Optional[str] = Field(None, description="Project ID when scope='project', None for system policy")
+    version: int = Field(..., ge=0, description="Version of the CryptoPolicy at time of save")
     action: PolicyAuditAction = Field(..., description="Action that produced this entry")
-    actor_user_id: Optional[str] = Field(
-        None, description="User who triggered the change, None for SEED"
-    )
+    actor_user_id: Optional[str] = Field(None, description="User who triggered the change, None for SEED")
     actor_display_name: Optional[str] = Field(
         None,
-        description="Denormalised display name — preserves attribution "
-                    "if the user is later deleted",
+        description="Denormalised display name — preserves attribution if the user is later deleted",
     )
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -51,9 +42,7 @@ class PolicyAuditEntry(BaseModel):
         max_length=200,
         description="Human-readable one-line summary of what changed",
     )
-    comment: Optional[str] = Field(
-        None, max_length=1000, description="User-entered comment at save time"
-    )
+    comment: Optional[str] = Field(None, max_length=1000, description="User-entered comment at save time")
     reverted_from_version: Optional[int] = Field(
         None,
         description="For REVERT actions: the source version being restored",

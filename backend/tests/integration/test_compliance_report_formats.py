@@ -44,12 +44,14 @@ def _install_fake_pipeline(monkeypatch):
     store: dict = {}
 
     async def _fake_store(self, db_, artifact_bytes, filename, mime_type):
-        key = f"art-{len(store)+1}"
+        key = f"art-{len(store) + 1}"
         store[key] = {"bytes": artifact_bytes, "mime": mime_type, "filename": filename}
         return key
 
     monkeypatch.setattr(
-        engine_mod.ComplianceReportEngine, "_store_artifact", _fake_store,
+        engine_mod.ComplianceReportEngine,
+        "_store_artifact",
+        _fake_store,
     )
 
     class _FakeStream:
@@ -85,20 +87,27 @@ def _install_fake_pipeline(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fmt,mime", [
-    ("json", "application/json"),
-    ("csv", "text/csv"),
-    ("sarif", "application/sarif+json"),
-])
+@pytest.mark.parametrize(
+    "fmt,mime",
+    [
+        ("json", "application/json"),
+        ("csv", "text/csv"),
+        ("sarif", "application/sarif+json"),
+    ],
+)
 async def test_each_format_renders(
-    client, db, owner_auth_headers_proj, fmt, mime, monkeypatch,
+    client,
+    db,
+    owner_auth_headers_proj,
+    fmt,
+    mime,
+    monkeypatch,
 ):
     _install_fake_pipeline(monkeypatch)
 
     resp = await client.post(
         "/api/v1/compliance/reports",
-        json={"scope": "project", "scope_id": "p",
-              "framework": "nist-sp-800-131a", "format": fmt},
+        json={"scope": "project", "scope_id": "p", "framework": "nist-sp-800-131a", "format": fmt},
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 202, resp.text
@@ -115,10 +124,7 @@ async def test_each_format_renders(
         await asyncio.sleep(0.1)
 
     if g is None or g.json().get("status") != "completed":
-        pytest.skip(
-            f"fake DB limitation: engine could not complete "
-            f"({g.json() if g else 'no response'})"
-        )
+        pytest.skip(f"fake DB limitation: engine could not complete ({g.json() if g else 'no response'})")
 
     dl = await client.get(
         f"/api/v1/compliance/reports/{report_id}/download",
@@ -132,7 +138,10 @@ async def test_each_format_renders(
 
 @pytest.mark.asyncio
 async def test_pdf_format_if_weasyprint_available(
-    client, db, owner_auth_headers_proj, monkeypatch,
+    client,
+    db,
+    owner_auth_headers_proj,
+    monkeypatch,
 ):
     try:
         import weasyprint  # noqa: F401
@@ -143,8 +152,7 @@ async def test_pdf_format_if_weasyprint_available(
 
     resp = await client.post(
         "/api/v1/compliance/reports",
-        json={"scope": "project", "scope_id": "p",
-              "framework": "nist-sp-800-131a", "format": "pdf"},
+        json={"scope": "project", "scope_id": "p", "framework": "nist-sp-800-131a", "format": "pdf"},
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 202, resp.text
@@ -161,10 +169,7 @@ async def test_pdf_format_if_weasyprint_available(
         await asyncio.sleep(0.1)
 
     if g is None or g.json().get("status") != "completed":
-        pytest.skip(
-            f"fake DB limitation: PDF generation could not complete "
-            f"({g.json() if g else 'no response'})"
-        )
+        pytest.skip(f"fake DB limitation: PDF generation could not complete ({g.json() if g else 'no response'})")
 
     dl = await client.get(
         f"/api/v1/compliance/reports/{report_id}/download",

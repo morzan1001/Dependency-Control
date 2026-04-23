@@ -75,9 +75,7 @@ class _RpcError(Exception):
         self.message = message
 
 
-async def _resolve_user_from_token(
-    authorization: str, db
-) -> tuple[User, Dict[str, Any]]:
+async def _resolve_user_from_token(authorization: str, db) -> tuple[User, Dict[str, Any]]:
     """Validate Bearer token and return the (user, key_doc) pair.
 
     Raises HTTPException on any failure so FastAPI serialises it correctly.
@@ -118,11 +116,13 @@ def _tools_list_payload() -> Dict[str, Any]:
     tools = []
     for td in get_tool_definitions():
         fn = td.get("function", {})
-        tools.append({
-            "name": fn.get("name", ""),
-            "description": fn.get("description", ""),
-            "inputSchema": fn.get("parameters", {"type": "object", "properties": {}}),
-        })
+        tools.append(
+            {
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "inputSchema": fn.get("parameters", {"type": "object", "properties": {}}),
+            }
+        )
     return {"tools": tools}
 
 

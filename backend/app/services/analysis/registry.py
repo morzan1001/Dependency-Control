@@ -54,7 +54,7 @@ analyzers: Dict[str, Analyzer] = {
         finding_types={FindingType.CRYPTO_QUANTUM_VULNERABLE},
     ),
     "crypto_certificate_lifecycle": CertificateLifecycleAnalyzer(),
-    "crypto_protocol_cipher":       ProtocolCipherSuiteAnalyzer(),
+    "crypto_protocol_cipher": ProtocolCipherSuiteAnalyzer(),
 }
 
 # Post-processing analyzers that enrich existing findings

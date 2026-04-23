@@ -11,9 +11,13 @@ from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 def _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=2048, bom_ref="r"):
     return CryptoAsset(
-        project_id="p1", scan_id="s1", bom_ref=bom_ref,
-        name=name, asset_type=CryptoAssetType.ALGORITHM,
-        primitive=primitive, key_size_bits=key_size_bits,
+        project_id="p1",
+        scan_id="s1",
+        bom_ref=bom_ref,
+        name=name,
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=primitive,
+        key_size_bits=key_size_bits,
     )
 
 
@@ -35,7 +39,8 @@ async def test_generate_maps_rsa_pke_to_ml_kem():
     db = MagicMock()
     gen = PQCMigrationPlanGenerator(db)
     with patch.object(
-        gen, "_list_vulnerable_assets",
+        gen,
+        "_list_vulnerable_assets",
         new=AsyncMock(return_value=[_asset(name="RSA", primitive=CryptoPrimitive.PKE)]),
     ):
         resp = await gen.generate(
@@ -55,7 +60,8 @@ async def test_generate_sorts_items_descending_priority():
     weak = _asset(key_size_bits=1024, bom_ref="r1")
     strong = _asset(key_size_bits=4096, bom_ref="r2")
     with patch.object(
-        gen, "_list_vulnerable_assets",
+        gen,
+        "_list_vulnerable_assets",
         new=AsyncMock(return_value=[strong, weak]),
     ):
         resp = await gen.generate(
@@ -69,7 +75,8 @@ async def test_generate_alias_resolution():
     db = MagicMock()
     gen = PQCMigrationPlanGenerator(db)
     with patch.object(
-        gen, "_list_vulnerable_assets",
+        gen,
+        "_list_vulnerable_assets",
         new=AsyncMock(return_value=[_asset(name="Diffie-Hellman", primitive=CryptoPrimitive.KEM)]),
     ):
         resp = await gen.generate(

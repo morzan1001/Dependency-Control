@@ -7,8 +7,7 @@ from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.policy_audit import PolicyAuditAction
 
 
-def _entry(version=1, policy_scope="system", project_id=None,
-           ts=None, action=PolicyAuditAction.UPDATE):
+def _entry(version=1, policy_scope="system", project_id=None, ts=None, action=PolicyAuditAction.UPDATE):
     return PolicyAuditEntry(
         policy_scope=policy_scope,
         project_id=project_id,
@@ -64,7 +63,9 @@ async def test_delete_older_than(db):
 
     cutoff = now - timedelta(days=90)
     deleted = await repo.delete_older_than(
-        policy_scope="system", project_id=None, cutoff=cutoff,
+        policy_scope="system",
+        project_id=None,
+        cutoff=cutoff,
     )
     assert deleted == 1
     remaining = await repo.list(policy_scope="system", limit=10)

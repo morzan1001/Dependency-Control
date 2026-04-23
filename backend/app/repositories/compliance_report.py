@@ -20,9 +20,7 @@ class ComplianceReportRepository:
         self._col = db[self.COLLECTION]
 
     async def ensure_indexes(self) -> None:
-        await self._col.create_index(
-            [("scope", 1), ("scope_id", 1), ("framework", 1), ("requested_at", -1)]
-        )
+        await self._col.create_index([("scope", 1), ("scope_id", 1), ("framework", 1), ("requested_at", -1)])
         await self._col.create_index([("status", 1)])
         await self._col.create_index([("expires_at", 1)])
         await self._col.create_index([("requested_by", 1), ("status", 1)])
@@ -35,29 +33,32 @@ class ComplianceReportRepository:
         return ComplianceReport.model_validate(doc) if doc else None
 
     async def list(
-        self, *,
+        self,
+        *,
         scope: Optional[str] = None,
         scope_id: Optional[str] = None,
         framework: Optional[ReportFramework] = None,
         status: Optional[ReportStatus] = None,
-        skip: int = 0, limit: int = 50,
+        skip: int = 0,
+        limit: int = 50,
     ) -> List[ComplianceReport]:
         query: Dict[str, Any] = {}
-        if scope: query["scope"] = scope
-        if scope_id: query["scope_id"] = scope_id
-        if framework: query["framework"] = framework.value if hasattr(framework, "value") else framework
-        if status: query["status"] = status.value if hasattr(status, "value") else status
-        cursor = (
-            self._col.find(query)
-            .sort("requested_at", DESCENDING)
-            .skip(skip)
-            .limit(limit)
-        )
+        if scope:
+            query["scope"] = scope
+        if scope_id:
+            query["scope_id"] = scope_id
+        if framework:
+            query["framework"] = framework.value if hasattr(framework, "value") else framework
+        if status:
+            query["status"] = status.value if hasattr(status, "value") else status
+        cursor = self._col.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [ComplianceReport.model_validate(d) for d in docs]
 
     async def update_status(
-        self, report_id: str, *,
+        self,
+        report_id: str,
+        *,
         status: ReportStatus,
         artifact_gridfs_id: Optional[str] = None,
         artifact_filename: Optional[str] = None,
@@ -88,10 +89,12 @@ class ComplianceReportRepository:
         await self._col.update_one({"_id": report_id}, {"$set": update})
 
     async def count_pending_for_user(self, user_id: str) -> int:
-        return await self._col.count_documents({
-            "requested_by": user_id,
-            "status": {"$in": ["pending", "generating"]},
-        })
+        return await self._col.count_documents(
+            {
+                "requested_by": user_id,
+                "status": {"$in": ["pending", "generating"]},
+            }
+        )
 
     async def delete(self, report_id: str) -> None:
         await self._col.delete_one({"_id": report_id})

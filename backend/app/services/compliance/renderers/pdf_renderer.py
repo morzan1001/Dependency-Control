@@ -22,8 +22,11 @@ class PdfRenderer:
     extension = "pdf"
 
     def render(
-        self, evaluation: FrameworkEvaluation, report: ComplianceReport,
-        *, disclaimer: Optional[str] = None,
+        self,
+        evaluation: FrameworkEvaluation,
+        report: ComplianceReport,
+        *,
+        disclaimer: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
         # Lazy imports so module import never fails on missing native libs.
         from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -34,8 +37,9 @@ class PdfRenderer:
             autoescape=select_autoescape(["html"]),
         )
         tpl = env.get_template("base_report.html")
-        fw_key = evaluation.framework_key if isinstance(evaluation.framework_key, str) \
-                 else evaluation.framework_key.value
+        fw_key = (
+            evaluation.framework_key if isinstance(evaluation.framework_key, str) else evaluation.framework_key.value
+        )
         context = {
             "framework_key": fw_key,
             "framework_name": evaluation.framework_name,
@@ -48,7 +52,8 @@ class PdfRenderer:
             "summary": evaluation.summary,
             "controls": [
                 {
-                    "control_id": c.control_id, "title": c.title,
+                    "control_id": c.control_id,
+                    "title": c.title,
                     "description": c.description,
                     "status": c.status if isinstance(c.status, str) else c.status.value,
                     "severity": c.severity if isinstance(c.severity, str) else c.severity.value,
@@ -61,7 +66,8 @@ class PdfRenderer:
             ],
             "residual_risks": [
                 {
-                    "control_id": r.control_id, "title": r.title,
+                    "control_id": r.control_id,
+                    "title": r.title,
                     "severity": r.severity if isinstance(r.severity, str) else r.severity.value,
                 }
                 for r in evaluation.residual_risks
@@ -70,10 +76,14 @@ class PdfRenderer:
         html = tpl.render(**context)
         stylesheets = [CSS(filename=str(_TEMPLATE_DIR / "styles.css"))]
         pdf_bytes = HTML(
-            string=html, base_url=str(_TEMPLATE_DIR),
+            string=html,
+            base_url=str(_TEMPLATE_DIR),
         ).write_pdf(stylesheets=stylesheets)
         filename = build_filename(
-            fw_key, report.scope, report.scope_id,
-            report.requested_at, self.extension,
+            fw_key,
+            report.scope,
+            report.scope_id,
+            report.requested_at,
+            self.extension,
         )
         return pdf_bytes, filename, self.mime_type

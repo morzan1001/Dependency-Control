@@ -49,11 +49,15 @@ class CertificateLifecycleAnalyzer(Analyzer):
         try:
             repo = CryptoAssetRepository(db)
             certs = await repo.list_by_scan(
-                project_id, scan_id, limit=50_000,
+                project_id,
+                scan_id,
+                limit=50_000,
                 asset_type=CryptoAssetType.CERTIFICATE,
             )
             algos = await repo.list_by_scan(
-                project_id, scan_id, limit=50_000,
+                project_id,
+                scan_id,
+                limit=50_000,
                 asset_type=CryptoAssetType.ALGORITHM,
             )
             algo_by_ref = {a.bom_ref: a for a in algos}
@@ -76,7 +80,9 @@ class CertificateLifecycleAnalyzer(Analyzer):
                     except Exception as e:
                         logger.warning(
                             "cert_lifecycle: check %s failed on %s: %s",
-                            check.__name__, cert.bom_ref, e,
+                            check.__name__,
+                            cert.bom_ref,
+                            e,
                         )
             return {"findings": findings}
         except Exception as e:
@@ -91,13 +97,15 @@ class CertificateLifecycleAnalyzer(Analyzer):
         if delta.total_seconds() <= 0:
             return []
         days_expired = int(delta.total_seconds() // 86400)
-        return [_build(
-            cert,
-            type_=FindingType.CRYPTO_CERT_EXPIRED,
-            severity=Severity.CRITICAL,
-            description=f"Certificate expired {days_expired} days ago",
-            details={"days_expired": days_expired, "not_valid_after": na.isoformat()},
-        )]
+        return [
+            _build(
+                cert,
+                type_=FindingType.CRYPTO_CERT_EXPIRED,
+                severity=Severity.CRITICAL,
+                description=f"Certificate expired {days_expired} days ago",
+                details={"days_expired": days_expired, "not_valid_after": na.isoformat()},
+            )
+        ]
 
     def _check_expiring(self, cert, now, rules, algo_by_ref):
         if cert.not_valid_after is None:
@@ -116,17 +124,19 @@ class CertificateLifecycleAnalyzer(Analyzer):
             sev = _severity_from_ladder(days, rule)
             if sev is None:
                 continue
-            out.append(_build(
-                cert,
-                type_=FindingType.CRYPTO_CERT_EXPIRING_SOON,
-                severity=sev,
-                description=f"Certificate expires in {days} days",
-                details={
-                    "days_until_expiry": days,
-                    "threshold_matched": sev.value if hasattr(sev, "value") else sev,
-                    "rule_id": rule.rule_id,
-                },
-            ))
+            out.append(
+                _build(
+                    cert,
+                    type_=FindingType.CRYPTO_CERT_EXPIRING_SOON,
+                    severity=sev,
+                    description=f"Certificate expires in {days} days",
+                    details={
+                        "days_until_expiry": days,
+                        "threshold_matched": sev.value if hasattr(sev, "value") else sev,
+                        "rule_id": rule.rule_id,
+                    },
+                )
+            )
         return out
 
     def _check_not_yet_valid(self, cert, now, rules, algo_by_ref):
@@ -137,13 +147,15 @@ class CertificateLifecycleAnalyzer(Analyzer):
         if remaining <= 0:
             return []
         days = int(remaining // 86400)
-        return [_build(
-            cert,
-            type_=FindingType.CRYPTO_CERT_NOT_YET_VALID,
-            severity=Severity.LOW,
-            description=f"Certificate not yet valid (begins in {days} days)",
-            details={"days_until_valid": days, "not_valid_before": nb.isoformat()},
-        )]
+        return [
+            _build(
+                cert,
+                type_=FindingType.CRYPTO_CERT_NOT_YET_VALID,
+                severity=Severity.LOW,
+                description=f"Certificate not yet valid (begins in {days} days)",
+                details={"days_until_valid": days, "not_valid_before": nb.isoformat()},
+            )
+        ]
 
     def _check_weak_signature(self, cert, now, rules, algo_by_ref):
         if not cert.signature_algorithm_ref:
@@ -157,18 +169,20 @@ class CertificateLifecycleAnalyzer(Analyzer):
                 prim = CryptoPrimitive(prim)
             except ValueError:
                 prim = None
-        is_hash = (prim == CryptoPrimitive.HASH)
+        is_hash = prim == CryptoPrimitive.HASH
         if is_hash and algo.name and algo.name.upper() in {n.upper() for n in _WEAK_HASH_NAMES}:
-            return [_build(
-                cert,
-                type_=FindingType.CRYPTO_CERT_WEAK_SIGNATURE,
-                severity=Severity.HIGH,
-                description=f"Certificate signed with weak hash algorithm: {algo.name}",
-                details={
-                    "algorithm_name": algo.name,
-                    "related_algo_bom_ref": algo.bom_ref,
-                },
-            )]
+            return [
+                _build(
+                    cert,
+                    type_=FindingType.CRYPTO_CERT_WEAK_SIGNATURE,
+                    severity=Severity.HIGH,
+                    description=f"Certificate signed with weak hash algorithm: {algo.name}",
+                    details={
+                        "algorithm_name": algo.name,
+                        "related_algo_bom_ref": algo.bom_ref,
+                    },
+                )
+            ]
         return []
 
     def _check_weak_key(self, cert, now, rules, algo_by_ref):
@@ -186,34 +200,37 @@ class CertificateLifecycleAnalyzer(Analyzer):
         min_size = _MIN_KEY_SIZES.get(prim)
         if min_size is None or algo.key_size_bits >= min_size:
             return []
-        return [_build(
-            cert,
-            type_=FindingType.CRYPTO_CERT_WEAK_KEY,
-            severity=Severity.HIGH,
-            description=(
-                f"Certificate uses weak key: {algo.name} "
-                f"({algo.key_size_bits} bits < {min_size} minimum)"
-            ),
-            details={
-                "algorithm_name": algo.name,
-                "key_size_bits": algo.key_size_bits,
-                "min_key_size_bits": min_size,
-                "related_algo_bom_ref": algo.bom_ref,
-            },
-        )]
+        return [
+            _build(
+                cert,
+                type_=FindingType.CRYPTO_CERT_WEAK_KEY,
+                severity=Severity.HIGH,
+                description=(
+                    f"Certificate uses weak key: {algo.name} ({algo.key_size_bits} bits < {min_size} minimum)"
+                ),
+                details={
+                    "algorithm_name": algo.name,
+                    "key_size_bits": algo.key_size_bits,
+                    "min_key_size_bits": min_size,
+                    "related_algo_bom_ref": algo.bom_ref,
+                },
+            )
+        ]
 
     def _check_self_signed(self, cert, now, rules, algo_by_ref):
         if not cert.subject_name or not cert.issuer_name:
             return []
         if cert.subject_name.strip() != cert.issuer_name.strip():
             return []
-        return [_build(
-            cert,
-            type_=FindingType.CRYPTO_CERT_SELF_SIGNED,
-            severity=Severity.MEDIUM,
-            description=f"Self-signed certificate: {cert.subject_name}",
-            details={"subject": cert.subject_name, "issuer": cert.issuer_name},
-        )]
+        return [
+            _build(
+                cert,
+                type_=FindingType.CRYPTO_CERT_SELF_SIGNED,
+                severity=Severity.MEDIUM,
+                description=f"Self-signed certificate: {cert.subject_name}",
+                details={"subject": cert.subject_name, "issuer": cert.issuer_name},
+            )
+        ]
 
     def _check_validity_too_long(self, cert, now, rules, algo_by_ref):
         if cert.not_valid_before is None or cert.not_valid_after is None:
@@ -235,20 +252,19 @@ class CertificateLifecycleAnalyzer(Analyzer):
                 sev = Severity(sev_raw) if isinstance(sev_raw, str) else sev_raw
             except ValueError:
                 sev = Severity.LOW
-            out.append(_build(
-                cert,
-                type_=FindingType.CRYPTO_CERT_VALIDITY_TOO_LONG,
-                severity=sev,
-                description=(
-                    f"Certificate validity ({total} days) exceeds policy limit "
-                    f"of {threshold} days"
-                ),
-                details={
-                    "validity_days": total,
-                    "threshold": threshold,
-                    "rule_id": rule.rule_id,
-                },
-            ))
+            out.append(
+                _build(
+                    cert,
+                    type_=FindingType.CRYPTO_CERT_VALIDITY_TOO_LONG,
+                    severity=sev,
+                    description=(f"Certificate validity ({total} days) exceeds policy limit of {threshold} days"),
+                    details={
+                        "validity_days": total,
+                        "threshold": threshold,
+                        "rule_id": rule.rule_id,
+                    },
+                )
+            )
         return out
 
 
@@ -259,8 +275,7 @@ def _ensure_aware(d: datetime) -> datetime:
 def _is_expiry_rule(rule: CryptoRule) -> bool:
     return any(
         getattr(rule, attr) is not None
-        for attr in ("expiry_critical_days", "expiry_high_days",
-                     "expiry_medium_days", "expiry_low_days")
+        for attr in ("expiry_critical_days", "expiry_high_days", "expiry_medium_days", "expiry_low_days")
     )
 
 

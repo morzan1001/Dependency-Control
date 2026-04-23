@@ -11,9 +11,7 @@ def _approx_tokens(messages: List[Dict[str, Any]]) -> int:
     return sum(len(json.dumps(m, default=str)) for m in messages) // 4
 
 
-def trim_to_token_budget(
-    messages: List[Dict[str, Any]], budget: int
-) -> List[Dict[str, Any]]:
+def trim_to_token_budget(messages: List[Dict[str, Any]], budget: int) -> List[Dict[str, Any]]:
     """
     Remove the oldest non-system messages until the approximate token count
     fits within the budget. The system prompt (index 0) and the final user
@@ -34,6 +32,7 @@ def trim_to_token_budget(
         middle.pop(0)
 
     return head + middle + tail
+
 
 SYSTEM_PROMPT = """You are a security assistant for Dependency Control, a software supply chain security platform. You help users understand their SBOM (Software Bill of Materials) data, vulnerabilities, dependencies, and security posture.
 
@@ -155,10 +154,12 @@ def build_messages(
             messages.append(assistant_entry)
 
             for tc in stored_tool_calls:
-                messages.append(build_tool_result_message(
-                    tc.get("tool_name", ""),
-                    tc.get("result", {}),
-                ))
+                messages.append(
+                    build_tool_result_message(
+                        tc.get("tool_name", ""),
+                        tc.get("result", {}),
+                    )
+                )
             continue
 
         entry: Dict[str, Any] = {"role": role, "content": msg.get("content", "")}

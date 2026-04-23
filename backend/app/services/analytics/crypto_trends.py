@@ -54,8 +54,13 @@ class CryptoTrendService:
         self.cache = get_analytics_cache()
 
     async def trend(
-        self, *, resolved: ResolvedScope, metric: Metric, bucket: Bucket,
-        range_start: datetime, range_end: datetime,
+        self,
+        *,
+        resolved: ResolvedScope,
+        metric: Metric,
+        bucket: Bucket,
+        range_start: datetime,
+        range_end: datetime,
     ) -> TrendSeries:
         if range_end - range_start > _MAX_RANGE:
             raise ValueError(f"requested range exceeds 2-year cap ({_MAX_RANGE.days}d)")
@@ -71,17 +76,29 @@ class CryptoTrendService:
 
         if metric in _METRIC_FILTER:
             points = await self._finding_buckets(
-                resolved, metric, bucket, range_start, range_end,
+                resolved,
+                metric,
+                bucket,
+                range_start,
+                range_end,
             )
         elif metric == "unique_algorithms":
             points = await self._asset_distinct_buckets(
-                resolved, bucket, range_start, range_end,
-                asset_type="algorithm", field="name",
+                resolved,
+                bucket,
+                range_start,
+                range_end,
+                asset_type="algorithm",
+                field="name",
             )
         elif metric == "unique_cipher_suites":
             points = await self._asset_distinct_buckets(
-                resolved, bucket, range_start, range_end,
-                asset_type="protocol", field="cipher_suites",
+                resolved,
+                bucket,
+                range_start,
+                range_end,
+                asset_type="protocol",
+                field="cipher_suites",
                 unwind_field="$cipher_suites",
             )
         else:
@@ -100,8 +117,12 @@ class CryptoTrendService:
         return series
 
     async def _finding_buckets(
-        self, resolved: ResolvedScope, metric: Metric, bucket: Bucket,
-        range_start: datetime, range_end: datetime,
+        self,
+        resolved: ResolvedScope,
+        metric: Metric,
+        bucket: Bucket,
+        range_start: datetime,
+        range_end: datetime,
     ) -> List[TrendPoint]:
         match: Dict[str, Any] = dict(_METRIC_FILTER[metric])
         match["scan_created_at"] = {"$gte": range_start, "$lte": range_end}
@@ -109,27 +130,40 @@ class CryptoTrendService:
             match["project_id"] = {"$in": resolved.project_ids}
         pipeline = [
             {"$match": match},
-            {"$group": {
-                "_id": {"$dateTrunc": {
-                    "date": "$scan_created_at", "unit": _dateTrunc_unit(bucket),
-                }},
-                "value": {"$sum": 1},
-            }},
+            {
+                "$group": {
+                    "_id": {
+                        "$dateTrunc": {
+                            "date": "$scan_created_at",
+                            "unit": _dateTrunc_unit(bucket),
+                        }
+                    },
+                    "value": {"$sum": 1},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
         out: List[TrendPoint] = []
         async for row in self.db.findings.aggregate(pipeline):
-            out.append(TrendPoint(
-                timestamp=row["_id"],
-                metric=metric,
-                value=float(row["value"]),
-            ))
+            out.append(
+                TrendPoint(
+                    timestamp=row["_id"],
+                    metric=metric,
+                    value=float(row["value"]),
+                )
+            )
         return out
 
     async def _asset_distinct_buckets(
-        self, resolved: ResolvedScope, bucket: Bucket,
-        range_start: datetime, range_end: datetime,
-        *, asset_type: str, field: str, unwind_field: Optional[str] = None,
+        self,
+        resolved: ResolvedScope,
+        bucket: Bucket,
+        range_start: datetime,
+        range_end: datetime,
+        *,
+        asset_type: str,
+        field: str,
+        unwind_field: Optional[str] = None,
     ) -> List[TrendPoint]:
         match: Dict[str, Any] = {
             "asset_type": asset_type,
@@ -142,33 +176,44 @@ class CryptoTrendService:
         if unwind_field:
             pipeline.append({"$unwind": unwind_field})
         field_ref = f"${field}"
-        pipeline.extend([
-            {"$group": {
-                "_id": {
-                    "bucket": {"$dateTrunc": {
-                        "date": "$created_at", "unit": _dateTrunc_unit(bucket),
-                    }},
-                    "value": field_ref,
+        pipeline.extend(
+            [
+                {
+                    "$group": {
+                        "_id": {
+                            "bucket": {
+                                "$dateTrunc": {
+                                    "date": "$created_at",
+                                    "unit": _dateTrunc_unit(bucket),
+                                }
+                            },
+                            "value": field_ref,
+                        },
+                    }
                 },
-            }},
-            {"$group": {"_id": "$_id.bucket", "value": {"$sum": 1}}},
-            {"$sort": {"_id": 1}},
-        ])
-        metric_name = (
-            "unique_algorithms" if asset_type == "algorithm" else "unique_cipher_suites"
+                {"$group": {"_id": "$_id.bucket", "value": {"$sum": 1}}},
+                {"$sort": {"_id": 1}},
+            ]
         )
+        metric_name = "unique_algorithms" if asset_type == "algorithm" else "unique_cipher_suites"
         out: List[TrendPoint] = []
         async for row in self.db.crypto_assets.aggregate(pipeline):
-            out.append(TrendPoint(
-                timestamp=row["_id"],
-                metric=metric_name,
-                value=float(row["value"]),
-            ))
+            out.append(
+                TrendPoint(
+                    timestamp=row["_id"],
+                    metric=metric_name,
+                    value=float(row["value"]),
+                )
+            )
         return out
 
     def _cache_key(
-        self, resolved: ResolvedScope, metric: Metric, bucket: Bucket,
-        range_start: datetime, range_end: datetime,
+        self,
+        resolved: ResolvedScope,
+        metric: Metric,
+        bucket: Bucket,
+        range_start: datetime,
+        range_end: datetime,
     ) -> tuple:
         rs = range_start.isoformat()
         re = range_end.isoformat()

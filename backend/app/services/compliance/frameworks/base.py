@@ -26,11 +26,12 @@ from app.services.analytics.scopes import ResolvedScope
 @dataclass
 class EvaluationInput:
     """Data bag passed into framework.evaluate()."""
+
     resolved: ResolvedScope
     scope_description: str
     crypto_assets: List[CryptoAsset]
-    findings: List[dict]              # persisted finding docs (kept dict for flexibility)
-    policy_rules: List[dict]          # CryptoRule dumps from the effective policy
+    findings: List[dict]  # persisted finding docs (kept dict for flexibility)
+    policy_rules: List[dict]  # CryptoRule dumps from the effective policy
     policy_version: Optional[int]
     iana_catalog_version: Optional[int]
     scan_ids: List[str]
@@ -41,18 +42,20 @@ class EvaluationInput:
 
 class ComplianceFramework(Protocol):
     """Interface every framework must implement."""
+
     name: str
     key: ReportFramework
     version: str
     source_url: str
-    disclaimer: Optional[str]         # shown on report cover (e.g. FIPS)
+    disclaimer: Optional[str]  # shown on report cover (e.g. FIPS)
     controls: List[ControlDefinition]
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation: ...
 
 
 def default_evaluator(
-    control: ControlDefinition, data: EvaluationInput,
+    control: ControlDefinition,
+    data: EvaluationInput,
 ) -> ControlResult:
     """Default rule-based evaluator.
 
@@ -66,10 +69,7 @@ def default_evaluator(
     matching: List[dict] = []
     for f in data.findings:
         ft = f.get("type")
-        if not any(
-            ft == (t.value if hasattr(t, "value") else t)
-            for t in control.maps_to_finding_types
-        ):
+        if not any(ft == (t.value if hasattr(t, "value") else t) for t in control.maps_to_finding_types):
             continue
         if control.maps_to_rule_ids:
             details = f.get("details") or {}
@@ -98,15 +98,14 @@ def default_evaluator(
         severity=control.severity,
         evidence_finding_ids=[str(f.get("_id") or f.get("id") or "") for f in matching],
         evidence_asset_bom_refs=_extract_bom_refs(matching),
-        waiver_reasons=[
-            (f.get("waiver_reason") or "") for f in waived_findings if f.get("waiver_reason")
-        ],
+        waiver_reasons=[(f.get("waiver_reason") or "") for f in waived_findings if f.get("waiver_reason")],
         remediation=control.remediation,
     )
 
 
 def _is_applicable(
-    control: ControlDefinition, data: EvaluationInput,
+    control: ControlDefinition,
+    data: EvaluationInput,
 ) -> bool:
     """Heuristic: if no assets exist for this framework's scope,
     mark as NOT_APPLICABLE instead of PASSED. Currently we consider the
@@ -125,7 +124,8 @@ def _extract_bom_refs(findings: List[dict]) -> List[str]:
 
 
 def evaluate_framework(
-    framework: ComplianceFramework, data: EvaluationInput,
+    framework: ComplianceFramework,
+    data: EvaluationInput,
 ) -> FrameworkEvaluation:
     """Shared entry point: run every control and build the top-level
     FrameworkEvaluation. Framework modules call this from their `evaluate`."""
@@ -175,9 +175,11 @@ def _build_residual_risks(results: List[ControlResult]) -> List[ResidualRisk]:
 
 
 def _inputs_fingerprint(data: EvaluationInput) -> str:
-    bits = "|".join([
-        f"policy={data.policy_version}",
-        f"iana={data.iana_catalog_version}",
-        f"scans={','.join(sorted(data.scan_ids))}",
-    ])
+    bits = "|".join(
+        [
+            f"policy={data.policy_version}",
+            f"iana={data.iana_catalog_version}",
+            f"scans={','.join(sorted(data.scan_ids))}",
+        ]
+    )
     return "sha256:" + hashlib.sha256(bits.encode()).hexdigest()

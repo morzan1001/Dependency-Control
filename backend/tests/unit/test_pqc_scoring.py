@@ -14,8 +14,9 @@ from app.services.pqc_migration.scoring import (
 
 
 class _A:
-    def __init__(self, asset_type="algorithm", certificate_format=None,
-                 detection_context=None, key_size_bits=None, name="RSA"):
+    def __init__(
+        self, asset_type="algorithm", certificate_format=None, detection_context=None, key_size_bits=None, name="RSA"
+    ):
         self.asset_type = asset_type
         self.certificate_format = certificate_format
         self.detection_context = detection_context
@@ -36,7 +37,9 @@ def test_score_is_between_0_and_100():
     score = priority_score(
         asset=_A(name="RSA", key_size_bits=2048),
         source_family="RSA",
-        timelines=timelines, now=now, asset_count=1,
+        timelines=timelines,
+        now=now,
+        asset_count=1,
     )
     assert 0 <= score <= 100
 
@@ -46,11 +49,17 @@ def test_short_key_bumps_weakness():
     timelines = [Timeline(name="t", deadline=now + timedelta(days=365 * 5), applies_to=["RSA"])]
     weak = priority_score(
         asset=_A(name="RSA", key_size_bits=1024),
-        source_family="RSA", timelines=timelines, now=now, asset_count=1,
+        source_family="RSA",
+        timelines=timelines,
+        now=now,
+        asset_count=1,
     )
     strong = priority_score(
         asset=_A(name="RSA", key_size_bits=4096),
-        source_family="RSA", timelines=timelines, now=now, asset_count=1,
+        source_family="RSA",
+        timelines=timelines,
+        now=now,
+        asset_count=1,
     )
     assert weak > strong
 
@@ -77,11 +86,17 @@ def test_certificate_asset_bumps_exposure():
     timelines = [Timeline(name="t", deadline=now + timedelta(days=365), applies_to=["RSA"])]
     cert = priority_score(
         asset=_A(asset_type="certificate", certificate_format="X.509"),
-        source_family="RSA", timelines=timelines, now=now, asset_count=1,
+        source_family="RSA",
+        timelines=timelines,
+        now=now,
+        asset_count=1,
     )
     internal = priority_score(
         asset=_A(detection_context="binary"),
-        source_family="RSA", timelines=timelines, now=now, asset_count=1,
+        source_family="RSA",
+        timelines=timelines,
+        now=now,
+        asset_count=1,
     )
     assert cert > internal
 

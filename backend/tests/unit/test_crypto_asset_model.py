@@ -37,8 +37,12 @@ def test_crypto_asset_populate_by_name_alias():
 
 def test_crypto_asset_primitive_enum():
     a = CryptoAsset(
-        project_id="p", scan_id="s",
-        bom_ref="r", name="AES", asset_type=CryptoAssetType.ALGORITHM,
-        primitive=CryptoPrimitive.BLOCK_CIPHER, key_size_bits=256,
+        project_id="p",
+        scan_id="s",
+        bom_ref="r",
+        name="AES",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.BLOCK_CIPHER,
+        key_size_bits=256,
     )
     assert a.primitive == CryptoPrimitive.BLOCK_CIPHER

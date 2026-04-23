@@ -51,7 +51,9 @@ async def sweep_expired_compliance_reports(db: AsyncIOMotorDatabase) -> int:
                 await bucket.delete(gridfs_id)
             except Exception as exc:  # missing blob / fake-DB no-op
                 logger.debug(
-                    "Could not delete GridFS artifact %s: %s", gridfs_id, exc,
+                    "Could not delete GridFS artifact %s: %s",
+                    gridfs_id,
+                    exc,
                 )
     result = await col.delete_many({"expires_at": {"$lt": now}})
     deleted = getattr(result, "deleted_count", len(expired_docs))
@@ -72,7 +74,8 @@ def _configured_retention_days() -> int:
     except ValueError:
         logger.warning(
             "Invalid %s: %r — falling back to default",
-            COMPLIANCE_REPORT_RETENTION_ENV, raw,
+            COMPLIANCE_REPORT_RETENTION_ENV,
+            raw,
         )
         return DEFAULT_COMPLIANCE_REPORT_RETENTION_DAYS
     return value if value > 0 else DEFAULT_COMPLIANCE_REPORT_RETENTION_DAYS

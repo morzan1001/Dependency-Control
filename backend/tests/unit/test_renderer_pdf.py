@@ -27,6 +27,7 @@ def test_pdf_renderer_produces_pdf_bytes():
     r = PdfRenderer()
     rep = _report()
     from app.schemas.compliance import ReportFormat
+
     rep.format = ReportFormat.PDF
     out, filename, mime = r.render(_evaluation(), rep)
     assert mime == "application/pdf"

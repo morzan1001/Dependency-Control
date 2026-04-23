@@ -28,12 +28,8 @@ class LicensePolicySchema(BaseModel):
         description="How dependencies are used: unmodified (as-is via public API), "
         "modified (forked/patched), mixed (some modified)",
     )
-    allow_strong_copyleft: bool = Field(
-        False, description="Allow GPL-style licenses (reduces severity to INFO)"
-    )
-    allow_network_copyleft: bool = Field(
-        False, description="Allow AGPL/SSPL licenses (reduces severity)"
-    )
+    allow_strong_copyleft: bool = Field(False, description="Allow GPL-style licenses (reduces severity to INFO)")
+    allow_network_copyleft: bool = Field(False, description="Allow AGPL/SSPL licenses (reduces severity)")
 
 
 class BranchInfo(BaseModel):

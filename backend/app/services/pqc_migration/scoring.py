@@ -32,8 +32,11 @@ _MIGRATION_BUCKETS = {
 
 
 def priority_score(
-    *, asset, source_family: str,
-    timelines: List[Timeline], now: datetime,
+    *,
+    asset,
+    source_family: str,
+    timelines: List[Timeline],
+    now: datetime,
     asset_count: int = 1,
 ) -> int:
     """Weighted sum of exposure, key-weakness, deadline, count components."""
@@ -42,10 +45,7 @@ def priority_score(
     deadline = _score_deadline(source_family, timelines, now)
     count = _score_count(asset_count)
     raw = (
-        exposure * EXPOSURE_WEIGHT
-        + weakness * KEY_WEAKNESS_WEIGHT
-        + deadline * DEADLINE_WEIGHT
-        + count * COUNT_WEIGHT
+        exposure * EXPOSURE_WEIGHT + weakness * KEY_WEAKNESS_WEIGHT + deadline * DEADLINE_WEIGHT + count * COUNT_WEIGHT
     )
     return max(0, min(100, round(raw)))
 

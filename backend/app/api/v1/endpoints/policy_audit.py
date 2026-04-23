@@ -24,6 +24,7 @@ router = APIRouter(tags=["policy-audit"])
 
 # ---------- SYSTEM SCOPE ----------
 
+
 @router.get("/crypto-policies/system/audit")
 async def list_system_audit(
     skip: int = Query(0, ge=0),
@@ -33,7 +34,9 @@ async def list_system_audit(
 ):
     _require_admin(current_user)
     entries = await PolicyAuditRepository(db).list(
-        policy_scope="system", skip=skip, limit=limit,
+        policy_scope="system",
+        skip=skip,
+        limit=limit,
     )
     return {"entries": [e.model_dump(by_alias=True) for e in entries]}
 
@@ -46,7 +49,9 @@ async def get_system_audit_entry(
 ):
     _require_admin(current_user)
     entry = await PolicyAuditRepository(db).get_by_version(
-        policy_scope="system", project_id=None, version=version,
+        policy_scope="system",
+        project_id=None,
+        version=version,
     )
     if entry is None:
         raise HTTPException(status_code=404, detail="Audit entry not found")
@@ -63,9 +68,12 @@ async def revert_system_policy(
     target_version = int(body.get("target_version"))
     comment = body.get("comment")
     await _revert_policy(
-        db=db, actor=current_user,
-        policy_scope="system", project_id=None,
-        target_version=target_version, comment=comment,
+        db=db,
+        actor=current_user,
+        policy_scope="system",
+        project_id=None,
+        target_version=target_version,
+        comment=comment,
     )
     policy = await CryptoPolicyRepository(db).get_system_policy()
     return policy.model_dump(by_alias=True)
@@ -80,12 +88,15 @@ async def prune_system_audit(
     _require_admin(current_user)
     cutoff = _parse_datetime(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
-        policy_scope="system", project_id=None, cutoff=cutoff,
+        policy_scope="system",
+        project_id=None,
+        cutoff=cutoff,
     )
     return {"deleted": deleted}
 
 
 # ---------- PROJECT SCOPE ----------
+
 
 @router.get("/projects/{project_id}/crypto-policy/audit")
 async def list_project_audit(
@@ -97,20 +108,26 @@ async def list_project_audit(
 ):
     await check_project_access(project_id, current_user, db, required_role="viewer")
     entries = await PolicyAuditRepository(db).list(
-        policy_scope="project", project_id=project_id, skip=skip, limit=limit,
+        policy_scope="project",
+        project_id=project_id,
+        skip=skip,
+        limit=limit,
     )
     return {"entries": [e.model_dump(by_alias=True) for e in entries]}
 
 
 @router.get("/projects/{project_id}/crypto-policy/audit/{version}")
 async def get_project_audit_entry(
-    project_id: str, version: int,
+    project_id: str,
+    version: int,
     current_user=Depends(get_current_active_user),
     db=Depends(get_database),
 ):
     await check_project_access(project_id, current_user, db, required_role="viewer")
     entry = await PolicyAuditRepository(db).get_by_version(
-        policy_scope="project", project_id=project_id, version=version,
+        policy_scope="project",
+        project_id=project_id,
+        version=version,
     )
     if entry is None:
         raise HTTPException(status_code=404, detail="Audit entry not found")
@@ -128,9 +145,12 @@ async def revert_project_policy(
     target_version = int(body.get("target_version"))
     comment = body.get("comment")
     await _revert_policy(
-        db=db, actor=current_user,
-        policy_scope="project", project_id=project_id,
-        target_version=target_version, comment=comment,
+        db=db,
+        actor=current_user,
+        policy_scope="project",
+        project_id=project_id,
+        target_version=target_version,
+        comment=comment,
     )
     policy = await CryptoPolicyRepository(db).get_project_policy(project_id)
     return policy.model_dump(by_alias=True) if policy else {}
@@ -146,12 +166,15 @@ async def prune_project_audit(
     await check_project_access(project_id, current_user, db, required_role="owner")
     cutoff = _parse_datetime(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
-        policy_scope="project", project_id=project_id, cutoff=cutoff,
+        policy_scope="project",
+        project_id=project_id,
+        cutoff=cutoff,
     )
     return {"deleted": deleted}
 
 
 # ---------- HELPERS ----------
+
 
 def _parse_datetime(value: str) -> datetime:
     """Parse an ISO-8601 datetime string, tolerating space-encoded '+' from URLs."""
@@ -168,11 +191,18 @@ def _require_admin(user) -> None:
 
 
 async def _revert_policy(
-    *, db, actor, policy_scope: str, project_id: Optional[str],
-    target_version: int, comment: Optional[str],
+    *,
+    db,
+    actor,
+    policy_scope: str,
+    project_id: Optional[str],
+    target_version: int,
+    comment: Optional[str],
 ) -> None:
     target_entry = await PolicyAuditRepository(db).get_by_version(
-        policy_scope=policy_scope, project_id=project_id, version=target_version,
+        policy_scope=policy_scope,
+        project_id=project_id,
+        version=target_version,
     )
     if target_entry is None:
         raise HTTPException(status_code=404, detail=f"Version {target_version} not found")
@@ -185,7 +215,7 @@ async def _revert_policy(
         current = await policy_repo.get_system_policy()
     else:
         current = await policy_repo.get_project_policy(project_id)
-    new_version = ((current.version + 1) if current else 1)
+    new_version = (current.version + 1) if current else 1
 
     new_policy = CryptoPolicy(
         scope=policy_scope,

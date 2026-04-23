@@ -34,12 +34,16 @@ async def get_hotspots(
 ):
     try:
         resolved = await ScopeResolver(db, current_user).resolve(
-            scope=scope, scope_id=scope_id,
+            scope=scope,
+            scope_id=scope_id,
         )
     except ScopeResolutionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     return await CryptoHotspotService(db).hotspots(
-        resolved=resolved, group_by=group_by, scan_id=scan_id, limit=limit,
+        resolved=resolved,
+        group_by=group_by,
+        scan_id=scan_id,
+        limit=limit,
     )
 
 
@@ -54,12 +58,15 @@ async def get_hotspot_locations(
 ):
     try:
         resolved = await ScopeResolver(db, current_user).resolve(
-            scope=scope, scope_id=scope_id,
+            scope=scope,
+            scope_id=scope_id,
         )
     except ScopeResolutionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     resp = await CryptoHotspotService(db).hotspots(
-        resolved=resolved, group_by=grouping, limit=500,
+        resolved=resolved,
+        group_by=grouping,
+        limit=500,
     )
     matches = [e for e in resp.items if e.key == key]
     if not matches:
@@ -80,14 +87,18 @@ async def get_trends(
 ):
     try:
         resolved = await ScopeResolver(db, current_user).resolve(
-            scope=scope, scope_id=scope_id,
+            scope=scope,
+            scope_id=scope_id,
         )
     except ScopeResolutionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     try:
         return await CryptoTrendService(db).trend(
-            resolved=resolved, metric=metric, bucket=bucket,
-            range_start=range_start, range_end=range_end,
+            resolved=resolved,
+            metric=metric,
+            bucket=bucket,
+            range_start=range_start,
+            range_end=range_end,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -103,10 +114,14 @@ async def get_scan_delta(
 ):
     try:
         await ScopeResolver(db, current_user).resolve(
-            scope="project", scope_id=project_id,
+            scope="project",
+            scope_id=project_id,
         )
     except ScopeResolutionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     return await compute_scan_delta(
-        db, project_id, from_scan=from_scan, to_scan=to_scan,
+        db,
+        project_id,
+        from_scan=from_scan,
+        to_scan=to_scan,
     )

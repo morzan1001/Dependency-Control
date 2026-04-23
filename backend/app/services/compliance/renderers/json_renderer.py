@@ -14,12 +14,16 @@ class JsonRenderer:
     extension = "json"
 
     def render(
-        self, evaluation: FrameworkEvaluation, report: ComplianceReport,
-        *, disclaimer: Optional[str] = None,
+        self,
+        evaluation: FrameworkEvaluation,
+        report: ComplianceReport,
+        *,
+        disclaimer: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
         payload = {
-            "framework": evaluation.framework_key if isinstance(evaluation.framework_key, str)
-                         else evaluation.framework_key.value,
+            "framework": evaluation.framework_key
+            if isinstance(evaluation.framework_key, str)
+            else evaluation.framework_key.value,
             "framework_name": evaluation.framework_name,
             "framework_version": evaluation.framework_version,
             "generated_at": evaluation.generated_at.isoformat(),
@@ -34,7 +38,10 @@ class JsonRenderer:
             payload["disclaimer"] = disclaimer
         body = json.dumps(payload, indent=2, default=str).encode("utf-8")
         filename = build_filename(
-            payload["framework"], report.scope, report.scope_id,
-            report.requested_at, self.extension,
+            payload["framework"],
+            report.scope,
+            report.scope_id,
+            report.requested_at,
+            self.extension,
         )
         return body, filename, self.mime_type

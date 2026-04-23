@@ -23,8 +23,11 @@ class Renderer(Protocol):
 
 
 def build_filename(
-    framework_key: str, scope: str, scope_id: Optional[str],
-    requested_at, extension: str,
+    framework_key: str,
+    scope: str,
+    scope_id: Optional[str],
+    requested_at,
+    extension: str,
 ) -> str:
     """Construct a descriptive, filesystem-safe filename.
 
@@ -32,6 +35,7 @@ def build_filename(
     """
     scope_part = f"{scope}" + (f"-{scope_id}" if scope_id else "")
     import re
+
     scope_part = re.sub(r"[^A-Za-z0-9\-]", "_", scope_part)
     ts = requested_at.strftime("%Y%m%dT%H%M%SZ")
     return f"{framework_key}_{scope_part}_{ts}.{extension}"

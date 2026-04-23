@@ -16,10 +16,13 @@ from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 
 @pytest.mark.asyncio
 async def test_expired_artifact_returns_410(
-    client, db, owner_auth_headers_proj,
+    client,
+    db,
+    owner_auth_headers_proj,
 ):
     report = ComplianceReport(
-        scope="project", scope_id="p",
+        scope="project",
+        scope_id="p",
         framework=ReportFramework.NIST_SP_800_131A,
         format=ReportFormat.JSON,
         status=ReportStatus.COMPLETED,

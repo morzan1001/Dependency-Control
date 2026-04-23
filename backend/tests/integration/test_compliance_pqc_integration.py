@@ -21,12 +21,15 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_pqc_report_does_not_crash_with_asyncio_run(
-    client, db, owner_auth_headers_proj,
+    client,
+    db,
+    owner_auth_headers_proj,
 ):
     resp = await client.post(
         "/api/v1/compliance/reports",
         json={
-            "scope": "project", "scope_id": "p",
+            "scope": "project",
+            "scope_id": "p",
             "framework": "pqc-migration-plan",
             "format": "json",
         },

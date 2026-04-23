@@ -60,10 +60,7 @@ def compute_change_summary(old: Optional[CryptoPolicy], new: CryptoPolicy) -> st
     for rid in common:
         o_rule = old_by_id[rid]
         n_rule = new_by_id[rid]
-        diff_fields = [
-            f for f in _COMPARED_FIELDS
-            if getattr(o_rule, f, None) != getattr(n_rule, f, None)
-        ]
+        diff_fields = [f for f in _COMPARED_FIELDS if getattr(o_rule, f, None) != getattr(n_rule, f, None)]
         if not diff_fields:
             continue
         if diff_fields == ["enabled"]:
@@ -192,20 +189,23 @@ async def _notify_relevant_users(db, entry: PolicyAuditEntry) -> None:
 
     title_scope = "System" if entry.policy_scope == "system" else f"Project {entry.project_id}"
     title = f"{title_scope} crypto policy changed"
-    body = (
-        f"{entry.actor_display_name or 'A user'} updated the policy: "
-        f"{entry.change_summary}"
-    )
+    body = f"{entry.actor_display_name or 'A user'} updated the policy: {entry.change_summary}"
     # Attempt common helper names; swallow AttributeError if none match.
     if entry.policy_scope == "project":
         if hasattr(notification_service, "notify_project_members"):
             await notification_service.notify_project_members(
-                db, project_id=entry.project_id, title=title, body=body,
+                db,
+                project_id=entry.project_id,
+                title=title,
+                body=body,
                 link=f"/projects/{entry.project_id}?tab=crypto-policy",
             )
     else:
         if hasattr(notification_service, "notify_users_with_permission"):
             await notification_service.notify_users_with_permission(
-                db, permission="system:manage", title=title, body=body,
+                db,
+                permission="system:manage",
+                title=title,
+                body=body,
                 link="/settings/crypto-policy",
             )

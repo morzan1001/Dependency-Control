@@ -19,16 +19,12 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
 
 @pytest.mark.asyncio
-async def test_crypto_asset_ingested_dispatches_webhook(
-    client, db, api_key_headers
-):
+async def test_crypto_asset_ingested_dispatches_webhook(client, db, api_key_headers):
     """CBOM ingest fires a crypto_asset.ingested event with summary payload."""
     dispatched_calls: list = []
 
     def _capture_trigger(inner_db, event_type, payload, project_id=None):
-        dispatched_calls.append(
-            {"event": event_type, "payload": payload, "project_id": project_id}
-        )
+        dispatched_calls.append({"event": event_type, "payload": payload, "project_id": project_id})
 
     cbom_data = json.loads((FIXTURES / "legacy_crypto_mixed.json").read_text())
     request_payload = {
@@ -42,9 +38,7 @@ async def test_crypto_asset_ingested_dispatches_webhook(
         "app.api.v1.endpoints.cbom_ingest.webhook_service.trigger_webhooks",
         side_effect=_capture_trigger,
     ):
-        resp = await client.post(
-            "/api/v1/ingest/cbom", json=request_payload, headers=api_key_headers
-        )
+        resp = await client.post("/api/v1/ingest/cbom", json=request_payload, headers=api_key_headers)
         assert resp.status_code == 202, resp.text
         scan_id = resp.json()["scan_id"]
 

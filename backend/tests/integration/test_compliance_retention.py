@@ -18,7 +18,8 @@ from app.services.compliance.retention import sweep_expired_compliance_reports
 def _report(*, expires_at, gridfs_id=None):
     now = datetime.now(timezone.utc)
     return ComplianceReport(
-        scope="project", scope_id="p",
+        scope="project",
+        scope_id="p",
         framework=ReportFramework.NIST_SP_800_131A,
         format=ReportFormat.JSON,
         status=ReportStatus.COMPLETED,

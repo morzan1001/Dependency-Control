@@ -33,7 +33,7 @@ class ReportFramework(str, Enum):
     CNSA_2_0 = "cnsa-2.0"
     FIPS_140_3 = "fips-140-3"
     ISO_19790 = "iso-19790"
-    PQC_MIGRATION_PLAN = "pqc-migration-plan"   # meta-framework, used in PR E
+    PQC_MIGRATION_PLAN = "pqc-migration-plan"  # meta-framework, used in PR E
 
 
 class ControlStatus(str, Enum):

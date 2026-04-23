@@ -9,13 +9,19 @@ from app.services.analytics.migrations import backfill_scan_created_at
 async def test_migration_backfills_scan_created_at(db):
     scan_date = datetime(2026, 3, 1, tzinfo=timezone.utc)
     await db.scans.insert_one({"_id": "scan1", "created_at": scan_date})
-    await db.findings.insert_one({
-        "_id": "f1", "scan_id": "scan1",
-    })
-    await db.findings.insert_one({
-        "_id": "f2", "scan_id": "scan1",
-        "scan_created_at": scan_date,
-    })
+    await db.findings.insert_one(
+        {
+            "_id": "f1",
+            "scan_id": "scan1",
+        }
+    )
+    await db.findings.insert_one(
+        {
+            "_id": "f2",
+            "scan_id": "scan1",
+            "scan_created_at": scan_date,
+        }
+    )
 
     n = await backfill_scan_created_at(db, batch_size=10)
     assert n == 1

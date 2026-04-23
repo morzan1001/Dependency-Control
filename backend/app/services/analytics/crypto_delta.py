@@ -43,8 +43,11 @@ def _to_entry(asset: CryptoAsset, group_dim: str = "name") -> HotspotEntry:
 
 
 async def compute_scan_delta(
-    db: AsyncIOMotorDatabase, project_id: str,
-    *, from_scan: str, to_scan: str,
+    db: AsyncIOMotorDatabase,
+    project_id: str,
+    *,
+    from_scan: str,
+    to_scan: str,
 ) -> ScanDelta:
     repo = CryptoAssetRepository(db)
     from_assets = await repo.list_by_scan(project_id, from_scan, limit=50_000)
