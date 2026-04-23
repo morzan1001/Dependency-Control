@@ -73,13 +73,14 @@ async def revert_system_policy(
 
 @router.delete("/crypto-policies/system/audit")
 async def prune_system_audit(
-    before: datetime = Query(..., description="Delete entries older than this ISO date"),
+    before: str = Query(..., description="Delete entries older than this ISO date"),
     current_user=Depends(get_current_active_user),
     db=Depends(get_database),
 ):
     _require_admin(current_user)
+    cutoff = _parse_datetime(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
-        policy_scope="system", project_id=None, cutoff=before,
+        policy_scope="system", project_id=None, cutoff=cutoff,
     )
     return {"deleted": deleted}
 
@@ -138,18 +139,27 @@ async def revert_project_policy(
 @router.delete("/projects/{project_id}/crypto-policy/audit")
 async def prune_project_audit(
     project_id: str,
-    before: datetime = Query(...),
+    before: str = Query(...),
     current_user=Depends(get_current_active_user),
     db=Depends(get_database),
 ):
     await check_project_access(project_id, current_user, db, required_role="owner")
+    cutoff = _parse_datetime(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
-        policy_scope="project", project_id=project_id, cutoff=before,
+        policy_scope="project", project_id=project_id, cutoff=cutoff,
     )
     return {"deleted": deleted}
 
 
 # ---------- HELPERS ----------
+
+def _parse_datetime(value: str) -> datetime:
+    """Parse an ISO-8601 datetime string, tolerating space-encoded '+' from URLs."""
+    # When '+00:00' is embedded in a raw URL, the '+' becomes a space in the
+    # query string. Restore it before parsing.
+    value = value.replace(" ", "+")
+    return datetime.fromisoformat(value)
+
 
 def _require_admin(user) -> None:
     perms = getattr(user, "permissions", frozenset()) or frozenset()

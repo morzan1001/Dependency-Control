@@ -41,6 +41,8 @@ from app.core.init_db import init_db
 from app.core.worker import worker_manager
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.policy_audit_entry import PolicyAuditRepository
+from app.services.audit.retention import prune_old_audit_entries
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.analytics.migrations import backfill_scan_created_at
 
@@ -107,8 +109,10 @@ async def startup_event() -> None:
             db = await get_database()
             await CryptoAssetRepository(db).ensure_indexes()
             await CryptoPolicyRepository(db).ensure_indexes()
+            await PolicyAuditRepository(db).ensure_indexes()
             await seed_crypto_policies(db)
             await backfill_scan_created_at(db)
+            await prune_old_audit_entries(db)
 
             # Initialize S3 bucket for archive storage (if configured)
             from app.core.s3 import ensure_bucket_exists, is_archive_enabled

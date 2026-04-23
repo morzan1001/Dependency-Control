@@ -332,6 +332,16 @@ class _FakeCollection:
     async def create_index(self, *args, **kwargs):
         return None
 
+    async def distinct(self, field: str, filter: dict = None):
+        filter = filter or {}
+        values = []
+        for doc in self._docs.values():
+            if all(doc.get(k) == v for k, v in filter.items()):
+                val = doc.get(field)
+                if val not in values:
+                    values.append(val)
+        return values
+
     def find(self, query=None, projection=None):
         """Return a chainable cursor over matching documents.
 
