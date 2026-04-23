@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     callgraph,
     cbom_ingest,
     chat,
+    crypto_analytics,
     crypto_assets,
     crypto_policies,
     github_instances,
@@ -40,6 +41,7 @@ from app.core.worker import worker_manager
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.analytics.migrations import backfill_scan_created_at
 
 # Configure logging
 logging.basicConfig(
@@ -105,6 +107,7 @@ async def startup_event() -> None:
             await CryptoAssetRepository(db).ensure_indexes()
             await CryptoPolicyRepository(db).ensure_indexes()
             await seed_crypto_policies(db)
+            await backfill_scan_created_at(db)
 
             # Initialize S3 bucket for archive storage (if configured)
             from app.core.s3 import ensure_bucket_exists, is_archive_enabled
@@ -183,6 +186,7 @@ app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archive
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(crypto_assets.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-assets"])
 app.include_router(crypto_policies.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-policies"])
+app.include_router(crypto_analytics.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-analytics"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])

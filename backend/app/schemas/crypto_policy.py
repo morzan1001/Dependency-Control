@@ -36,6 +36,34 @@ class CryptoRule(BaseModel):
     match_protocol_versions: List[str] = Field(default_factory=list, description="Match if (protocol_type, version) combines to one of these strings (case-insensitive)")
     quantum_vulnerable: Optional[bool] = Field(None, description="When true, match if primitive is PKE/SIGNATURE/KEM and name is in match_name_patterns")
 
+    # Certificate-Lifecycle thresholds (in days). None = "not used by this rule"
+    expiry_critical_days: Optional[int] = Field(
+        None, ge=0,
+        description="If cert expires in ≤ this many days, emit CRITICAL severity",
+    )
+    expiry_high_days: Optional[int] = Field(
+        None, ge=0,
+        description="HIGH severity threshold in days",
+    )
+    expiry_medium_days: Optional[int] = Field(
+        None, ge=0,
+        description="MEDIUM severity threshold in days",
+    )
+    expiry_low_days: Optional[int] = Field(
+        None, ge=0,
+        description="LOW / informational threshold in days",
+    )
+    validity_too_long_days: Optional[int] = Field(
+        None, ge=0,
+        description="Maximum allowed validity period (days); emit CRYPTO_CERT_VALIDITY_TOO_LONG if exceeded",
+    )
+
+    # Cipher-suite weakness matching (Phase 2)
+    match_cipher_weaknesses: List[str] = Field(
+        default_factory=list,
+        description="Match if any of these weakness tags appear in the parsed cipher-suite entry",
+    )
+
     enabled: bool = Field(True, description="Whether the rule is active for analysis")
     source: CryptoPolicySource = Field(..., description="Which standards body or origin this rule comes from")
     references: List[str] = Field(default_factory=list, description="URLs to supporting standards or documentation")

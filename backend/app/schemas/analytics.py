@@ -5,9 +5,10 @@ Pydantic models and TypedDicts for analytics API endpoints.
 These define the response and request structures for analytics operations.
 """
 
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CVEEnrichmentResult(BaseModel):
@@ -400,3 +401,67 @@ class UpdateFrequencyComparison(BaseModel):
     team_avg_coverage_pct: float
     best_project: Optional[str] = None
     worst_project: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Crypto analytics schemas (Phase 2 — analytics foundations)
+# ---------------------------------------------------------------------------
+
+
+class HotspotEntry(BaseModel):
+    """A single entry in a crypto hotspot report."""
+
+    key: str = Field(..., description="Grouping key (e.g., 'RSA-1024')")
+    grouping_dimension: str = Field(..., description="Dimension this entry groups by")
+    asset_count: int = Field(..., ge=0)
+    finding_count: int = Field(..., ge=0)
+    severity_mix: Dict[str, int] = Field(default_factory=dict)
+    locations: List[str] = Field(default_factory=list)
+    project_ids: List[str] = Field(default_factory=list)
+    first_seen: datetime
+    last_seen: datetime
+
+
+class HotspotResponse(BaseModel):
+    """Paginated hotspot response for a given scope."""
+
+    scope: Literal["project", "team", "global", "user"]
+    scope_id: Optional[str] = None
+    grouping_dimension: str
+    items: List[HotspotEntry] = Field(default_factory=list)
+    total: int = Field(..., ge=0)
+    generated_at: datetime
+    cache_hit: bool = False
+
+
+class TrendPoint(BaseModel):
+    """A single data point in a trend time-series."""
+
+    timestamp: datetime
+    metric: str
+    value: float
+
+
+class TrendSeries(BaseModel):
+    """A full trend time-series for a metric within a scope."""
+
+    scope: str
+    scope_id: Optional[str] = None
+    metric: str
+    bucket: Literal["day", "week", "month"]
+    points: List[TrendPoint] = Field(default_factory=list)
+    range_start: datetime
+    range_end: datetime
+    cache_hit: bool = False
+
+
+class ScanDelta(BaseModel):
+    """Diff between two scans expressed as added/removed hotspot entries."""
+
+    from_scan_id: str
+    to_scan_id: str
+    added: List[HotspotEntry] = Field(default_factory=list)
+    removed: List[HotspotEntry] = Field(default_factory=list)
+    unchanged_count: int = Field(..., ge=0)
+
+    model_config = ConfigDict(populate_by_name=True)

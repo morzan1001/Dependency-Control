@@ -1,0 +1,19 @@
+# Protocol / cipher-suite defaults — Phase 2
+# Most cipher-suite findings are emitted by the analyzer directly (using
+# IANA catalog weakness tags). These rules exist for policy-driven amplification
+# on per-project baselines.
+
+rules:
+  - rule_id: cnsa20-require-pfs
+    name: CNSA 2.0 — require perfect forward secrecy
+    description: >
+      CNSA 2.0 requires forward secrecy for all TLS/SSH handshakes.
+      Flags cipher suites without PFS (e.g., TLS_RSA_* suites).
+      Disabled by default — enable explicitly in CNSA-compliant environments.
+    finding_type: crypto_weak_protocol
+    default_severity: MEDIUM
+    match_cipher_weaknesses: ["no-forward-secrecy"]
+    enabled: false
+    source: cnsa-2.0
+    references:
+      - https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF

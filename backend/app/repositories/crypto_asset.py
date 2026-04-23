@@ -28,6 +28,7 @@ class CryptoAssetRepository:
         await self._col.create_index(
             [("project_id", 1), ("scan_id", 1), ("bom_ref", 1)], unique=True
         )
+        await self._col.create_index([("project_id", 1), ("asset_type", 1), ("primitive", 1)])
 
     async def bulk_upsert(
         self,

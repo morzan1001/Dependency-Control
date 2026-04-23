@@ -13,6 +13,7 @@ import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert,
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
+import { ScanDeltaView } from '@/components/crypto/analytics/ScanDeltaView'
 
 interface ProjectScansProps {
   projectId: string
@@ -28,11 +29,17 @@ const getEffectiveScanData = (scan: Scan) => {
     };
 };
 
+interface DeltaState {
+  from: string;
+  to: string;
+}
+
 export function ProjectScans({ projectId }: ProjectScansProps) {
   const [page, setPage] = useState(1)
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
   const [sortBy, setSortBy] = useState("created_at")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+  const [deltaState, setDeltaState] = useState<DeltaState | null>(null)
   const limit = DEFAULT_PAGE_SIZE
   const navigate = useNavigate()
 
@@ -145,6 +152,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                 <TableHead className="w-[120px] cursor-pointer hover:text-foreground" onClick={() => handleSort('status')}>
                   Status {renderSortIcon('status')}
                 </TableHead>
+                <TableHead className="w-[80px]">Delta</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -156,11 +164,14 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                       <TableCell><Skeleton className="h-6 w-24" /></TableCell>
                       <TableCell><Skeleton className="h-6 w-24" /></TableCell>
                       <TableCell><Skeleton className="h-6 w-20" /></TableCell>
+                      <TableCell />
                   </TableRow>
               ))}
-              {!isLoading && scanList.map((scan) => (
-                <TableRow 
-                  key={scan.id} 
+              {!isLoading && scanList.map((scan, idx) => {
+                const prevScan = sortOrder === "desc" ? scanList[idx + 1] : scanList[idx - 1];
+                return (
+                <TableRow
+                  key={scan.id}
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() => navigate(`/projects/${projectId}/scans/${scan.latest_rescan_id || scan.id}`)}
                 >
@@ -315,11 +326,25 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                         );
                     })()}
                   </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    {prevScan && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setDeltaState({ from: prevScan.latest_rescan_id || prevScan.id, to: scan.latest_rescan_id || scan.id })
+                        }
+                      >
+                        Delta
+                      </Button>
+                    )}
+                  </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
               {!isLoading && scanList.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     No scans found.
                   </TableCell>
                 </TableRow>
@@ -354,6 +379,12 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
           </div>
         )}
       </CardContent>
+      <ScanDeltaView
+        projectId={projectId}
+        fromScanId={deltaState?.from ?? null}
+        toScanId={deltaState?.to ?? null}
+        onClose={() => setDeltaState(null)}
+      />
     </Card>
   )
 }

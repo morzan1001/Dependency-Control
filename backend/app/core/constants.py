@@ -393,6 +393,9 @@ EXPLOIT_MATURITY_BOOST: Dict[str, float] = {
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
 
+# Permission required to query analytics at global scope (all projects)
+PERMISSION_ANALYTICS_GLOBAL: str = "analytics:global"
+
 # Impact score calculation parameters
 IMPACT_REACH_MULTIPLIER_CAP: int = 10  # Max multiplier for affected projects
 IMPACT_FIX_AVAILABLE_BOOST: float = 1.2  # Boost for issues with available fixes

@@ -24,6 +24,130 @@ _SET_ON_INSERT = "$setOnInsert"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
+def _fake_match_doc(doc: dict, query: dict) -> bool:
+    """Return True if doc matches a simple MongoDB query (field equality + $in + $regex)."""
+    for key, condition in query.items():
+        value = doc.get(key)
+        if isinstance(condition, dict):
+            if "$in" in condition:
+                if value not in condition["$in"]:
+                    return False
+            if "$regex" in condition:
+                import re
+                flags = re.IGNORECASE if condition.get("$options") == "i" else 0
+                if not re.search(condition["$regex"], str(value or ""), flags):
+                    return False
+            if "$gte" in condition or "$lte" in condition or "$gt" in condition or "$lt" in condition:
+                # For date range matching, always pass (trend tests use empty data anyway)
+                pass
+        else:
+            if value != condition:
+                return False
+    return True
+
+
+def _fake_match(docs: list, query: dict) -> list:
+    return [d for d in docs if _fake_match_doc(d, query)]
+
+
+def _resolve_field(doc: dict, expr):
+    """Resolve a field reference like '$field' or a plain value."""
+    if isinstance(expr, str) and expr.startswith("$"):
+        return doc.get(expr[1:])
+    return expr
+
+
+def _resolve_group_key(doc: dict, id_spec) -> object:
+    """Resolve the _id expression in a $group stage to a hashable key."""
+    if id_spec is None:
+        return None
+    if isinstance(id_spec, str) and id_spec.startswith("$"):
+        val = doc.get(id_spec[1:])
+        # $dateTrunc expressions are dicts; we map them to None so bucket grouping
+        # produces a single bucket (empty results) rather than raising an error.
+        return val
+    if isinstance(id_spec, dict):
+        # Check for $dateTrunc — return None to avoid errors
+        if "$dateTrunc" in id_spec:
+            return None
+        result = {}
+        for k, v in id_spec.items():
+            if isinstance(v, dict) and "$dateTrunc" in v:
+                result[k] = None
+            else:
+                result[k] = _resolve_field(doc, v)
+        try:
+            return tuple(sorted(result.items()))
+        except TypeError:
+            return str(result)
+    return id_spec
+
+
+def _fake_group(docs: list, group_spec: dict) -> list:
+    """Minimal $group implementation covering $sum, $first, $addToSet, $push, $min, $max."""
+    id_expr = group_spec.get("_id")
+    accumulators = {k: v for k, v in group_spec.items() if k != "_id"}
+
+    groups: dict = {}   # key -> accumulated state
+    key_order: list = []
+
+    for doc in docs:
+        key = _resolve_group_key(doc, id_expr)
+        hashable = key if not isinstance(key, dict) else str(key)
+        if hashable not in groups:
+            groups[hashable] = {"_id_val": key}
+            key_order.append(hashable)
+            for acc_name, acc_expr in accumulators.items():
+                op = list(acc_expr.keys())[0]
+                if op == "$sum":
+                    val = acc_expr["$sum"]
+                    # Literal numeric $sum (e.g. {$sum: 1}): resolve on first doc
+                    # so the first document contributes its value immediately.
+                    if isinstance(val, (int, float)):
+                        groups[hashable][acc_name] = val
+                    else:
+                        groups[hashable][acc_name] = _resolve_field(doc, val) or 0
+                elif op == "$first":
+                    groups[hashable][acc_name] = _resolve_field(doc, acc_expr["$first"])
+                elif op in ("$addToSet",):
+                    groups[hashable][acc_name] = set()
+                elif op == "$push":
+                    groups[hashable][acc_name] = []
+                elif op in ("$min", "$max"):
+                    groups[hashable][acc_name] = _resolve_field(doc, acc_expr[op])
+        else:
+            for acc_name, acc_expr in accumulators.items():
+                op = list(acc_expr.keys())[0]
+                field_val = _resolve_field(doc, acc_expr[op])
+                cur = groups[hashable][acc_name]
+                if op == "$sum":
+                    increment = field_val if isinstance(field_val, (int, float)) else 1
+                    groups[hashable][acc_name] = cur + increment
+                elif op == "$first":
+                    pass  # keep first value
+                elif op == "$addToSet":
+                    if field_val is not None:
+                        cur.add(field_val)
+                elif op == "$push":
+                    cur.append(field_val)
+                elif op == "$min":
+                    if field_val is not None and (cur is None or field_val < cur):
+                        groups[hashable][acc_name] = field_val
+                elif op == "$max":
+                    if field_val is not None and (cur is None or field_val > cur):
+                        groups[hashable][acc_name] = field_val
+
+    result = []
+    for hashable in key_order:
+        state = groups[hashable]
+        row = {"_id": state.pop("_id_val")}
+        for k, v in state.items():
+            row[k] = list(v) if isinstance(v, set) else v
+        result.append(row)
+    return result
+
+
 def _make_project(project_id: str = "test-project-id", name: str = "test-project") -> Project:
     return Project(id=project_id, name=name)
 
@@ -162,42 +286,67 @@ class _FakeCollection:
         result.deleted_count = 1 if matched_key is not None else 0
         return result
 
+    async def insert_one(self, doc: dict):
+        key = doc.get("_id") or str(len(self._docs))
+        self._docs[key] = dict(doc)
+        result = MagicMock()
+        result.inserted_id = key
+        return result
+
     async def create_index(self, *args, **kwargs):
         return None
 
-    def find(self, query=None):
-        """Return a chainable cursor over matching documents."""
+    def find(self, query=None, projection=None):
+        """Return a chainable cursor over matching documents.
+
+        The ``projection`` argument is accepted for API compatibility with Motor
+        but is not applied — the fake cursor returns full documents.
+        """
         return _FakeCursor(self._docs, query or {})
 
     def aggregate(self, pipeline):
-        """Minimal in-process aggregate: handles $match + $group by a single field.
+        """In-process aggregate supporting the pipeline shapes used by analytics services.
 
-        Covers the shape used by CryptoAssetRepository.summary_for_scan:
-          [ {$match: {...}}, {$group: {_id: "$field", count: {$sum: 1}}} ]
+        Handles: $match (including $in, $regex), $sort, $group (with $sum, $first,
+        $addToSet, $push, $min, $max), $limit, $unwind.
+
+        Deliberately ignores $dateTrunc (returns None bucket key) so that trend
+        endpoints return an empty but valid points list rather than erroring.
         """
-        # Resolve $match filter
-        match_query: dict = {}
-        group_field: str | None = None
+        docs = list(self._docs.values())
+
         for stage in pipeline:
             if "$match" in stage:
-                match_query = stage["$match"]
+                docs = _fake_match(docs, stage["$match"])
+            elif "$sort" in stage:
+                sort_spec = stage["$sort"]
+                for field, direction in reversed(list(sort_spec.items())):
+                    docs = sorted(
+                        docs,
+                        key=lambda d, f=field: (d.get(f) is None, d.get(f)),
+                        reverse=(direction == -1),
+                    )
             elif "$group" in stage:
-                group_spec = stage["$group"].get("_id", "")
-                if isinstance(group_spec, str) and group_spec.startswith("$"):
-                    group_field = group_spec[1:]
+                docs = _fake_group(docs, stage["$group"])
+            elif "$limit" in stage:
+                docs = docs[: stage["$limit"]]
+            elif "$unwind" in stage:
+                field_path = stage["$unwind"]
+                if isinstance(field_path, str):
+                    field_path = field_path.lstrip("$")
+                unwound = []
+                for doc in docs:
+                    val = doc.get(field_path)
+                    if isinstance(val, list):
+                        for item in val:
+                            new_doc = dict(doc)
+                            new_doc[field_path] = item
+                            unwound.append(new_doc)
+                    elif val is not None:
+                        unwound.append(doc)
+                docs = unwound
 
-        matched = [
-            doc for doc in self._docs.values()
-            if all(doc.get(k) == v for k, v in match_query.items())
-        ]
-
-        # Group by the resolved field
-        counts: dict = {}
-        for doc in matched:
-            key = doc.get(group_field) if group_field else None
-            counts[key] = counts.get(key, 0) + 1
-
-        rows = [{"_id": k, "count": v} for k, v in counts.items()]
+        rows = docs
 
         class _AggCursor:
             def __init__(self, items):

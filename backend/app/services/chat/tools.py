@@ -362,6 +362,70 @@ async def suggest_crypto_policy_override(
     }
 
 
+# ── Crypto analytics standalone helpers ───────────────────────────────────
+
+async def get_crypto_hotspots(
+    db,
+    *,
+    project_id: str,
+    group_by: str = "name",
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """List top crypto hotspots for a project, grouped by the given dimension."""
+    from app.services.analytics.crypto_hotspots import CryptoHotspotService
+    from app.services.analytics.scopes import ResolvedScope
+
+    resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
+    resp = await CryptoHotspotService(db).hotspots(
+        resolved=resolved, group_by=group_by, limit=limit,
+    )
+    return resp.model_dump()
+
+
+async def get_crypto_trends(
+    db,
+    *,
+    project_id: str,
+    metric: str = "total_crypto_findings",
+    days: int = 30,
+) -> Dict[str, Any]:
+    """Return time-bucketed crypto finding/asset trends for a project."""
+    from app.services.analytics.crypto_trends import CryptoTrendService
+    from app.services.analytics.scopes import ResolvedScope
+
+    resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
+    now = datetime.now(timezone.utc)
+    days = max(1, min(days, 365))
+    bucket = "day" if days <= 14 else "week" if days <= 90 else "month"
+    series = await CryptoTrendService(db).trend(
+        resolved=resolved, metric=metric, bucket=bucket,
+        range_start=now - timedelta(days=days), range_end=now,
+    )
+    return series.model_dump()
+
+
+async def get_scan_delta(
+    db,
+    *,
+    project_id: str,
+    from_scan_id: str,
+    to_scan_id: str,
+) -> Dict[str, Any]:
+    """Compare two scans for a project and return added/removed crypto assets."""
+    from app.services.analytics.crypto_delta import compute_scan_delta
+
+    delta = await compute_scan_delta(
+        db, project_id, from_scan=from_scan_id, to_scan=to_scan_id,
+    )
+    return {
+        "from_scan_id": delta.from_scan_id,
+        "to_scan_id": delta.to_scan_id,
+        "added": [e.model_dump() for e in delta.added],
+        "removed": [e.model_dump() for e in delta.removed],
+        "unchanged_count": delta.unchanged_count,
+    }
+
+
 # ── Tool metadata ──────────────────────────────────────────────────────────
 
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
@@ -1179,6 +1243,76 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                     "scan_id": {"type": "string", "description": "The scan ID"},
                 },
                 "required": ["project_id", "scan_id"],
+            },
+        },
+    },
+    # ── Crypto Analytics ──
+    {
+        "type": "function",
+        "function": {
+            "name": "get_crypto_hotspots",
+            "description": "List top crypto hotspots for a project, grouped by the given dimension.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "group_by": {
+                        "type": "string",
+                        "enum": ["name", "primitive", "asset_type", "weakness_tag", "severity"],
+                    },
+                    "limit": {"type": "integer", "default": 20, "maximum": 100},
+                },
+                "required": ["project_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_crypto_trends",
+            "description": (
+                "Return time-bucketed crypto finding/asset trend data for a project. "
+                "Bucket granularity is auto-selected based on the days range."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "metric": {
+                        "type": "string",
+                        "enum": [
+                            "total_crypto_findings",
+                            "quantum_vulnerable_findings",
+                            "weak_algo_findings",
+                            "weak_key_findings",
+                            "cert_expiring_soon",
+                            "cert_expired",
+                            "unique_algorithms",
+                            "unique_cipher_suites",
+                        ],
+                    },
+                    "days": {"type": "integer", "default": 30, "minimum": 1, "maximum": 365},
+                },
+                "required": ["project_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_scan_delta",
+            "description": (
+                "Compare two scans for a project and return the crypto assets that "
+                "were added, removed, or unchanged between them."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "from_scan_id": {"type": "string", "description": "The baseline scan ID"},
+                    "to_scan_id": {"type": "string", "description": "The target scan ID"},
+                },
+                "required": ["project_id", "from_scan_id", "to_scan_id"],
             },
         },
     },
@@ -2425,6 +2559,40 @@ class ChatToolRegistry:
                 return {"error": "Project not found or access denied"}
             return await suggest_crypto_policy_override(
                 db, project_id=args["project_id"], scan_id=args["scan_id"]
+            )
+
+        # ── Crypto Analytics tools ──
+        if tool_name == "get_crypto_hotspots":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            return await get_crypto_hotspots(
+                db,
+                project_id=args["project_id"],
+                group_by=args.get("group_by", "name"),
+                limit=_clamp_limit(args.get("limit"), 20, 100),
+            )
+
+        if tool_name == "get_crypto_trends":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            return await get_crypto_trends(
+                db,
+                project_id=args["project_id"],
+                metric=args.get("metric", "total_crypto_findings"),
+                days=int(args.get("days") or 30),
+            )
+
+        if tool_name == "get_scan_delta":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            return await get_scan_delta(
+                db,
+                project_id=args["project_id"],
+                from_scan_id=args["from_scan_id"],
+                to_scan_id=args["to_scan_id"],
             )
 
         return {"error": f"Unknown tool: {tool_name}"}
