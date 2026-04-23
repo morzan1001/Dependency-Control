@@ -10,32 +10,38 @@ persists even if the artifact is later pruned.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Tuple
+from typing import List, Tuple
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.models.compliance_report import ComplianceReport
 from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
     FrameworkEvaluation, ReportFormat, ReportStatus,
 )
+from app.services.analytics.scopes import ResolvedScope, ScopeResolver
+from app.services.analyzers.crypto.catalogs.loader import CURRENT_IANA_CATALOG_VERSION
+from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
+from app.services.compliance.frameworks.base import EvaluationInput
+from app.services.compliance.renderers import RENDERER_REGISTRY
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_RETENTION_DAYS = 90
-_PLACEHOLDER_MSG = "Implemented in PR D."
 
 
 class ComplianceReportEngine:
     """Thin orchestrator. Renderers + frameworks live elsewhere.
 
     `_gather_inputs` is responsible for:
-        1. Resolving scope -> project_ids (via ScopeResolver).
-        2. Loading crypto_assets / findings / policy rules for that scope.
-        3. Running the framework evaluator to produce a FrameworkEvaluation.
-    The result object carries the evaluation plus snapshot metadata. Keeping
-    the framework call on that side of the seam lets unit tests mock the
-    whole pipeline with a single patch.
+        1. Loading crypto_assets / findings / policy rules for the resolved scope.
+        2. Returning an `EvaluationInput` for the framework to evaluate.
+
+    The framework evaluation itself happens in `generate()` after `_gather_inputs`,
+    so unit tests can mock each seam (scope resolver, inputs, framework, render,
+    store) independently.
     """
 
     async def generate(
@@ -45,11 +51,12 @@ class ComplianceReportEngine:
         repo = ComplianceReportRepository(db)
         await repo.update_status(report.id, status=ReportStatus.GENERATING)
         try:
-            from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
-
-            gathered = await self._gather_inputs(db, user, report)
+            resolved = await ScopeResolver(db, user).resolve(
+                scope=report.scope, scope_id=report.scope_id,
+            )
+            inputs = await self._gather_inputs(db, resolved, report)
             framework = FRAMEWORK_REGISTRY[report.framework]
-            evaluation = getattr(gathered, "evaluation", None)
+            evaluation = framework.evaluate(inputs)
             artifact_bytes, filename, mime = self._render(
                 report.format, framework, evaluation, report,
             )
@@ -63,9 +70,9 @@ class ComplianceReportEngine:
                 artifact_filename=filename,
                 artifact_size_bytes=len(artifact_bytes),
                 artifact_mime_type=mime,
-                summary=getattr(evaluation, "summary", None),
-                policy_version_snapshot=getattr(gathered, "policy_version", None),
-                iana_catalog_version_snapshot=getattr(gathered, "iana_catalog_version", None),
+                summary=evaluation.summary,
+                policy_version_snapshot=inputs.policy_version,
+                iana_catalog_version_snapshot=inputs.iana_catalog_version,
                 completed_at=datetime.now(timezone.utc),
                 expires_at=datetime.now(timezone.utc) + timedelta(days=_DEFAULT_RETENTION_DAYS),
             )
@@ -79,23 +86,89 @@ class ComplianceReportEngine:
                 completed_at=datetime.now(timezone.utc),
             )
 
-    async def _gather_inputs(self, db, user, report: ComplianceReport):
-        """PR D will flesh this out. Placeholder lets C-tests mock it.
+    async def _gather_inputs(
+        self, db, resolved: ResolvedScope, report: ComplianceReport,
+    ) -> EvaluationInput:
+        scan_ids = await self._pick_scan_ids(db, resolved)
+        assets = await self._collect_crypto_assets(db, resolved, scan_ids)
+        findings = await self._collect_findings(db, resolved, scan_ids)
+        policy_repo = CryptoPolicyRepository(db)
+        system = await policy_repo.get_system_policy()
+        policy_version = getattr(system, "version", None) if system else None
+        policy_rules = (
+            [r.model_dump() for r in system.rules] if system else []
+        )
+        scope_desc = self._scope_description(resolved)
+        return EvaluationInput(
+            resolved=resolved,
+            scope_description=scope_desc,
+            crypto_assets=assets,
+            findings=findings,
+            policy_rules=policy_rules,
+            policy_version=policy_version,
+            iana_catalog_version=CURRENT_IANA_CATALOG_VERSION,
+            scan_ids=scan_ids,
+        )
 
-        Returns an object with attributes: `evaluation` (FrameworkEvaluation),
-        `policy_version` (int), `iana_catalog_version` (int).
-        """
-        raise NotImplementedError(_PLACEHOLDER_MSG)
+    async def _pick_scan_ids(self, db, resolved: ResolvedScope) -> List[str]:
+        match = {"status": {"$in": ["completed", "partial"]}}
+        if resolved.project_ids is not None:
+            match["project_id"] = {"$in": resolved.project_ids}
+        pipeline = [
+            {"$match": match},
+            {"$sort": {"created_at": -1}},
+            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
+        ]
+        return [row["scan_id"] async for row in db.scans.aggregate(pipeline)]
+
+    async def _collect_crypto_assets(self, db, resolved, scan_ids):
+        repo = CryptoAssetRepository(db)
+        out = []
+        for sid in scan_ids:
+            scan_doc = await db.scans.find_one({"_id": sid}, {"project_id": 1})
+            if not scan_doc:
+                continue
+            pid = scan_doc.get("project_id")
+            if pid is None:
+                continue
+            assets = await repo.list_by_scan(pid, sid, limit=10000)
+            out.extend(assets)
+        return out
+
+    async def _collect_findings(self, db, resolved, scan_ids):
+        query = {
+            "scan_id": {"$in": scan_ids},
+            "type": {"$regex": "^crypto_"},
+        }
+        if resolved.project_ids is not None:
+            query["project_id"] = {"$in": resolved.project_ids}
+        cursor = db.findings.find(query).limit(20000)
+        return [doc async for doc in cursor]
+
+    def _scope_description(self, resolved: ResolvedScope) -> str:
+        if resolved.scope == "project":
+            return f"project '{resolved.scope_id}'"
+        if resolved.scope == "team":
+            return f"team '{resolved.scope_id}'"
+        if resolved.scope == "user":
+            count = len(resolved.project_ids or [])
+            return f"user scope ({count} project(s))"
+        return "global (all projects)"
 
     def _render(
         self, fmt: ReportFormat, framework, evaluation: FrameworkEvaluation,
         report: ComplianceReport,
     ) -> Tuple[bytes, str, str]:
-        """PR D will flesh this out. Placeholder lets C-tests mock it."""
-        raise NotImplementedError(_PLACEHOLDER_MSG)
+        renderer = RENDERER_REGISTRY[fmt]
+        disclaimer = getattr(framework, "disclaimer", None)
+        return renderer.render(evaluation, report, disclaimer=disclaimer)
 
     async def _store_artifact(
         self, db, artifact_bytes: bytes, filename: str, mime: str,
     ) -> str:
-        """PR D will flesh this out. Placeholder lets C-tests mock it."""
-        raise NotImplementedError(_PLACEHOLDER_MSG)
+        bucket = AsyncIOMotorGridFSBucket(db)
+        gridfs_id = await bucket.upload_from_stream(
+            filename, artifact_bytes,
+            metadata={"content_type": mime, "kind": "compliance_report"},
+        )
+        return str(gridfs_id)
