@@ -7,12 +7,11 @@ evaluators and delegates everything else to the default evaluator here.
 """
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Protocol
 
 from app.models.crypto_asset import CryptoAsset
-from app.models.finding import Finding, FindingType, Severity
 from app.schemas.compliance import (
     ControlDefinition,
     ControlResult,
