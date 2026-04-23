@@ -8,6 +8,7 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -17,11 +18,18 @@ from app.core.config import settings
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
+from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.waivers import WaiverRepository
+from app.schemas.compliance import ReportFramework
+from app.services.analytics.scopes import ResolvedScope, ScopeResolver
+from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
+from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +431,90 @@ async def get_scan_delta(
         "added": [e.model_dump() for e in delta.added],
         "removed": [e.model_dump() for e in delta.removed],
         "unchanged_count": delta.unchanged_count,
+    }
+
+
+# ── Compliance / PQC-migration standalone helpers ─────────────────────────
+
+async def generate_pqc_migration_plan(
+    db,
+    *,
+    project_id: str,
+    limit: int = 500,
+) -> Dict[str, Any]:
+    """MCP tool: generate the PQC migration plan for one project."""
+    resolved = ResolvedScope(
+        scope="project", scope_id=project_id, project_ids=[project_id],
+    )
+    gen = PQCMigrationPlanGenerator(db)
+    resp = await gen.generate(resolved=resolved, limit=limit)
+    return resp.model_dump()
+
+
+async def list_compliance_reports(
+    db,
+    *,
+    project_id: Optional[str] = None,
+    framework: Optional[str] = None,
+    limit: int = 10,
+) -> Dict[str, Any]:
+    """MCP tool: recent compliance reports (metadata only, no artifacts)."""
+    fw: Optional[ReportFramework] = None
+    if framework:
+        try:
+            fw = ReportFramework(framework)
+        except ValueError:
+            fw = None
+    reports = await ComplianceReportRepository(db).list(
+        scope="project" if project_id else None,
+        scope_id=project_id,
+        framework=fw,
+        limit=limit,
+    )
+    return {"reports": [r.model_dump(by_alias=True) for r in reports]}
+
+
+async def list_policy_audit_entries(
+    db,
+    *,
+    policy_scope: str,
+    project_id: Optional[str] = None,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """MCP tool: policy audit timeline."""
+    entries = await PolicyAuditRepository(db).list(
+        policy_scope=policy_scope,
+        project_id=project_id,
+        limit=limit,
+    )
+    return {"entries": [e.model_dump(by_alias=True) for e in entries]}
+
+
+async def get_framework_evaluation_summary(
+    db,
+    *,
+    user,
+    scope: str,
+    scope_id: Optional[str],
+    framework: str,
+) -> Dict[str, Any]:
+    """MCP tool: run compliance evaluation in-process and return summary counts."""
+    try:
+        fw_enum = ReportFramework(framework)
+    except ValueError:
+        return {"error": f"Unknown framework: {framework}"}
+    resolver = ScopeResolver(db, user)
+    resolved = await resolver.resolve(scope=scope, scope_id=scope_id)
+
+    engine = ComplianceReportEngine()
+    fake_report = SimpleNamespace(scope=scope, scope_id=scope_id)
+    inputs = await engine._gather_inputs(db, resolved, fake_report)
+    framework_obj = FRAMEWORK_REGISTRY[fw_enum]
+    eval_result = framework_obj.evaluate(inputs)
+    return {
+        "framework": framework,
+        "framework_name": eval_result.framework_name,
+        "summary": eval_result.summary,
     }
 
 
@@ -1338,6 +1430,79 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "type": "object",
                 "properties": {},
                 "required": [],
+            },
+        },
+    },
+    # ── Compliance / PQC-migration (Phase 3) ──
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_pqc_migration_plan",
+            "description": "Generate a PQC migration plan for one project.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "limit": {"type": "integer", "default": 500, "maximum": 2000},
+                },
+                "required": ["project_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_compliance_reports",
+            "description": "List recent compliance reports (metadata only).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_id": {"type": "string"},
+                    "framework": {"type": "string"},
+                    "limit": {"type": "integer", "default": 10, "maximum": 50},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_policy_audit_entries",
+            "description": "List policy audit timeline entries.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "policy_scope": {"type": "string", "enum": ["system", "project"]},
+                    "project_id": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20, "maximum": 100},
+                },
+                "required": ["policy_scope"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_framework_evaluation_summary",
+            "description": "Evaluate a compliance framework and return summary counts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scope": {"type": "string", "enum": ["project", "team", "global", "user"]},
+                    "scope_id": {"type": "string"},
+                    "framework": {
+                        "type": "string",
+                        "enum": [
+                            "nist-sp-800-131a",
+                            "bsi-tr-02102",
+                            "cnsa-2.0",
+                            "fips-140-3",
+                            "iso-19790",
+                            "pqc-migration-plan",
+                        ],
+                    },
+                },
+                "required": ["scope", "framework"],
             },
         },
     },
@@ -2593,6 +2758,58 @@ class ChatToolRegistry:
                 project_id=args["project_id"],
                 from_scan_id=args["from_scan_id"],
                 to_scan_id=args["to_scan_id"],
+            )
+
+        # ── Compliance / PQC-migration (Phase 3) ──
+        if tool_name == "generate_pqc_migration_plan":
+            project = await self._get_authorized_project(args["project_id"], user_project_query, db)
+            if not project:
+                return {"error": "Project not found or access denied"}
+            return await generate_pqc_migration_plan(
+                db,
+                project_id=args["project_id"],
+                limit=_clamp_limit(args.get("limit"), 500, 2000),
+            )
+
+        if tool_name == "list_compliance_reports":
+            project_id = args.get("project_id")
+            if project_id:
+                project = await self._get_authorized_project(project_id, user_project_query, db)
+                if not project:
+                    return {"error": "Project not found or access denied"}
+            return await list_compliance_reports(
+                db,
+                project_id=project_id,
+                framework=args.get("framework"),
+                limit=_clamp_limit(args.get("limit"), 10, 50),
+            )
+
+        if tool_name == "list_policy_audit_entries":
+            project_id = args.get("project_id")
+            if project_id:
+                project = await self._get_authorized_project(project_id, user_project_query, db)
+                if not project:
+                    return {"error": "Project not found or access denied"}
+            return await list_policy_audit_entries(
+                db,
+                policy_scope=args["policy_scope"],
+                project_id=project_id,
+                limit=_clamp_limit(args.get("limit"), 20, 100),
+            )
+
+        if tool_name == "get_framework_evaluation_summary":
+            scope = args["scope"]
+            scope_id = args.get("scope_id")
+            if scope == "project" and scope_id:
+                project = await self._get_authorized_project(scope_id, user_project_query, db)
+                if not project:
+                    return {"error": "Project not found or access denied"}
+            return await get_framework_evaluation_summary(
+                db,
+                user=user,
+                scope=scope,
+                scope_id=scope_id,
+                framework=args["framework"],
             )
 
         return {"error": f"Unknown tool: {tool_name}"}
