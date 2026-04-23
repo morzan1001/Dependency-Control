@@ -160,6 +160,8 @@ class _FakeCursor:
         self._query = query
         self._skip_n = 0
         self._limit_n = 0
+        self._sort_key: str | None = None
+        self._sort_dir: int = 1  # 1 = ASC, -1 = DESC
 
     def skip(self, n: int) -> "_FakeCursor":
         self._skip_n = n
@@ -167,6 +169,11 @@ class _FakeCursor:
 
     def limit(self, n: int) -> "_FakeCursor":
         self._limit_n = n
+        return self
+
+    def sort(self, key: str, direction: int = 1) -> "_FakeCursor":
+        self._sort_key = key
+        self._sort_dir = direction
         return self
 
     def _matches(self, doc: dict) -> bool:
@@ -182,6 +189,11 @@ class _FakeCursor:
 
     async def to_list(self, length=None) -> list:
         results = [d for d in self._docs.values() if self._matches(d)]
+        if self._sort_key is not None:
+            results.sort(
+                key=lambda d: (d.get(self._sort_key) is None, d.get(self._sort_key)),
+                reverse=(self._sort_dir == -1),
+            )
         results = results[self._skip_n:]
         if self._limit_n:
             results = results[: self._limit_n]
@@ -273,6 +285,19 @@ class _FakeCollection:
         result.modified_count = len(ops)
         return result
 
+    def _doc_matches_query(self, doc: dict, query: dict) -> bool:
+        import operator as _op
+        _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
+        for fk, fv in query.items():
+            val = doc.get(fk)
+            if isinstance(fv, dict):
+                for op_key, cmp_fn in _CMP.items():
+                    if op_key in fv and not (val is not None and cmp_fn(val, fv[op_key])):
+                        return False
+            elif val != fv:
+                return False
+        return True
+
     async def delete_one(self, query):
         await asyncio.sleep(0)  # yield to event loop — keeps this a true coroutine
         matched_key = None
@@ -284,6 +309,17 @@ class _FakeCollection:
             del self._docs[matched_key]
         result = MagicMock()
         result.deleted_count = 1 if matched_key is not None else 0
+        return result
+
+    async def delete_many(self, query):
+        await asyncio.sleep(0)  # yield to event loop — keeps this a true coroutine
+        keys_to_delete = [
+            k for k, doc in self._docs.items() if self._doc_matches_query(doc, query)
+        ]
+        for k in keys_to_delete:
+            del self._docs[k]
+        result = MagicMock()
+        result.deleted_count = len(keys_to_delete)
         return result
 
     async def insert_one(self, doc: dict):
