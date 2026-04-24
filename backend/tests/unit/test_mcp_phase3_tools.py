@@ -5,12 +5,25 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_generate_pqc_migration_plan_returns_response():
+    from app.services.analytics.scopes import ResolvedScope
     from app.services.chat.tools import generate_pqc_migration_plan
 
     db = MagicMock()
-    with patch(
-        "app.services.chat.tools.PQCMigrationPlanGenerator",
-    ) as gen_cls:
+    user = MagicMock(id="u1", permissions=frozenset())
+    resolver = MagicMock(
+        resolve=AsyncMock(
+            return_value=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
+        )
+    )
+    with (
+        patch(
+            "app.services.chat.tools.ScopeResolver",
+            return_value=resolver,
+        ),
+        patch(
+            "app.services.chat.tools.PQCMigrationPlanGenerator",
+        ) as gen_cls,
+    ):
         gen_cls.return_value = MagicMock(
             generate=AsyncMock(
                 return_value=MagicMock(
@@ -18,7 +31,7 @@ async def test_generate_pqc_migration_plan_returns_response():
                 )
             )
         )
-        out = await generate_pqc_migration_plan(db, project_id="p1")
+        out = await generate_pqc_migration_plan(db, user=user, project_id="p1")
     assert out["scope"] == "project"
     assert out["items"] == []
 

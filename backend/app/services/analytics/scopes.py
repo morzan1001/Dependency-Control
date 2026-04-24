@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, List, Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import PERMISSION_ANALYTICS_GLOBAL
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -70,8 +70,25 @@ class ScopeResolver:
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 
     async def _resolve_user(self) -> ResolvedScope:
+        # Super-users with PROJECT_READ_ALL see every project under the user
+        # scope. This matches the long-standing SBOM-analytics semantics so
+        # migrating SBOM endpoints to ScopeResolver causes no behaviour
+        # change for those callers.
+        from app.core.permissions import Permissions, has_permission
+
+        perms = getattr(self.user, "permissions", None)
+        if perms is not None and has_permission(perms, Permissions.PROJECT_READ_ALL):
+            all_ids = await self._list_all_project_ids()
+            return ResolvedScope(scope="user", scope_id=None, project_ids=all_ids)
+
         project_ids = await self._list_user_project_ids()
         return ResolvedScope(scope="user", scope_id=None, project_ids=project_ids)
+
+    async def _list_all_project_ids(self) -> List[str]:
+        """Return every project_id in the database — super-user escape hatch."""
+        cursor = self.db.projects.find({}, {"_id": 1}).limit(ANALYTICS_MAX_QUERY_LIMIT)
+        docs = await cursor.to_list(length=ANALYTICS_MAX_QUERY_LIMIT)
+        return [str(d["_id"]) for d in docs]
 
     async def _check_project_member(self, project_id: str) -> bool:
         from app.api.v1.helpers.projects import check_project_access

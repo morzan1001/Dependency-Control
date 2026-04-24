@@ -395,7 +395,6 @@ async def get_crypto_hotspots(
 ) -> Dict[str, Any]:
     """List top crypto hotspots for a project, grouped by the given dimension."""
     from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
-    from app.services.analytics.scopes import ResolvedScope
 
     resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     group_by_lit = cast(GroupBy, group_by)
@@ -420,7 +419,6 @@ async def get_crypto_trends(
         CryptoTrendService,
         Metric,
     )
-    from app.services.analytics.scopes import ResolvedScope
 
     resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     now = datetime.now(timezone.utc)
@@ -467,14 +465,19 @@ async def get_scan_delta(
 async def generate_pqc_migration_plan(
     db: AsyncIOMotorDatabase,
     *,
+    user: User,
     project_id: str,
     limit: int = 500,
 ) -> Dict[str, Any]:
-    """MCP tool: generate the PQC migration plan for one project."""
-    resolved = ResolvedScope(
-        scope="project",
-        scope_id=project_id,
-        project_ids=[project_id],
+    """MCP tool: generate the PQC migration plan for one project.
+
+    The caller (``_dispatch``) already verifies the user's access to the
+    project via ``_get_authorized_project``; ``ScopeResolver.resolve`` below
+    re-runs the same project-member check so scope construction stays
+    consistent with every other analytics path in the codebase.
+    """
+    resolved = await ScopeResolver(db, user).resolve(
+        scope="project", scope_id=project_id
     )
     gen = PQCMigrationPlanGenerator(db)
     resp = await gen.generate(resolved=resolved, limit=limit)
@@ -2872,6 +2875,7 @@ class ChatToolRegistry:
                 return {"error": "Project not found or access denied"}
             return await generate_pqc_migration_plan(
                 db,
+                user=user,
                 project_id=args["project_id"],
                 limit=_clamp_limit(args.get("limit"), 500, 2000),
             )
