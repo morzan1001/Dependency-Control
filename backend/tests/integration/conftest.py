@@ -48,12 +48,37 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
 
 
 def _fake_match_doc(doc: dict, query: dict) -> bool:
-    """Return True if doc matches a simple MongoDB query (field equality + $in + $regex + range ops)."""
+    """Return True if doc matches a simple MongoDB query.
+
+    Supports equality, ``$in``, ``$nin``, ``$ne``, ``$regex``, range ops
+    (``$lt``/``$lte``/``$gt``/``$gte``), ``$exists`` and top-level
+    ``$or``/``$and``.
+    """
     for key, condition in query.items():
+        # Top-level logical operators
+        if key == "$or":
+            if not any(_fake_match_doc(doc, sub) for sub in condition):
+                return False
+            continue
+        if key == "$and":
+            if not all(_fake_match_doc(doc, sub) for sub in condition):
+                return False
+            continue
+
         value = doc.get(key)
         if isinstance(condition, dict):
+            if "$exists" in condition:
+                field_present = key in doc
+                if bool(condition["$exists"]) != field_present:
+                    return False
             if "$in" in condition:
                 if value not in condition["$in"]:
+                    return False
+            if "$nin" in condition:
+                if value in condition["$nin"]:
+                    return False
+            if "$ne" in condition:
+                if value == condition["$ne"]:
                     return False
             if "$regex" in condition:
                 import re
@@ -199,22 +224,9 @@ class _FakeCursor:
         return self
 
     def _matches(self, doc: dict) -> bool:
-        for k, v in self._query.items():
-            if isinstance(v, dict):
-                val = doc.get(k)
-                if "$regex" in v:
-                    import re
-
-                    flags = re.IGNORECASE if v.get("$options") == "i" else 0
-                    if not re.search(v["$regex"], str(val or ""), flags):
-                        return False
-                if "$in" in v and val not in v["$in"]:
-                    return False
-                if not _match_range_ops(val, v):
-                    return False
-            elif doc.get(k) != v:
-                return False
-        return True
+        # Delegate to the shared matcher for full operator support
+        # ($or/$and/$exists/$in/$ne/range ops/$regex).
+        return _fake_match_doc(doc, self._query)
 
     async def to_list(self, length=None) -> list:
         results = [d for d in self._docs.values() if self._matches(d)]
@@ -280,13 +292,13 @@ class _FakeCollection:
         # return_document=True (or ReturnDocument.AFTER) returns the updated doc
         return self._docs[matched_key] if return_document else before
 
-    async def find_one(self, query):
-        key = query.get("_id") or query.get("_id")
-        if key:
-            return self._docs.get(key)
-        # search by field
+    async def find_one(self, query, *_args, **_kwargs):
+        # Fast path: straight `_id` lookup (common in repository code).
+        if set(query.keys()) == {"_id"} and not isinstance(query["_id"], dict):
+            return self._docs.get(query["_id"])
+        # General path: full matcher (handles $or, $in, $exists, ranges).
         for doc in self._docs.values():
-            if all(doc.get(k) == v for k, v in query.items()):
+            if _fake_match_doc(doc, query):
                 return doc
         return None
 
@@ -336,16 +348,9 @@ class _FakeCollection:
         return result
 
     def _doc_matches_query(self, doc: dict, query: dict) -> bool:
-        for fk, fv in query.items():
-            val = doc.get(fk)
-            if isinstance(fv, dict):
-                if "$in" in fv and val not in fv["$in"]:
-                    return False
-                if not _match_range_ops(val, fv):
-                    return False
-            elif val != fv:
-                return False
-        return True
+        # Delegate to the shared matcher so all fake-DB code paths agree
+        # on operator support ($or/$and/$exists/$in/$ne/range ops).
+        return _fake_match_doc(doc, query)
 
     async def delete_one(self, query):
         await asyncio.sleep(0)  # yield to event loop — keeps this a true coroutine

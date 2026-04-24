@@ -20,6 +20,14 @@ class PolicyAuditEntry(BaseModel):
         validation_alias="_id",
         serialization_alias="_id",
     )
+    policy_type: Literal["crypto", "license"] = Field(
+        default="crypto",
+        description=(
+            "Which policy subsystem this entry belongs to. Defaults to "
+            "'crypto' for backward compatibility with entries written "
+            "before the discriminator was added."
+        ),
+    )
     policy_scope: Literal["system", "project"] = Field(..., description="Scope of the audited policy")
     project_id: Optional[str] = Field(None, description="Project ID when scope='project', None for system policy")
     version: int = Field(..., ge=0, description="Version of the CryptoPolicy at time of save")
