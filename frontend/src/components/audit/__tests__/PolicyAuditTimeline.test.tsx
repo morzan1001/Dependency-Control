@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi } from "vitest";
 
@@ -28,6 +28,8 @@ vi.mock("@/api/policyAudit", () => ({
   getProjectAuditEntry: vi.fn(),
   revertSystemPolicy: vi.fn(),
   revertProjectPolicy: vi.fn(),
+  pruneSystemAudit: vi.fn().mockResolvedValue({ deleted: 0 }),
+  pruneProjectAudit: vi.fn().mockResolvedValue({ deleted: 0 }),
 }));
 
 function withClient(ui: React.ReactElement) {
@@ -42,5 +44,20 @@ describe("PolicyAuditTimeline", () => {
     expect(screen.getByText("Added 1 rule")).toBeInTheDocument();
     expect(screen.getByText(/Q2 audit/)).toBeInTheDocument();
     expect(screen.getByText("Initial policy (5 rules)")).toBeInTheDocument();
+  });
+
+  it("hides the prune button when canRevert is false", () => {
+    withClient(<PolicyAuditTimeline policyScope="system" />);
+    expect(screen.queryByRole("button", { name: /Prune old entries/i }))
+      .not.toBeInTheDocument();
+  });
+
+  it("shows the prune button and opens the dialog when canRevert is true", async () => {
+    withClient(<PolicyAuditTimeline policyScope="system" canRevert />);
+    const btn = await screen.findByRole("button", { name: /Prune old entries/i });
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(screen.getByText(/Prune audit entries/i)).toBeInTheDocument();
+    expect(screen.getByText(/Destructive:/i)).toBeInTheDocument();
   });
 });

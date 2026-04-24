@@ -2,16 +2,33 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
-  ChevronDown, ChevronRight, RotateCcw,
+  ChevronDown, ChevronRight, RotateCcw, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   listSystemAudit, listProjectAudit,
   revertSystemPolicy, revertProjectPolicy,
+  pruneSystemAudit, pruneProjectAudit,
 } from "@/api/policyAudit";
 import type { PolicyAuditEntry } from "@/types/policyAudit";
 import { PolicyDiffView } from "./PolicyDiffView";
 import { RevertConfirmDialog } from "./RevertConfirmDialog";
+import { PruneAuditDialog } from "./PruneAuditDialog";
+
+function extractErrorMessage(err: unknown): string {
+  if (err && typeof err === "object") {
+    const e = err as {
+      response?: { data?: { detail?: string | { msg?: string }[] | Record<string, unknown> } };
+      message?: string;
+    };
+    const detail = e.response?.data?.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);
+    if (detail) return JSON.stringify(detail);
+    if (e.message) return e.message;
+  }
+  return "Unknown error";
+}
 
 interface Props {
   policyScope: "system" | "project";
@@ -23,6 +40,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [revertTarget, setRevertTarget] = useState<number | null>(null);
+  const [pruneOpen, setPruneOpen] = useState(false);
 
   const { data } = useQuery({
     queryKey: ["policy-audit", policyScope, projectId],
@@ -48,10 +66,34 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
     onError: (e: Error) => toast.error(`Revert failed: ${e.message}`),
   });
 
+  const doPrune = useMutation({
+    mutationFn: async (before: string) => {
+      if (policyScope === "system") return pruneSystemAudit(before);
+      return pruneProjectAudit(projectId!, before);
+    },
+    onSuccess: (res) => {
+      toast.success(`Pruned ${res.deleted} entr${res.deleted === 1 ? "y" : "ies"}`);
+      qc.invalidateQueries({ queryKey: ["policy-audit"] });
+      setPruneOpen(false);
+    },
+    onError: (e: unknown) => toast.error(`Prune failed: ${extractErrorMessage(e)}`),
+  });
+
   return (
     <div className="rounded-md border">
-      <div className="border-b bg-muted/30 p-2 text-sm font-medium">
-        Policy audit history
+      <div className="flex items-center justify-between border-b bg-muted/30 p-2">
+        <span className="text-sm font-medium">Policy audit history</span>
+        {canRevert && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPruneOpen(true)}
+            title="Prune old audit entries"
+          >
+            <Trash2 className="mr-1 h-3 w-3" />
+            Prune old entries
+          </Button>
+        )}
       </div>
       {entries.length === 0 ? (
         <div className="p-4 text-sm text-muted-foreground">No audit entries yet.</div>
@@ -115,6 +157,12 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
         onConfirm={async (comment) => {
           if (revertTarget !== null) await doRevert.mutateAsync({ version: revertTarget, comment });
         }}
+      />
+      <PruneAuditDialog
+        open={pruneOpen}
+        busy={doPrune.isPending}
+        onClose={() => setPruneOpen(false)}
+        onConfirm={async (before) => { await doPrune.mutateAsync(before); }}
       />
     </div>
   );
