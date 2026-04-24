@@ -92,7 +92,12 @@ class ComplianceReportRepository:
         return await self._col.count_documents(
             {
                 "requested_by": user_id,
-                "status": {"$in": ["pending", "generating"]},
+                "status": {
+                    "$in": [
+                        ReportStatus.PENDING.value,
+                        ReportStatus.GENERATING.value,
+                    ]
+                },
             }
         )
 
