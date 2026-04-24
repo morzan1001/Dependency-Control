@@ -76,6 +76,11 @@ export function WebhookManager({
       description: "Fires when a scan or analysis run fails.",
     },
     {
+      id: "sbom.ingested",
+      label: "SBOM ingested",
+      description: "Fires when an SBOM is ingested for a project.",
+    },
+    {
       id: "crypto_asset.ingested",
       label: "Crypto asset ingested",
       description: "Fires when crypto assets (CBOM) are imported or updated.",

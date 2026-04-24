@@ -259,6 +259,27 @@ class _FakeCollection:
         result.modified_count = 1
         return result
 
+    async def find_one_and_update(self, query, update, return_document=False, **_kwargs):
+        """Atomic find + update. Supports $set and $addToSet operators."""
+        matched_key = None
+        for k, doc in self._docs.items():
+            if all(doc.get(fk) == fv for fk, fv in query.items()):
+                matched_key = k
+                break
+        if matched_key is None:
+            return None
+        before = dict(self._docs[matched_key])
+        set_ops = update.get("$set", {})
+        self._docs[matched_key].update(set_ops)
+        add_to_set = update.get("$addToSet", {})
+        for field, value in add_to_set.items():
+            current = self._docs[matched_key].get(field) or []
+            if value not in current:
+                current.append(value)
+            self._docs[matched_key][field] = current
+        # return_document=True (or ReturnDocument.AFTER) returns the updated doc
+        return self._docs[matched_key] if return_document else before
+
     async def find_one(self, query):
         key = query.get("_id") or query.get("_id")
         if key:

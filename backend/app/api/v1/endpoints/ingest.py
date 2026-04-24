@@ -24,6 +24,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.v1.helpers.ingest import process_findings_ingest
+from app.core.constants import WEBHOOK_EVENT_SBOM_INGESTED
 from app.models.dependency import Dependency
 from app.models.project import Project
 from app.repositories import DependencyRepository
@@ -40,6 +41,7 @@ from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.sbom_parser import parse_sbom
 from app.services.scan_manager import ScanManager
+from app.services.webhooks import webhook_service
 
 ProjectIngestDep = Annotated[Project, Depends(deps.get_project_for_ingest)]
 
@@ -383,6 +385,30 @@ async def ingest_sbom(
 
     # Register SBOM result and trigger analysis
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
+
+    # Fire sbom.ingested webhook (best-effort; never blocks ingest)
+    try:
+        await webhook_service.trigger_webhooks(
+            db,
+            WEBHOOK_EVENT_SBOM_INGESTED,
+            {
+                "scan_id": scan_id,
+                "project_id": str(project.id),
+                "pipeline_id": data.pipeline_id,
+                "commit_hash": data.commit_hash,
+                "branch": data.branch,
+                "sboms_processed": sboms_processed,
+                "sboms_failed": sboms_failed,
+                "dependencies_count": total_deps_inserted,
+            },
+            str(project.id),
+        )
+    except Exception as exc:
+        logger.warning(
+            "sbom_ingest: webhook dispatch failed for scan %s (non-fatal): %s",
+            scan_id,
+            exc,
+        )
 
     # Build response message
     message = "Analysis queued successfully"
