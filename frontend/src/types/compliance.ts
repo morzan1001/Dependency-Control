@@ -6,7 +6,9 @@ export type ReportFramework =
   | "cnsa-2.0"
   | "fips-140-3"
   | "iso-19790"
-  | "pqc-migration-plan";
+  | "pqc-migration-plan"
+  | "license-audit"
+  | "cve-remediation-sla";
 
 export interface ComplianceReportMeta {
   _id: string;

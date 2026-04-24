@@ -34,6 +34,9 @@ class ReportFramework(str, Enum):
     FIPS_140_3 = "fips-140-3"
     ISO_19790 = "iso-19790"
     PQC_MIGRATION_PLAN = "pqc-migration-plan"  # meta-framework, used in PR E
+    # SBOM-side meta-frameworks (Phase 4 extension)
+    LICENSE_AUDIT = "license-audit"
+    CVE_REMEDIATION_SLA = "cve-remediation-sla"
 
 
 class ControlStatus(str, Enum):
