@@ -1,8 +1,35 @@
 """
-TTLCache — minimal thread-unsafe LRU cache with per-entry TTL.
+In-process analytics cache — a minimal LRU cache with per-entry TTL.
 
-Used to cache expensive analytics aggregation query results so repeated
-requests within the TTL window are served without hitting MongoDB.
+Used to memoize the output of expensive MongoDB aggregation queries
+(crypto hotspots, trends, PQC migration plans, scan deltas). Entries are
+tied to a cache key that combines `(scope, scope_id, query-parameters,
+data-fingerprint)`; see `CryptoHotspotService.hotspots` for the typical
+shape.
+
+When to use this cache vs. ``app.core.cache.cache_service``
+----------------------------------------------------------
+* **This cache (TTLCache / get_analytics_cache)** — for hot,
+  process-local reads that are recomputed from MongoDB. Sync API.
+  Values can be arbitrary Python objects (including Pydantic models).
+  Does NOT share state across pods — each replica computes on miss.
+  Appropriate when the cost of recomputation is small per-pod and
+  per-pod consistency (e.g. "always returns current DB state within
+  TTL") is sufficient.
+
+* **``app.core.cache.cache_service``** — for results of external calls
+  (OSV, deps.dev, NPM license lookups, OIDC key material) where
+  cross-pod deduplication matters or upstream rate-limits apply.
+  Async API, Redis-backed, JSON-serialized. Use when the fetch itself
+  is expensive in calendar time or subject to external rate-limits.
+
+Invalidation
+------------
+Callers that mutate the underlying MongoDB state (policy changes,
+waiver add/remove, crypto asset upsert) MUST call
+``get_analytics_cache().clear()`` to avoid serving stale aggregations.
+See ``app.services.audit.history.record_policy_change`` for the
+canonical example.
 """
 
 from collections import OrderedDict
@@ -59,13 +86,31 @@ class TTLCache:
         """Remove all cached entries."""
         self._store.clear()
 
+    def __len__(self) -> int:
+        return len(self._store)
+
 
 _default_cache: Optional[TTLCache] = None
 
 
 def get_analytics_cache() -> TTLCache:
-    """Return the process-level analytics cache singleton."""
+    """Return the process-level analytics cache singleton.
+
+    Prefer this over creating a local TTLCache so that all analytics
+    services share the same invalidation surface — ``clear()`` called
+    from one mutation path invalidates every aggregation.
+    """
     global _default_cache
     if _default_cache is None:
         _default_cache = TTLCache(maxsize=512, ttl_seconds=300)
     return _default_cache
+
+
+def reset_analytics_cache_for_tests() -> None:
+    """Drop the process-level cache singleton — test-only helper.
+
+    Tests that patch the cache (e.g. to substitute a spy) should call
+    this in teardown so subsequent tests see a fresh singleton.
+    """
+    global _default_cache
+    _default_cache = None

@@ -10,6 +10,21 @@ Key features:
 - Graceful fallback when Redis is unavailable
 - Batch operations for efficiency
 - Cache key prefixing for namespace isolation
+
+When to use this cache vs. ``app.services.analytics.cache.TTLCache``
+-------------------------------------------------------------------
+* **This cache (cache_service)** — async, Redis-backed. Use for results
+  of external API calls (OSV, deps.dev, NPM, OIDC key material, etc.)
+  or any datum where cross-pod deduplication matters because the fetch
+  itself has calendar-time cost or is subject to upstream rate limits.
+
+* **TTLCache in app.services.analytics.cache** — sync, in-process. Use
+  for memoizing MongoDB aggregation results that are cheap to recompute
+  per-pod (crypto hotspots, trends, PQC plans, scan deltas) and where
+  per-pod-per-TTL consistency is sufficient.
+
+See ``app.services.analytics.cache`` module docstring for the full
+distinction.
 """
 
 import asyncio
