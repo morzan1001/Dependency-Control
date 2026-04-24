@@ -5,9 +5,10 @@ REST endpoints for crypto analytics (hotspots, trends, scan-delta).
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import HTTPException, Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.schemas.analytics import HotspotResponse, ScanDelta, TrendSeries
 from app.services.analytics.crypto_delta import compute_scan_delta
 from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
@@ -19,7 +20,7 @@ from app.services.analytics.scopes import (
 
 _ScopeLit = Literal["project", "team", "global", "user"]
 
-router = APIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"])
+router = CustomAPIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"])
 
 _SCOPE_PATTERN = "^(project|team|global|user)$"
 

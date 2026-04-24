@@ -10,10 +10,11 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import Body, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_active_user, get_database
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 # days of forensic history that must always be preserved.
 DEFAULT_MIN_PRUNE_DAYS = 90
 
-router = APIRouter(tags=["policy-audit"])
+router = CustomAPIRouter(tags=["policy-audit"])
 
 
 # ---------- SYSTEM SCOPE ----------

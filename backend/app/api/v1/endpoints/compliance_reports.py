@@ -15,12 +15,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_active_user, get_database
+from app.api.router import CustomAPIRouter
 from app.core.constants import WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
@@ -31,7 +32,7 @@ from app.services.compliance.engine import ComplianceReportEngine
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/compliance", tags=["compliance-reports"])
+router = CustomAPIRouter(prefix="/compliance", tags=["compliance-reports"])
 
 _MAX_CONCURRENT_PENDING = 10
 _SCOPE_PATTERN = "^(project|team|global|user)$"

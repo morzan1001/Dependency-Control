@@ -4,10 +4,11 @@ import logging
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_active_user, get_database
+from app.api.router import CustomAPIRouter
 from app.core.constants import WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED
 from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
@@ -18,7 +19,7 @@ from app.services.pqc_migration.mappings_loader import CURRENT_MAPPINGS_VERSION
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
+router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 
 
 @router.get("/pqc-migration", response_model=MigrationPlanResponse)
