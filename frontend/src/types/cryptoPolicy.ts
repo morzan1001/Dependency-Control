@@ -4,7 +4,16 @@ export type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "NEGLIGIBLE" | "
 export type CryptoFindingType =
   | "crypto_weak_algorithm"
   | "crypto_weak_key"
-  | "crypto_quantum_vulnerable";
+  | "crypto_quantum_vulnerable"
+  | "crypto_cert_expired"
+  | "crypto_cert_expiring_soon"
+  | "crypto_cert_not_yet_valid"
+  | "crypto_cert_weak_signature"
+  | "crypto_cert_weak_key"
+  | "crypto_cert_self_signed"
+  | "crypto_cert_validity_too_long"
+  | "crypto_weak_protocol"
+  | "crypto_key_management";
 
 export type CryptoPolicySource =
   | "nist-sp-800-131a"
