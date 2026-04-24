@@ -32,6 +32,22 @@ class CsvRenderer:
         disclaimer: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
         buf = io.StringIO()
+        # Framework disclaimers (e.g. FIPS/ISO "algorithm-level conformance
+        # only") are emitted by the PDF/JSON/SARIF renderers. Prepend them
+        # as CSV comment lines (leading '#') so a bare CSV export from a
+        # FIPS evaluation cannot be mistaken for a full CMVP pass. Most
+        # consumers (Excel, `pandas.read_csv(comment='#')`) skip such
+        # lines automatically.
+        fw_name = evaluation.framework_name or ""
+        fw_version = evaluation.framework_version or ""
+        if disclaimer:
+            buf.write(f"# Disclaimer: {disclaimer}\n")
+            if fw_name or fw_version:
+                fw_header = fw_name
+                if fw_version:
+                    fw_header = f"{fw_header} ({fw_version})" if fw_name else fw_version
+                buf.write(f"# Framework: {fw_header}\n")
+            buf.write(f"# Generated: {evaluation.generated_at.isoformat()}\n")
         writer = csv.DictWriter(buf, fieldnames=self.FIELDS)
         writer.writeheader()
         for c in evaluation.controls:
