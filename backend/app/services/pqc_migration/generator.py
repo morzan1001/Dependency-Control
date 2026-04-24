@@ -5,7 +5,7 @@ PQC replacements.
 """
 
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -178,9 +178,10 @@ class PQCMigrationPlanGenerator:
         if not completed:
             return None
         completed.sort(key=_created_at, reverse=True)
-        return completed[0]
+        first: Dict[str, Any] = completed[0]
+        return first
 
-    def _find_mapping(self, family: str, primitive) -> Optional[PQCMapping]:
+    def _find_mapping(self, family: str, primitive: Any) -> Optional[PQCMapping]:
         prim_val = _enum_value(primitive)
         exact = next(
             (m for m in self.mappings.mappings if m.source_family == family and m.source_primitive == prim_val),
@@ -204,13 +205,13 @@ class PQCMigrationPlanGenerator:
         return min(t.deadline for t in applicable)
 
 
-def _enum_value(val) -> str:
+def _enum_value(val: Any) -> str:
     if hasattr(val, "value"):
-        return val.value
-    return val or ""
+        return str(val.value)
+    return str(val) if val else ""
 
 
-def _coerce_primitive(prim):
+def _coerce_primitive(prim: Any) -> Optional[CryptoPrimitive]:
     if isinstance(prim, CryptoPrimitive):
         return prim
     if isinstance(prim, str):

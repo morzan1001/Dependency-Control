@@ -9,7 +9,7 @@ evaluators and delegates everything else to the default evaluator here.
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Protocol
+from typing import Dict, List, Optional, Protocol, runtime_checkable
 
 from app.models.crypto_asset import CryptoAsset
 from app.schemas.compliance import (
@@ -40,6 +40,7 @@ class EvaluationInput:
     db: Optional[object] = None
 
 
+@runtime_checkable
 class ComplianceFramework(Protocol):
     """Interface every framework must implement."""
 
@@ -47,8 +48,13 @@ class ComplianceFramework(Protocol):
     key: ReportFramework
     version: str
     source_url: str
-    disclaimer: Optional[str]  # shown on report cover (e.g. FIPS)
-    controls: List[ControlDefinition]
+
+    @property
+    def disclaimer(self) -> Optional[str]:  # shown on report cover (e.g. FIPS)
+        ...
+
+    @property
+    def controls(self) -> List[ControlDefinition]: ...
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation: ...
 

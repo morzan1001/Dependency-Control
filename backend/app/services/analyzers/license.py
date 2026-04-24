@@ -821,7 +821,7 @@ class LicenseAnalyzer(Analyzer):
             Severity.HIGH.value: Severity.MEDIUM.value,
             Severity.MEDIUM.value: Severity.LOW.value,
         }
-        new_severity = downgrade_map.get(severity)
+        new_severity = downgrade_map.get(severity) if isinstance(severity, str) else None
         if new_severity:
             issue["effective_severity"] = issue.get("effective_severity") or severity
             issue["severity"] = new_severity
@@ -1032,7 +1032,7 @@ class LicenseAnalyzer(Analyzer):
                 expr = lic_entry["expression"]
                 if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
                     if _SPDX_OR_SPLIT.search(expr):
-                        return expr
+                        return str(expr)
 
         direct_license = component.get("license")
         if isinstance(direct_license, str) and _SPDX_OR_SPLIT.search(direct_license):

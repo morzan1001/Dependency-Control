@@ -7,7 +7,7 @@ Controls auto-derived from the Phase-1 seed file
 
 from functools import cached_property
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import yaml
 
@@ -22,11 +22,11 @@ _SEED_PATH = Path(__file__).resolve().parents[3] / "services" / "crypto_policy" 
 
 
 class NistSp800_131aFramework:
-    key = ReportFramework.NIST_SP_800_131A
-    name = "NIST SP 800-131A (Transitioning Cryptographic Algorithms and Key Lengths)"
-    version = "Rev.3"
-    source_url = "https://csrc.nist.gov/pubs/sp/800/131/a/r3/final"
-    disclaimer = None
+    key: ReportFramework = ReportFramework.NIST_SP_800_131A
+    name: str = "NIST SP 800-131A (Transitioning Cryptographic Algorithms and Key Lengths)"
+    version: str = "Rev.3"
+    source_url: str = "https://csrc.nist.gov/pubs/sp/800/131/a/r3/final"
+    disclaimer: Optional[str] = None
 
     @cached_property
     def controls(self) -> List[ControlDefinition]:

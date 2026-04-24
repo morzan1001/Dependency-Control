@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, cast
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -269,7 +269,7 @@ def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def list_crypto_assets(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
     scan_id: str,
@@ -280,7 +280,21 @@ async def list_crypto_assets(
     limit: int = 100,
 ) -> Dict[str, Any]:
     """List cryptographic assets for a scan with optional filters."""
+    from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
     from app.repositories.crypto_asset import CryptoAssetRepository
+
+    at_enum: Optional[CryptoAssetType] = None
+    if asset_type:
+        try:
+            at_enum = CryptoAssetType(asset_type)
+        except ValueError:
+            at_enum = None
+    pr_enum: Optional[CryptoPrimitive] = None
+    if primitive:
+        try:
+            pr_enum = CryptoPrimitive(primitive)
+        except ValueError:
+            pr_enum = None
 
     repo = CryptoAssetRepository(db)
     items = await repo.list_by_scan(
@@ -288,8 +302,8 @@ async def list_crypto_assets(
         scan_id,
         limit=min(limit, 500),
         skip=skip,
-        asset_type=asset_type,
-        primitive=primitive,
+        asset_type=at_enum,
+        primitive=pr_enum,
         name_search=name_search,
     )
     total = await repo.count_by_scan(project_id, scan_id)
@@ -300,7 +314,7 @@ async def list_crypto_assets(
 
 
 async def get_crypto_asset_details(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
     asset_id: str,
@@ -313,7 +327,7 @@ async def get_crypto_asset_details(
 
 
 async def get_crypto_summary(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
     scan_id: str,
@@ -325,7 +339,7 @@ async def get_crypto_summary(
 
 
 async def get_project_crypto_policy(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
 ) -> Dict[str, Any]:
@@ -341,7 +355,7 @@ async def get_project_crypto_policy(
 
 
 async def suggest_crypto_policy_override(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
     scan_id: str,
@@ -373,43 +387,48 @@ async def suggest_crypto_policy_override(
 
 
 async def get_crypto_hotspots(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
     group_by: str = "name",
     limit: int = 20,
 ) -> Dict[str, Any]:
     """List top crypto hotspots for a project, grouped by the given dimension."""
-    from app.services.analytics.crypto_hotspots import CryptoHotspotService
+    from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
     from app.services.analytics.scopes import ResolvedScope
 
     resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
+    group_by_lit = cast(GroupBy, group_by)
     resp = await CryptoHotspotService(db).hotspots(
         resolved=resolved,
-        group_by=group_by,
+        group_by=group_by_lit,
         limit=limit,
     )
     return resp.model_dump()
 
 
 async def get_crypto_trends(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
     metric: str = "total_crypto_findings",
     days: int = 30,
 ) -> Dict[str, Any]:
     """Return time-bucketed crypto finding/asset trends for a project."""
-    from app.services.analytics.crypto_trends import CryptoTrendService
+    from app.services.analytics.crypto_trends import (
+        Bucket,
+        CryptoTrendService,
+        Metric,
+    )
     from app.services.analytics.scopes import ResolvedScope
 
     resolved = ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     now = datetime.now(timezone.utc)
     days = max(1, min(days, 365))
-    bucket = "day" if days <= 14 else "week" if days <= 90 else "month"
+    bucket: Bucket = "day" if days <= 14 else "week" if days <= 90 else "month"
     series = await CryptoTrendService(db).trend(
         resolved=resolved,
-        metric=metric,
+        metric=cast(Metric, metric),
         bucket=bucket,
         range_start=now - timedelta(days=days),
         range_end=now,
@@ -418,7 +437,7 @@ async def get_crypto_trends(
 
 
 async def get_scan_delta(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
     from_scan_id: str,
@@ -446,7 +465,7 @@ async def get_scan_delta(
 
 
 async def generate_pqc_migration_plan(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: str,
     limit: int = 500,
@@ -463,7 +482,7 @@ async def generate_pqc_migration_plan(
 
 
 async def list_compliance_reports(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     project_id: Optional[str] = None,
     framework: Optional[str] = None,
@@ -486,7 +505,7 @@ async def list_compliance_reports(
 
 
 async def list_policy_audit_entries(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
     policy_scope: str,
     project_id: Optional[str] = None,
@@ -494,7 +513,7 @@ async def list_policy_audit_entries(
 ) -> Dict[str, Any]:
     """MCP tool: policy audit timeline."""
     entries = await PolicyAuditRepository(db).list(
-        policy_scope=policy_scope,
+        policy_scope=cast(Literal["system", "project"], policy_scope),
         project_id=project_id,
         limit=limit,
     )
@@ -502,9 +521,9 @@ async def list_policy_audit_entries(
 
 
 async def get_framework_evaluation_summary(
-    db,
+    db: AsyncIOMotorDatabase,
     *,
-    user,
+    user: User,
     scope: str,
     scope_id: Optional[str],
     framework: str,
@@ -515,7 +534,10 @@ async def get_framework_evaluation_summary(
     except ValueError:
         return {"error": f"Unknown framework: {framework}"}
     resolver = ScopeResolver(db, user)
-    resolved = await resolver.resolve(scope=scope, scope_id=scope_id)
+    resolved = await resolver.resolve(
+        scope=cast(Literal["project", "team", "global", "user"], scope),
+        scope_id=scope_id,
+    )
 
     engine = ComplianceReportEngine()
     inputs = await engine._gather_inputs(db, resolved)
@@ -1716,7 +1738,7 @@ class ChatToolRegistry:
             scan = await db["scans"].find_one({"_id": args["scan_id"], "project_id": args["project_id"]})
             if not scan:
                 return {"error": "Scan not found in this project"}
-            query: Dict[str, Any] = {"scan_id": args["scan_id"], "project_id": args["project_id"]}
+            query = {"scan_id": args["scan_id"], "project_id": args["project_id"]}
             if args.get("severity"):
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
@@ -1812,7 +1834,7 @@ class ChatToolRegistry:
             latest_scan_id = project.get("latest_scan_id")
             if not latest_scan_id:
                 return {"breakdown": {}}
-            pipeline = [
+            pipeline: list[dict[str, Any]] = [
                 {"$match": {"scan_id": latest_scan_id}},
                 {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
             ]
@@ -1851,7 +1873,7 @@ class ChatToolRegistry:
             ]
             latest_scans = await db["scans"].aggregate(pipeline).to_list(length=len(project_ids))
             scan_ids = [s["latest_scan_id"] for s in latest_scans]
-            sev_pipeline = [
+            sev_pipeline: list[dict[str, Any]] = [
                 {"$match": {"scan_id": {"$in": scan_ids}}},
                 {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
             ]
@@ -1917,17 +1939,17 @@ class ChatToolRegistry:
         if tool_name == "get_hotspots":
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
             limit = _clamp_limit(args.get("limit"), 10)
-            pipeline = [
+            hotspots_pipeline: list[dict[str, Any]] = [
                 {"$match": {"project_id": {"$in": project_ids}}},
                 {"$sort": {"created_at": -1}},
                 {"$group": {"_id": "$project_id", "latest_scan_id": {"$first": "$_id"}, "stats": {"$first": "$stats"}}},
                 {"$sort": {"stats.critical": -1}},
                 {"$limit": limit},
             ]
-            results = await db["scans"].aggregate(pipeline).to_list(length=limit)
+            results = await db["scans"].aggregate(hotspots_pipeline).to_list(length=limit)
             # Enrich with project name so the model can recommend concrete projects.
             project_ids_hit = [r["_id"] for r in results if r.get("_id")]
-            names: Dict[str, str] = {}
+            names = {}
             async for p in db["projects"].find({"_id": {"$in": project_ids_hit}}, {"name": 1}):
                 names[p["_id"]] = p.get("name", "")
             hotspots = []
@@ -2032,13 +2054,13 @@ class ChatToolRegistry:
                 project_ids = await self._get_authorized_project_ids(user_project_query, db)
                 if not project_ids:
                     return {"findings": [], "message": "No accessible projects"}
-                latest_scans_pipe = [
+                latest_scans_pipe: list[dict[str, Any]] = [
                     {"$match": {"project_id": {"$in": project_ids}}},
                     {"$sort": {"created_at": -1}},
                     {"$group": {"_id": "$project_id", "latest_scan_id": {"$first": "$_id"}}},
                 ]
-                latest = await db["scans"].aggregate(latest_scans_pipe).to_list(length=len(project_ids))
-                scan_ids = [row["latest_scan_id"] for row in latest if row.get("latest_scan_id")]
+                latest_rows = await db["scans"].aggregate(latest_scans_pipe).to_list(length=len(project_ids))
+                scan_ids = [row["latest_scan_id"] for row in latest_rows if row.get("latest_scan_id")]
                 if not scan_ids:
                     return {"findings": [], "message": "No scans found"}
                 match["scan_id"] = {"$in": scan_ids}
@@ -2947,7 +2969,7 @@ class ChatToolRegistry:
         project_ids = await self._get_authorized_project_ids(user_project_query, db)
         if not project_ids:
             return {}
-        pipeline = [
+        pipeline: list[dict[str, Any]] = [
             {"$match": {"project_id": {"$in": project_ids}}},
             {"$sort": {"created_at": -1}},
             {"$group": {"_id": "$project_id", "latest_scan_id": {"$first": "$_id"}}},

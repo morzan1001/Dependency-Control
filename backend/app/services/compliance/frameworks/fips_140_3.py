@@ -8,7 +8,7 @@ algorithm appears in the disallowed set from NIST SP 800-140C/D/F.
 
 from functools import cached_property
 from pathlib import Path
-from typing import List
+from typing import Callable, Dict, List, Optional
 
 import yaml
 
@@ -29,22 +29,23 @@ _DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "fips_approved_fu
 
 
 class Fips1403Framework:
-    key = ReportFramework.FIPS_140_3
-    name = "FIPS 140-3 (Algorithm-level Conformance)"
-    version = "2019"
-    source_url = "https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.140-3.pdf"
-    disclaimer = (
+    key: ReportFramework = ReportFramework.FIPS_140_3
+    name: str = "FIPS 140-3 (Algorithm-level Conformance)"
+    version: str = "2019"
+    source_url: str = "https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.140-3.pdf"
+    disclaimer: Optional[str] = (
         "Algorithm-level conformance only. Module-level CMVP certification status is out of scope of this report."
     )
 
     @cached_property
-    def _data(self) -> dict:
+    def _data(self) -> Dict[str, Dict[str, List[str]]]:
         with _DATA_PATH.open() as f:
-            return yaml.safe_load(f) or {}
+            loaded = yaml.safe_load(f) or {}
+        return loaded if isinstance(loaded, dict) else {}
 
     @cached_property
     def controls(self) -> List[ControlDefinition]:
-        disallowed = self._data.get("disallowed") or {}
+        disallowed: Dict[str, List[str]] = self._data.get("disallowed") or {}
         out: List[ControlDefinition] = []
         for category, algos in disallowed.items():
             title = f"Disallowed {category.replace('_', ' ')}"
@@ -86,7 +87,9 @@ class Fips1403Framework:
         return evaluate_framework(self, data)
 
 
-def _make_disallowed_evaluator(algos: List[str], category: str, title: str):
+def _make_disallowed_evaluator(
+    algos: List[str], category: str, title: str
+) -> Callable[[EvaluationInput], ControlResult]:
     """Return a custom evaluator that walks crypto_assets and flags direct
     use of any algorithm name in the disallowed list."""
     norm_disallowed = {a.upper() for a in algos}

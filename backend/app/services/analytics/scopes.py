@@ -7,11 +7,14 @@ enforced here so that individual query functions stay scope-agnostic.
 """
 
 from dataclasses import dataclass
-from typing import List, Literal, Optional
+from typing import TYPE_CHECKING, Any, List, Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import PERMISSION_ANALYTICS_GLOBAL
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 Scope = Literal["project", "team", "global", "user"]
 
@@ -30,7 +33,7 @@ class ResolvedScope:
 class ScopeResolver:
     SYSTEM_MANAGE = "system:manage"
 
-    def __init__(self, db: AsyncIOMotorDatabase, user):
+    def __init__(self, db: AsyncIOMotorDatabase, user: "User | Any") -> None:
         self.db = db
         self.user = user
 
@@ -61,7 +64,7 @@ class ScopeResolver:
         return ResolvedScope(scope="team", scope_id=scope_id, project_ids=project_ids)
 
     def _resolve_global(self) -> ResolvedScope:
-        perms = getattr(self.user, "permissions", frozenset()) or frozenset()
+        perms: frozenset[str] = getattr(self.user, "permissions", frozenset()) or frozenset()
         if PERMISSION_ANALYTICS_GLOBAL not in perms and self.SYSTEM_MANAGE not in perms:
             raise ScopeResolutionError("Global analytics requires analytics:global or system:manage")
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
@@ -82,7 +85,7 @@ class ScopeResolver:
     async def _check_team_member(self, team_id: str) -> bool:
         from app.repositories.teams import TeamRepository
 
-        team = await TeamRepository(self.db).get(team_id)
+        team = await TeamRepository(self.db).get_by_id(team_id)
         if team is None:
             return False
         members = getattr(team, "members", [])
@@ -91,7 +94,9 @@ class ScopeResolver:
     async def _list_team_project_ids(self, team_id: str) -> List[str]:
         from app.repositories.projects import ProjectRepository
 
-        projects = await ProjectRepository(self.db).list_by_team(team_id, limit=1000)
+        projects = await ProjectRepository(self.db).find_many_minimal(
+            {"team_id": team_id}, limit=1000
+        )
         return [str(p.id) for p in projects]
 
     async def _list_user_project_ids(self) -> List[str]:

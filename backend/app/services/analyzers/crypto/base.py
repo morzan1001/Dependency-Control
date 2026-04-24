@@ -83,7 +83,11 @@ def _build_finding(asset: CryptoAsset, rule: CryptoRule) -> Dict[str, Any]:
             "asset_name": asset.name,
             "asset_type": (asset.asset_type.value if hasattr(asset.asset_type, "value") else asset.asset_type),
             "key_size_bits": asset.key_size_bits,
-            "primitive": (asset.primitive.value if hasattr(asset.primitive, "value") else asset.primitive),
+            "primitive": (
+                asset.primitive.value
+                if asset.primitive is not None and hasattr(asset.primitive, "value")
+                else asset.primitive
+            ),
             "references": list(rule.references),
         },
         "found_in": list(asset.occurrence_locations),

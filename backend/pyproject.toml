@@ -56,6 +56,10 @@ warn_return_any = true
 module = "app.api.*"
 disable_error_code = ["dict-item"]
 
+[[tool.mypy.overrides]]
+module = ["yaml", "weasyprint"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 120
 exclude = [".git", "__pycache__", "docs/source/conf.py", "old", "build", "dist"]

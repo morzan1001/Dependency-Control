@@ -13,16 +13,17 @@ Report generation is done in a FastAPI BackgroundTask, which hands off to
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, AsyncIterator, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_active_user, get_database
 from app.core.constants import WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED
 from app.models.compliance_report import ComplianceReport
+from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ScopeResolver
@@ -37,7 +38,7 @@ _SCOPE_PATTERN = "^(project|team|global|user)$"
 
 
 class ReportRequest(BaseModel):
-    scope: str = Field(..., pattern=_SCOPE_PATTERN)
+    scope: Literal["project", "team", "global", "user"] = Field(..., pattern=_SCOPE_PATTERN)
     scope_id: Optional[str] = None
     framework: ReportFramework
     format: ReportFormat
@@ -49,17 +50,17 @@ class ReportAck(BaseModel):
     status: str
 
 
-def _status_str(value) -> str:
-    return value.value if hasattr(value, "value") else value
+def _status_str(value: Any) -> str:
+    return str(value.value) if hasattr(value, "value") else str(value)
 
 
 @router.post("/reports", response_model=ReportAck, status_code=202)
 async def create_report(
     req: ReportRequest,
     background_tasks: BackgroundTasks,
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> ReportAck:
     try:
         await ScopeResolver(db, current_user).resolve(
             scope=req.scope,
@@ -103,9 +104,9 @@ async def list_reports(
     status: Optional[ReportStatus] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     repo = ComplianceReportRepository(db)
     reports = await repo.list(
         scope=scope,
@@ -121,9 +122,9 @@ async def list_reports(
 @router.get("/reports/{report_id}")
 async def get_report(
     report_id: str,
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     r = await ComplianceReportRepository(db).get(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -133,9 +134,9 @@ async def get_report(
 @router.get("/reports/{report_id}/download")
 async def download_report(
     report_id: str,
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> StreamingResponse:
     r = await ComplianceReportRepository(db).get(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -157,7 +158,7 @@ async def download_report(
     except Exception:
         raise HTTPException(status_code=410, detail="Artifact storage error")
 
-    async def _iter():
+    async def _iter() -> AsyncIterator[bytes]:
         try:
             while True:
                 chunk = await stream.readchunk()
@@ -165,7 +166,11 @@ async def download_report(
                     break
                 yield chunk
         finally:
-            await stream.close()
+            # motor's AgnosticGridOut.close() returns a coroutine at runtime
+            # though the stub claims None; await defensively.
+            close_result: Any = stream.close()  # type: ignore[func-returns-value]
+            if close_result is not None:
+                await close_result
 
     headers = {"Content-Disposition": f'attachment; filename="{r.artifact_filename}"'}
     return StreamingResponse(
@@ -178,15 +183,15 @@ async def download_report(
 @router.delete("/reports/{report_id}", status_code=204)
 async def delete_report(
     report_id: str,
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> None:
     repo = ComplianceReportRepository(db)
     r = await repo.get(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail="Report not found")
     if r.requested_by != current_user.id:
-        perms = getattr(current_user, "permissions", frozenset()) or frozenset()
+        perms: frozenset[str] = getattr(current_user, "permissions", frozenset()) or frozenset()
         if "system:manage" not in perms:
             raise HTTPException(
                 status_code=403,
@@ -201,7 +206,7 @@ async def delete_report(
     await repo.delete(report_id)
 
 
-async def _run_and_webhook(db, report: ComplianceReport, user) -> None:
+async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, user: User) -> None:
     """BackgroundTask target: run engine then fire best-effort webhook."""
     engine = ComplianceReportEngine()
     try:

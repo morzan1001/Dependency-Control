@@ -89,7 +89,13 @@ class CertificateLifecycleAnalyzer(Analyzer):
             logger.exception("cert_lifecycle analyzer failed: %s", e)
             return {"error": str(e), "findings": []}
 
-    def _check_expired(self, cert, now, rules, algo_by_ref):
+    def _check_expired(
+        self,
+        cert: CryptoAsset,
+        now: datetime,
+        rules: List[CryptoRule],
+        algo_by_ref: Dict[str, CryptoAsset],
+    ) -> List[Dict[str, Any]]:
         if cert.not_valid_after is None:
             return []
         na = _ensure_aware(cert.not_valid_after)
@@ -107,7 +113,13 @@ class CertificateLifecycleAnalyzer(Analyzer):
             )
         ]
 
-    def _check_expiring(self, cert, now, rules, algo_by_ref):
+    def _check_expiring(
+        self,
+        cert: CryptoAsset,
+        now: datetime,
+        rules: List[CryptoRule],
+        algo_by_ref: Dict[str, CryptoAsset],
+    ) -> List[Dict[str, Any]]:
         if cert.not_valid_after is None:
             return []
         na = _ensure_aware(cert.not_valid_after)
@@ -139,7 +151,13 @@ class CertificateLifecycleAnalyzer(Analyzer):
             )
         return out
 
-    def _check_not_yet_valid(self, cert, now, rules, algo_by_ref):
+    def _check_not_yet_valid(
+        self,
+        cert: CryptoAsset,
+        now: datetime,
+        rules: List[CryptoRule],
+        algo_by_ref: Dict[str, CryptoAsset],
+    ) -> List[Dict[str, Any]]:
         if cert.not_valid_before is None:
             return []
         nb = _ensure_aware(cert.not_valid_before)
@@ -157,7 +175,13 @@ class CertificateLifecycleAnalyzer(Analyzer):
             )
         ]
 
-    def _check_weak_signature(self, cert, now, rules, algo_by_ref):
+    def _check_weak_signature(
+        self,
+        cert: CryptoAsset,
+        now: datetime,
+        rules: List[CryptoRule],
+        algo_by_ref: Dict[str, CryptoAsset],
+    ) -> List[Dict[str, Any]]:
         if not cert.signature_algorithm_ref:
             return []
         algo = algo_by_ref.get(cert.signature_algorithm_ref)
@@ -185,7 +209,13 @@ class CertificateLifecycleAnalyzer(Analyzer):
             ]
         return []
 
-    def _check_weak_key(self, cert, now, rules, algo_by_ref):
+    def _check_weak_key(
+        self,
+        cert: CryptoAsset,
+        now: datetime,
+        rules: List[CryptoRule],
+        algo_by_ref: Dict[str, CryptoAsset],
+    ) -> List[Dict[str, Any]]:
         if not cert.signature_algorithm_ref:
             return []
         algo = algo_by_ref.get(cert.signature_algorithm_ref)
@@ -197,6 +227,8 @@ class CertificateLifecycleAnalyzer(Analyzer):
                 prim = CryptoPrimitive(prim)
             except ValueError:
                 return []
+        if prim is None:
+            return []
         min_size = _MIN_KEY_SIZES.get(prim)
         if min_size is None or algo.key_size_bits >= min_size:
             return []
@@ -217,7 +249,13 @@ class CertificateLifecycleAnalyzer(Analyzer):
             )
         ]
 
-    def _check_self_signed(self, cert, now, rules, algo_by_ref):
+    def _check_self_signed(
+        self,
+        cert: CryptoAsset,
+        now: datetime,
+        rules: List[CryptoRule],
+        algo_by_ref: Dict[str, CryptoAsset],
+    ) -> List[Dict[str, Any]]:
         if not cert.subject_name or not cert.issuer_name:
             return []
         if cert.subject_name.strip() != cert.issuer_name.strip():
@@ -232,7 +270,13 @@ class CertificateLifecycleAnalyzer(Analyzer):
             )
         ]
 
-    def _check_validity_too_long(self, cert, now, rules, algo_by_ref):
+    def _check_validity_too_long(
+        self,
+        cert: CryptoAsset,
+        now: datetime,
+        rules: List[CryptoRule],
+        algo_by_ref: Dict[str, CryptoAsset],
+    ) -> List[Dict[str, Any]]:
         if cert.not_valid_before is None or cert.not_valid_after is None:
             return []
         nb = _ensure_aware(cert.not_valid_before)
@@ -291,7 +335,14 @@ def _severity_from_ladder(days: int, rule: CryptoRule) -> Optional[Severity]:
     return None
 
 
-def _build(cert: CryptoAsset, *, type_, severity, description, details):
+def _build(
+    cert: CryptoAsset,
+    *,
+    type_: FindingType,
+    severity: Severity,
+    description: str,
+    details: Dict[str, Any],
+) -> Dict[str, Any]:
     comp_label = f"{cert.subject_name or cert.name} [bom-ref:{cert.bom_ref}]"
     return {
         "id": str(uuid.uuid4()),

@@ -1,5 +1,6 @@
 """Renderer protocol — each format implements render(eval, report) → bytes."""
 
+from datetime import datetime
 from typing import Optional, Protocol, Tuple
 
 from app.models.compliance_report import ComplianceReport
@@ -26,7 +27,7 @@ def build_filename(
     framework_key: str,
     scope: str,
     scope_id: Optional[str],
-    requested_at,
+    requested_at: datetime,
     extension: str,
 ) -> str:
     """Construct a descriptive, filesystem-safe filename.

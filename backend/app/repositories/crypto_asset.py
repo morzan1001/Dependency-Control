@@ -86,7 +86,7 @@ class CryptoAssetRepository:
         return await self._col.count_documents({"project_id": project_id, "scan_id": scan_id})
 
     async def summary_for_scan(self, project_id: str, scan_id: str) -> Dict[str, Any]:
-        pipeline = [
+        pipeline: List[Dict[str, Any]] = [
             {"$match": {"project_id": project_id, "scan_id": scan_id}},
             {"$group": {"_id": "$asset_type", "count": {"$sum": 1}}},
         ]

@@ -6,13 +6,15 @@ Project scope: member for reads, owner/admin for writes.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_active_user, get_database
 from app.api.v1.helpers.projects import check_project_access
 from app.models.crypto_policy import CryptoPolicy
+from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoRule
@@ -29,9 +31,9 @@ router = APIRouter(tags=["policy-audit"])
 async def list_system_audit(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     _require_admin(current_user)
     entries = await PolicyAuditRepository(db).list(
         policy_scope="system",
@@ -44,9 +46,9 @@ async def list_system_audit(
 @router.get("/crypto-policies/system/audit/{version}")
 async def get_system_audit_entry(
     version: int,
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     _require_admin(current_user)
     entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope="system",
@@ -61,11 +63,14 @@ async def get_system_audit_entry(
 @router.post("/crypto-policies/system/revert")
 async def revert_system_policy(
     body: dict = Body(...),
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     _require_admin(current_user)
-    target_version = int(body.get("target_version"))
+    target_raw = body.get("target_version")
+    if target_raw is None:
+        raise HTTPException(status_code=400, detail="target_version required")
+    target_version = int(target_raw)
     comment = body.get("comment")
     await _revert_policy(
         db=db,
@@ -76,15 +81,17 @@ async def revert_system_policy(
         comment=comment,
     )
     policy = await CryptoPolicyRepository(db).get_system_policy()
+    if policy is None:
+        raise HTTPException(status_code=500, detail="Reverted policy not found")
     return policy.model_dump(by_alias=True)
 
 
 @router.delete("/crypto-policies/system/audit")
 async def prune_system_audit(
     before: str = Query(..., description="Delete entries older than this ISO date"),
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     _require_admin(current_user)
     cutoff = _parse_datetime(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
@@ -103,9 +110,9 @@ async def list_project_audit(
     project_id: str,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role="viewer")
     entries = await PolicyAuditRepository(db).list(
         policy_scope="project",
@@ -120,9 +127,9 @@ async def list_project_audit(
 async def get_project_audit_entry(
     project_id: str,
     version: int,
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role="viewer")
     entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope="project",
@@ -138,11 +145,14 @@ async def get_project_audit_entry(
 async def revert_project_policy(
     project_id: str,
     body: dict = Body(...),
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role="owner")
-    target_version = int(body.get("target_version"))
+    target_raw = body.get("target_version")
+    if target_raw is None:
+        raise HTTPException(status_code=400, detail="target_version required")
+    target_version = int(target_raw)
     comment = body.get("comment")
     await _revert_policy(
         db=db,
@@ -160,9 +170,9 @@ async def revert_project_policy(
 async def prune_project_audit(
     project_id: str,
     before: str = Query(...),
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role="owner")
     cutoff = _parse_datetime(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
@@ -184,17 +194,17 @@ def _parse_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def _require_admin(user) -> None:
-    perms = getattr(user, "permissions", frozenset()) or frozenset()
+def _require_admin(user: User) -> None:
+    perms: frozenset[str] = getattr(user, "permissions", frozenset()) or frozenset()
     if "system:manage" not in perms:
         raise HTTPException(status_code=403, detail="system:manage permission required")
 
 
 async def _revert_policy(
     *,
-    db,
-    actor,
-    policy_scope: str,
+    db: AsyncIOMotorDatabase,
+    actor: User,
+    policy_scope: Literal["system", "project"],
     project_id: Optional[str],
     target_version: int,
     comment: Optional[str],
@@ -211,9 +221,12 @@ async def _revert_policy(
     rules = [CryptoRule.model_validate(r) for r in snapshot.get("rules", [])]
 
     policy_repo = CryptoPolicyRepository(db)
+    current: Optional[CryptoPolicy]
     if policy_scope == "system":
         current = await policy_repo.get_system_policy()
     else:
+        if project_id is None:
+            raise HTTPException(status_code=400, detail="project_id required for project scope")
         current = await policy_repo.get_project_policy(project_id)
     new_version = (current.version + 1) if current else 1
 

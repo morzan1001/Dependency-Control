@@ -10,11 +10,12 @@ persists even if the artifact is later pruned.
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.models.compliance_report import ComplianceReport
+from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -26,7 +27,7 @@ from app.schemas.compliance import (
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
 from app.services.analyzers.crypto.catalogs.loader import CURRENT_IANA_CATALOG_VERSION
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
-from app.services.compliance.frameworks.base import EvaluationInput
+from app.services.compliance.frameworks.base import ComplianceFramework, EvaluationInput
 from app.services.compliance.renderers import RENDERER_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ class ComplianceReportEngine:
         *,
         report: ComplianceReport,
         db: AsyncIOMotorDatabase,
-        user,
+        user: User,
     ) -> None:
         repo = ComplianceReportRepository(db)
         await repo.update_status(report.id, status=ReportStatus.GENERATING)
@@ -63,7 +64,7 @@ class ComplianceReportEngine:
             inputs = await self._gather_inputs(db, resolved)
             framework = FRAMEWORK_REGISTRY[report.framework]
             if hasattr(framework, "evaluate_async"):
-                evaluation = await framework.evaluate_async(inputs)
+                evaluation = await framework.evaluate_async(inputs)  # type: ignore[attr-defined]
             else:
                 evaluation = framework.evaluate(inputs)
             artifact_bytes, filename, mime = self._render(
@@ -103,7 +104,7 @@ class ComplianceReportEngine:
 
     async def _gather_inputs(
         self,
-        db,
+        db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
     ) -> EvaluationInput:
         scan_ids = await self._pick_scan_ids(db, resolved)
@@ -126,20 +127,22 @@ class ComplianceReportEngine:
             db=db,
         )
 
-    async def _pick_scan_ids(self, db, resolved: ResolvedScope) -> List[str]:
-        match = {"status": {"$in": ["completed", "partial"]}}
+    async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> List[str]:
+        match: dict[str, Any] = {"status": {"$in": ["completed", "partial"]}}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
-        pipeline = [
+        pipeline: list[dict[str, Any]] = [
             {"$match": match},
             {"$sort": {"created_at": -1}},
             {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
         ]
         return [row["scan_id"] async for row in db.scans.aggregate(pipeline)]
 
-    async def _collect_crypto_assets(self, db, resolved, scan_ids):
+    async def _collect_crypto_assets(
+        self, db: AsyncIOMotorDatabase, resolved: ResolvedScope, scan_ids: List[str]
+    ) -> List[Any]:
         repo = CryptoAssetRepository(db)
-        out = []
+        out: List[Any] = []
         for sid in scan_ids:
             scan_doc = await db.scans.find_one({"_id": sid}, {"project_id": 1})
             if not scan_doc:
@@ -151,8 +154,10 @@ class ComplianceReportEngine:
             out.extend(assets)
         return out
 
-    async def _collect_findings(self, db, resolved, scan_ids):
-        query = {
+    async def _collect_findings(
+        self, db: AsyncIOMotorDatabase, resolved: ResolvedScope, scan_ids: List[str]
+    ) -> List[dict]:
+        query: dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
             "type": {"$regex": "^crypto_"},
         }
@@ -174,7 +179,7 @@ class ComplianceReportEngine:
     def _render(
         self,
         fmt: ReportFormat,
-        framework,
+        framework: ComplianceFramework,
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
     ) -> Tuple[bytes, str, str]:
@@ -184,7 +189,7 @@ class ComplianceReportEngine:
 
     async def _store_artifact(
         self,
-        db,
+        db: AsyncIOMotorDatabase,
         artifact_bytes: bytes,
         filename: str,
         mime: str,

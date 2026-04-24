@@ -69,7 +69,9 @@ return {1, max_reqs - count - 1}
         member = f"{user_id}:{now}"
 
         minute_key = f"{self.prefix}{user_id}:minute"
-        result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)
+        # redis.asyncio.Redis.eval() is typed with an over-broad Awaitable | str
+        # union by the stubs; at runtime it returns the Lua script's result.
+        result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)  # type: ignore[misc]
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:
             chat_rate_limited_total.inc()
@@ -78,7 +80,7 @@ return {1, max_reqs - count - 1}
         chat_rate_limit_remaining.labels(user_id=user_id, window="minute").set(retry_or_remaining)
 
         hour_key = f"{self.prefix}{user_id}:hour"
-        result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)
+        result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)  # type: ignore[misc]
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:
             chat_rate_limited_total.inc()

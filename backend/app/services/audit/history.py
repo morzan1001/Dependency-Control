@@ -10,7 +10,7 @@ Public functions:
 
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -93,7 +93,7 @@ async def record_policy_change(
     old_policy: Optional[CryptoPolicy],
     new_policy: CryptoPolicy,
     action: PolicyAuditAction,
-    actor,
+    actor: Any,
     comment: Optional[str],
     reverted_from_version: Optional[int] = None,
 ) -> PolicyAuditEntry:
@@ -130,13 +130,14 @@ async def record_policy_change(
     return entry
 
 
-def _actor_id(actor) -> Optional[str]:
+def _actor_id(actor: Any) -> Optional[str]:
     if actor is None:
         return None
-    return getattr(actor, "id", None) or getattr(actor, "user_id", None)
+    result = getattr(actor, "id", None) or getattr(actor, "user_id", None)
+    return str(result) if result is not None else None
 
 
-def _actor_display_name(actor) -> Optional[str]:
+def _actor_display_name(actor: Any) -> Optional[str]:
     if actor is None:
         return None
     for attr in ("display_name", "full_name", "username", "email"):
@@ -146,7 +147,7 @@ def _actor_display_name(actor) -> Optional[str]:
     return None
 
 
-async def _dispatch_webhook(db, entry: PolicyAuditEntry) -> None:
+async def _dispatch_webhook(db: AsyncIOMotorDatabase, entry: PolicyAuditEntry) -> None:
     """Fire crypto_policy.changed webhook. Best-effort."""
     from app.services.webhooks import webhook_service
 
@@ -173,7 +174,7 @@ async def _dispatch_webhook(db, entry: PolicyAuditEntry) -> None:
     )
 
 
-async def _notify_relevant_users(db, entry: PolicyAuditEntry) -> None:
+async def _notify_relevant_users(db: AsyncIOMotorDatabase, entry: PolicyAuditEntry) -> None:
     """Create in-app notifications for users affected by the policy change.
 
     Skipped for SEED (system-initiated, no info value).

@@ -2,7 +2,7 @@
 
 from functools import cached_property
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from app.schemas.compliance import ControlDefinition, FrameworkEvaluation, ReportFramework
 from app.services.compliance.frameworks.base import EvaluationInput, evaluate_framework
@@ -14,13 +14,13 @@ _SEED_PATH = Path(__file__).resolve().parents[3] / "services" / "crypto_policy" 
 
 
 class BsiTr02102Framework:
-    key = ReportFramework.BSI_TR_02102
-    name = "BSI TR-02102-1 (Cryptographic Mechanisms: Recommendations and Key Lengths)"
-    version = "2024"
-    source_url = (
+    key: ReportFramework = ReportFramework.BSI_TR_02102
+    name: str = "BSI TR-02102-1 (Cryptographic Mechanisms: Recommendations and Key Lengths)"
+    version: str = "2024"
+    source_url: str = (
         "https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html"
     )
-    disclaimer = None
+    disclaimer: Optional[str] = None
 
     @cached_property
     def controls(self) -> List[ControlDefinition]:

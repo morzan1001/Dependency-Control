@@ -51,9 +51,11 @@ def _tool_name_from_metadata(tools: Any) -> Optional[str]:
     if isinstance(tools, dict):
         comps = tools.get("components") or []
         if comps:
-            return comps[0].get("name")
+            value = comps[0].get("name")
+            return str(value) if value is not None else None
     elif isinstance(tools, list) and tools:
-        return tools[0].get("name")
+        value = tools[0].get("name")
+        return str(value) if value is not None else None
     return None
 
 
@@ -61,9 +63,11 @@ def _tool_version_from_metadata(tools: Any) -> Optional[str]:
     if isinstance(tools, dict):
         comps = tools.get("components") or []
         if comps:
-            return comps[0].get("version")
+            value = comps[0].get("version")
+            return str(value) if value is not None else None
     elif isinstance(tools, list) and tools:
-        return tools[0].get("version")
+        value = tools[0].get("version")
+        return str(value) if value is not None else None
     return None
 
 
@@ -165,7 +169,9 @@ def _populate_protocol(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
 
 def _populate_evidence(asset: ParsedCryptoAsset, evidence: Dict[str, Any]) -> None:
     occurrences = evidence.get("occurrences") or []
-    asset.occurrence_locations = [o.get("location") for o in occurrences if isinstance(o, dict) and o.get("location")]
+    asset.occurrence_locations = [
+        str(o.get("location")) for o in occurrences if isinstance(o, dict) and o.get("location")
+    ]
     detection = evidence.get("detectionContext")
     if isinstance(detection, str):
         asset.detection_context = detection

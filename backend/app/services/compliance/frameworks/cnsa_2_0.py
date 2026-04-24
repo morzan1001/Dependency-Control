@@ -2,7 +2,7 @@
 
 from functools import cached_property
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from app.schemas.compliance import ControlDefinition, FrameworkEvaluation, ReportFramework
 from app.services.compliance.frameworks.base import EvaluationInput, evaluate_framework
@@ -14,11 +14,11 @@ _SEED_PATH = Path(__file__).resolve().parents[3] / "services" / "crypto_policy" 
 
 
 class Cnsa20Framework:
-    key = ReportFramework.CNSA_2_0
-    name = "CNSA 2.0 (Commercial National Security Algorithm Suite)"
-    version = "2022"
-    source_url = "https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF"
-    disclaimer = None
+    key: ReportFramework = ReportFramework.CNSA_2_0
+    name: str = "CNSA 2.0 (Commercial National Security Algorithm Suite)"
+    version: str = "2022"
+    source_url: str = "https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF"
+    disclaimer: Optional[str] = None
 
     @cached_property
     def controls(self) -> List[ControlDefinition]:

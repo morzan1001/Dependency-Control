@@ -17,11 +17,16 @@ from app.schemas.analytics import HotspotEntry, ScanDelta
 
 def _key(asset: CryptoAsset) -> Tuple[str, str, str]:
     primitive = asset.primitive
-    primitive_str = primitive.value if hasattr(primitive, "value") else (primitive or "")
+    if primitive is None:
+        primitive_str = ""
+    elif hasattr(primitive, "value"):
+        primitive_str = primitive.value
+    else:
+        primitive_str = str(primitive)
     return (
         asset.name or "",
         asset.variant or "",
-        primitive_str or "",
+        primitive_str,
     )
 
 

@@ -20,10 +20,13 @@ class JsonRenderer:
         *,
         disclaimer: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
-        payload = {
-            "framework": evaluation.framework_key
+        framework_key_str = (
+            evaluation.framework_key
             if isinstance(evaluation.framework_key, str)
-            else evaluation.framework_key.value,
+            else evaluation.framework_key.value
+        )
+        payload: dict = {
+            "framework": framework_key_str,
             "framework_name": evaluation.framework_name,
             "framework_version": evaluation.framework_version,
             "generated_at": evaluation.generated_at.isoformat(),
@@ -38,7 +41,7 @@ class JsonRenderer:
             payload["disclaimer"] = disclaimer
         body = json.dumps(payload, indent=2, default=str).encode("utf-8")
         filename = build_filename(
-            payload["framework"],
+            framework_key_str,
             report.scope,
             report.scope_id,
             report.requested_at,

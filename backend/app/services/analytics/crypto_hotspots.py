@@ -92,7 +92,7 @@ class CryptoHotspotService:
             match["project_id"] = {"$in": project_ids}
 
         group_key = self._group_key_stage(group_by)
-        asset_pipeline = [
+        asset_pipeline: List[Dict[str, Any]] = [
             {"$match": match},
             {
                 "$group": {
@@ -137,7 +137,7 @@ class CryptoHotspotService:
         await self._enrich_with_findings(out, project_ids, scan_ids)
         return out
 
-    def _group_key_stage(self, group_by: GroupBy):
+    def _group_key_stage(self, group_by: GroupBy) -> Any:
         if group_by == "name":
             return {"name": "$name", "variant": "$variant"}
         if group_by == "primitive":
@@ -150,7 +150,7 @@ class CryptoHotspotService:
             return "$asset_type"
         return None
 
-    def _key_from_row(self, row, group_by: GroupBy) -> Optional[str]:
+    def _key_from_row(self, row: Dict[str, Any], group_by: GroupBy) -> Optional[str]:
         key = row.get("_id")
         if group_by == "name" and isinstance(key, dict):
             name = key.get("name") or ""

@@ -181,7 +181,10 @@ async def process_analyzer(
 
         # Crypto analyzers need project_id, scan_id, and db to read crypto assets from DB
         if is_crypto_analyzer(analyzer_name):
-            result = await analyzer.analyze(
+            # Crypto analyzers subclass Analyzer and extend .analyze() with
+            # keyword-only parameters; Liskov-compatible but mypy only sees the
+            # base signature.
+            result = await analyzer.analyze(  # type: ignore[call-arg]
                 sbom,
                 settings=settings,
                 parsed_components=parsed_components,

@@ -5,7 +5,7 @@ Higher = migrate sooner. Status bucket thresholds: 80 / 50 / 25.
 
 import math
 from datetime import datetime
-from typing import List
+from typing import Any, List
 
 from app.services.pqc_migration.mappings_loader import Timeline
 
@@ -33,7 +33,7 @@ _MIGRATION_BUCKETS = {
 
 def priority_score(
     *,
-    asset,
+    asset: Any,
     source_family: str,
     timelines: List[Timeline],
     now: datetime,
@@ -61,7 +61,7 @@ def status_from_score(score: int) -> str:
     return "monitor"
 
 
-def _score_exposure(asset) -> float:
+def _score_exposure(asset: Any) -> float:
     asset_type = _attr(asset, "asset_type") or ""
     cert_format = _attr(asset, "certificate_format") or ""
     detection_context = (_attr(asset, "detection_context") or "").lower()
@@ -76,7 +76,7 @@ def _score_exposure(asset) -> float:
     return 45.0  # default moderate exposure
 
 
-def _score_key_weakness(asset, source_family: str) -> float:
+def _score_key_weakness(asset: Any, source_family: str) -> float:
     key_size = _attr(asset, "key_size_bits")
     minimum = _MIN_KEY_SIZE.get(source_family)
     if key_size is None or minimum is None:
@@ -115,5 +115,5 @@ def _score_count(count: int) -> float:
     return min(100.0, math.log10(count) * 50.0)
 
 
-def _attr(obj, name):
+def _attr(obj: Any, name: str) -> Any:
     return getattr(obj, name, None) if not isinstance(obj, dict) else obj.get(name)

@@ -2,7 +2,7 @@
 Admin + project-scoped crypto policy endpoints.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Body, Depends, HTTPException, status
 
@@ -28,7 +28,7 @@ AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANA
 async def get_system_policy(
     current_user: AdminUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, Any]:
     """Get the system-level crypto policy. Admin only."""
     policy = await CryptoPolicyRepository(db).get_system_policy()
     if policy is None:
@@ -38,10 +38,10 @@ async def get_system_policy(
 
 @router.put("/crypto-policies/system")
 async def put_system_policy(
+    current_user: AdminUserDep,
+    db: DatabaseDep,
     body: dict = Body(...),
-    current_user: AdminUserDep = None,
-    db: DatabaseDep = None,
-):
+) -> dict[str, Any]:
     """Replace the system-level crypto policy, bumping the version. Admin only."""
     rules = [CryptoRule.model_validate(r) for r in body.get("rules") or []]
     comment = body.get("comment")
@@ -77,7 +77,7 @@ async def get_project_policy(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, Any]:
     """Get the project override policy. Returns a stub with empty rules if none exists."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
     policy = await CryptoPolicyRepository(db).get_project_policy(project_id)
@@ -89,10 +89,10 @@ async def get_project_policy(
 @router.put("/projects/{project_id}/crypto-policy")
 async def put_project_policy(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     body: dict = Body(...),
-    current_user: CurrentUserDep = None,
-    db: DatabaseDep = None,
-):
+) -> dict[str, Any]:
     """Create or replace the project override policy. Project owner or admin only."""
     await check_project_access(project_id, current_user, db, required_role="admin")
     rules = [CryptoRule.model_validate(r) for r in body.get("rules") or []]
@@ -133,7 +133,7 @@ async def delete_project_policy(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> None:
     """Delete the project override policy. Project owner or admin only."""
     await check_project_access(project_id, current_user, db, required_role="admin")
     repo = CryptoPolicyRepository(db)
@@ -162,7 +162,7 @@ async def get_effective_policy(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, Any]:
     """Get the effective merged policy for a project (system defaults merged with overrides)."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
     effective = await CryptoPolicyResolver(db).resolve(project_id)

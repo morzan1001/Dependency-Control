@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 _CRYPTO_MISUSE_RULE_ID_PREFIX = "crypto-misuse-"
 
 
-def _finding_type_from_rule(rule_id) -> FindingType:
+def _finding_type_from_rule(rule_id: Any) -> FindingType:
     """Map a SAST rule ID to the appropriate FindingType.
 
     Rules starting with `crypto-misuse-` (shipped by the pipeline-templates

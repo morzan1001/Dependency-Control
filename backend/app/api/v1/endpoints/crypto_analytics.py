@@ -3,7 +3,7 @@ REST endpoints for crypto analytics (hotspots, trends, scan-delta).
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -17,6 +17,8 @@ from app.services.analytics.scopes import (
     ScopeResolver,
 )
 
+_ScopeLit = Literal["project", "team", "global", "user"]
+
 router = APIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"])
 
 _SCOPE_PATTERN = "^(project|team|global|user)$"
@@ -24,14 +26,14 @@ _SCOPE_PATTERN = "^(project|team|global|user)$"
 
 @router.get("/hotspots", response_model=HotspotResponse)
 async def get_hotspots(
-    scope: str = Query(..., pattern=_SCOPE_PATTERN),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    scope: _ScopeLit = Query(..., pattern=_SCOPE_PATTERN),
     scope_id: Optional[str] = Query(None),
     group_by: GroupBy = Query("name"),
     scan_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
-    current_user: CurrentUserDep = None,
-    db: DatabaseDep = None,
-):
+) -> HotspotResponse:
     try:
         resolved = await ScopeResolver(db, current_user).resolve(
             scope=scope,
@@ -50,12 +52,12 @@ async def get_hotspots(
 @router.get("/hotspots/{key}/locations")
 async def get_hotspot_locations(
     key: str,
-    scope: str = Query(..., pattern=_SCOPE_PATTERN),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    scope: _ScopeLit = Query(..., pattern=_SCOPE_PATTERN),
     scope_id: Optional[str] = Query(None),
     grouping: GroupBy = Query("name"),
-    current_user: CurrentUserDep = None,
-    db: DatabaseDep = None,
-):
+) -> object:
     try:
         resolved = await ScopeResolver(db, current_user).resolve(
             scope=scope,
@@ -76,15 +78,15 @@ async def get_hotspot_locations(
 
 @router.get("/trends", response_model=TrendSeries)
 async def get_trends(
-    scope: str = Query(..., pattern=_SCOPE_PATTERN),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    range_start: datetime = Query(...),
+    range_end: datetime = Query(...),
+    scope: _ScopeLit = Query(..., pattern=_SCOPE_PATTERN),
     scope_id: Optional[str] = Query(None),
     metric: Metric = Query("total_crypto_findings"),
     bucket: Bucket = Query("week"),
-    range_start: datetime = Query(...),
-    range_end: datetime = Query(...),
-    current_user: CurrentUserDep = None,
-    db: DatabaseDep = None,
-):
+) -> TrendSeries:
     try:
         resolved = await ScopeResolver(db, current_user).resolve(
             scope=scope,
@@ -106,12 +108,12 @@ async def get_trends(
 
 @router.get("/scan-delta", response_model=ScanDelta)
 async def get_scan_delta(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     project_id: str = Query(...),
     from_scan: str = Query(..., alias="from"),
     to_scan: str = Query(..., alias="to"),
-    current_user: CurrentUserDep = None,
-    db: DatabaseDep = None,
-):
+) -> ScanDelta:
     try:
         await ScopeResolver(db, current_user).resolve(
             scope="project",

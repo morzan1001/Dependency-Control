@@ -14,7 +14,9 @@ must dispatch on `hasattr(framework, "evaluate_async")` and await it.
 """
 
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Any, Dict, List, Optional, cast
+
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.finding import Severity
 from app.schemas.compliance import (
@@ -46,11 +48,11 @@ _SEVERITY_MAP: Dict[str, Severity] = {
 
 
 class PQCMigrationPlanFramework:
-    key = ReportFramework.PQC_MIGRATION_PLAN
-    name = "PQC Migration Plan"
-    version = "1"
-    source_url = "https://csrc.nist.gov/Projects/post-quantum-cryptography"
-    disclaimer = (
+    key: ReportFramework = ReportFramework.PQC_MIGRATION_PLAN
+    name: str = "PQC Migration Plan"
+    version: str = "1"
+    source_url: str = "https://csrc.nist.gov/Projects/post-quantum-cryptography"
+    disclaimer: Optional[str] = (
         "This report enumerates currently-detected quantum-vulnerable crypto "
         "assets and their NIST-standardised PQC successors. It is not a "
         "formal compliance assessment against an external standard."
@@ -71,7 +73,8 @@ class PQCMigrationPlanFramework:
         if data.db is None:
             raise ValueError("EvaluationInput.db is required for PQC meta-framework")
 
-        plan = await PQCMigrationPlanGenerator(data.db).generate(
+        db = cast(AsyncIOMotorDatabase[Any], data.db)
+        plan = await PQCMigrationPlanGenerator(db).generate(
             resolved=data.resolved,
             limit=1000,
         )
@@ -112,12 +115,12 @@ def _item_to_control(item: MigrationItem) -> ControlResult:
     )
 
 
-def _bucket(status) -> str:
-    return status if isinstance(status, str) else status.value
+def _bucket(status: Any) -> str:
+    return status if isinstance(status, str) else str(status.value)
 
 
-def _status_value(status) -> str:
-    return status if isinstance(status, str) else status.value
+def _status_value(status: Any) -> str:
+    return status if isinstance(status, str) else str(status.value)
 
 
 def _summary(controls: List[ControlResult]) -> Dict[str, int]:

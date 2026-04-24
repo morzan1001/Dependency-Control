@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import BackgroundTasks, Depends, HTTPException, status
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
 from app.api.deps import DatabaseDep
@@ -26,7 +27,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.scans import ScanRepository
-from app.services.cbom_parser import parse_cbom
+from app.services.cbom_parser import ParsedCBOM, parse_cbom
 from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,12 @@ async def ingest_cbom(
     return CBOMIngestResponse(scan_id=scan_id, status="accepted")
 
 
-async def _persist_crypto_assets(db, project_id: str, scan_id: str, parsed) -> None:
+async def _persist_crypto_assets(
+    db: AsyncIOMotorDatabase,
+    project_id: str,
+    scan_id: str,
+    parsed: ParsedCBOM,
+) -> None:
     """Background task: bulk-upsert CryptoAsset records then dispatch analysis."""
     from app.core.worker import worker_manager
 

@@ -8,6 +8,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.permissions import Permissions, has_permission
+from app.models.user import User
 from app.repositories.mcp_api_keys import MCPApiKeyRepository
 from app.schemas.mcp import (
     MCPKeyCreate,
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-def _check_mcp_access(user) -> None:
+def _check_mcp_access(user: User) -> None:
     if not has_permission(user.permissions, Permissions.MCP_ACCESS):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -52,7 +53,7 @@ async def create_mcp_key(
     body: MCPKeyCreate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> MCPKeyCreateResponse:
     """Issue a new MCP API token bound to the current user. The plaintext
     token is returned in this single response — store it immediately; the
     server never shows it again."""
@@ -84,7 +85,7 @@ async def create_mcp_key(
 async def list_mcp_keys(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> MCPKeyListResponse:
     _check_mcp_access(current_user)
     repo = MCPApiKeyRepository(db)
     keys = await repo.list_for_user(str(current_user.id))
@@ -100,7 +101,7 @@ async def revoke_mcp_key(
     key_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, str]:
     _check_mcp_access(current_user)
     repo = MCPApiKeyRepository(db)
     revoked = await repo.revoke(key_id, user_id=str(current_user.id))

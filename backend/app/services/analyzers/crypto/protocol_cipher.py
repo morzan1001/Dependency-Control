@@ -49,7 +49,7 @@ _WEAKNESS_SEVERITY_ORDER = [
 class ProtocolCipherSuiteAnalyzer(Analyzer):
     name = "crypto_protocol_cipher"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._catalog = load_iana_catalog()
 
     async def analyze(

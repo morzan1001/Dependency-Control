@@ -1,10 +1,12 @@
 """PQC migration plan REST endpoint."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_active_user, get_database
+from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
@@ -16,12 +18,12 @@ router = APIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 
 @router.get("/pqc-migration", response_model=MigrationPlanResponse)
 async def get_pqc_migration_plan(
-    scope: str = Query(..., pattern="^(project|team|global|user)$"),
+    scope: Literal["project", "team", "global", "user"] = Query(..., pattern="^(project|team|global|user)$"),
     scope_id: Optional[str] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
-    current_user=Depends(get_current_active_user),
-    db=Depends(get_database),
-):
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> MigrationPlanResponse:
     try:
         resolved = await ScopeResolver(db, current_user).resolve(
             scope=scope,
@@ -40,7 +42,7 @@ async def get_pqc_migration_plan(
         CURRENT_MAPPINGS_VERSION,
     )
     hit, cached = cache.get(cache_key)
-    if hit:
+    if hit and isinstance(cached, MigrationPlanResponse):
         return cached
 
     resp = await PQCMigrationPlanGenerator(db).generate(
