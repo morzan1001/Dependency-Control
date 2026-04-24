@@ -49,9 +49,6 @@ _WEAKNESS_SEVERITY_ORDER = [
 class ProtocolCipherSuiteAnalyzer(Analyzer):
     name = "crypto_protocol_cipher"
 
-    def __init__(self) -> None:
-        self._catalog = load_iana_catalog()
-
     async def analyze(
         self,
         sbom: Dict[str, Any],
@@ -64,6 +61,11 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
     ) -> Dict[str, Any]:
         if db is None or project_id is None or scan_id is None:
             return {"findings": []}
+
+        # Load (and on first call, fetch + Redis-cache) the IANA catalog
+        # lazily — this mirrors the OSV / deps_dev analyzers which also
+        # fetch their upstream data on-demand rather than at __init__ time.
+        self._catalog = await load_iana_catalog()
 
         try:
             assets = await CryptoAssetRepository(db).list_by_scan(
