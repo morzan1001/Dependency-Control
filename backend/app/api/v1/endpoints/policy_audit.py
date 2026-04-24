@@ -5,7 +5,9 @@ System scope: admin only.
 Project scope: member for reads, owner/admin for writes.
 """
 
-from datetime import datetime
+import logging
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -20,6 +22,13 @@ from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoRule
 from app.schemas.policy_audit import PolicyAuditAction
 from app.services.audit.history import record_policy_change
+
+logger = logging.getLogger(__name__)
+
+# Minimum age (in days) an audit entry must have before it can be pruned.
+# Admins can configure via POLICY_AUDIT_MIN_PRUNE_DAYS — defaults to 90
+# days of forensic history that must always be preserved.
+DEFAULT_MIN_PRUNE_DAYS = 90
 
 router = APIRouter(tags=["policy-audit"])
 
@@ -94,6 +103,7 @@ async def prune_system_audit(
 ) -> dict[str, Any]:
     _require_admin(current_user)
     cutoff = _parse_datetime(before)
+    _enforce_min_prune_cutoff(cutoff)
     deleted = await PolicyAuditRepository(db).delete_older_than(
         policy_scope="system",
         project_id=None,
@@ -148,7 +158,9 @@ async def revert_project_policy(
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
-    await check_project_access(project_id, current_user, db, required_role="owner")
+    # Note: "owner" isn't a project role — PROJECT_ROLES = viewer|editor|admin.
+    # The previous string crashed check_project_access with ValueError.
+    await check_project_access(project_id, current_user, db, required_role="admin")
     target_raw = body.get("target_version")
     if target_raw is None:
         raise HTTPException(status_code=400, detail="target_version required")
@@ -173,8 +185,10 @@ async def prune_project_audit(
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
-    await check_project_access(project_id, current_user, db, required_role="owner")
+    # Same "owner" -> "admin" normalisation as revert_project_policy above.
+    await check_project_access(project_id, current_user, db, required_role="admin")
     cutoff = _parse_datetime(before)
+    _enforce_min_prune_cutoff(cutoff)
     deleted = await PolicyAuditRepository(db).delete_older_than(
         policy_scope="project",
         project_id=project_id,
@@ -192,6 +206,52 @@ def _parse_datetime(value: str) -> datetime:
     # query string. Restore it before parsing.
     value = value.replace(" ", "+")
     return datetime.fromisoformat(value)
+
+
+def _min_prune_days() -> int:
+    """Return the configured minimum prune age in days.
+
+    ``POLICY_AUDIT_MIN_PRUNE_DAYS`` overrides the default when set.
+    Invalid / non-positive values fall back to the default so a bad env
+    var can never relax this safety check.
+    """
+    raw = os.environ.get("POLICY_AUDIT_MIN_PRUNE_DAYS")
+    if not raw:
+        return DEFAULT_MIN_PRUNE_DAYS
+    try:
+        days = int(raw)
+    except ValueError:
+        logger.warning("Invalid POLICY_AUDIT_MIN_PRUNE_DAYS: %r — using default", raw)
+        return DEFAULT_MIN_PRUNE_DAYS
+    if days <= 0:
+        logger.warning("Non-positive POLICY_AUDIT_MIN_PRUNE_DAYS: %d — using default", days)
+        return DEFAULT_MIN_PRUNE_DAYS
+    return days
+
+
+def _enforce_min_prune_cutoff(cutoff: datetime) -> None:
+    """Reject prune requests that would delete recent audit history.
+
+    ``cutoff`` is the boundary passed as ``?before=``; entries older than
+    it are deleted. The cutoff itself must be at least
+    ``_min_prune_days`` in the past so recent forensic evidence is never
+    destroyed by an overly-aggressive prune.
+    """
+    days = _min_prune_days()
+    # Use UTC and normalise the cutoff in case the client sends a naive
+    # timestamp (rare but permitted by datetime.fromisoformat).
+    now = datetime.now(timezone.utc)
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    min_age_boundary = now - timedelta(days=days)
+    if cutoff > min_age_boundary:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"before must be at least {days} days in the past to preserve "
+                "forensic history"
+            ),
+        )
 
 
 def _require_admin(user: User) -> None:
