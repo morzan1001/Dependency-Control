@@ -80,6 +80,60 @@ async def test_project_update_without_license_change_creates_no_audit_entry(
 
 
 @pytest.mark.asyncio
+async def test_license_policy_audit_list_endpoint(
+    client, db, owner_auth_headers_proj
+):
+    """GET /projects/{id}/license-policy/audit returns the entries."""
+    # Seed via project update
+    await client.put(
+        "/api/v1/projects/p",
+        json={"license_policy": {"distribution_model": "distributed"}},
+        headers=owner_auth_headers_proj,
+    )
+    resp = await client.get(
+        "/api/v1/projects/p/license-policy/audit",
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "entries" in body
+    assert len(body["entries"]) == 1
+    assert body["entries"][0]["policy_type"] == "license"
+    assert body["entries"][0]["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_license_policy_audit_get_by_version_endpoint(
+    client, db, owner_auth_headers_proj
+):
+    """GET /projects/{id}/license-policy/audit/{version} returns one entry."""
+    await client.put(
+        "/api/v1/projects/p",
+        json={"license_policy": {"distribution_model": "distributed"}},
+        headers=owner_auth_headers_proj,
+    )
+    resp = await client.get(
+        "/api/v1/projects/p/license-policy/audit/1",
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["policy_type"] == "license"
+    assert body["version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_license_policy_audit_404_on_unknown_version(
+    client, db, owner_auth_headers_proj
+):
+    resp = await client.get(
+        "/api/v1/projects/p/license-policy/audit/99",
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_license_policy_entries_isolated_from_crypto(
     client, db, owner_auth_headers_proj
 ):

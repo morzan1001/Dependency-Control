@@ -198,6 +198,57 @@ async def prune_project_audit(
     return {"deleted": deleted}
 
 
+# ---------- LICENSE POLICY AUDIT (PROJECT SCOPE ONLY) ----------
+
+
+@router.get("/projects/{project_id}/license-policy/audit")
+async def list_project_license_audit(
+    project_id: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
+    """List license-policy audit entries for a project (viewer+ role)."""
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+    entries = await PolicyAuditRepository(db).list(
+        policy_scope="project",
+        project_id=project_id,
+        policy_type="license",
+        skip=skip,
+        limit=limit,
+    )
+    return {"entries": [e.model_dump(by_alias=True) for e in entries]}
+
+
+@router.get("/projects/{project_id}/license-policy/audit/{version}")
+async def get_project_license_audit_entry(
+    project_id: str,
+    version: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
+    """Fetch a single license-policy audit entry by version."""
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+    entry = await PolicyAuditRepository(db).get_by_version(
+        policy_scope="project",
+        project_id=project_id,
+        version=version,
+        policy_type="license",
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"License-policy version {version} not found")
+    return entry.model_dump(by_alias=True)
+
+
+# NOTE: revert/prune for license-policy audit is intentionally deferred:
+#   * revert would need to overwrite project.license_policy and/or
+#     project.analyzer_settings['license_compliance'] — a merge with other
+#     analyzer settings is non-trivial (stomping peer settings would be a bug).
+#   * prune reuses the min-cutoff guard from crypto; when revert ships we'll
+#     add the matching DELETE endpoint with policy_type='license'.
+
+
 # ---------- HELPERS ----------
 
 
