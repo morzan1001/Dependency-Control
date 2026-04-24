@@ -50,8 +50,41 @@ export function WebhookManager({
   })
 
   const availableEvents = [
-    { id: "scan_completed", label: "Scan Completed" },
-    { id: "vulnerability_found", label: "Vulnerability Found" }
+    {
+      id: "scan_completed",
+      label: "Scan completed",
+      description: "Fires when a project scan finishes successfully.",
+    },
+    {
+      id: "vulnerability_found",
+      label: "Vulnerability found",
+      description: "Fires when a new vulnerability is detected in a scan.",
+    },
+    {
+      id: "analysis_failed",
+      label: "Analysis failed",
+      description: "Fires when a scan or analysis run fails.",
+    },
+    {
+      id: "crypto_asset.ingested",
+      label: "Crypto asset ingested",
+      description: "Fires when crypto assets (CBOM) are imported or updated.",
+    },
+    {
+      id: "crypto_policy.changed",
+      label: "Crypto policy changed",
+      description: "Fires on every create/update/delete/revert of a crypto policy.",
+    },
+    {
+      id: "compliance_report.generated",
+      label: "Compliance report generated",
+      description: "Fires when a compliance report completes successfully.",
+    },
+    {
+      id: "pqc_migration_plan.generated",
+      label: "PQC migration plan generated",
+      description: "Fires when a post-quantum migration plan is produced.",
+    },
   ]
 
   const handleCreate = async () => {
@@ -136,15 +169,23 @@ export function WebhookManager({
                 </div>
               <div className="space-y-2">
                 <Label>Events</Label>
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                   {availableEvents.map(event => (
-                    <div key={event.id} className="flex items-center space-x-2">
+                    <div key={event.id} className="flex items-start space-x-2">
                       <Checkbox
                         id={event.id}
                         checked={(newWebhook.events || []).includes(event.id)}
                         onCheckedChange={() => toggleEvent(event.id)}
+                        className="mt-1"
                       />
-                      <Label htmlFor={event.id}>{event.label}</Label>
+                      <div className="grid gap-0.5 leading-tight">
+                        <Label htmlFor={event.id} className="font-medium">
+                          {event.label}
+                        </Label>
+                        <span className="text-xs text-muted-foreground">
+                          {event.description}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
