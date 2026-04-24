@@ -119,6 +119,17 @@ async def record_policy_change(
         await PolicyAuditRepository(db).insert(entry)
     except Exception:
         logger.exception("Policy audit persistence failed (non-blocking)")
+    # Analytics outputs (hotspots, trends, PQC migration plans) are derived
+    # from the effective crypto policy. A policy change silently invalidates
+    # everything the TTL cache currently holds, so flush it here. Failure
+    # must never block the caller — we never want a cache bug to prevent a
+    # valid policy write.
+    try:
+        from app.services.analytics.cache import get_analytics_cache
+
+        get_analytics_cache().clear()
+    except Exception:
+        logger.exception("Analytics cache invalidation failed (non-blocking)")
     try:
         await _dispatch_webhook(db, entry)
     except Exception:

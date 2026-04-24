@@ -129,3 +129,46 @@ async def test_record_policy_change_denormalises_actor():
     assert entry.actor_user_id == "u42"
     assert entry.actor_display_name == "alice"
     assert entry.comment == "first override"
+
+
+@pytest.mark.asyncio
+async def test_record_policy_change_clears_analytics_cache():
+    """Policy changes alter what hotspots/trends/PQC plans should return;
+    the TTL cache must be flushed synchronously on each policy write so
+    the next analytics query re-computes against the new rule set."""
+    db = MagicMock()
+    insert_mock = AsyncMock()
+    clear_mock = MagicMock()
+    fake_cache = MagicMock(clear=clear_mock)
+    with (
+        patch(
+            "app.services.audit.history.PolicyAuditRepository",
+            return_value=MagicMock(insert=insert_mock),
+        ),
+        patch(
+            "app.services.audit.history._dispatch_webhook",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.audit.history._notify_relevant_users",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.analytics.cache.get_analytics_cache",
+            return_value=fake_cache,
+        ),
+    ):
+        new = CryptoPolicy(scope="system", version=2, rules=[_rule("a")])
+        await record_policy_change(
+            db,
+            policy_scope="system",
+            project_id=None,
+            old_policy=None,
+            new_policy=new,
+            action=PolicyAuditAction.CREATE,
+            actor=None,
+            comment=None,
+        )
+
+    insert_mock.assert_awaited_once()
+    clear_mock.assert_called_once()

@@ -21,7 +21,20 @@ from app.core.permissions import Permissions, has_permission
 from app.models.waiver import Waiver
 from app.repositories import WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
+from app.services.analytics.cache import get_analytics_cache
 from app.services.stats import recalculate_all_projects, recalculate_project_stats
+
+
+def _invalidate_analytics_cache() -> None:
+    """Flush the analytics TTL cache. Hotspots, trends and PQC plans all
+    derive their counts from finding `waived` flags, so any waiver mutation
+    can silently change those outputs until the TTL expires. The cache is
+    best-effort by design — failure here must never prevent a waiver write.
+    """
+    try:
+        get_analytics_cache().clear()
+    except Exception:  # pragma: no cover — defensive; clear() has no I/O
+        pass
 
 router = CustomAPIRouter()
 
@@ -61,6 +74,7 @@ async def create_waiver(
     waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
 
     await waiver_repo.create(waiver)
+    _invalidate_analytics_cache()
 
     # Trigger stats recalculation
     if waiver.project_id:
@@ -183,6 +197,7 @@ async def update_waiver(
     updated = await waiver_repo.update(waiver_id, update_data)
     if not updated:
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
+    _invalidate_analytics_cache()
 
     # Trigger stats recalculation if status changed (affects waived/unwaived state)
     if "status" in update_data:
@@ -220,6 +235,7 @@ async def delete_waiver(
             raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     await waiver_repo.delete(waiver_id)
+    _invalidate_analytics_cache()
 
     # Trigger stats recalculation
     if waiver.project_id:
