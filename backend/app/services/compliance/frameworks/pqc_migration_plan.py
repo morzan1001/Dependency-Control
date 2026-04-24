@@ -14,9 +14,7 @@ must dispatch on `hasattr(framework, "evaluate_async")` and await it.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, cast
-
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from typing import Any, Dict, List, Optional
 
 from app.models.finding import Severity
 from app.schemas.compliance import (
@@ -73,8 +71,7 @@ class PQCMigrationPlanFramework:
         if data.db is None:
             raise ValueError("EvaluationInput.db is required for PQC meta-framework")
 
-        db = cast(AsyncIOMotorDatabase[Any], data.db)
-        plan = await PQCMigrationPlanGenerator(db).generate(
+        plan = await PQCMigrationPlanGenerator(data.db).generate(
             resolved=data.resolved,
             limit=1000,
         )

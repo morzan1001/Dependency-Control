@@ -9,7 +9,9 @@ evaluators and delegates everything else to the default evaluator here.
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.crypto_asset import CryptoAsset
 from app.schemas.compliance import (
@@ -37,7 +39,8 @@ class EvaluationInput:
     scan_ids: List[str]
     # Populated by engine._gather_inputs for meta-frameworks that need to run
     # their own queries (e.g. PQC migration plan delegates to a generator).
-    db: Optional[object] = None
+    # Typed precisely so consumers (notably PQC) don't need runtime casts.
+    db: Optional[AsyncIOMotorDatabase[Any]] = None
 
 
 @runtime_checkable
