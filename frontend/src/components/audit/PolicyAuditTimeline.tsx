@@ -15,6 +15,8 @@ import { PolicyDiffView } from "./PolicyDiffView";
 import { RevertConfirmDialog } from "./RevertConfirmDialog";
 import { PruneAuditDialog } from "./PruneAuditDialog";
 
+const PAGE_SIZE = 50;
+
 function extractErrorMessage(err: unknown): string {
   if (err && typeof err === "object") {
     const e = err as {
@@ -45,8 +47,8 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
   const { data } = useQuery({
     queryKey: ["policy-audit", policyScope, projectId],
     queryFn: async () => {
-      if (policyScope === "system") return listSystemAudit({ limit: 50 });
-      return listProjectAudit(projectId!, { limit: 50 });
+      if (policyScope === "system") return listSystemAudit({ limit: PAGE_SIZE });
+      return listProjectAudit(projectId!, { limit: PAGE_SIZE });
     },
     enabled: policyScope === "system" || !!projectId,
   });
@@ -102,6 +104,12 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
           {entries.map((entry, idx) => {
             const isOpen = expanded.has(entry._id);
             const previous = entries[idx + 1];
+            const isLast = idx === entries.length - 1;
+            // A full page might have more entries in the DB that weren't
+            // loaded — in that case previous is undefined only because of
+            // the pagination window, not because we hit the first version.
+            const windowTruncated =
+              isLast && !previous && entries.length >= PAGE_SIZE && entry.version > 1;
             return (
               <li key={entry._id} className="p-3 text-sm">
                 <div className="flex items-center gap-2">
@@ -142,7 +150,18 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
                 )}
                 {isOpen && (
                   <div className="mt-3 ml-5">
-                    <PolicyDiffView current={entry} previous={previous} />
+                    {windowTruncated ? (
+                      <div className="rounded border border-dashed p-3 text-xs text-muted-foreground">
+                        Previous version is beyond the loaded window
+                        (showing the most recent {PAGE_SIZE} entries).
+                        Showing snapshot only.
+                        <pre className="mt-2 max-h-64 overflow-auto rounded bg-muted/50 p-2 text-[11px]">
+                          {JSON.stringify(entry.snapshot, null, 2)}
+                        </pre>
+                      </div>
+                    ) : (
+                      <PolicyDiffView current={entry} previous={previous} />
+                    )}
                   </div>
                 )}
               </li>
