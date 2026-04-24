@@ -178,34 +178,43 @@ async def _notify_relevant_users(db: AsyncIOMotorDatabase, entry: PolicyAuditEnt
     """Create in-app notifications for users affected by the policy change.
 
     Skipped for SEED (system-initiated, no info value).
-    Adapts to the actual notification_service API.
+
+    For system-scope changes: notifies users holding ``system:manage`` or
+    ``analytics:global`` permissions. For project-scope changes: notifies all
+    members of the project. Relies on the notification service's own error
+    handling — this function is wrapped by ``record_policy_change`` in a
+    best-effort try/except.
     """
     if entry.action == PolicyAuditAction.SEED or entry.action == "seed":
         return
-    try:
-        from app.services.notifications import service as notification_service
-    except ImportError:
-        return
+
+    from app.services.notifications.service import notification_service
 
     title_scope = "System" if entry.policy_scope == "system" else f"Project {entry.project_id}"
-    title = f"{title_scope} crypto policy changed"
-    body = f"{entry.actor_display_name or 'A user'} updated the policy: {entry.change_summary}"
-    # Attempt common helper names; swallow AttributeError if none match.
+    subject = f"{title_scope} crypto policy changed"
+    message = f"{entry.actor_display_name or 'A user'} updated the policy: {entry.change_summary}"
+    event_type = "crypto_policy_changed"
+
     if entry.policy_scope == "project":
-        if hasattr(notification_service, "notify_project_members"):
-            await notification_service.notify_project_members(
-                db,
-                project_id=entry.project_id,
-                title=title,
-                body=body,
-                link=f"/projects/{entry.project_id}?tab=crypto-policy",
-            )
+        if entry.project_id is None:
+            return
+        from app.repositories.projects import ProjectRepository
+
+        project = await ProjectRepository(db).get_by_id(entry.project_id)
+        if project is None:
+            return
+        await notification_service.notify_project_members(
+            project=project,
+            event_type=event_type,
+            subject=subject,
+            message=message,
+            db=db,
+        )
     else:
-        if hasattr(notification_service, "notify_users_with_permission"):
-            await notification_service.notify_users_with_permission(
-                db,
-                permission="system:manage",
-                title=title,
-                body=body,
-                link="/settings/crypto-policy",
-            )
+        await notification_service.notify_users_with_permission(
+            db,
+            permission=["system:manage", "analytics:global"],
+            event_type=event_type,
+            subject=subject,
+            message=message,
+        )
