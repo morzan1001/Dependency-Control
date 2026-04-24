@@ -702,14 +702,24 @@ OIDC_HTTP_TIMEOUT_SECONDS: float = 30.0
 WEBHOOK_LIST_LIMIT: int = 100
 WEBHOOK_BACKOFF_BASE: int = 2  # Exponential backoff base (2^n seconds)
 
-# Webhook event types
-WEBHOOK_EVENT_SCAN_COMPLETED = "scan_completed"
-WEBHOOK_EVENT_VULNERABILITY_FOUND = "vulnerability_found"
-WEBHOOK_EVENT_ANALYSIS_FAILED = "analysis_failed"
+# Webhook event types (dot-notation canonical names)
+WEBHOOK_EVENT_SCAN_COMPLETED = "scan.completed"
+WEBHOOK_EVENT_VULNERABILITY_FOUND = "vulnerability.found"
+WEBHOOK_EVENT_ANALYSIS_FAILED = "analysis.failed"
 WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED = "crypto_asset.ingested"
 WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED = "crypto_policy.changed"
 WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report.generated"
 WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan.generated"
+
+# Backward-compat aliases: old snake_case event names -> new dot-notation names.
+# Existing webhook subscriptions in MongoDB may still store the old names in
+# their `events` field; the dispatcher and validation layer treat both forms as
+# equivalent so we do not require a DB migration.
+WEBHOOK_EVENT_ALIASES: dict[str, str] = {
+    "scan_completed": WEBHOOK_EVENT_SCAN_COMPLETED,
+    "vulnerability_found": WEBHOOK_EVENT_VULNERABILITY_FOUND,
+    "analysis_failed": WEBHOOK_EVENT_ANALYSIS_FAILED,
+}
 
 WEBHOOK_VALID_EVENTS = [
     WEBHOOK_EVENT_SCAN_COMPLETED,
@@ -720,6 +730,11 @@ WEBHOOK_VALID_EVENTS = [
     WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
     WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
 ]
+
+# Validation accepts both canonical dot-notation and legacy snake_case names
+# (for backward-compatibility with existing webhook subscriptions). The
+# matcher normalizes both sides when dispatching events.
+WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]
 
 # Webhook permissions - Use Permissions class from app.core.permissions instead
 # from app.core.permissions import Permissions (Permissions.WEBHOOK_CREATE, etc.)

@@ -49,19 +49,29 @@ export function WebhookManager({
     secret: ""
   })
 
+  // Backward-compat: webhook events renamed to dot-notation. Translate legacy
+  // snake_case names stored in existing subscriptions to the canonical form so
+  // the checkboxes render correctly and badges display a single canonical name.
+  const EVENT_ALIASES: Record<string, string> = {
+    scan_completed: "scan.completed",
+    vulnerability_found: "vulnerability.found",
+    analysis_failed: "analysis.failed",
+  }
+  const canonicalize = (eventId: string): string => EVENT_ALIASES[eventId] ?? eventId
+
   const availableEvents = [
     {
-      id: "scan_completed",
+      id: "scan.completed",
       label: "Scan completed",
       description: "Fires when a project scan finishes successfully.",
     },
     {
-      id: "vulnerability_found",
+      id: "vulnerability.found",
       label: "Vulnerability found",
       description: "Fires when a new vulnerability is detected in a scan.",
     },
     {
-      id: "analysis_failed",
+      id: "analysis.failed",
       label: "Analysis failed",
       description: "Fires when a scan or analysis run fails.",
     },
@@ -174,7 +184,7 @@ export function WebhookManager({
                     <div key={event.id} className="flex items-start space-x-2">
                       <Checkbox
                         id={event.id}
-                        checked={(newWebhook.events || []).includes(event.id)}
+                        checked={(newWebhook.events || []).some(e => canonicalize(e) === event.id)}
                         onCheckedChange={() => toggleEvent(event.id)}
                         className="mt-1"
                       />
@@ -220,7 +230,7 @@ export function WebhookManager({
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {(webhook.events || []).map(e => (
-                        <Badge key={e} variant="secondary">{e}</Badge>
+                        <Badge key={e} variant="secondary">{canonicalize(e)}</Badge>
                       ))}
                     </div>
                   </TableCell>

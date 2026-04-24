@@ -7,7 +7,11 @@ to ensure consistent validation across the application.
 
 from typing import List, Optional
 
-from app.core.constants import WEBHOOK_ALLOWED_URL_PREFIXES, WEBHOOK_VALID_EVENTS
+from app.core.constants import (
+    WEBHOOK_ACCEPTED_EVENT_NAMES,
+    WEBHOOK_ALLOWED_URL_PREFIXES,
+    WEBHOOK_VALID_EVENTS,
+)
 
 
 def validate_webhook_url(url: str) -> str:
@@ -66,7 +70,9 @@ def validate_webhook_events(events: List[str], allow_empty: bool = False) -> Lis
     if not allow_empty and not events:
         raise ValueError("At least one event type is required")
 
-    invalid_events = [e for e in events if e not in WEBHOOK_VALID_EVENTS]
+    # Accept both canonical dot-notation names and legacy snake_case aliases so
+    # that existing webhook subscriptions remain valid after the rename.
+    invalid_events = [e for e in events if e not in WEBHOOK_ACCEPTED_EVENT_NAMES]
     if invalid_events:
         raise ValueError(f"Invalid event types: {invalid_events}. Valid events: {WEBHOOK_VALID_EVENTS}")
     return events
@@ -105,6 +111,6 @@ def validate_webhook_event_type(event_type: str) -> str:
     Raises:
         ValueError: If the event type is invalid
     """
-    if event_type not in WEBHOOK_VALID_EVENTS:
+    if event_type not in WEBHOOK_ACCEPTED_EVENT_NAMES:
         raise ValueError(f"Invalid event type: {event_type}. Valid events: {WEBHOOK_VALID_EVENTS}")
     return event_type

@@ -1,10 +1,10 @@
 """
 Webhook Service for triggering webhooks on various events.
 
-Supports multiple event types:
-- scan_completed: Triggered when a scan finishes
-- vulnerability_found: Triggered when critical vulnerabilities are detected
-- analysis_failed: Triggered when analysis fails
+Canonical event names use dot-notation (e.g. ``scan.completed``). The legacy
+snake_case names (``scan_completed``, ``vulnerability_found``,
+``analysis_failed``) remain accepted as aliases for backward compatibility
+with existing subscriptions; see WEBHOOK_EVENT_ALIASES in core.constants.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.config import settings
 from app.core.constants import (
     WEBHOOK_BACKOFF_BASE,
+    WEBHOOK_EVENT_ALIASES,
     WEBHOOK_EVENT_ANALYSIS_FAILED,
     WEBHOOK_EVENT_SCAN_COMPLETED,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -51,6 +52,29 @@ from app.core.constants import (
     WEBHOOK_HEADER_USER_AGENT,
     WEBHOOK_USER_AGENT_VALUE,
 )
+
+
+def _normalize_event_name(event_type: str) -> str:
+    """Canonicalize a webhook event name to its dot-notation form."""
+    return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
+
+
+def _event_match_set(event_type: str) -> List[str]:
+    """
+    Return the list of event-name strings that should match a given event.
+
+    When firing an event, we need to match subscription documents that may
+    store either the canonical dot-notation name or the legacy snake_case
+    alias. Likewise, if an event fires under a legacy name we match both.
+    """
+    canonical = _normalize_event_name(event_type)
+    names = [canonical]
+    for alias, target in WEBHOOK_EVENT_ALIASES.items():
+        if target == canonical and alias not in names:
+            names.append(alias)
+    if event_type not in names:
+        names.append(event_type)
+    return names
 # Avoid circular import - webhook.py imports validation.py from this package
 # Import moved to method level where needed
 
@@ -463,10 +487,15 @@ class WebhookService:
 
         now = datetime.now(timezone.utc)
 
-        # Base query with circuit breaker filter
+        # Base query with circuit breaker filter. Subscriptions may store the
+        # event under either its canonical dot-notation name or the legacy
+        # snake_case alias; match either form. MongoDB's array-membership
+        # behaviour means `events: {"$in": [...]}` matches docs whose
+        # `events` array contains any of the listed values.
+        event_names = _event_match_set(event_type)
         base_conditions: Dict[str, Any] = {
             "is_active": True,
-            "events": event_type,
+            "events": {"$in": event_names},
             "$or": [
                 {"circuit_breaker_until": {"$exists": False}},
                 {"circuit_breaker_until": None},
