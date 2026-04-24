@@ -23,10 +23,13 @@ from app.schemas.compliance import (
     ControlStatus,
     FrameworkEvaluation,
     ReportFramework,
-    ResidualRisk,
 )
 from app.schemas.pqc_migration import MigrationItem, MigrationPlanResponse
-from app.services.compliance.frameworks.base import EvaluationInput
+from app.services.compliance.frameworks.base import (
+    EvaluationInput,
+    build_residual_risks,
+    build_summary,
+)
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 
@@ -84,8 +87,8 @@ class PQCMigrationPlanFramework:
             generated_at=datetime.now(timezone.utc),
             scope_description=data.scope_description,
             controls=controls,
-            summary=_summary(controls),
-            residual_risks=_residual_risks(controls),
+            summary=build_summary(controls),
+            residual_risks=build_residual_risks(controls),
             inputs_fingerprint=_fingerprint(plan),
         )
 
@@ -114,37 +117,6 @@ def _item_to_control(item: MigrationItem) -> ControlResult:
 
 def _bucket(status: Any) -> str:
     return status if isinstance(status, str) else str(status.value)
-
-
-def _status_value(status: Any) -> str:
-    return status if isinstance(status, str) else str(status.value)
-
-
-def _summary(controls: List[ControlResult]) -> Dict[str, int]:
-    counts = {
-        "passed": 0,
-        "failed": 0,
-        "waived": 0,
-        "not_applicable": 0,
-        "total": len(controls),
-    }
-    for c in controls:
-        key = _status_value(c.status)
-        counts[key] = counts.get(key, 0) + 1
-    return counts
-
-
-def _residual_risks(controls: List[ControlResult]) -> List[ResidualRisk]:
-    return [
-        ResidualRisk(
-            control_id=c.control_id,
-            title=c.title,
-            severity=c.severity,
-            description=c.description,
-        )
-        for c in controls
-        if _status_value(c.status) == "failed"
-    ]
 
 
 def _fingerprint(plan: MigrationPlanResponse) -> str:

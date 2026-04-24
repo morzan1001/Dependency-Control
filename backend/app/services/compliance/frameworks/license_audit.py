@@ -20,9 +20,13 @@ from app.schemas.compliance import (
     ControlStatus,
     FrameworkEvaluation,
     ReportFramework,
-    ResidualRisk,
 )
-from app.services.compliance.frameworks.base import EvaluationInput
+from app.services.compliance.frameworks.base import (
+    EvaluationInput,
+    build_residual_risks,
+    build_summary,
+    extract_finding_id,
+)
 
 
 # Licence-policy setting keys and the control they expand to. The key
@@ -142,17 +146,6 @@ class LicenseAuditFramework:
             )
         )
 
-        summary = _build_summary(controls)
-        residuals = [
-            ResidualRisk(
-                control_id=c.control_id,
-                title=c.title,
-                severity=c.severity,
-                description=c.description,
-            )
-            for c in controls
-            if (c.status if isinstance(c.status, str) else c.status.value) == "failed"
-        ]
         return FrameworkEvaluation(
             framework_key=self.key,
             framework_name=self.name,
@@ -160,8 +153,8 @@ class LicenseAuditFramework:
             generated_at=datetime.now(timezone.utc),
             scope_description=data.scope_description,
             controls=controls,
-            summary=summary,
-            residual_risks=residuals,
+            summary=build_summary(controls),
+            residual_risks=build_residual_risks(controls),
             inputs_fingerprint="license-audit-v1",
         )
 
@@ -197,7 +190,7 @@ def _classify(matching: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]
     if not matching:
         return ControlStatus.PASSED, []
     active = [f for f in matching if not f.get("waived")]
-    evidence_ids = [str(f.get("_id") or f.get("id") or "") for f in matching if f.get("_id") or f.get("id")]
+    evidence_ids = [extract_finding_id(f) for f in matching if f.get("_id") or f.get("id")]
     if active:
         return ControlStatus.FAILED, evidence_ids
     return ControlStatus.WAIVED, evidence_ids
@@ -205,11 +198,3 @@ def _classify(matching: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]
 
 def _waiver_reason(f: Dict[str, Any]) -> str:
     return str(f.get("waiver_reason") or "")
-
-
-def _build_summary(controls: List[ControlResult]) -> Dict[str, int]:
-    counts = {"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": len(controls)}
-    for c in controls:
-        key = c.status if isinstance(c.status, str) else c.status.value
-        counts[key] = counts.get(key, 0) + 1
-    return counts

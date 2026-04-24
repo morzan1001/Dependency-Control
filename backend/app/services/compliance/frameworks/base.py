@@ -105,7 +105,7 @@ def default_evaluator(
         description=control.description,
         status=status,
         severity=control.severity,
-        evidence_finding_ids=[str(f.get("_id") or f.get("id") or "") for f in matching],
+        evidence_finding_ids=[extract_finding_id(f) for f in matching],
         evidence_asset_bom_refs=_extract_bom_refs(matching),
         waiver_reasons=[(f.get("waiver_reason") or "") for f in waived_findings if f.get("waiver_reason")],
         remediation=control.remediation,
@@ -162,15 +162,38 @@ def evaluate_framework(
     )
 
 
-def _build_summary(results: List[ControlResult]) -> Dict[str, int]:
+def status_value(status: Any) -> str:
+    """Return the plain-string form of a ControlStatus / Severity / etc.
+
+    Centralises the ``x.value if hasattr(x, 'value') else x`` pattern that
+    otherwise gets repeated across every framework and renderer.  Accepts
+    enums, plain strings, or None (returns empty string).
+    """
+    if status is None:
+        return ""
+    return status.value if hasattr(status, "value") else str(status)
+
+
+def extract_finding_id(finding: Dict[str, Any]) -> str:
+    """Best-effort finding ID accessor with _id/id fallback.
+
+    Findings sourced from MongoDB carry ``_id``; in-memory test dicts
+    sometimes carry ``id``. Returns '' when neither is present.
+    """
+    return str(finding.get("_id") or finding.get("id") or "")
+
+
+def build_summary(results: List[ControlResult]) -> Dict[str, int]:
+    """Count controls by status bucket (shared across frameworks)."""
     counts = {"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": len(results)}
     for r in results:
-        key = r.status.value if hasattr(r.status, "value") else r.status
+        key = status_value(r.status)
         counts[key] = counts.get(key, 0) + 1
     return counts
 
 
-def _build_residual_risks(results: List[ControlResult]) -> List[ResidualRisk]:
+def build_residual_risks(results: List[ControlResult]) -> List[ResidualRisk]:
+    """Convert every FAILED ControlResult into a ResidualRisk entry."""
     return [
         ResidualRisk(
             control_id=r.control_id,
@@ -179,8 +202,14 @@ def _build_residual_risks(results: List[ControlResult]) -> List[ResidualRisk]:
             description=r.description,
         )
         for r in results
-        if (r.status.value if hasattr(r.status, "value") else r.status) == "failed"
+        if status_value(r.status) == "failed"
     ]
+
+
+# Private aliases kept for backwards compatibility with existing callers
+# inside this module.
+_build_summary = build_summary
+_build_residual_risks = build_residual_risks
 
 
 def _inputs_fingerprint(data: EvaluationInput) -> str:
