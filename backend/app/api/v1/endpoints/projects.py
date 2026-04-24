@@ -578,13 +578,61 @@ async def update_project(
         system_settings.rescan_mode,
     )
 
+    # Capture the pre-update license policy so we can audit transitions.
+    old_license_policy = _resolve_license_policy(project)
+
     if update_data:
         await project_repo.update(project_id, update_data)
 
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
+        # Best-effort license-policy audit. Any failure must not block
+        # the project update; record_license_policy_change itself is
+        # already fail-soft internally.
+        try:
+            new_license_policy = _resolve_license_policy(updated_project)
+            if old_license_policy != new_license_policy:
+                from app.schemas.policy_audit import PolicyAuditAction
+                from app.services.audit.history import record_license_policy_change
+
+                action = (
+                    PolicyAuditAction.CREATE
+                    if not old_license_policy
+                    else PolicyAuditAction.UPDATE
+                )
+                await record_license_policy_change(
+                    db,
+                    project_id=project_id,
+                    old_policy=old_license_policy,
+                    new_policy=new_license_policy,
+                    action=action,
+                    actor=current_user,
+                    comment=None,
+                )
+        except Exception:  # pragma: no cover - defensive
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "License-policy audit for project %s failed (non-blocking)", project_id
+            )
         return updated_project
     raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+
+
+def _resolve_license_policy(project: Project) -> Optional[Dict[str, Any]]:
+    """Return the current license policy for a project, merging legacy and new shapes.
+
+    ``project.analyzer_settings['license_compliance']`` is the canonical
+    location since Phase 2 refactors; ``project.license_policy`` is the
+    legacy top-level field. We prefer the canonical one when both are set.
+    """
+    settings = (project.analyzer_settings or {}).get("license_compliance") if getattr(project, "analyzer_settings", None) else None
+    if settings:
+        return dict(settings)
+    legacy = getattr(project, "license_policy", None)
+    if legacy:
+        return dict(legacy) if isinstance(legacy, dict) else legacy.model_dump()
+    return None
 
 
 @router.get(
