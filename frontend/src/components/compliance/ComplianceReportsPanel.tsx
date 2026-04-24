@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { listReports } from "@/api/compliance";
+import { useDialogState } from "@/hooks/use-dialog-state";
 import type { ComplianceReportMeta, ReportFramework } from "@/types/compliance";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { NewReportDialog } from "./NewReportDialog";
 import { ReportDetailDrawer } from "./ReportDetailDrawer";
 
 export function ComplianceReportsPanel() {
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const newReportDialog = useDialogState();
   const [selected, setSelected] = useState<ComplianceReportMeta | null>(null);
   const [prefillFramework, setPrefillFramework] = useState<ReportFramework | undefined>();
 
@@ -27,13 +28,13 @@ export function ComplianceReportsPanel() {
       const stored = localStorage.getItem("prefill_compliance_framework") as ReportFramework | null;
       if (stored) {
         setPrefillFramework(stored);
-        setDialogOpen(true);
+        newReportDialog.openDialog();
         localStorage.removeItem("prefill_compliance_framework");
       }
     };
     globalThis.addEventListener("goto-compliance-reports-tab", onPrefill);
     return () => globalThis.removeEventListener("goto-compliance-reports-tab", onPrefill);
-  }, []);
+  }, [newReportDialog]);
 
   const reports = data?.reports ?? [];
 
@@ -43,7 +44,7 @@ export function ComplianceReportsPanel() {
         <div className="text-sm text-muted-foreground">
           {reports.length} report(s)
         </div>
-        <Button onClick={() => { setPrefillFramework(undefined); setDialogOpen(true); }}>
+        <Button onClick={() => { setPrefillFramework(undefined); newReportDialog.openDialog(); }}>
           Generate report
         </Button>
       </div>
@@ -88,8 +89,8 @@ export function ComplianceReportsPanel() {
       </div>
 
       <NewReportDialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
+        open={newReportDialog.open}
+        onClose={newReportDialog.closeDialog}
         defaultFramework={prefillFramework}
       />
       <ReportDetailDrawer report={selected} onClose={() => setSelected(null)} />
