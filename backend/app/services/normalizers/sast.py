@@ -18,11 +18,24 @@ _CRYPTO_MISUSE_RULE_ID_PREFIX = "crypto-misuse-"
 def _finding_type_from_rule(rule_id: Any) -> FindingType:
     """Map a SAST rule ID to the appropriate FindingType.
 
-    Rules starting with `crypto-misuse-` (shipped by the pipeline-templates
-    crypto-misuse ruleset) become CRYPTO_KEY_MANAGEMENT. All other SAST
-    findings stay as FindingType.SAST.
+    Rules whose name starts with ``crypto-misuse-`` (shipped by the
+    pipeline-templates crypto-misuse ruleset) become
+    ``CRYPTO_KEY_MANAGEMENT``. All other SAST findings stay as
+    ``FindingType.SAST``.
+
+    Semgrep/OpenGrep exposes ``check_id`` as either the bare rule name
+    (e.g. ``"crypto-misuse-ecb-mode-python"``) or — when rules are loaded
+    from a path — as a dotted path that embeds the rule name at the end
+    (e.g. ``"rules.crypto-misuse.ecb-mode.crypto-misuse-ecb-mode-python"``).
+    We therefore check the LAST dot-separated segment in addition to the
+    raw string so a nested-path check_id still maps correctly.
     """
-    if isinstance(rule_id, str) and rule_id.startswith(_CRYPTO_MISUSE_RULE_ID_PREFIX):
+    if not isinstance(rule_id, str):
+        return FindingType.SAST
+    if rule_id.startswith(_CRYPTO_MISUSE_RULE_ID_PREFIX):
+        return FindingType.CRYPTO_KEY_MANAGEMENT
+    last_segment = rule_id.rsplit(".", 1)[-1]
+    if last_segment.startswith(_CRYPTO_MISUSE_RULE_ID_PREFIX):
         return FindingType.CRYPTO_KEY_MANAGEMENT
     return FindingType.SAST
 
