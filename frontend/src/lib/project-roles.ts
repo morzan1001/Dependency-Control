@@ -48,7 +48,7 @@ export function hasProjectRole(
   return ROLE_HIERARCHY.indexOf(role) >= ROLE_HIERARCHY.indexOf(requiredRole);
 }
 
-/** @deprecated Use isProjectAdmin instead. Kept for backward compatibility. */
+/** @deprecated Use isProjectAdmin instead. */
 export function isProjectOwner(project: Project, userId: string): boolean {
   return project.members?.some(m => m.user_id === userId && m.role === 'admin') ?? false;
 }

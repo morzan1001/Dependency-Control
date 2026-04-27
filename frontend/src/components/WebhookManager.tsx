@@ -50,9 +50,7 @@ export function WebhookManager({
     secret: ""
   })
 
-  // Backward-compat: webhook events renamed to dot-notation. Translate legacy
-  // snake_case names stored in existing subscriptions to the canonical form so
-  // the checkboxes render correctly and badges display a single canonical name.
+  // Back-compat: legacy snake_case event names mapped to canonical dot-notation.
   const EVENT_ALIASES: Record<string, string> = {
     scan_completed: "scan.completed",
     vulnerability_found: "vulnerability.found",

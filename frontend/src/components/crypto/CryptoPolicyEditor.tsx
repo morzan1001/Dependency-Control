@@ -47,7 +47,7 @@ const PRIMITIVES: CryptoPrimitive[] = [
   "kem", "kdf", "drbg", "other",
 ];
 
-// Silence unused variable warning — PRIMITIVES is exported for use in AddRuleDialog
+// Reserved for AddRuleDialog primitive selection.
 void PRIMITIVES;
 
 function emptyRule(): CryptoRule {

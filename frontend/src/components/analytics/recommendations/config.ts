@@ -135,7 +135,6 @@ export const typeConfig: Record<string, { icon: typeof Container; label: string;
     color: 'text-red-600',
     bgColor: 'bg-red-600/10',
   },
-  // Dependency Graph
   deep_dependency_chain: {
     icon: FolderTree,
     label: 'Deep Dependency Chain',
@@ -148,7 +147,6 @@ export const typeConfig: Record<string, { icon: typeof Container; label: string;
     color: 'text-fuchsia-500',
     bgColor: 'bg-fuchsia-500/10',
   },
-  // Cross-Project
   cross_project_pattern: {
     icon: Globe,
     label: 'Cross-Project Pattern',

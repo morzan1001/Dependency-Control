@@ -106,9 +106,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
             const isOpen = expanded.has(entry._id);
             const previous = entries[idx + 1];
             const isLast = idx === entries.length - 1;
-            // A full page might have more entries in the DB that weren't
-            // loaded — in that case previous is undefined only because of
-            // the pagination window, not because we hit the first version.
+            // `previous` may be undefined just because of pagination, not because we hit v1.
             const windowTruncated =
               isLast && !previous && entries.length >= PAGE_SIZE && entry.version > 1;
             return (
