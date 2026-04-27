@@ -1,10 +1,6 @@
-"""
-Webhook Service for triggering webhooks on various events.
-
-Canonical event names use dot-notation (e.g. ``scan.completed``). The legacy
-snake_case names (``scan_completed``, ``vulnerability_found``,
-``analysis_failed``) remain accepted as aliases for backward compatibility
-with existing subscriptions; see WEBHOOK_EVENT_ALIASES in core.constants.
+"""Webhook delivery service. Canonical event names are dot-notation
+(e.g. ``scan.completed``); snake_case aliases are still accepted via
+WEBHOOK_EVENT_ALIASES in core.constants.
 """
 
 from __future__ import annotations
@@ -60,13 +56,8 @@ def _normalize_event_name(event_type: str) -> str:
 
 
 def _event_match_set(event_type: str) -> List[str]:
-    """
-    Return the list of event-name strings that should match a given event.
-
-    When firing an event, we need to match subscription documents that may
-    store either the canonical dot-notation name or the legacy snake_case
-    alias. Likewise, if an event fires under a legacy name we match both.
-    """
+    """Subscriptions may store the canonical dot-notation name or the snake_case
+    alias — return both forms so either subscription type matches."""
     canonical = _normalize_event_name(event_type)
     names = [canonical]
     for alias, target in WEBHOOK_EVENT_ALIASES.items():
@@ -75,12 +66,10 @@ def _event_match_set(event_type: str) -> List[str]:
     if event_type not in names:
         names.append(event_type)
     return names
-# Avoid circular import - webhook.py imports validation.py from this package
-# Import moved to method level where needed
+
 
 logger = logging.getLogger(__name__)
 
-# Import metrics for webhook tracking
 webhooks_triggered_total: Optional[Counter] = None
 webhooks_failed_total: Optional[Counter] = None
 
@@ -91,12 +80,7 @@ except ImportError:
 
 
 class WebhookService:
-    """
-    Service for triggering webhooks on various events.
-
-    Handles webhook delivery with retries, signature generation,
-    and delivery tracking for multi-pod deployments.
-    """
+    """Webhook delivery with retries, HMAC signing, and per-delivery audit logging."""
 
     def __init__(
         self,
@@ -182,19 +166,6 @@ class WebhookService:
         project_name: str,
         scan_url: Optional[str] = None,
     ) -> BaseWebhookPayload:
-        """
-        Build common payload structure used by all webhook events.
-
-        Args:
-            event_type: Type of event
-            scan_id: Scan ID
-            project_id: Project ID
-            project_name: Project name
-            scan_url: Optional URL to view scan results
-
-        Returns:
-            Base payload dictionary with typed structure
-        """
         scan: ScanPayload = {
             "id": scan_id,
             "url": scan_url,
@@ -216,23 +187,14 @@ class WebhookService:
         webhook_id: str,
         success: bool,
     ) -> None:
-        """
-        Update webhook delivery status in database with circuit breaker logic.
-
-        This is crucial for multi-pod deployments to track delivery state.
-
-        Args:
-            db: Database connection
-            webhook_id: Webhook ID to update
-            success: Whether the delivery was successful
-        """
+        """Track delivery state in DB with circuit-breaker — required for multi-pod
+        deployments where any pod may fire a webhook."""
         from datetime import timedelta
 
         try:
             now = datetime.now(timezone.utc)
 
             if success:
-                # Reset circuit breaker on success
                 await db.webhooks.update_one(
                     {"_id": webhook_id},
                     {
@@ -245,12 +207,10 @@ class WebhookService:
                     },
                 )
             else:
-                # Increment failure counters
-                # Circuit breaker: After 5 consecutive failures, disable for 1 hour
+                # Circuit breaker: 5 consecutive failures disable webhook for 1h.
                 CIRCUIT_BREAKER_THRESHOLD = 5
                 CIRCUIT_BREAKER_DURATION_HOURS = 1
 
-                # First, increment failure counters
                 await db.webhooks.update_one(
                     {"_id": webhook_id},
                     {
@@ -259,15 +219,13 @@ class WebhookService:
                     },
                 )
 
-                # Then, atomically activate circuit breaker if threshold is reached
-                # This uses a conditional update that only activates the circuit breaker
-                # when consecutive_failures >= threshold, making it atomic and race-safe
+                # Conditional update is race-safe: only flips when threshold is
+                # reached and breaker isn't already active (prevents duplicate logs).
                 circuit_until = now + timedelta(hours=CIRCUIT_BREAKER_DURATION_HOURS)
                 result = await db.webhooks.find_one_and_update(
                     {
                         "_id": webhook_id,
                         "consecutive_failures": {"$gte": CIRCUIT_BREAKER_THRESHOLD},
-                        # Only activate if not already activated (prevents duplicate logs)
                         "$or": [
                             {"circuit_breaker_until": {"$exists": False}},
                             {"circuit_breaker_until": None},

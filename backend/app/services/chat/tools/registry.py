@@ -1,9 +1,4 @@
-"""``ChatToolRegistry`` — central dispatcher for chat tool calls.
-
-The class checks per-tool permission requirements, executes the matching
-repository / service path, and post-processes the result (URL injection +
-context-budget truncation) before returning it to the LLM.
-"""
+"""Central dispatcher for chat tool calls with permission checks and result post-processing."""
 
 import logging
 import re
@@ -51,23 +46,18 @@ logger = logging.getLogger(__name__)
 
 
 class ChatToolRegistry:
-    """Registry that checks which tools a user can access and executes them."""
-
     def get_available_tool_names(self, user_permissions: List[str]) -> set[str]:
-        """Return set of tool names available for given permissions."""
         available = set()
         for tool_def in TOOL_DEFINITIONS:
             name = tool_def["function"]["name"]
             required = TOOL_PERMISSIONS.get(name)
             if required is None:
-                # No special permission needed beyond chat:access
                 available.add(name)
             elif has_permission(user_permissions, required):
                 available.add(name)
         return available
 
     def get_available_tool_definitions(self, user_permissions: List[str]) -> List[Dict[str, Any]]:
-        """Return only the tool definitions the user is authorized to use."""
         available_names = self.get_available_tool_names(user_permissions)
         return [t for t in TOOL_DEFINITIONS if t["function"]["name"] in available_names]
 
@@ -78,12 +68,6 @@ class ChatToolRegistry:
         user: User,
         db: AsyncIOMotorDatabase,
     ) -> Dict[str, Any]:
-        """
-        Execute a tool call with user authorization.
-
-        Returns the tool result as a dict.
-        """
-        # Check tool-level permissions
         required = TOOL_PERMISSIONS.get(tool_name)
         if required and not has_permission(user.permissions, required):
             return {"error": f"You don't have permission to use {tool_name}"}
@@ -94,13 +78,10 @@ class ChatToolRegistry:
             duration = time.time() - start
             chat_tool_calls_total.labels(tool_name=tool_name, status="success").inc()
             chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
-            # Inject deep-link URLs for identifiable entities so the model
-            # can surface them to the user verbatim.
             if isinstance(result, dict):
                 _inject_urls(result)
-            # Cap JSON size — large tool dumps (hundreds of projects / thousands
-            # of findings) blow the LLM's context budget and make it loop on
-            # the same tool trying to re-read data that is already there.
+            # Cap JSON size — large tool dumps blow the LLM's context budget and
+            # make it loop on the same tool trying to re-read data already there.
             return _truncate_if_too_large(result) if isinstance(result, dict) else result
         except Exception as e:
             duration = time.time() - start
@@ -116,12 +97,9 @@ class ChatToolRegistry:
         user: User,
         db: AsyncIOMotorDatabase,
     ) -> Dict[str, Any]:
-        """Route tool call to the appropriate repository/service method."""
         team_repo = TeamRepository(db)
-        # Build user-scoped project query for data isolation
         user_project_query = await build_user_project_query(user, team_repo)
 
-        # ── Project tools ──
         if tool_name == "list_projects":
             query = {**user_project_query}
             search = args.get("search")
@@ -171,7 +149,6 @@ class ChatToolRegistry:
                 )
             }
 
-        # ── Scan tools ──
         if tool_name == "get_scan_history":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
@@ -245,7 +222,6 @@ class ChatToolRegistry:
                 return {"error": "Finding not found"}
             slim = _serialize_finding_for_llm(finding)
             slim["project_name"] = project.get("name", "")
-            # Attach full vulnerability list (up to 5) for context
             details = finding.get("details") or {}
             vulns = (details.get("vulnerabilities") or [])[:5]
             if vulns:
@@ -319,7 +295,6 @@ class ChatToolRegistry:
             results = await db["findings"].aggregate(pipeline).to_list(length=20)
             return {"breakdown": {r["_id"]: r["count"] for r in results}}
 
-        # ── Analytics tools ──
         if tool_name == "get_analytics_summary":
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
             if not project_ids:
@@ -342,8 +317,6 @@ class ChatToolRegistry:
                 {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
             ]
             sev_results = await db["findings"].aggregate(sev_pipeline).to_list(length=10)
-            # Top-3 risky projects by critical count so the model can
-            # name concrete starting points without another tool call.
             ranked = sorted(
                 latest_scans,
                 key=lambda s: (s.get("stats") or {}).get("critical", 0),
@@ -377,7 +350,6 @@ class ChatToolRegistry:
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             match_query: Dict[str, Any] = {"project_id": {"$in": project_ids}, "created_at": {"$gte": cutoff}}
             if args.get("project_id"):
-                # Restrict to the requested project, but only if user has access
                 if args["project_id"] not in project_ids:
                     return {"error": "Project not found or access denied"}
                 match_query["project_id"] = args["project_id"]
@@ -411,7 +383,6 @@ class ChatToolRegistry:
                 {"$limit": limit},
             ]
             results = await db["scans"].aggregate(hotspots_pipeline).to_list(length=limit)
-            # Enrich with project name so the model can recommend concrete projects.
             project_ids_hit = [r["_id"] for r in results if r.get("_id")]
             names = {}
             async for p in db["projects"].find({"_id": {"$in": project_ids_hit}}, {"name": 1}):
@@ -438,7 +409,6 @@ class ChatToolRegistry:
                 return {"error": "Dependency not found in enrichment data"}
             return {"dependency": _serialize_doc(dep)}
 
-        # ── Team tools ──
         if tool_name == "list_teams":
             teams = await team_repo.find_by_member(str(user.id))
             return {"teams": [{"id": t.id, "name": t.name, "description": t.description} for t in teams]}
@@ -471,7 +441,6 @@ class ChatToolRegistry:
             projects = await cursor.to_list(length=50)
             return {"projects": [_serialize_doc(p, ["_id", "name", "stats", "last_scan_at"]) for p in projects]}
 
-        # ── Waiver tools ──
         if tool_name == "get_waiver_status":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
@@ -497,11 +466,8 @@ class ChatToolRegistry:
             waivers = await cursor.to_list(length=100)
             return {"waivers": [_serialize_doc(w) for w in waivers]}
 
-        # ── Recommendation tools ──
         if tool_name == "get_top_priority_findings":
             limit = _clamp_limit(args.get("limit"), 5, maximum=20)
-            # If a project_id is provided, restrict to that project; else span all
-            # projects the user can access.
             match: Dict[str, Any] = {}
             if args.get("project_id"):
                 proj = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -513,8 +479,7 @@ class ChatToolRegistry:
                 match["scan_id"] = latest_scan_id
                 match["project_id"] = args["project_id"]
             else:
-                # Collect latest scan per authorized project so we only look at
-                # current state, not historical findings.
+                # Use latest scan per project to look at current state, not history.
                 project_ids = await self._get_authorized_project_ids(user_project_query, db)
                 if not project_ids:
                     return {"findings": [], "message": "No accessible projects"}
@@ -528,7 +493,6 @@ class ChatToolRegistry:
                 if not scan_ids:
                     return {"findings": [], "message": "No scans found"}
                 match["scan_id"] = {"$in": scan_ids}
-            # Prefer CRITICAL, then HIGH — sort severity then EPSS desc for urgency.
             match.setdefault("severity", {"$in": ["CRITICAL", "HIGH"]})
             cursor = db["findings"].find(
                 match,
@@ -537,7 +501,6 @@ class ChatToolRegistry:
             )
             findings = await cursor.to_list(length=limit)
 
-            # Enrich with project name so the model can tell the user exactly where to look.
             project_ids_hit = list({f.get("project_id") for f in findings if f.get("project_id")})
             project_names: Dict[str, str] = {}
             if project_ids_hit:
@@ -571,8 +534,7 @@ class ChatToolRegistry:
 
             max_steps = _clamp_limit(args.get("max_steps"), 10, maximum=25)
 
-            # Pull CRITICAL/HIGH findings for the latest scan. 500 is plenty —
-            # plans collapse to a handful of steps after grouping by component.
+            # 500 is plenty — plans collapse to a handful of steps after grouping by component.
             cursor = db["findings"].find(
                 {
                     "scan_id": latest_scan_id,
@@ -588,9 +550,8 @@ class ChatToolRegistry:
                     "message": "No unwaived CRITICAL/HIGH findings on the latest scan.",
                 }
 
-            # Index direct/transitive info from the dependency snapshot of the
-            # latest scan. Keyed by lowercase component name — purl would be
-            # more precise but findings don't consistently carry it.
+            # Keyed by lowercase component name — purl would be more precise
+            # but findings don't consistently carry it.
             dep_index: Dict[str, Dict[str, Any]] = {}
             async for dep in db["dependencies"].find(
                 {"scan_id": latest_scan_id},
@@ -599,14 +560,12 @@ class ChatToolRegistry:
                 key = (dep.get("name") or "").lower()
                 if not key:
                     continue
-                # Prefer direct entries when a name appears multiple times
-                # (same package pulled in at different versions).
+                # Prefer direct entries when same package appears at multiple versions.
                 existing = dep_index.get(key)
                 if existing and existing.get("direct") and not dep.get("direct"):
                     continue
                 dep_index[key] = dep
 
-            # Group findings by component.
             groups: Dict[str, Dict[str, Any]] = {}
             for f in findings:
                 comp = f.get("component") or f.get("component_name") or f.get("package") or f.get("package_name")
@@ -623,7 +582,6 @@ class ChatToolRegistry:
                     },
                 )
                 g["findings"].append(f)
-                # Collect any fix_version hint from this finding.
                 for fv in f.get("fixed_versions") or []:
                     if isinstance(fv, str) and fv:
                         g["fix_candidates"].append(fv)
@@ -631,11 +589,9 @@ class ChatToolRegistry:
                 if isinstance(single, str) and single:
                     g["fix_candidates"].append(single)
 
-            # Build plan steps.
             steps: List[Dict[str, Any]] = []
             for key, g in groups.items():
-                # Pick the largest fix version that appears across this component's
-                # findings — that's the one that resolves the most CVEs at once.
+                # Pick largest fix version — resolves the most CVEs at once.
                 target: Optional[str] = None
                 for cand in g["fix_candidates"]:
                     if target is None or _compare_versions(cand, target) > 0:
@@ -722,7 +678,6 @@ class ChatToolRegistry:
                 ),
             }
 
-        # ── New focused / analytics tools ──
         if tool_name == "get_auto_fixable_findings":
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
@@ -811,7 +766,6 @@ class ChatToolRegistry:
             scan_a_id = args.get("scan_id_a")
             scan_b_id = args.get("scan_id_b")
             if not scan_a_id or not scan_b_id:
-                # Default: the two most recent scans
                 recent = (
                     await db["scans"]
                     .find(
@@ -830,7 +784,6 @@ class ChatToolRegistry:
             if not scan_a or not scan_b:
                 return {"error": "Scan not found in this project"}
 
-            # Pull (finding_id, severity) pairs for each side
             async def _ids(scan_id: str) -> Dict[str, str]:
                 items: Dict[str, str] = {}
                 async for f in db["findings"].find(
@@ -853,7 +806,6 @@ class ChatToolRegistry:
                     bucket[sev] = bucket.get(sev, 0) + 1
                 return bucket
 
-            # Return a small sample of each side so the LLM has concrete handles
             def _sample(keys: set[str]) -> List[str]:
                 return sorted(keys)[:10]
 
@@ -1023,7 +975,6 @@ class ChatToolRegistry:
                 return {"findings": [], "message": "No scan data available"}
             cutoff = _dt.now(_tz.utc) - _td(days=days)
             project_ids = list(latest.keys())
-            # Step 1: collect (project_id, finding_id) pairs that existed before cutoff
             old_keys: set = set()
             async for f in db["findings"].find(
                 {"project_id": {"$in": project_ids}, "created_at": {"$lt": cutoff}},
@@ -1033,7 +984,6 @@ class ChatToolRegistry:
                     old_keys.add((f["project_id"], f["finding_id"]))
             if not old_keys:
                 return {"findings": [], "message": f"No findings older than {days} days"}
-            # Step 2: look at findings in latest scans, keep those also in old set
             cursor = db["findings"].find(
                 {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
                 sort=[("severity", -1), ("details.epss_score", -1)],
@@ -1181,7 +1131,6 @@ class ChatToolRegistry:
                 )
             return {"projects": out, "count": len(out), "threshold_days": days}
 
-        # ── Reachability tools ──
         if tool_name in ("get_callgraph", "check_reachability"):
             project = await self._get_authorized_project(args.get("project_id", ""), user_project_query, db)
             if not project:
@@ -1195,7 +1144,6 @@ class ChatToolRegistry:
                     return {"error": "Finding not found"}
                 return {"reachable": finding.get("reachable", "unknown"), "finding_id": args["finding_id"]}
 
-        # ── Archive tools ──
         if tool_name == "list_archives":
             query = {}
             if args.get("project_id"):
@@ -1221,7 +1169,6 @@ class ChatToolRegistry:
                     return {"error": "Archive not found or access denied"}
             return {"archive": _serialize_doc(archive)}
 
-        # ── Webhook tools ──
         if tool_name == "list_project_webhooks":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
@@ -1243,7 +1190,6 @@ class ChatToolRegistry:
             deliveries = await cursor.to_list(length=20)
             return {"deliveries": [_serialize_doc(d) for d in deliveries]}
 
-        # ── System tools ──
         if tool_name == "get_system_settings":
             doc = await db["system_settings"].find_one({"_id": "current"})
             return {"settings": _serialize_doc(doc) if doc else {}}
@@ -1254,7 +1200,6 @@ class ChatToolRegistry:
             cache_health = await cache_service.health_check()
             return {"database": "connected", "cache": cache_health}
 
-        # ── Crypto / CBOM tools ──
         if tool_name == "list_crypto_assets":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
@@ -1295,7 +1240,6 @@ class ChatToolRegistry:
                 return {"error": "Project not found or access denied"}
             return await suggest_crypto_policy_override(db, project_id=args["project_id"], scan_id=args["scan_id"])
 
-        # ── Crypto Analytics tools ──
         if tool_name == "get_crypto_hotspots":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
@@ -1329,7 +1273,6 @@ class ChatToolRegistry:
                 to_scan_id=args["to_scan_id"],
             )
 
-        # ── Compliance / PQC-migration (Phase 3) ──
         if tool_name == "generate_pqc_migration_plan":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
@@ -1389,27 +1332,22 @@ class ChatToolRegistry:
     ) -> Optional[Dict[str, Any]]:
         """Fetch a project only if user has access.
 
-        Contract: `user_project_query` must be the result of
-        build_user_project_query(user, team_repo). That helper is the single
-        source of truth for authorization — it returns {} only for users with
-        PROJECT_READ_ALL permission. Any caller bypassing that helper MUST
-        enforce equivalent checks; otherwise an empty dict here is a security
-        bypass. DO NOT refactor this to compute the query inline without
-        auditing every caller.
+        Contract: `user_project_query` MUST come from build_user_project_query —
+        the single source of truth for authorization. It returns {} only for
+        users with PROJECT_READ_ALL permission. Any caller bypassing that helper
+        MUST enforce equivalent checks; otherwise an empty dict here is a
+        security bypass.
 
-        NOTE: Using $and to compose the project ID and user-scoped query avoids
-        the silent authorization bypass that would occur if user_project_query
-        ever contained an `_id` key and we used a naive .update() merge.
+        Using $and (rather than .update()) avoids a silent authorization bypass
+        if user_project_query ever contained an `_id` key.
         """
         if not user_project_query:
-            # Empty query => build_user_project_query confirmed PROJECT_READ_ALL.
             return await db["projects"].find_one({"_id": project_id})
         return await db["projects"].find_one({"$and": [{"_id": project_id}, user_project_query]})
 
     async def _get_authorized_project_ids(
         self, user_project_query: Dict[str, Any], db: AsyncIOMotorDatabase
     ) -> List[str]:
-        """Get all project IDs user has access to."""
         cursor = db["projects"].find(user_project_query, projection={"_id": 1})
         projects = await cursor.to_list(length=1000)
         return [p["_id"] for p in projects]
@@ -1420,11 +1358,8 @@ class ChatToolRegistry:
         restrict_to_project_id: Optional[str],
         db: AsyncIOMotorDatabase,
     ) -> Dict[str, str]:
-        """Return a {project_id: latest_scan_id} mapping limited to authorised projects.
-
-        If `restrict_to_project_id` is given, the map is validated against the user's
-        scope and only that single entry is returned (empty dict on access denial).
-        """
+        """Return {project_id: latest_scan_id} for authorised projects, validated against
+        `restrict_to_project_id` when provided (returns {} on access denial)."""
         if restrict_to_project_id:
             proj = await self._get_authorized_project(restrict_to_project_id, user_project_query, db)
             if not proj or not proj.get("latest_scan_id"):
@@ -1444,7 +1379,6 @@ class ChatToolRegistry:
 
     @staticmethod
     async def _project_names(db: AsyncIOMotorDatabase, project_ids: List[str]) -> Dict[str, str]:
-        """Bulk lookup project name by id, skipping None/empty inputs."""
         cleaned = [pid for pid in project_ids if pid]
         if not cleaned:
             return {}

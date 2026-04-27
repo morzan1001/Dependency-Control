@@ -1,11 +1,4 @@
-"""License compliance analyzer.
-
-Top-level orchestration that walks SBOM components, dispatches each one to
-the per-license evaluator, and aggregates findings + summary stats. Heavy
-lifting (constants, normalization, evaluation, cross-component compatibility)
-lives in sibling modules; this class delegates to them and exposes thin
-``self``-bound wrappers so existing test imports keep working.
-"""
+"""License compliance analyzer that walks SBOM components and aggregates findings."""
 
 from __future__ import annotations
 
@@ -32,7 +25,6 @@ from .constants import (
 class LicenseAnalyzer(Analyzer):
     name = "license_compliance"
 
-    # Re-exposed for backward compatibility with tests / external callers
     LICENSE_DATABASE: Dict[str, LicenseInfo] = LICENSE_DATABASE
     _CATEGORY_STAT_KEY: Dict[LicenseCategory, str] = CATEGORY_STAT_KEY
 
@@ -54,12 +46,10 @@ class LicenseAnalyzer(Analyzer):
         ignore_dev = settings.get("ignore_dev_dependencies", True)
         ignore_transitive = settings.get("ignore_transitive", False)
 
-        # Build LicensePolicy from settings.
-        # Precedence: settings (already merged from analyzer_settings.license_compliance by engine)
-        # falls back to legacy top-level "license_policy" key for backward compat.
+        # Precedence: settings (merged from analyzer_settings.license_compliance) >
+        # legacy top-level "license_policy" key.
         policy_raw = settings.get("license_policy", {})
         if not policy_raw and any(k in settings for k in ("distribution_model", "deployment_model", "library_usage")):
-            # New-style: settings come directly from analyzer_settings["license_compliance"]
             policy_raw = settings
         policy = LicensePolicy(
             distribution_model=DistributionModel(policy_raw.get("distribution_model", "distributed")),
@@ -95,7 +85,6 @@ class LicenseAnalyzer(Analyzer):
                 policy=policy,
             )
 
-        # Cross-dependency license compatibility check
         compatibility_issues = compatibility.check_license_compatibility(components, ignore_dev)
         issues.extend(compatibility_issues)
 
@@ -111,7 +100,6 @@ class LicenseAnalyzer(Analyzer):
         ignore_transitive: bool,
         policy: LicensePolicy,
     ) -> None:
-        """Analyze a single component for license compliance."""
         comp_scope = (component.get("scope") or "").lower()
 
         if ignore_dev and comp_scope in ("dev", "development", "test", "optional"):
@@ -131,7 +119,6 @@ class LicenseAnalyzer(Analyzer):
         spdx_expr = normalizer.has_spdx_expression(component)
         if spdx_expr:
             or_groups = normalizer.parse_spdx_expression(spdx_expr)
-            # Track stats for the best choice
             self._track_expression_stats(or_groups, stats)
             issue = self._evaluate_expression(
                 comp_name,
@@ -147,7 +134,6 @@ class LicenseAnalyzer(Analyzer):
                     issues.append(issue)
             return
 
-        # Standard per-license evaluation (no OR expression)
         licenses = normalizer.extract_licenses(component)
         if not licenses:
             stats["unknown"] += 1
@@ -179,8 +165,7 @@ class LicenseAnalyzer(Analyzer):
                     issues.append(issue)
 
     def _track_expression_stats(self, or_groups: List[List[str]], stats: Dict[str, int]) -> None:
-        """Track license category stats for the best OR alternative."""
-        # Find the least restrictive OR group to track
+        """Track stats for the least restrictive OR alternative."""
         best_rank = 999
         best_licenses: List[str] = []
         for group in or_groups:
@@ -227,7 +212,7 @@ class LicenseAnalyzer(Analyzer):
         best_severity_rank = 999
 
         for and_group in or_groups:
-            # Evaluate all AND-connected licenses — worst (highest severity) wins
+            # AND-connected: highest severity wins.
             worst_issue: Optional[Dict[str, Any]] = None
             worst_rank = -1
 
@@ -250,23 +235,17 @@ class LicenseAnalyzer(Analyzer):
                     worst_rank = rank
                     worst_issue = issue
 
-            # For OR: pick the least restrictive alternative
             if worst_rank < best_severity_rank:
                 best_severity_rank = worst_rank
                 best_issue = worst_issue
 
         return best_issue
 
-    # ------------------------------------------------------------------
-    # Backward-compatibility wrappers (used by external tests)
-    # ------------------------------------------------------------------
-
+    # Thin wrappers exposed for tests that import the legacy method names.
     def _normalize_license(self, lic_id: str) -> str:
-        """Normalize a license identifier to SPDX format (delegates to ``normalizer``)."""
         return normalizer.normalize_license(lic_id)
 
     def _extract_licenses(self, component: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
-        """Extract license identifiers and URLs from a component (delegates to ``normalizer``)."""
         return normalizer.extract_licenses(component)
 
     def _evaluate_license(
@@ -278,7 +257,6 @@ class LicenseAnalyzer(Analyzer):
         purl: str,
         policy: LicensePolicy,
     ) -> Optional[Dict[str, Any]]:
-        """Evaluate a license and return an issue if problematic (delegates to ``evaluator``)."""
         return evaluator.evaluate_license(
             component=component,
             version=version,
@@ -289,21 +267,17 @@ class LicenseAnalyzer(Analyzer):
         )
 
     def _has_spdx_expression(self, component: Dict[str, Any]) -> Optional[str]:
-        """Return the SPDX OR-expression for a component (delegates to ``normalizer``)."""
         return normalizer.has_spdx_expression(component)
 
     def _parse_spdx_expression(self, expr: str) -> List[List[str]]:
-        """Parse an SPDX expression into OR-groups of AND-connected licenses."""
         return normalizer.parse_spdx_expression(expr)
 
     @staticmethod
     def _apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> None:
-        """Reduce severity for transitive dependencies (delegates to ``evaluator``)."""
         evaluator.apply_transitive_adjustment(issue, is_transitive)
 
     @staticmethod
     def _should_include_finding(issue: Dict[str, Any], is_transitive: bool) -> bool:
-        """Decide whether a finding belongs in the result set (delegates to ``evaluator``)."""
         return evaluator.should_include_finding(issue, is_transitive)
 
     def _check_license_compatibility(
@@ -311,5 +285,4 @@ class LicenseAnalyzer(Analyzer):
         components: List[Dict[str, Any]],
         ignore_dev: bool,
     ) -> List[Dict[str, Any]]:
-        """Cross-component license-pair conflict check (delegates to ``compatibility``)."""
         return compatibility.check_license_compatibility(components, ignore_dev)

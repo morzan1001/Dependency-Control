@@ -1,9 +1,4 @@
-"""
-HTTP Utilities
-
-Shared utilities for HTTP client operations, error handling,
-and retry logic. Eliminates duplicate httpx exception handling.
-"""
+"""HTTP client helpers for shared error handling and retry logic."""
 
 import logging
 import time
@@ -37,29 +32,15 @@ async def safe_http_request(
     timeout: float = 30.0,
     suppress_errors: bool = True,
 ) -> AsyncGenerator[httpx.AsyncClient, None]:
-    """
-    Context manager for safe HTTP requests with consistent error handling.
+    """Yield an httpx.AsyncClient with consistent metrics + error handling.
 
-    Usage:
-        async with safe_http_request("GitHub API", "fetch advisory") as client:
-            response = await client.get(url)
-            # process response
-
-    Args:
-        service_name: Name of the external service (for logging)
-        operation: Description of the operation (for logging)
-        timeout: Request timeout in seconds
-        suppress_errors: If True, log errors but don't raise. If False, raise HTTPRequestError.
-
-    Yields:
-        Configured httpx.AsyncClient
+    Set ``suppress_errors=False`` to raise HTTPRequestError instead of swallowing.
     """
     start_time = time.time()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             external_api_requests_total.labels(service=service_name).inc()
             yield client
-            # Record duration on success
             duration = time.time() - start_time
             external_api_duration_seconds.labels(service=service_name).observe(duration)
     except httpx.TimeoutException:
@@ -94,18 +75,7 @@ async def fetch_json(
     timeout: float = 30.0,
     service_name: str = "External API",
 ) -> Optional[dict]:
-    """
-    Fetch JSON from a URL with error handling.
-
-    Args:
-        url: The URL to fetch
-        headers: Optional request headers
-        timeout: Request timeout in seconds
-        service_name: Name for logging
-
-    Returns:
-        Parsed JSON dict, or None if request failed
-    """
+    """Fetch JSON, returning None on any error."""
     start_time = time.time()
     external_api_requests_total.labels(service=service_name).inc()
     try:
@@ -126,7 +96,7 @@ async def fetch_json(
         return None
     except httpx.HTTPStatusError as e:
         external_api_errors_total.labels(service=service_name).inc()
-        if e.response.status_code != 404:  # 404 is often expected
+        if e.response.status_code != 404:
             logger.debug(f"HTTP {e.response.status_code} fetching {url}")
         return None
     except Exception as e:
@@ -142,19 +112,7 @@ async def post_json(
     timeout: float = 30.0,
     service_name: str = "External API",
 ) -> Optional[dict]:
-    """
-    POST JSON to a URL with error handling.
-
-    Args:
-        url: The URL to post to
-        data: JSON data to send
-        headers: Optional request headers
-        timeout: Request timeout in seconds
-        service_name: Name for logging
-
-    Returns:
-        Parsed JSON response dict, or None if request failed
-    """
+    """POST JSON, returning None on any error."""
     start_time = time.time()
     external_api_requests_total.labels(service=service_name).inc()
     try:
@@ -184,13 +142,7 @@ async def post_json(
 
 
 class InstrumentedAsyncClient:
-    """
-    A wrapper around httpx.AsyncClient that automatically records metrics.
-
-    Usage:
-        async with InstrumentedAsyncClient("EPSS API", timeout=30.0) as client:
-            response = await client.get(url)
-    """
+    """httpx.AsyncClient wrapper that records request/duration/error Prometheus metrics."""
 
     def __init__(
         self,
@@ -205,12 +157,10 @@ class InstrumentedAsyncClient:
         self._NOT_STARTED_MSG = "Client not started. Use 'async with' or call start()."
 
     async def start(self) -> None:
-        """Start the underlying client (for long-lived usage)."""
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=self._timeout, **self._kwargs)
 
     async def close(self) -> None:
-        """Close the underlying client."""
         if self._client:
             await self._client.aclose()
             self._client = None
@@ -225,19 +175,15 @@ class InstrumentedAsyncClient:
         await self.close()
 
     def _record_request(self) -> None:
-        """Record that a request was made."""
         external_api_requests_total.labels(service=self.service_name).inc()
 
     def _record_success(self, duration: float) -> None:
-        """Record a successful request."""
         external_api_duration_seconds.labels(service=self.service_name).observe(duration)
 
     def _record_error(self) -> None:
-        """Record a failed request."""
         external_api_errors_total.labels(service=self.service_name).inc()
 
     async def get(self, url: str, **kwargs: Any) -> httpx.Response:
-        """Make a GET request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
 
@@ -252,7 +198,6 @@ class InstrumentedAsyncClient:
             raise
 
     async def post(self, url: str, **kwargs: Any) -> httpx.Response:
-        """Make a POST request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
 
@@ -267,7 +212,6 @@ class InstrumentedAsyncClient:
             raise
 
     async def put(self, url: str, **kwargs: Any) -> httpx.Response:
-        """Make a PUT request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
 
@@ -282,7 +226,6 @@ class InstrumentedAsyncClient:
             raise
 
     async def delete(self, url: str, **kwargs: Any) -> httpx.Response:
-        """Make a DELETE request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
 
@@ -297,7 +240,6 @@ class InstrumentedAsyncClient:
             raise
 
     async def request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        """Make an arbitrary HTTP request with metrics."""
         if self._client is None:
             raise RuntimeError(self._NOT_STARTED_MSG)
 
@@ -317,22 +259,7 @@ def with_http_error_handling(
     default_return: Any = None,
     log_level: str = "warning",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """
-    Decorator for async functions that make HTTP requests.
-    Catches common httpx exceptions and returns a default value.
-
-    Usage:
-        @with_http_error_handling("GitHub API", default_return=[])
-        async def fetch_advisories(cve_ids: list) -> list:
-            async with httpx.AsyncClient() as client:
-                # ... make requests
-                return results
-
-    Args:
-        service_name: Name of the service for logging
-        default_return: Value to return on error
-        log_level: Logging level for errors ("debug", "warning", "error")
-    """
+    """Decorator that catches common httpx exceptions and returns ``default_return``."""
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)

@@ -31,24 +31,21 @@ def analyze_outdated_dependencies(
         version = get_attr(dep, "version", "")
         latest_version = get_attr(dep, "latest_version")
 
-        # Skip python library packages (python3-*, python-*, *-python)
-        # These are NOT Python interpreter versions
+        # python3-*, python-*, *-python are library packages, not the interpreter.
         if name.startswith("python3-") or name.startswith("python-") or name.endswith("-python"):
             continue
 
-        # Use scanner data to determine if outdated
         if latest_version and latest_version != version:
             outdated_deps.append(
                 {
                     "name": get_attr(dep, "name"),
                     "version": version,
-                    "recommended_major": latest_version,  # converting to showing the specific version
+                    "recommended_major": latest_version,
                     "message": f"Newer version {latest_version} is available",
                     "direct": get_attr(dep, "direct", False),
                 }
             )
 
-    # Group by priority (direct deps are more important)
     direct_outdated = [d for d in outdated_deps if d.get("direct")]
     transitive_outdated = [d for d in outdated_deps if not d.get("direct")]
 
@@ -230,11 +227,9 @@ def analyze_dev_in_production(
         name = str(get_attr(dep, "name") or "").lower()
         scope = str(get_attr(dep, "scope") or "").lower()
 
-        # Skip if already marked as dev
         if scope in ("dev", "development", "test"):
             continue
 
-        # Check if it matches dev patterns
         for pattern in DEV_DEPENDENCY_PATTERNS:
             if re.search(pattern, name, re.IGNORECASE):
                 potential_dev_deps.append(

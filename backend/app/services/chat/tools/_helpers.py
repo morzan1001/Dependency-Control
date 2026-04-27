@@ -1,8 +1,4 @@
-"""Internal helpers for chat tool registry.
-
-Stateless utilities used by the dispatcher and crypto/compliance tool wrappers.
-Kept in a private module so callers go through the package's public surface.
-"""
+"""Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
 
 from typing import Any, Dict, List, Optional
 
@@ -11,12 +7,9 @@ from app.core.config import settings
 MAX_TOOL_LIMIT = 200  # Hard cap on LLM-supplied limit arguments to prevent DoS.
 MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
 
-# Threat-intel enrichment values (details.exploit_maturity) that mean the
-# vulnerability is actively exploited in the wild — our KEV-equivalent.
+# details.exploit_maturity values meaning actively exploited in the wild.
 KEV_EQUIVALENT_MATURITY = ("active", "weaponized")
 
-# Top-level finding fields surfaced to the LLM. `details` is flattened
-# separately to pull CVE IDs / EPSS / fix_version up one level.
 _FINDING_TOPLEVEL_FIELDS = (
     "finding_id",
     "severity",
@@ -30,7 +23,6 @@ _FINDING_TOPLEVEL_FIELDS = (
     "waiver_reason",
 )
 
-# Fields from the `details` subobject that are useful for LLM reasoning.
 _FINDING_DETAILS_FIELDS = (
     "fixed_version",
     "epss_score",
@@ -72,12 +64,8 @@ def _clip_value(value: Any) -> Any:
 
 
 def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a compact, LLM-friendly projection of a finding document.
-
-    Flattens the `details` subobject and the first CVE from
-    `details.vulnerabilities` so the model gets CVE ID + fix + EPSS +
-    exploit maturity at the top level without diving into nested structures.
-    """
+    """Compact LLM projection: flattens `details` and the first CVE from
+    `details.vulnerabilities` so CVE ID + fix + EPSS sit at the top level."""
     if not doc:
         return {}
     out: Dict[str, Any] = {}
@@ -93,8 +81,7 @@ def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
 
     vulns = details.get("vulnerabilities") or []
     if vulns:
-        # Surface the first CVE as a concrete handle. The model can see there
-        # are more via `cve_count`.
+        # Surface first CVE as a concrete handle; remaining count via cve_count.
         primary = vulns[0]
         if primary.get("id"):
             out["cve"] = primary["id"]
@@ -109,14 +96,12 @@ def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _summary_severity_bucket(severity: Optional[str]) -> str:
-    """Map severity label to a bucket key used in our aggregate stats."""
     if not severity:
         return "unknown"
     return severity.lower()
 
 
 def _parse_major(version: Optional[str]) -> Optional[int]:
-    """Return the leading numeric component of a version string, or None."""
     if not version or not isinstance(version, str):
         return None
     cleaned = version.lstrip("vV=^~ ").strip()
@@ -128,9 +113,8 @@ def _parse_major(version: Optional[str]) -> Optional[int]:
 
 
 def _compare_versions(a: str, b: str) -> int:
-    """Naive tuple comparison of numeric version parts. Returns -1/0/1.
-    Falls back to lexicographic when parts are non-numeric — good enough to
-    pick the 'largest' fix_version from a candidate list, not a full semver."""
+    """Naive numeric-tuple comparison (-1/0/1) with lexicographic fallback —
+    good enough to pick the 'largest' fix_version, not a full semver."""
 
     def parts(v: str) -> List[Any]:
         out: List[Any] = []
@@ -156,7 +140,6 @@ def _compare_versions(a: str, b: str) -> int:
 
 
 def _breaking_risk(current: Optional[str], target: Optional[str]) -> str:
-    """Classify upgrade risk from current→target version."""
     cur_major = _parse_major(current)
     tgt_major = _parse_major(target)
     if cur_major is None or tgt_major is None:
@@ -170,16 +153,11 @@ def _breaking_risk(current: Optional[str], target: Optional[str]) -> str:
 
 
 def _inject_urls(node: Any) -> None:
-    """Walk a tool result tree and add a 'url' field to any dict that has
-    enough identifiers to deep-link into the UI. The frontend chat linkifier
-    turns `project_name` / `cve` / `component` mentions into links pointing
-    at this URL — so the model doesn't need to construct URLs itself.
-
-    Rules, longest-path wins:
-      - project_id + scan_id + id (internal finding UUID) → scan details
-        with finding drawer auto-opened.
-      - project_id + scan_id → scan details.
-      - project_id only → project details page.
+    """Walk a tool result tree and set a 'url' deep-link field on any dict that
+    has enough identifiers, longest-path wins:
+      - project_id + scan_id + id → scan details with finding drawer open
+      - project_id + scan_id → scan details
+      - project_id only → project details
     """
     base = settings.FRONTEND_BASE_URL.rstrip("/")
     if isinstance(node, list):
@@ -202,9 +180,9 @@ def _inject_urls(node: Any) -> None:
 
 
 def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
-    """If the JSON encoding exceeds MAX_TOOL_RESULT_BYTES, keep the first
-    items of the largest list and replace the rest with a hint. Prevents
-    a single tool result from blowing the LLM's context window."""
+    """Truncate the largest list in `result` so JSON stays under
+    MAX_TOOL_RESULT_BYTES, preventing a single tool result from blowing the
+    LLM's context window."""
     import json as _json
 
     try:
@@ -214,7 +192,6 @@ def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
     if len(encoded) <= MAX_TOOL_RESULT_BYTES:
         return result
 
-    # Find the biggest list in the result and truncate it.
     biggest_key = None
     biggest_len = 0
     for k, v in result.items():
@@ -225,7 +202,7 @@ def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
         result["_truncated"] = True
         return result
 
-    # Binary-search for the largest prefix that fits
+    # Binary-search for the largest prefix that fits.
     original = result[biggest_key]
     lo, hi = 0, len(original)
     while lo < hi:
@@ -245,7 +222,7 @@ def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _serialize_doc(doc: Optional[Dict[str, Any]], fields: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Serialize a MongoDB doc for LLM consumption. Converts _id and datetime."""
+    """Serialize a MongoDB doc for LLM consumption (renames _id and isoformats datetimes)."""
     if doc is None:
         return {}
     if fields:
@@ -260,7 +237,6 @@ def _serialize_doc(doc: Optional[Dict[str, Any]], fields: Optional[List[str]] = 
                 else:
                     result[f] = val
         return result
-    # Full serialization
     result = {}
     for k, v in doc.items():
         key = "id" if k == "_id" else k

@@ -58,7 +58,6 @@ async def get_impact_analysis(
     if not scan_ids:
         return []
 
-    # Aggregate vulnerabilities by component with more details
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
         {
@@ -91,10 +90,8 @@ async def get_impact_analysis(
 
     results = await finding_repo.aggregate(pipeline)
 
-    # Collect all CVE IDs for enrichment
     all_cves = [fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")]
 
-    # Enrich with EPSS/KEV data
     enrichments = {}
     if all_cves:
         try:
@@ -108,16 +105,13 @@ async def get_impact_analysis(
         fix_versions = extract_fix_versions(r.get("details_list", []))
         has_fix = len(fix_versions) > 0
 
-        # Process CVE enrichment data
         finding_ids = [fid for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")]
         enrichment_data = process_cve_enrichments(finding_ids, enrichments)
 
-        # Calculate days known and days until due
         days_known = calculate_days_known(r.get("first_seen"))
         days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
         enrichment_data.days_until_due = days_until_due
 
-        # Calculate impact score using helper function
         base_impact = calculate_impact_score(
             severity_counts,
             r["affected_projects"],
@@ -126,15 +120,14 @@ async def get_impact_analysis(
             days_known,
         )
 
-        # Filter project_ids to only accessible projects
-        # Prevents information disclosure of project names user doesn't have access to
+        # Filter to accessible projects only — prevents leaking project names
+        # the user doesn't have access to.
         accessible_impact_project_ids = [pid for pid in r["project_ids"] if pid in project_ids]
 
-        # Build priority reasons using helper function
         priority_reasons = build_priority_reasons(
             severity_counts,
             enrichment_data,
-            len(accessible_impact_project_ids),  # Use filtered count
+            len(accessible_impact_project_ids),
             has_fix,
             days_known,
         )
@@ -143,13 +136,13 @@ async def get_impact_analysis(
             ImpactAnalysisResult(
                 component=r["component"],
                 version=r.get("version") or "unknown",
-                affected_projects=len(accessible_impact_project_ids),  # Only accessible count
+                affected_projects=len(accessible_impact_project_ids),
                 total_findings=r["total_findings"],
                 findings_by_severity=SeverityBreakdown(**severity_counts),
                 fix_impact_score=base_impact,
                 affected_project_names=[
                     project_name_map.get(pid, "Unknown")
-                    for pid in accessible_impact_project_ids[:5]  # Only accessible projects!
+                    for pid in accessible_impact_project_ids[:5]
                 ],
                 max_epss_score=enrichment_data.max_epss,
                 epss_percentile=enrichment_data.max_percentile,
@@ -167,14 +160,12 @@ async def get_impact_analysis(
             )
         )
 
-    # Sort by impact score
     impact_results.sort(key=lambda x: x.fix_impact_score, reverse=True)
 
     return impact_results
 
 
 def _format_first_seen(first_seen: Any) -> str:
-    """Format a first_seen value to a string."""
     if not first_seen:
         return ""
     if isinstance(first_seen, datetime):
@@ -189,7 +180,6 @@ def _build_hotspot(
     project_name_map: Dict[str, str],
     project_ids: List[str],
 ) -> VulnerabilityHotspot:
-    """Build a single VulnerabilityHotspot from an aggregation result."""
     severity_counts = count_severities(r.get("severities", []))
     fix_versions = extract_fix_versions(r.get("details_list", []))
     has_fix = len(fix_versions) > 0
@@ -285,16 +275,15 @@ async def get_vulnerability_hotspots(
     ]
 
     if post_sort_by:
-        # For post-sort fields (epss, risk) we need more results to re-sort in Python
+        # epss/risk live in enrichment data, so we re-sort post-fetch in Python
+        # and over-fetch to keep page sizes meaningful after the re-sort.
         pipeline.append({"$limit": limit * 3})
     else:
-        # Use server-side skip/limit for direct MongoDB sort fields
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})
 
     results = await finding_repo.aggregate(pipeline)
 
-    # Collect all CVE IDs for enrichment
     all_cves = list({fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")})
 
     enrichments = {}
@@ -304,7 +293,6 @@ async def get_vulnerability_hotspots(
         except Exception as e:
             logger.warning(f"Failed to enrich CVEs: {e}")
 
-    # Batch fetch dependency types via aggregation (deduplicates by name)
     component_names = list({r["_id"]["component"] for r in results})
     type_pipeline: List[Dict[str, Any]] = [
         {"$match": {"name": {"$in": component_names}}},
@@ -315,7 +303,6 @@ async def get_vulnerability_hotspots(
 
     hotspots = [_build_hotspot(r, enrichments, dep_type_map, project_name_map, project_ids) for r in results]
 
-    # Post-sort by enrichment data if needed
     if post_sort_by == "epss":
         hotspots.sort(key=lambda x: x.max_epss_score or 0, reverse=(sort_order == "desc"))
         hotspots = hotspots[skip : skip + limit]

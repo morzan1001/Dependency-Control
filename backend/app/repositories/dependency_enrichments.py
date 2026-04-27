@@ -112,7 +112,6 @@ class DependencyEnrichmentRepository:
         return result.deleted_count > 0
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
-        """Count documents matching query."""
         return await self.collection.count_documents(query or {})
 
     async def find_many(
@@ -122,7 +121,6 @@ class DependencyEnrichmentRepository:
         limit: int = 100,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Find multiple documents matching query."""
         cursor = self.collection.find(query, projection)
         cursor = cursor.skip(skip).limit(limit)
         return await cursor.to_list(limit)

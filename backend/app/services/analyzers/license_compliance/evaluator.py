@@ -1,10 +1,4 @@
-"""License severity evaluation and finding-construction helpers.
-
-Pure functions that translate a single :class:`LicenseInfo` plus a project
-:class:`LicensePolicy` into an issue dictionary (or ``None`` if no finding
-applies). Also contains transitive-severity adjustment, the severity-based
-finding filter, and the issue-dict factory.
-"""
+"""License severity evaluation and finding-construction helpers."""
 
 from __future__ import annotations
 
@@ -29,33 +23,24 @@ def evaluate_license(
     purl: str,
     policy: LicensePolicy,
 ) -> Optional[Dict[str, Any]]:
-    """Evaluate a license and return an issue if problematic.
+    """Return an issue dict if the license is problematic under `policy`, else None.
+    Severity reductions add ``context_reason`` and ``effective_severity`` for auditability."""
 
-    Severity is determined by the license category and the project's license policy.
-    When a policy reduces the severity, ``context_reason`` and ``effective_severity``
-    fields are added to the issue for auditability.
-    """
-
-    # Permissive and public domain are always fine
     if license_info.category in (
         LicenseCategory.PERMISSIVE,
         LicenseCategory.PUBLIC_DOMAIN,
     ):
         return None
 
-    # Weak copyleft — context: only relevant when library is modified
     if license_info.category == LicenseCategory.WEAK_COPYLEFT:
         return evaluate_weak_copyleft(component, version, license_info, lic_url, purl, policy)
 
-    # Strong copyleft — context: only relevant when distributing
     if license_info.category == LicenseCategory.STRONG_COPYLEFT:
         return evaluate_strong_copyleft(component, version, license_info, lic_url, purl, policy)
 
-    # Network copyleft — context: only relevant for network-facing services
     if license_info.category == LicenseCategory.NETWORK_COPYLEFT:
         return evaluate_network_copyleft(component, version, license_info, lic_url, purl, policy)
 
-    # Proprietary (e.g., NC licenses) — always problematic regardless of context
     if license_info.category == LicenseCategory.PROPRIETARY:
         return create_issue(
             component=component,
@@ -85,13 +70,8 @@ def evaluate_weak_copyleft(
     purl: str,
     policy: LicensePolicy,
 ) -> Optional[Dict[str, Any]]:
-    """Evaluate weak copyleft licenses (LGPL, MPL, EPL, CDDL).
-
-    Weak copyleft only requires source disclosure for modifications to the library
-    itself. Using a library as-is via its public API creates no copyleft obligation.
-    """
+    """Weak copyleft (LGPL, MPL, EPL, CDDL): obligation only on modification."""
     if policy.library_usage == LibraryUsage.UNMODIFIED:
-        # No obligation when using as-is — skip finding entirely
         return None
 
     context_reason = None
@@ -127,12 +107,7 @@ def evaluate_strong_copyleft(
     purl: str,
     policy: LicensePolicy,
 ) -> Optional[Dict[str, Any]]:
-    """Evaluate strong copyleft licenses (GPL).
-
-    GPL obligations only trigger upon distribution. Internal-only tools and
-    open-source projects have no GPL compliance risk.
-    """
-    # Internal-only: GPL obligations don't apply (no distribution)
+    """Strong copyleft (GPL): obligations trigger only upon distribution."""
     if policy.distribution_model == DistributionModel.INTERNAL_ONLY:
         return create_issue(
             component=component,
@@ -155,7 +130,6 @@ def evaluate_strong_copyleft(
             effective_severity=Severity.HIGH.value,
         )
 
-    # Open source: GPL is fine, code is already open
     if policy.distribution_model == DistributionModel.OPEN_SOURCE:
         return create_issue(
             component=component,
@@ -177,7 +151,6 @@ def evaluate_strong_copyleft(
             effective_severity=Severity.HIGH.value,
         )
 
-    # Distributed: depends on policy allowance
     if policy.allow_strong_copyleft:
         return create_issue(
             component=component,
@@ -230,12 +203,8 @@ def evaluate_network_copyleft(
     purl: str,
     policy: LicensePolicy,
 ) -> Optional[Dict[str, Any]]:
-    """Evaluate network copyleft licenses (AGPL, SSPL).
-
-    AGPL/SSPL obligations trigger when users interact over a network.
-    CLI tools, batch jobs, desktop apps, and embedded systems are not affected.
-    """
-    # Non-network deployment: AGPL network clause is irrelevant
+    """Network copyleft (AGPL, SSPL): obligations trigger on network interaction.
+    CLI/batch/desktop/embedded deployments are not affected."""
     if policy.deployment_model in (
         DeploymentModel.CLI_BATCH,
         DeploymentModel.DESKTOP,
@@ -265,7 +234,6 @@ def evaluate_network_copyleft(
             effective_severity=Severity.CRITICAL.value,
         )
 
-    # Network-facing + internal only: reduced concern
     if policy.distribution_model == DistributionModel.INTERNAL_ONLY:
         return create_issue(
             component=component,
@@ -290,7 +258,6 @@ def evaluate_network_copyleft(
             effective_severity=Severity.CRITICAL.value,
         )
 
-    # Network-facing + distributed: depends on policy allowance
     if policy.allow_network_copyleft:
         return create_issue(
             component=component,
@@ -338,19 +305,14 @@ def evaluate_network_copyleft(
 
 
 def apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> None:
-    """Reduce severity for transitive dependencies.
-
-    Transitive dependencies pose less direct risk because:
-    - The direct dependency may abstract away the transitive's license obligations
-    - Dynamic linking/usage patterns may not trigger copyleft
-    """
+    """Downgrade one severity level for transitive deps — direct deps may
+    abstract away copyleft obligations and dynamic linking may not trigger them."""
     if not is_transitive:
         return
 
     issue["is_transitive"] = True
     severity = issue.get("severity")
 
-    # Downgrade severity by one level for transitive deps
     downgrade_map = {
         Severity.CRITICAL.value: Severity.HIGH.value,
         Severity.HIGH.value: Severity.MEDIUM.value,
@@ -368,11 +330,7 @@ def apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> N
 
 
 def should_include_finding(issue: Dict[str, Any], is_transitive: bool) -> bool:
-    """Determine if a finding should be included in results.
-
-    Skip INFO-level findings for transitive dependencies — they add noise
-    without actionable value.
-    """
+    """Skip INFO/LOW transitive findings — noise without actionable value."""
     if is_transitive and issue.get("severity") in (
         Severity.INFO.value,
         Severity.LOW.value,
@@ -399,9 +357,8 @@ def create_issue(
 ) -> Dict[str, Any]:
     """Create a license issue with full context.
 
-    Args:
-        context_reason: Why the severity was adjusted based on project context.
-        effective_severity: What the severity would be without project context (audit trail).
+    `context_reason` documents why the severity was adjusted; `effective_severity`
+    records the unadjusted severity for audit purposes.
     """
     issue: Dict[str, Any] = {
         "component": component,

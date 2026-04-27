@@ -1,13 +1,9 @@
-"""
-PolicyAuditRepository — MongoDB access for `crypto_policy_history`.
+"""PolicyAuditRepository — MongoDB access for `crypto_policy_history`.
 
-The collection name is kept for historic reasons (it originated as the
-crypto-policy audit store).  Entries now carry a ``policy_type``
-discriminator (default ``"crypto"``) so additional policy subsystems —
-currently License-Policy — can share the same store.  Queries without
-an explicit ``policy_type`` default to ``crypto`` so pre-existing
-entries without the field remain visible via the unchanged crypto
-audit endpoints.
+Entries carry a ``policy_type`` discriminator (default ``"crypto"``) so
+crypto and license policies share one collection. Queries without an
+explicit ``policy_type`` default to ``crypto`` so entries written before
+the discriminator existed still match.
 """
 
 from datetime import datetime
@@ -22,12 +18,8 @@ PolicyType = Literal["crypto", "license"]
 
 
 def _policy_type_filter(policy_type: PolicyType) -> Dict[str, Any]:
-    """Build a MongoDB filter that matches a given policy_type.
-
-    For ``"crypto"``, pre-existing entries written before the
-    discriminator was added have no ``policy_type`` field. We match
-    those by allowing ``$exists: False`` alongside the explicit value.
-    """
+    """For ``"crypto"`` we also match documents missing the field — they
+    pre-date the discriminator."""
     if policy_type == "crypto":
         return {"$or": [{"policy_type": "crypto"}, {"policy_type": {"$exists": False}}]}
     return {"policy_type": policy_type}
@@ -40,14 +32,12 @@ class PolicyAuditRepository:
         self._col = db[self.COLLECTION]
 
     async def ensure_indexes(self) -> None:
-        # (policy_type, policy_scope, project_id, version) is unique so
-        # crypto and license policies may both have version 1 for the
-        # same project without colliding.
+        # (policy_type, policy_scope, project_id, version) — uniqueness so
+        # crypto and license policies may both have version 1 for one project.
         await self._col.create_index(
             [("policy_type", 1), ("policy_scope", 1), ("project_id", 1), ("version", -1)]
         )
-        # Legacy index kept for backwards compatibility with queries
-        # that do not filter on policy_type.
+        # Index without policy_type for queries that don't filter on it.
         await self._col.create_index([("policy_scope", 1), ("project_id", 1), ("version", -1)])
         await self._col.create_index([("timestamp", -1)])
         await self._col.create_index([("actor_user_id", 1), ("timestamp", -1)])

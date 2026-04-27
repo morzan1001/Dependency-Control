@@ -1,9 +1,4 @@
-"""Pure helpers for SPDX license normalization and expression parsing.
-
-These helpers consult :data:`LICENSE_DATABASE` / :data:`LICENSE_ALIASES`
-and return normalized identifiers, license tuples, or parsed
-SPDX OR/AND group structures. They contain no analyzer state.
-"""
+"""Pure helpers for SPDX license normalization and expression parsing."""
 
 from __future__ import annotations
 
@@ -26,33 +21,26 @@ def normalize_license(lic_id: str) -> str:
     if not lic_id:
         return ""
 
-    # Strip metadata suffixes like ;link="..." (common in NuGet/RPM SBOMs)
-    # e.g. 'Apache-2.0";link="https://..."' → 'Apache-2.0'
+    # Strip metadata suffixes like ;link="..." common in NuGet/RPM SBOMs.
     if ";" in lic_id:
         lic_id = lic_id.split(";", 1)[0]
-    # Strip surrounding quotes
     lic_id = lic_id.strip('" ')
 
     if not lic_id:
         return ""
 
-    # Check aliases first (exact match)
     if lic_id in LICENSE_ALIASES:
         return LICENSE_ALIASES[lic_id]
 
-    # Return as-is if it's already in the database (exact match)
     if lic_id in LICENSE_DATABASE:
         return lic_id
 
-    # Use pre-computed lowercase mappings for O(1) case-insensitive matching
     db_lower, alias_lower = get_lowercase_mappings()
     lic_lower = lic_id.lower()
 
-    # Try case-insensitive alias match
     if lic_lower in alias_lower:
         return alias_lower[lic_lower]
 
-    # Try case-insensitive database match
     if lic_lower in db_lower:
         return db_lower[lic_lower]
 
@@ -60,15 +48,11 @@ def normalize_license(lic_id: str) -> str:
 
 
 def extract_licenses(component: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
-    """Extract license identifiers and URLs from a component.
-
-    Returns a flat list of (license_id, url) tuples. For SPDX expression
-    handling, use the expression-aware helpers which preserve OR/AND semantics.
-    """
+    """Return flat (license_id, url) tuples; OR/AND semantics need
+    has_spdx_expression / parse_spdx_expression."""
     licenses: List[Tuple[str, Optional[str]]] = []
 
     for lic_entry in component.get("licenses", []):
-        # CycloneDX structure
         if "license" in lic_entry:
             lic = lic_entry["license"]
             lic_id = lic.get("id") or lic.get("name")
@@ -76,7 +60,6 @@ def extract_licenses(component: Dict[str, Any]) -> List[Tuple[str, Optional[str]
             if lic_id and lic_id.upper() not in UNKNOWN_LICENSE_PATTERNS:
                 licenses.append((lic_id, lic_url))
 
-        # SPDX expression — delegate to expression parser
         if "expression" in lic_entry:
             expr = lic_entry["expression"]
             if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
@@ -85,7 +68,6 @@ def extract_licenses(component: Dict[str, Any]) -> List[Tuple[str, Optional[str]
                     if lic_id:
                         licenses.append((lic_id, None))
 
-    # Also check direct license field (parsed components / SPDX format)
     direct_license = component.get("license")
     license_url = component.get("license_url")
     if (
@@ -110,7 +92,7 @@ def extract_licenses(component: Dict[str, Any]) -> List[Tuple[str, Optional[str]
 
 
 def has_spdx_expression(component: Dict[str, Any]) -> Optional[str]:
-    """Return the SPDX expression string if the component has an OR-expression."""
+    """Return the SPDX expression if the component contains an OR-expression."""
     for lic_entry in component.get("licenses", []):
         if "expression" in lic_entry:
             expr = lic_entry["expression"]
@@ -128,28 +110,21 @@ def has_spdx_expression(component: Dict[str, Any]) -> Optional[str]:
 def parse_spdx_expression(expr: str) -> List[List[str]]:
     """Parse an SPDX expression into OR-groups of AND-connected licenses.
 
-    Returns a list of OR-alternatives, where each alternative is a list of
-    AND-connected license IDs. The caller should pick the least restrictive
-    OR-alternative.
-
     Examples:
-        "MIT OR Apache-2.0"       → [["MIT"], ["Apache-2.0"]]
-        "GPL-2.0 AND Classpath"   → [["GPL-2.0", "Classpath"]]
+        "MIT OR Apache-2.0"              → [["MIT"], ["Apache-2.0"]]
+        "GPL-2.0 AND Classpath"          → [["GPL-2.0", "Classpath"]]
         "MIT OR (GPL-2.0 AND Classpath)" → [["MIT"], ["GPL-2.0", "Classpath"]]
-        "MIT"                     → [["MIT"]]
     """
-    # Strip WITH exceptions (e.g. "GPL-2.0 WITH Classpath-exception-2.0")
-    # WITH modifies the preceding license but doesn't add a new one
+    # WITH modifies the preceding license but doesn't add a new one.
     expr = re.sub(r"\s+WITH\s+\S+", "", expr)
 
-    # Split by OR first (lowest precedence in SPDX)
+    # OR has the lowest precedence in SPDX.
     or_parts = SPDX_OR_SPLIT.split(expr)
     result: List[List[str]] = []
     for or_part in or_parts:
         or_part = or_part.strip("() ")
         if not or_part:
             continue
-        # Each OR alternative may contain AND-connected licenses
         and_parts = SPDX_AND_SPLIT.split(or_part)
         group: List[str] = []
         for and_part in and_parts:

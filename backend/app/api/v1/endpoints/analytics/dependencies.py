@@ -47,25 +47,21 @@ async def get_dependency_tree(
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
 
-    # Verify access
     project_ids = await get_user_project_ids(current_user, db)
     if project_id not in project_ids:
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
-    # Get scan ID (prefer latest scan from active branch)
     if not scan_id:
         scan_id = await _resolve_scan_id(project_id, db)
 
     if not scan_id:
         return []
 
-    # Get all dependencies for this scan
     dependencies = await dep_repo.find_by_scan(scan_id)
 
     if not dependencies:
         return []
 
-    # Get findings for this scan and build severity map
     findings = await finding_repo.find_many(
         {"scan_id": scan_id, "type": "vulnerability"},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
@@ -102,11 +98,10 @@ async def get_dependency_tree(
             children=[],
         )
 
-    # Separate direct and transitive dependencies
     direct_deps = [build_node(d) for d in dependencies if get_attr(d, "direct", False)]
     transitive_deps = [build_node(d) for d in dependencies if not get_attr(d, "direct", False)]
 
-    # Sort by findings count (most problematic first)
+    # Sort most-problematic-first.
     direct_deps.sort(key=lambda x: x.findings_count, reverse=True)
     transitive_deps.sort(key=lambda x: x.findings_count, reverse=True)
 
@@ -143,7 +138,6 @@ async def get_component_findings(
 
     results = []
     for fr in finding_records:
-        # Convert Pydantic model to dict
         finding = fr.model_dump()
         finding["project_name"] = project_name_map.get(fr.project_id, "Unknown")
         results.append(finding)
@@ -159,10 +153,8 @@ async def get_dependency_metadata_endpoint(
     version: Annotated[Optional[str], Query(description="Specific version")] = None,
     type: Annotated[Optional[str], Query(description="Package type")] = None,
 ) -> Optional[DependencyMetadata]:
-    """
-    Get aggregated metadata for a dependency across all accessible projects.
-    Returns dependency-specific information (not project-specific like Docker layers).
-    """
+    """Aggregated dependency-specific metadata across accessible projects
+    (excludes project-specific data like Docker layers)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     project_ids = await get_user_project_ids(current_user, db)
@@ -180,7 +172,6 @@ async def get_dependency_metadata_endpoint(
     project_repo = ProjectRepository(db)
     enrichment_repo = DependencyEnrichmentRepository(db)
 
-    # Build query for dependencies
     dep_query = {"scan_id": {"$in": scan_ids}, "name": component}
     if version:
         dep_query["version"] = version
@@ -192,17 +183,14 @@ async def get_dependency_metadata_endpoint(
     if not dependencies:
         return None
 
-    # Get project names for enrichment
     projects = await project_repo.find_many_minimal(
         {"_id": {"$in": project_ids}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
     )
     project_name_map = {p.id: p.name for p in projects}
 
-    # Aggregate dependency-specific metadata (take first non-null value)
     first_dep = dependencies[0]
 
-    # Collect affected projects (with deduplication)
     affected_projects = {}
     for dep in dependencies:
         proj_id = get_attr(dep, "project_id")
@@ -213,11 +201,9 @@ async def get_dependency_metadata_endpoint(
                 "direct": get_attr(dep, "direct", False),
             }
 
-    # Get enrichment data (deps.dev + license)
     dep_purl = get_attr(first_dep, "purl")
     enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
 
-    # Helper function to get first non-null value from dependencies
     def first_value(key: str) -> Optional[Any]:
         for dep in dependencies:
             val = get_attr(dep, key)
@@ -225,7 +211,6 @@ async def get_dependency_metadata_endpoint(
                 return val
         return None
 
-    # Count findings for this component
     finding_query: Dict[str, Any] = {"scan_id": {"$in": scan_ids}, "component": component}
     if version:
         finding_query["version"] = version

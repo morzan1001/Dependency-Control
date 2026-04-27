@@ -33,7 +33,6 @@ router = CustomAPIRouter()
 def _passes_vuln_filter(
     dep_project_id: str, dep_name: str, has_vulnerabilities: Optional[bool], vuln_status_map: Dict[str, bool]
 ) -> bool:
-    """Check if a dependency passes the vulnerability filter."""
     if has_vulnerabilities is None:
         return True
     key = f"{dep_project_id}:{dep_name}"
@@ -42,7 +41,6 @@ def _passes_vuln_filter(
 
 
 def _dep_to_search_result(dep: Any, project_name_map: Dict[str, str]) -> DependencySearchResult:
-    """Convert a dependency to a DependencySearchResult."""
     dep_project_id = get_attr(dep, "project_id")
     return DependencySearchResult(
         project_id=dep_project_id,
@@ -78,7 +76,6 @@ def _build_search_results(
     vuln_status_map: Dict[str, bool],
     project_name_map: Dict[str, str],
 ) -> List[DependencySearchResult]:
-    """Build filtered search results from dependencies."""
     results = []
     for dep in dependencies:
         dep_project_id = get_attr(dep, "project_id")
@@ -115,7 +112,6 @@ async def search_dependencies_advanced(
 
     accessible_project_ids = await get_user_project_ids(current_user, db)
 
-    # Filter by requested project IDs if provided
     if project_ids:
         requested_ids = [pid.strip() for pid in project_ids.split(",")]
         accessible_project_ids = [pid for pid in accessible_project_ids if pid in requested_ids]
@@ -139,15 +135,13 @@ async def search_dependencies_advanced(
     if source_type:
         query["source_type"] = source_type
 
-    # Get total count for pagination
     total_count = await dep_repo.count(query)
 
-    # Map sort fields to MongoDB fields
     sort_field_map = {
         "name": "name",
         "version": "version",
         "type": "type",
-        "project_name": "project_id",  # Will sort by project_id, but close enough
+        "project_name": "project_id",  # close enough — sorts by project_id, not name.
         "license": "license",
         "direct": "direct",
     }
@@ -162,14 +156,11 @@ async def search_dependencies_advanced(
         sort_order=sort_direction,
     )
 
-    # Batch fetch vulnerability status if filter is set
     vuln_status_map: Dict[str, bool] = {}
     if has_vulnerabilities is not None and dependencies:
-        # Build unique (project_id, component) pairs
         dep_keys = list({(get_attr(dep, "project_id"), get_attr(dep, "name")) for dep in dependencies})
         component_names = list({get_attr(dep, "name") for dep in dependencies})
 
-        # Single aggregation to get components with vulnerabilities
         vuln_pipeline: List[Dict[str, Any]] = [
             {
                 "$match": {
@@ -196,7 +187,6 @@ async def search_dependencies_advanced(
 
 
 def _get_description(vuln: dict, finding: Any) -> str | None:
-    """Extract description from vulnerability or finding."""
     if vuln.get("description"):
         desc_text: str = vuln["description"][:200]
         return desc_text
@@ -207,11 +197,8 @@ def _get_description(vuln: dict, finding: Any) -> str | None:
 
 
 def _aggregate_kev_status(details: Dict[str, Any], nested_vulns: List[Dict[str, Any]]) -> tuple[bool, bool, Any]:
-    """Aggregate KEV status from finding details and nested vulnerabilities.
-
-    Returns:
-        Tuple of (in_kev_status, kev_ransomware, kev_due_date)
-    """
+    """Return (in_kev_status, kev_ransomware, kev_due_date) merged from finding details
+    and nested vulnerabilities."""
     in_kev_status = details.get("kev", False)
     kev_ransomware = details.get("kev_ransomware", False)
     kev_due_date = details.get("kev_due_date")
@@ -228,7 +215,6 @@ def _aggregate_kev_status(details: Dict[str, Any], nested_vulns: List[Dict[str, 
 
 
 def _check_fix_availability(details: Dict[str, Any], nested_vulns: List[Dict[str, Any]]) -> bool:
-    """Check if any fix is available from details or nested vulnerabilities."""
     if details.get("fixed_version"):
         return True
     return any(vuln.get("fixed_version") for vuln in nested_vulns)
@@ -242,7 +228,6 @@ def _build_direct_vuln_result(
     kev_due_date: Any,
     project_name_map: Dict[str, str],
 ) -> VulnerabilitySearchResult:
-    """Build a VulnerabilitySearchResult for a direct finding match."""
     return VulnerabilitySearchResult(
         vulnerability_id=finding.finding_id,
         aliases=finding.aliases or [],
@@ -278,7 +263,6 @@ def _build_nested_vuln_result(
     kev_due_date: Any,
     project_name_map: Dict[str, str],
 ) -> VulnerabilitySearchResult:
-    """Build a VulnerabilitySearchResult for a nested vulnerability match."""
     return VulnerabilitySearchResult(
         vulnerability_id=(vuln.get("id") or vuln.get("resolved_cve") or finding.finding_id),
         aliases=([finding.finding_id] if vuln.get("id") != finding.finding_id else finding.aliases or []),
@@ -329,20 +313,14 @@ async def search_vulnerabilities(
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> VulnerabilitySearchResponse:
-    """
-    Search for vulnerabilities, CVEs, and other security identifiers across all accessible projects.
+    """Search for vulnerabilities/CVEs across accessible projects.
 
-    Searches in:
-    - Finding ID (e.g., CVE-2021-44228)
-    - Aliases (e.g., GHSA-xxx)
-    - Nested vulnerability IDs in details
-    - Description text
+    Searches finding id, aliases, nested vulnerability ids, and description text.
     """
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     accessible_project_ids = await get_user_project_ids(current_user, db)
 
-    # Filter by requested project IDs if provided
     if project_ids:
         requested_ids = [pid.strip() for pid in project_ids.split(",")]
         accessible_project_ids = [pid for pid in accessible_project_ids if pid in requested_ids]
@@ -357,8 +335,6 @@ async def search_vulnerabilities(
     if not scan_ids:
         return VulnerabilitySearchResponse(items=[], total=0, page=0, size=limit)
 
-    # Build query for findings
-    # Search in: id, aliases, details.vulnerabilities[].id, description
     search_regex = {"$regex": re.escape(q), "$options": "i"}
 
     query = {
@@ -372,7 +348,6 @@ async def search_vulnerabilities(
         ],
     }
 
-    # Apply filters
     if severity:
         query["severity"] = severity.upper()
 
@@ -382,10 +357,8 @@ async def search_vulnerabilities(
     if not include_waived:
         query["waived"] = {"$ne": True}
 
-    # Get total count
     total_count = await finding_repo.count(query)
 
-    # Sort mapping - uses SEVERITY_ORDER from constants for consistency
     sort_field_map = {
         "severity": "severity",
         "cvss": "details.cvss_score",
@@ -396,7 +369,6 @@ async def search_vulnerabilities(
     mongo_sort_field = sort_field_map.get(sort_by, "severity")
     sort_direction = -1 if sort_order == "desc" else 1
 
-    # Fetch findings with Pydantic models
     findings = await finding_repo.find_many(
         query,
         skip=skip,
@@ -414,16 +386,13 @@ async def search_vulnerabilities(
 
         in_kev_status, kev_ransomware, kev_due_date = _aggregate_kev_status(details, nested_vulns)
 
-        # Apply KEV filter
         if in_kev is not None and in_kev != in_kev_status:
             continue
 
-        # Apply fix filter
         has_fix_status = _check_fix_availability(details, nested_vulns)
         if has_fix is not None and has_fix != has_fix_status:
             continue
 
-        # Find nested vulnerabilities matching the query
         matched_vulns = [
             vuln
             for vuln in nested_vulns
@@ -444,7 +413,7 @@ async def search_vulnerabilities(
                     )
                 )
 
-    # Sort by severity if needed (since MongoDB can't sort by severity order)
+    # MongoDB can't sort by severity order, so resort in Python with the rank map.
     if sort_by == "severity":
         results.sort(
             key=lambda x: get_severity_value(x.severity),

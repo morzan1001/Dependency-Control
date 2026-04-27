@@ -1,18 +1,4 @@
-"""Constants and regex helpers for the license-compliance analyzer.
-
-Contains:
-- Obligation string labels (deduplicated for SonarQube S1192).
-- SPDX expression splitter regexes.
-- The known license-incompatibility table.
-- The severity-rank lookup used when picking the least/most restrictive
-  alternative inside an SPDX expression.
-- The static ``LICENSE_DATABASE`` of recognised SPDX identifiers and their
-  metadata.
-- The category → stats-key map used for accumulating component category counts.
-
-Lazy lowercase lookup tables for ``LICENSE_DATABASE`` keys and
-``LICENSE_ALIASES`` entries are exposed via :func:`get_lowercase_mappings`.
-"""
+"""Constants and regex helpers for the license-compliance analyzer."""
 
 from __future__ import annotations
 
@@ -23,7 +9,6 @@ from app.core.constants import LICENSE_ALIASES
 from app.models.finding import Severity
 from app.models.license import LicenseCategory, LicenseInfo
 
-# String constants to avoid duplication (SonarQube S1192)
 INCLUDE_COPYRIGHT_NOTICE = "Include copyright notice"
 INCLUDE_LICENSE_TEXT = "Include license text"
 SHARE_SOURCE_OF_MODIFICATIONS = "Share source of library modifications"
@@ -35,8 +20,7 @@ SPDX_EXPR_SPLIT = re.compile(r"\s+(?:AND|OR|WITH)\s+")
 SPDX_OR_SPLIT = re.compile(r"\s+OR\s+")
 SPDX_AND_SPLIT = re.compile(r"\s+AND\s+")
 
-# Known license incompatibilities: (license_a, license_b) → explanation
-# Both directions are checked automatically
+# (license_a, license_b) → explanation. Both directions are checked.
 LICENSE_INCOMPATIBILITIES: Dict[tuple, str] = {
     (
         "GPL-2.0-only",
@@ -57,9 +41,8 @@ LICENSE_INCOMPATIBILITIES: Dict[tuple, str] = {
     ("SSPL-1.0", "AGPL-3.0"): "SSPL-1.0 is not compatible with AGPL-3.0.",
 }
 
-# Severity rank for choosing the least/most restrictive license in OR/AND expressions
 SEVERITY_RANK: Dict[Optional[str], int] = {
-    None: 0,  # No issue (permissive/public domain)
+    None: 0,
     Severity.INFO.value: 1,
     Severity.LOW.value: 2,
     Severity.MEDIUM.value: 3,
@@ -68,7 +51,6 @@ SEVERITY_RANK: Dict[Optional[str], int] = {
 }
 
 
-# Comprehensive license database with context
 LICENSE_DATABASE: Dict[str, LicenseInfo] = {
     "MIT": LicenseInfo(
         spdx_id="MIT",

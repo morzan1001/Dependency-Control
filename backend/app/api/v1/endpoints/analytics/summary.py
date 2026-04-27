@@ -61,13 +61,10 @@ async def get_analytics_summary(
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
 
-    # Count total dependencies
     total_deps = await dep_repo.count({"scan_id": {"$in": scan_ids}})
 
-    # Count unique packages
     unique_packages = await dep_repo.get_unique_packages(scan_ids)
 
-    # Get dependency types distribution
     type_results = await dep_repo.get_type_distribution(scan_ids)
 
     dependency_types = []
@@ -81,7 +78,6 @@ async def get_analytics_summary(
                 )
             )
 
-    # Get vulnerability counts by severity using repository method
     severity_counts = await finding_repo.get_severity_distribution(scan_ids)
 
     severity_dist = SeverityBreakdown(
@@ -121,7 +117,6 @@ async def get_top_dependencies(
     if not scan_ids:
         return []
 
-    # Aggregate dependencies
     match_stage: Dict[str, Any] = {"scan_id": {"$in": scan_ids}}
     if type:
         match_stage["type"] = type
@@ -155,11 +150,9 @@ async def get_top_dependencies(
 
     results = await dep_repo.aggregate(pipeline)
 
-    # Batch fetch vulnerability counts using repository method
     component_names = [dep["name"] for dep in results]
     vuln_count_map = await finding_repo.get_vuln_counts_by_components(project_ids, component_names)
 
-    # Enrich with vulnerability info
     enriched = []
     for dep in results:
         vuln_count = vuln_count_map.get(dep["name"], 0)
@@ -167,7 +160,7 @@ async def get_top_dependencies(
             DependencyUsage(
                 name=dep["name"],
                 type=dep.get("type", "unknown"),
-                versions=dep["versions"][:10],  # Limit versions to 10
+                versions=dep["versions"][:10],
                 project_count=dep["project_count"],
                 total_occurrences=dep["total_occurrences"],
                 has_vulnerabilities=vuln_count > 0,

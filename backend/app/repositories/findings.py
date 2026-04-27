@@ -1,8 +1,4 @@
-"""
-Finding Repository
-
-Centralizes all database operations for findings.
-"""
+"""Repository for finding database operations."""
 
 from typing import Any, Dict, List, Optional
 
@@ -13,8 +9,6 @@ from app.repositories.base import BaseRepository
 
 
 class FindingRepository(BaseRepository[FindingRecord]):
-    """Repository for finding database operations."""
-
     collection_name = "findings"
     model_class = FindingRecord
 
@@ -29,10 +23,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         waived: bool,
         waiver_reason: Optional[str] = None,
     ) -> int:
-        """
-        Apply waiver to specific vulnerability within findings.
-        Uses MongoDB array_filters to update nested vulnerability objects.
-        """
+        """Apply waiver to a specific nested vulnerability via array_filters."""
         update_data: Dict[str, Any] = {"details.vulnerabilities.$[vuln].waived": waived}
         if waiver_reason:
             update_data["details.vulnerabilities.$[vuln].waiver_reason"] = waiver_reason
@@ -55,7 +46,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         waived: bool,
         waiver_reason: Optional[str] = None,
     ) -> int:
-        """Apply waiver to findings matching query (for non-vulnerability or finding-level waivers)."""
+        """Apply waiver to findings matching `query` (finding-level, not nested-vulnerability)."""
         full_query = {"scan_id": scan_id, **query}
         update_data: Dict[str, Any] = {"waived": waived}
         if waiver_reason:
@@ -71,29 +62,24 @@ class FindingRepository(BaseRepository[FindingRecord]):
         limit: int = 1000,
         query_filter: Optional[Dict[str, Any]] = None,
     ) -> List[FindingRecord]:
-        """Find findings for a scan."""
         query: Dict[str, Any] = {"scan_id": scan_id}
         if query_filter:
             query.update(query_filter)
         return await self.find_many(query, skip=skip, limit=limit)
 
     async def delete_by_scan(self, scan_id: str) -> int:
-        """Delete all findings for a scan."""
         return await self.delete_many({"scan_id": scan_id})
 
     async def count_by_scan(self, scan_id: str) -> int:
-        """Count findings for a scan."""
         return await self.count({"scan_id": scan_id})
 
     async def bulk_upsert(self, operations: List[UpdateOne]) -> int:
-        """Bulk upsert findings."""
         if not operations:
             return 0
         result = await self.collection.bulk_write(operations)
         return result.upserted_count + result.modified_count
 
     async def get_severity_counts(self, scan_id: str) -> Dict[str, int]:
-        """Get finding counts by severity for a scan."""
         pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": scan_id}},
             {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
@@ -102,7 +88,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return {r["_id"]: r["count"] for r in results if r["_id"]}
 
     async def get_type_counts(self, scan_id: str) -> Dict[str, int]:
-        """Get finding counts by type for a scan."""
         pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": scan_id}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
@@ -115,16 +100,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         scan_ids: List[str],
         finding_type: str = "vulnerability",
     ) -> Dict[str, int]:
-        """
-        Get severity distribution across multiple scans.
-
-        Args:
-            scan_ids: List of scan IDs to aggregate
-            finding_type: Type of findings to count (default: vulnerability)
-
-        Returns:
-            Dict mapping severity to count: {"CRITICAL": 5, "HIGH": 10, ...}
-        """
+        """Returns {severity: count} aggregated across `scan_ids`."""
         pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}, "type": finding_type}},
             {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
@@ -137,16 +113,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         project_ids: List[str],
         component_names: List[str],
     ) -> Dict[str, int]:
-        """
-        Get vulnerability counts per component across projects.
-
-        Args:
-            project_ids: List of project IDs to search
-            component_names: List of component names to count
-
-        Returns:
-            Dict mapping component name to vulnerability count
-        """
+        """Returns {component_name: vulnerability_count} across `project_ids`."""
         pipeline: List[Dict[str, Any]] = [
             {
                 "$match": {

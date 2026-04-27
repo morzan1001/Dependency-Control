@@ -1,8 +1,4 @@
-"""
-Project Repository
-
-Centralizes all database operations for projects.
-"""
+"""Repository for projects."""
 
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
@@ -24,7 +20,6 @@ class ProjectRepository:
         self.collection = db.projects
 
     async def get_by_id(self, project_id: str) -> Optional[Project]:
-        """Get project by ID."""
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": project_id})
         if data:
@@ -148,18 +143,15 @@ class ProjectRepository:
         return Project(**result), created
 
     async def create(self, project: Project) -> Project:
-        """Create a new project."""
         with track_db_operation(_COL, "insert_one"):
             await self.collection.insert_one(project.model_dump(by_alias=True))
         return project
 
     async def create_raw(self, project_data: Dict[str, Any]) -> None:
-        """Create a new project from raw data."""
         with track_db_operation(_COL, "insert_one"):
             await self.collection.insert_one(project_data)
 
     async def update(self, project_id: str, update_data: Dict[str, Any]) -> Optional[Project]:
-        """Update project by ID."""
         if update_data:
             with track_db_operation(_COL, "update_one"):
                 await self.collection.update_one({"_id": project_id}, {"$set": update_data})
@@ -171,7 +163,6 @@ class ProjectRepository:
             await self.collection.update_one({"_id": project_id}, update_ops)
 
     async def delete(self, project_id: str) -> bool:
-        """Delete project by ID."""
         with track_db_operation(_COL, "delete_one"):
             result = await self.collection.delete_one({"_id": project_id})
         return result.deleted_count > 0
@@ -200,7 +191,6 @@ class ProjectRepository:
         sort_order: int = 1,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Find multiple raw project documents with pagination."""
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
             return await cursor.to_list(limit)
@@ -251,7 +241,6 @@ class ProjectRepository:
         return await cursor.to_list(None)
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
-        """Count projects matching query."""
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})
 
@@ -266,17 +255,14 @@ class ProjectRepository:
             return await self.collection.aggregate(pipeline).to_list(limit)
 
     async def update_many(self, query: Dict[str, Any], update_data: Dict[str, Any]) -> int:
-        """Update multiple projects matching query."""
         with track_db_operation(_COL, "update_many"):
             result = await self.collection.update_many(query, {"$set": update_data})
         return result.modified_count
 
     async def add_member(self, project_id: str, member_data: Dict[str, Any]) -> None:
-        """Add a member to project."""
         await self.collection.update_one({"_id": project_id}, {"$push": {"members": member_data}})
 
     async def remove_member(self, project_id: str, user_id: str) -> None:
-        """Remove a member from project."""
         await self.collection.update_one({"_id": project_id}, {"$pull": {"members": {"user_id": user_id}}})
 
     async def update_member(self, project_id: str, user_id: str, update_data: Dict[str, Any]) -> None:
@@ -297,6 +283,5 @@ class ProjectRepository:
             yield Project(**doc)
 
     async def iterate_all(self, query: Optional[Dict[str, Any]] = None) -> AsyncGenerator[Dict[str, Any], None]:
-        """Iterate over all projects as raw dicts (async generator)."""
         async for doc in self.collection.find(query or {}):
             yield doc

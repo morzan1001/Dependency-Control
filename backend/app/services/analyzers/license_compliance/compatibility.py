@@ -1,9 +1,4 @@
-"""Cross-component license compatibility checking.
-
-Detects pairs of components whose licenses cannot legally coexist in
-the same distributed work, based on the static
-:data:`LICENSE_INCOMPATIBILITIES` table.
-"""
+"""Cross-component license compatibility checking against LICENSE_INCOMPATIBILITIES."""
 
 from __future__ import annotations
 

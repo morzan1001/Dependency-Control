@@ -1,14 +1,8 @@
 """Standalone async tool functions for crypto / CBOM / compliance / PQC migration.
 
-These are importable directly (without going through `ChatToolRegistry`) so MCP
-endpoints, unit tests, and future automation can call them outside the chat
-dispatch path.
-
-Compatibility note: tests use ``patch("app.services.chat.tools.ScopeResolver")``
-(and similar) to substitute external collaborators. Each function therefore
-resolves these names through the parent ``app.services.chat.tools`` package
-*at call time* rather than capturing them at import time. That preserves the
-patch surface that existed before the package split.
+External collaborators (``ScopeResolver``, ``ComplianceReportEngine``, …) are
+resolved through the parent package namespace at call time so test patches on
+``app.services.chat.tools.<NAME>`` keep working.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -20,11 +14,8 @@ from app.models.user import User
 
 
 def _pkg() -> Any:
-    """Return the ``app.services.chat.tools`` package module.
-
-    Used so functions look up ``ScopeResolver`` / ``ComplianceReportEngine`` /
-    etc. on the package namespace, which is what the test suite patches.
-    """
+    """Return the parent package module so collaborators resolve via the namespace
+    that tests patch."""
     from app.services.chat import tools as _tools_pkg
 
     return _tools_pkg
@@ -41,7 +32,6 @@ async def list_crypto_assets(
     skip: int = 0,
     limit: int = 100,
 ) -> Dict[str, Any]:
-    """List cryptographic assets for a scan with optional filters."""
     from app.repositories.crypto_asset import CryptoAssetRepository
     from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
@@ -81,7 +71,6 @@ async def get_crypto_asset_details(
     project_id: str,
     asset_id: str,
 ) -> Optional[Dict[str, Any]]:
-    """Return a single crypto asset by ID, or None if not found."""
     from app.repositories.crypto_asset import CryptoAssetRepository
 
     asset = await CryptoAssetRepository(db).get(project_id, asset_id)
@@ -94,7 +83,6 @@ async def get_crypto_summary(
     project_id: str,
     scan_id: str,
 ) -> Dict[str, Any]:
-    """Return a type-breakdown summary of crypto assets for a scan."""
     from app.repositories.crypto_asset import CryptoAssetRepository
 
     return await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
@@ -105,7 +93,6 @@ async def get_project_crypto_policy(
     *,
     project_id: str,
 ) -> Dict[str, Any]:
-    """Return the effective crypto policy for a project."""
     from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
     effective = await CryptoPolicyResolver(db).resolve(project_id)
@@ -122,10 +109,8 @@ async def suggest_crypto_policy_override(
     project_id: str,
     scan_id: str,
 ) -> Dict[str, Any]:
-    """Advisory: returns rule_ids that produce the most findings for this scan.
-
-    Does NOT write; caller decides whether to craft an override.
-    """
+    """Advisory only — returns rule_ids producing the most findings; caller
+    decides whether to craft an override (this function does not write)."""
     cursor = db.findings.aggregate(
         [
             {"$match": {"project_id": project_id, "scan_id": scan_id, "type": {"$regex": "^crypto_"}}},
@@ -145,9 +130,6 @@ async def suggest_crypto_policy_override(
     }
 
 
-# ── Crypto analytics standalone helpers ───────────────────────────────────
-
-
 async def get_crypto_hotspots(
     db: AsyncIOMotorDatabase,
     *,
@@ -155,7 +137,6 @@ async def get_crypto_hotspots(
     group_by: str = "name",
     limit: int = 20,
 ) -> Dict[str, Any]:
-    """List top crypto hotspots for a project, grouped by the given dimension."""
     from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
 
     pkg = _pkg()
@@ -176,7 +157,6 @@ async def get_crypto_trends(
     metric: str = "total_crypto_findings",
     days: int = 30,
 ) -> Dict[str, Any]:
-    """Return time-bucketed crypto finding/asset trends for a project."""
     from app.services.analytics.crypto_trends import (
         Bucket,
         CryptoTrendService,
@@ -205,7 +185,6 @@ async def get_scan_delta(
     from_scan_id: str,
     to_scan_id: str,
 ) -> Dict[str, Any]:
-    """Compare two scans for a project and return added/removed crypto assets."""
     from app.services.analytics.crypto_delta import compute_scan_delta
 
     delta = await compute_scan_delta(
@@ -223,9 +202,6 @@ async def get_scan_delta(
     }
 
 
-# ── Compliance / PQC-migration standalone helpers ─────────────────────────
-
-
 async def generate_pqc_migration_plan(
     db: AsyncIOMotorDatabase,
     *,
@@ -233,13 +209,9 @@ async def generate_pqc_migration_plan(
     project_id: str,
     limit: int = 500,
 ) -> Dict[str, Any]:
-    """MCP tool: generate the PQC migration plan for one project.
-
-    The caller (``_dispatch``) already verifies the user's access to the
-    project via ``_get_authorized_project``; ``ScopeResolver.resolve`` below
-    re-runs the same project-member check so scope construction stays
-    consistent with every other analytics path in the codebase.
-    """
+    """Generate the PQC migration plan for one project. ScopeResolver re-runs
+    the project-member check so scope construction stays consistent with every
+    other analytics path."""
     pkg = _pkg()
     resolved = await pkg.ScopeResolver(db, user).resolve(
         scope="project", scope_id=project_id
@@ -257,7 +229,7 @@ async def list_compliance_reports(
     framework: Optional[str] = None,
     limit: int = 10,
 ) -> Dict[str, Any]:
-    """MCP tool: recent compliance reports (metadata only, no artifacts)."""
+    """Recent compliance reports (metadata only, no artifacts)."""
     pkg = _pkg()
     fw: Optional[Any] = None
     if framework:
@@ -281,7 +253,6 @@ async def list_policy_audit_entries(
     project_id: Optional[str] = None,
     limit: int = 20,
 ) -> Dict[str, Any]:
-    """MCP tool: policy audit timeline."""
     pkg = _pkg()
     entries = await pkg.PolicyAuditRepository(db).list(
         policy_scope=cast(Literal["system", "project"], policy_scope),
@@ -299,7 +270,7 @@ async def get_framework_evaluation_summary(
     scope_id: Optional[str],
     framework: str,
 ) -> Dict[str, Any]:
-    """MCP tool: run compliance evaluation in-process and return summary counts."""
+    """Run compliance evaluation in-process and return summary counts."""
     pkg = _pkg()
     try:
         fw_enum = pkg.ReportFramework(framework)

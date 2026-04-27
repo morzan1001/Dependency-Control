@@ -1,8 +1,4 @@
-"""
-System Settings Repository
-
-Centralizes all database operations for system settings.
-"""
+"""Repository for system settings."""
 
 from typing import Any, Dict, Optional
 

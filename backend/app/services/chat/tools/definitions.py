@@ -1,15 +1,10 @@
-"""Static tool metadata: TOOL_DEFINITIONS, TOOL_PERMISSIONS, get_tool_definitions().
-
-Pure data — no Mongo / repository imports — so it stays cheap to import and
-trivial to introspect from tests / docs tooling.
-"""
+"""Static tool metadata: TOOL_DEFINITIONS, TOOL_PERMISSIONS, get_tool_definitions()."""
 
 from typing import Any, Dict, List
 
 from app.core.permissions import Permissions
 
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
-    # ── Projects ──
     {
         "type": "function",
         "function": {
@@ -75,7 +70,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Scans & Findings ──
     {
         "type": "function",
         "function": {
@@ -216,7 +210,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Analytics & Trends ──
     {
         "type": "function",
         "function": {
@@ -291,7 +284,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Teams ──
     {
         "type": "function",
         "function": {
@@ -332,7 +324,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Waivers ──
     {
         "type": "function",
         "function": {
@@ -374,7 +365,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Recommendations ──
     {
         "type": "function",
         "function": {
@@ -671,7 +661,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Reachability ──
     {
         "type": "function",
         "function": {
@@ -701,7 +690,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Archives ──
     {
         "type": "function",
         "function": {
@@ -731,7 +719,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Webhooks ──
     {
         "type": "function",
         "function": {
@@ -760,7 +747,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Crypto / CBOM ──
     {
         "type": "function",
         "function": {
@@ -850,7 +836,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Crypto Analytics ──
     {
         "type": "function",
         "function": {
@@ -920,7 +905,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── System (Admin only) ──
     {
         "type": "function",
         "function": {
@@ -945,7 +929,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
     },
-    # ── Compliance / PQC-migration (Phase 3) ──
     {
         "type": "function",
         "function": {
@@ -1021,7 +1004,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 ]
 
 
-# ── Permission requirements per tool ──
 
 TOOL_PERMISSIONS: Dict[str, List[str]] = {
     # Most tools just need project:read (access is further scoped by build_user_project_query)

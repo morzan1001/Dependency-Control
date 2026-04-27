@@ -1,9 +1,4 @@
-"""
-Repository Pattern for Database Access
-
-Provides a clean abstraction layer over MongoDB collections,
-centralizing database operations and reducing code duplication.
-"""
+"""Repository pattern over MongoDB collections."""
 
 from app.repositories.base import BaseRepository
 from app.repositories.analysis_results import AnalysisResultRepository

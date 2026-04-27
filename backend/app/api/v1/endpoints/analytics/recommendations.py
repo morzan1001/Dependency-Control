@@ -38,23 +38,8 @@ async def get_project_recommendations(
     db: DatabaseDep,
     scan_id: Optional[str] = None,
 ) -> RecommendationsResponse:
-    """
-    Get remediation recommendations for a project's security findings.
-
-    Analyzes all finding types and generates actionable recommendations:
-    - Base image updates (fix multiple OS-level vulns at once)
-    - Direct dependency updates (with specific version targets)
-    - Transitive dependency fixes
-    - Secret rotation and removal
-    - SAST code fixes
-    - IAC infrastructure fixes
-    - License compliance issues
-    - Dependency health (outdated, fragmented)
-    - Trend analysis (regressions, recurring issues)
-    - Cross-project patterns (shared vulnerabilities)
-
-    Recommendations are prioritized by impact and effort.
-    """
+    """Generate remediation recommendations for a project's findings,
+    prioritized by impact and effort."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     project_repo = ProjectRepository(db)
@@ -62,23 +47,19 @@ async def get_project_recommendations(
     finding_repo = FindingRepository(db)
     dep_repo = DependencyRepository(db)
 
-    # Verify project access
     project = await project_repo.get_raw_by_id(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Check if user has access to this project
     user_project_ids = await get_user_project_ids(current_user, db)
     if project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
-    # Get the latest scan or specified scan
     if scan_id:
         scan = await scan_repo.get_by_id(scan_id)
         if scan and scan.project_id != project_id:
             scan = None
     else:
-        # Get latest completed scan for project
         scans = await scan_repo.find_many(
             {"project_id": project_id, "status": "completed"},
             limit=1,
@@ -91,16 +72,12 @@ async def get_project_recommendations(
 
     scan_id = scan.id
 
-    # Get source target (e.g., Docker image name) from scan
     source_target = None
 
-    # Fetch ALL findings for this scan (all types: vulnerability, secret, sast, iac, license, quality)
     findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
 
-    # Fetch all dependencies for this scan
     dependencies = await dep_repo.find_by_scan(scan_id)
 
-    # Try to get source target from dependencies (Dependency is a Pydantic model)
     for dep in dependencies:
         if dep.source_target:
             source_target = dep.source_target
@@ -109,7 +86,6 @@ async def get_project_recommendations(
     previous_scan_findings = None
     scan_history = None
 
-    # Get previous scan for regression detection
     previous_scans = await scan_repo.find_many(
         {"project_id": project_id, "_id": {"$ne": scan_id}},
         limit=1,
@@ -120,7 +96,6 @@ async def get_project_recommendations(
     if previous_scan:
         previous_scan_findings = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
 
-    # Get last 10 scans for recurring issue detection
     recent_scans = await scan_repo.find_many(
         {"project_id": project_id},
         limit=10,
@@ -130,7 +105,6 @@ async def get_project_recommendations(
     if recent_scans:
         scan_history = [s.model_dump() for s in recent_scans]
 
-    # Gather cross-project data using helper
     cross_project_data = await gather_cross_project_data(user_project_ids, project_id, db)
 
     recommendations = await recommendation_engine.generate_recommendations(
@@ -142,7 +116,6 @@ async def get_project_recommendations(
         cross_project_data=cross_project_data,
     )
 
-    # Count findings by type for stats (FindingRecord uses type attribute, not dict)
     vuln_count = sum(1 for f in findings if f.type == "vulnerability")
     secret_count = sum(1 for f in findings if f.type == "secret")
     sast_count = sum(1 for f in findings if f.type == "sast")
@@ -150,7 +123,6 @@ async def get_project_recommendations(
     license_count = sum(1 for f in findings if f.type == "license")
     quality_count = sum(1 for f in findings if f.type == "quality")
 
-    # Build extended summary
     summary: Dict[str, Any] = {
         "base_image_updates": 0,
         "direct_updates": 0,
@@ -163,12 +135,10 @@ async def get_project_recommendations(
         "iac_issues": 0,
         "license_issues": 0,
         "quality_issues": 0,
-        # New summary fields
         "outdated_deps": 0,
         "fragmentation_issues": 0,
         "trend_alerts": 0,
         "cross_project_issues": 0,
-        # Finding type counts
         "finding_counts": {
             "vulnerabilities": vuln_count,
             "secrets": secret_count,
@@ -205,7 +175,6 @@ async def get_project_recommendations(
             summary["license_issues"] += impact_total
         elif rec_type == "supply_chain_risk":
             summary["quality_issues"] += impact_total
-        # New types
         elif rec_type in ("outdated_dependency", "unmaintained_package"):
             summary["outdated_deps"] += impact_total
         elif rec_type in (

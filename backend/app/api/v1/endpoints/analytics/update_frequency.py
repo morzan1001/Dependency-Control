@@ -40,12 +40,7 @@ async def get_project_update_frequency(
     db: DatabaseDep,
     max_scans: Annotated[int, Query(ge=2, le=50)] = 20,
 ) -> UpdateFrequencyMetrics:
-    """
-    Get update frequency metrics for a project.
-
-    Analyzes how regularly and incrementally dependencies are updated
-    by comparing versions across consecutive scans.
-    """
+    """Update frequency metrics from comparing dependency versions across consecutive scans."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     project_repo = ProjectRepository(db)
@@ -57,7 +52,6 @@ async def get_project_update_frequency(
     if project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
-    # Check cache
     cache_key = CacheKeys.update_frequency(project_id)
     cached = await cache_service.get(cache_key)
     if cached:
@@ -87,15 +81,9 @@ async def get_update_frequency_comparison(
     team_id: Optional[str] = None,
     max_scans: Annotated[int, Query(ge=2, le=20)] = 10,
 ) -> UpdateFrequencyComparison:
-    """
-    Get update frequency comparison across projects.
-
-    Returns a ranking of projects by their update behavior,
-    optionally filtered by team.
-    """
+    """Ranking of projects by update behavior, optionally filtered by team."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
-    # Check cache
     cache_key = CacheKeys.update_frequency_comparison(current_user.id, team_id or "all")
     cached = await cache_service.get(cache_key)
     if cached:
@@ -111,7 +99,6 @@ async def get_update_frequency_comparison(
             team_avg_coverage_pct=0.0,
         )
 
-    # Build query for projects
     query: Dict[str, Any] = {"_id": {"$in": user_project_ids}}
     if team_id:
         query["team_id"] = team_id
@@ -122,7 +109,6 @@ async def get_update_frequency_comparison(
         limit=len(user_project_ids),
     )
 
-    # Resolve team names if needed
     if projects_raw:
         team_ids: List[str] = [str(p["team_id"]) for p in projects_raw if p.get("team_id")]
         unique_team_ids = list(set(team_ids))
