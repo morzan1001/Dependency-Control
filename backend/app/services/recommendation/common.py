@@ -90,11 +90,8 @@ def calculate_best_fix_version(versions: List[str]) -> str:
     if not parsed:
         return "unknown"
 
-    try:
-        parsed.sort(key=lambda x: parse_version_tuple(x), reverse=True)
-        return parsed[0] if parsed[0] else "unknown"
-    except Exception:
-        return parsed[0] if parsed[0] else "unknown"
+    parsed.sort(key=parse_version_tuple, reverse=True)
+    return parsed[0]
 
 
 # Cached at module-level to avoid repeated dict lookups in calculate_score().
