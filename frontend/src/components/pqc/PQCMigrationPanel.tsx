@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MigrationPlanTable } from "./MigrationPlanTable";
 import { MigrationItemDetailDrawer } from "./MigrationItemDetailDrawer";
+import { formatDate } from "@/lib/utils";
 import type { MigrationItem } from "@/types/pqcMigration";
 
 export function PQCMigrationPanel() {
@@ -28,7 +29,7 @@ export function PQCMigrationPanel() {
       {s.earliest_deadline && (
         <div className="rounded border bg-muted/30 p-3 text-sm">
           Earliest PQC migration deadline:{" "}
-          <strong>{new Date(s.earliest_deadline).toLocaleDateString()}</strong>
+          <strong>{formatDate(s.earliest_deadline)}</strong>
         </div>
       )}
       <div className="flex items-center gap-3">

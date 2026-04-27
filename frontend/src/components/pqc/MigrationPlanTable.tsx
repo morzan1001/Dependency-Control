@@ -1,3 +1,4 @@
+import { formatDate } from "@/lib/utils";
 import type { MigrationItem, MigrationItemStatus } from "@/types/pqcMigration";
 
 interface Props {
@@ -69,7 +70,7 @@ export function MigrationPlanTable({ items, onSelect }: Props) {
               <td className="p-2">{it.asset_count}</td>
               <td className="p-2">{it.project_ids.length}</td>
               <td className="p-2 text-xs">
-                {it.recommended_deadline ? new Date(it.recommended_deadline).toLocaleDateString() : "—"}
+                {it.recommended_deadline ? formatDate(it.recommended_deadline) : "—"}
               </td>
             </tr>
           ))}

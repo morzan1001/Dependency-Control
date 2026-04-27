@@ -1,5 +1,6 @@
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
 import { useAnalyticsList } from "@/hooks/useAnalyticsList";
+import { formatDate } from "@/lib/utils";
 import type {
   AnalyticsScope,
   GroupingDimension,
@@ -60,7 +61,7 @@ export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Prop
                 ))}
               </td>
               <td className="p-2 text-xs">{e.project_ids.length}</td>
-              <td className="p-2 text-xs">{new Date(e.last_seen).toLocaleDateString()}</td>
+              <td className="p-2 text-xs">{formatDate(e.last_seen)}</td>
             </tr>
           ))}
         </tbody>

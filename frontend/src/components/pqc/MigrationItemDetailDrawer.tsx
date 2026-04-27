@@ -1,6 +1,7 @@
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { formatDate } from "@/lib/utils";
 import type { MigrationItem } from "@/types/pqcMigration";
 
 interface Props {
@@ -32,7 +33,7 @@ export function MigrationItemDetailDrawer({ item, onClose }: Props) {
               <dt className="text-muted-foreground">Deadline</dt>
               <dd>
                 {item.recommended_deadline
-                  ? new Date(item.recommended_deadline).toLocaleDateString()
+                  ? formatDate(item.recommended_deadline)
                   : "—"}
               </dd>
             </dl>

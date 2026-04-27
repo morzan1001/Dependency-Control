@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { listReports } from "@/api/compliance";
 import { useDialogState } from "@/hooks/use-dialog-state";
+import { formatDateTime } from "@/lib/utils";
 import type { ComplianceReportMeta, ReportFramework } from "@/types/compliance";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import { NewReportDialog } from "./NewReportDialog";
@@ -80,7 +81,7 @@ export function ComplianceReportsPanel() {
                 <td className="p-2 font-mono">{r.framework}</td>
                 <td className="p-2">{r.format.toUpperCase()}</td>
                 <td className="p-2"><ReportStatusBadge status={r.status} /></td>
-                <td className="p-2 text-xs">{new Date(r.requested_at).toLocaleString()}</td>
+                <td className="p-2 text-xs">{formatDateTime(r.requested_at)}</td>
                 <td className="p-2 text-xs">{r.scope}{r.scope_id ? `:${r.scope_id}` : ""}</td>
               </tr>
             ))}
