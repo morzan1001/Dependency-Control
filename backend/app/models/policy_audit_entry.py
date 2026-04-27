@@ -8,13 +8,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument, PyObjectId
 from app.schemas.policy_audit import PolicyAuditAction
 
 
-class PolicyAuditEntry(BaseModel):
+class PolicyAuditEntry(MongoDocument):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -55,5 +55,3 @@ class PolicyAuditEntry(BaseModel):
         None,
         description="For REVERT actions: the source version being restored",
     )
-
-    model_config = ConfigDict(populate_by_name=True, use_enum_values=True)

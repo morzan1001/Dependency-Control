@@ -8,13 +8,13 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument, PyObjectId
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 
 
-class ComplianceReport(BaseModel):
+class ComplianceReport(MongoDocument):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -38,5 +38,3 @@ class ComplianceReport(BaseModel):
     error_message: Optional[str] = None
     expires_at: Optional[datetime] = None
     comment: Optional[str] = None
-
-    model_config = ConfigDict(populate_by_name=True, use_enum_values=True)
