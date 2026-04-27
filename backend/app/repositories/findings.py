@@ -79,22 +79,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
         result = await self.collection.bulk_write(operations)
         return result.upserted_count + result.modified_count
 
-    async def get_severity_counts(self, scan_id: str) -> Dict[str, int]:
-        pipeline: List[Dict[str, Any]] = [
-            {"$match": {"scan_id": scan_id}},
-            {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
-        ]
-        results = await self.aggregate(pipeline)
-        return {r["_id"]: r["count"] for r in results if r["_id"]}
-
-    async def get_type_counts(self, scan_id: str) -> Dict[str, int]:
-        pipeline: List[Dict[str, Any]] = [
-            {"$match": {"scan_id": scan_id}},
-            {"$group": {"_id": "$type", "count": {"$sum": 1}}},
-        ]
-        results = await self.aggregate(pipeline)
-        return {r["_id"]: r["count"] for r in results if r["_id"]}
-
     async def get_severity_distribution(
         self,
         scan_ids: List[str],
