@@ -6,25 +6,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { deleteReport, downloadReportUrl } from "@/api/compliance";
 import { useDialogState } from "@/hooks/use-dialog-state";
+import { extractErrorMessage } from "@/lib/errors";
+import { formatDateTime } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import type { ComplianceReportMeta } from "@/types/compliance";
 
 interface Props { report: ComplianceReportMeta | null; onClose: () => void; }
-
-function extractErrorMessage(err: unknown): string {
-  if (err && typeof err === "object") {
-    const e = err as {
-      response?: { data?: { detail?: string | { msg?: string }[] | Record<string, unknown> } };
-      message?: string;
-    };
-    const detail = e.response?.data?.detail;
-    if (typeof detail === "string") return detail;
-    if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);
-    if (detail) return JSON.stringify(detail);
-    if (e.message) return e.message;
-  }
-  return "Unknown error";
-}
 
 export function ReportDetailDrawer({ report, onClose }: Props) {
   const qc = useQueryClient();
@@ -57,11 +44,11 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
                   Status: <ReportStatusBadge status={report.status} />
                 </div>
                 <div className="text-muted-foreground">
-                  Requested {new Date(report.requested_at).toLocaleString()} by {report.requested_by}
+                  Requested {formatDateTime(report.requested_at)} by {report.requested_by}
                 </div>
                 {report.completed_at && (
                   <div className="text-muted-foreground">
-                    Completed {new Date(report.completed_at).toLocaleString()}
+                    Completed {formatDateTime(report.completed_at)}
                   </div>
                 )}
                 {report.status === "failed" && report.error_message && (

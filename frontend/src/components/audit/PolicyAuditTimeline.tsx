@@ -6,6 +6,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDialogState } from "@/hooks/use-dialog-state";
+import { extractErrorMessage } from "@/lib/errors";
+import { formatDateTime } from "@/lib/utils";
 import {
   listSystemAudit, listProjectAudit,
   revertSystemPolicy, revertProjectPolicy,
@@ -17,21 +19,6 @@ import { RevertConfirmDialog } from "./RevertConfirmDialog";
 import { PruneAuditDialog } from "./PruneAuditDialog";
 
 const PAGE_SIZE = 50;
-
-function extractErrorMessage(err: unknown): string {
-  if (err && typeof err === "object") {
-    const e = err as {
-      response?: { data?: { detail?: string | { msg?: string }[] | Record<string, unknown> } };
-      message?: string;
-    };
-    const detail = e.response?.data?.detail;
-    if (typeof detail === "string") return detail;
-    if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);
-    if (detail) return JSON.stringify(detail);
-    if (e.message) return e.message;
-  }
-  return "Unknown error";
-}
 
 interface Props {
   policyScope: "system" | "project";
@@ -130,7 +117,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
                     <span>{entry.change_summary}</span>
                   </button>
                   <div className="ml-auto text-xs text-muted-foreground">
-                    {new Date(entry.timestamp).toLocaleString()}
+                    {formatDateTime(entry.timestamp)}
                   </div>
                   {canRevert && entry.action !== "revert" && (
                     <Button
