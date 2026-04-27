@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -6,6 +5,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { deleteReport, downloadReportUrl } from "@/api/compliance";
+import { useDialogState } from "@/hooks/use-dialog-state";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import type { ComplianceReportMeta } from "@/types/compliance";
 
@@ -28,14 +28,14 @@ function extractErrorMessage(err: unknown): string {
 
 export function ReportDetailDrawer({ report, onClose }: Props) {
   const qc = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const confirm = useDialogState();
 
   const del = useMutation({
     mutationFn: (id: string) => deleteReport(id),
     onSuccess: () => {
       toast.success("Report deleted");
       qc.invalidateQueries({ queryKey: ["compliance-reports"] });
-      setConfirmOpen(false);
+      confirm.closeDialog();
       onClose();
     },
     onError: (e: unknown) => {
@@ -98,7 +98,7 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
                 <Button
                   variant="destructive"
                   size="sm"
-                  onClick={() => setConfirmOpen(true)}
+                  onClick={confirm.openDialog}
                   disabled={del.isPending}
                 >
                   Delete report
@@ -109,7 +109,7 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <Dialog open={confirm.open} onOpenChange={confirm.setOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Delete this report?</DialogTitle>
@@ -119,7 +119,7 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
             removed. This action cannot be undone.
           </p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmOpen(false)}>
+            <Button variant="outline" onClick={confirm.closeDialog}>
               Cancel
             </Button>
             <Button

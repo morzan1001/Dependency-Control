@@ -5,6 +5,7 @@ import {
   ChevronDown, ChevronRight, RotateCcw, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useDialogState } from "@/hooks/use-dialog-state";
 import {
   listSystemAudit, listProjectAudit,
   revertSystemPolicy, revertProjectPolicy,
@@ -42,7 +43,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [revertTarget, setRevertTarget] = useState<number | null>(null);
-  const [pruneOpen, setPruneOpen] = useState(false);
+  const pruneDialog = useDialogState();
 
   const { data } = useQuery({
     queryKey: ["policy-audit", policyScope, projectId],
@@ -76,7 +77,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
     onSuccess: (res) => {
       toast.success(`Pruned ${res.deleted} entr${res.deleted === 1 ? "y" : "ies"}`);
       qc.invalidateQueries({ queryKey: ["policy-audit"] });
-      setPruneOpen(false);
+      pruneDialog.closeDialog();
     },
     onError: (e: unknown) => toast.error(`Prune failed: ${extractErrorMessage(e)}`),
   });
@@ -89,7 +90,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setPruneOpen(true)}
+            onClick={pruneDialog.openDialog}
             title="Prune old audit entries"
           >
             <Trash2 className="mr-1 h-3 w-3" />
@@ -178,9 +179,9 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
         }}
       />
       <PruneAuditDialog
-        open={pruneOpen}
+        open={pruneDialog.open}
         busy={doPrune.isPending}
-        onClose={() => setPruneOpen(false)}
+        onClose={pruneDialog.closeDialog}
         onConfirm={async (before) => { await doPrune.mutateAsync(before); }}
       />
     </div>
