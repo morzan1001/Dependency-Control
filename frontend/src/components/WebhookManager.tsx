@@ -12,6 +12,7 @@ import { Trash2, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/context/useAuth"
+import { useDialogState } from "@/hooks/use-dialog-state"
 import { formatDate } from "@/lib/utils"
 
 interface WebhookManagerProps {
@@ -35,7 +36,7 @@ export function WebhookManager({
   createPermission = "webhook:create",
   deletePermission = "webhook:delete"
 }: WebhookManagerProps) {
-  const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const createDialog = useDialogState()
   const { hasPermission } = useAuth()
   const canCreate = typeof createPermission === 'boolean'
     ? createPermission
@@ -105,7 +106,7 @@ export function WebhookManager({
   const handleCreate = async () => {
     try {
       await onCreate(newWebhook)
-      setIsCreateOpen(false)
+      createDialog.closeDialog()
       setNewWebhook({ url: "", events: [], secret: "" })
       toast.success("Webhook created")
     } catch {
@@ -157,7 +158,7 @@ export function WebhookManager({
           <CardDescription>{description}</CardDescription>
         </div>
         {canCreate && (
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+          <Dialog open={createDialog.open} onOpenChange={createDialog.setOpen}>
             <DialogTrigger asChild>
               <Button size="sm"><Plus className="mr-2 h-4 w-4" /> Add Webhook</Button>
             </DialogTrigger>
