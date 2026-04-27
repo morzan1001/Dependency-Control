@@ -47,33 +47,53 @@ EPSS_MEDIUM_THRESHOLD: float = 0.01  # >= 1% - Moderate exploitation risk
 EPSS_LOW_THRESHOLD: float = 0.0  # < 1% - Low exploitation risk
 
 
+# SPDX license identifiers — defined once so they can be referenced from
+# both LICENSE_URL_PATTERNS (URL-based detection) and LICENSE_ALIASES
+# (display-name normalisation) without typo risk or ID drift.
+SPDX_GPL_3_0 = "GPL-3.0"
+SPDX_GPL_3_0_OR_LATER = "GPL-3.0-or-later"
+SPDX_GPL_2_0 = "GPL-2.0"
+SPDX_GPL_2_0_OR_LATER = "GPL-2.0-or-later"
+SPDX_LGPL_3_0 = "LGPL-3.0"
+SPDX_LGPL_2_1 = "LGPL-2.1"
+SPDX_LGPL_2_1_OR_LATER = "LGPL-2.1-or-later"
+SPDX_LGPL_2_0 = "LGPL-2.0"
+SPDX_AGPL_3_0 = "AGPL-3.0"
+SPDX_APACHE_2_0 = "Apache-2.0"
+SPDX_APACHE_1_1 = "Apache-1.1"
+SPDX_MIT = "MIT"
+SPDX_BSD_3_CLAUSE = "BSD-3-Clause"
+SPDX_BSD_2_CLAUSE = "BSD-2-Clause"
+SPDX_MPL_2_0 = "MPL-2.0"
+SPDX_MPL_1_1 = "MPL-1.1"
+
 # License URL Patterns
 # Common license URL patterns to SPDX ID mapping
 LICENSE_URL_PATTERNS: Dict[str, str] = {
     # GNU Licenses
-    r"gnu\.org/licenses/gpl-3\.0": "GPL-3.0",
-    r"gnu\.org/licenses/gpl-2\.0": "GPL-2.0",
-    r"gnu\.org/licenses/lgpl-3\.0": "LGPL-3.0",
-    r"gnu\.org/licenses/lgpl-2\.1": "LGPL-2.1",
-    r"gnu\.org/licenses/lgpl-2\.0": "LGPL-2.0",
-    r"gnu\.org/licenses/agpl-3\.0": "AGPL-3.0",
+    r"gnu\.org/licenses/gpl-3\.0": SPDX_GPL_3_0,
+    r"gnu\.org/licenses/gpl-2\.0": SPDX_GPL_2_0,
+    r"gnu\.org/licenses/lgpl-3\.0": SPDX_LGPL_3_0,
+    r"gnu\.org/licenses/lgpl-2\.1": SPDX_LGPL_2_1,
+    r"gnu\.org/licenses/lgpl-2\.0": SPDX_LGPL_2_0,
+    r"gnu\.org/licenses/agpl-3\.0": SPDX_AGPL_3_0,
     r"gnu\.org/licenses/fdl": "GFDL-1.3",
     # Apache
-    r"apache\.org/licenses/LICENSE-2\.0": "Apache-2.0",
-    r"apache\.org/licenses/LICENSE-1\.1": "Apache-1.1",
+    r"apache\.org/licenses/LICENSE-2\.0": SPDX_APACHE_2_0,
+    r"apache\.org/licenses/LICENSE-1\.1": SPDX_APACHE_1_1,
     # MIT
-    r"opensource\.org/licenses/MIT": "MIT",
-    r"mit-license\.org": "MIT",
+    r"opensource\.org/licenses/MIT": SPDX_MIT,
+    r"mit-license\.org": SPDX_MIT,
     # BSD
-    r"opensource\.org/licenses/BSD-3-Clause": "BSD-3-Clause",
-    r"opensource\.org/licenses/BSD-2-Clause": "BSD-2-Clause",
+    r"opensource\.org/licenses/BSD-3-Clause": SPDX_BSD_3_CLAUSE,
+    r"opensource\.org/licenses/BSD-2-Clause": SPDX_BSD_2_CLAUSE,
     # Creative Commons
     r"creativecommons\.org/licenses/by/4\.0": "CC-BY-4.0",
     r"creativecommons\.org/licenses/by-sa/4\.0": "CC-BY-SA-4.0",
     r"creativecommons\.org/publicdomain/zero/1\.0": "CC0-1.0",
     # Mozilla
-    r"mozilla\.org/MPL/2\.0": "MPL-2.0",
-    r"mozilla\.org/MPL/1\.1": "MPL-1.1",
+    r"mozilla\.org/MPL/2\.0": SPDX_MPL_2_0,
+    r"mozilla\.org/MPL/1\.1": SPDX_MPL_1_1,
     # Eclipse
     r"eclipse\.org/legal/epl-2\.0": "EPL-2.0",
     r"eclipse\.org/legal/epl-v10": "EPL-1.0",
@@ -90,46 +110,46 @@ LICENSE_URL_PATTERNS: Dict[str, str] = {
 # License Aliases
 # Common license names to SPDX ID mapping
 LICENSE_ALIASES: Dict[str, str] = {
-    "MIT/X11": "MIT",
-    "Expat": "MIT",
+    "MIT/X11": SPDX_MIT,
+    "Expat": SPDX_MIT,
     # Apache variations
-    "Apache 2.0": "Apache-2.0",
-    "Apache License 2.0": "Apache-2.0",
-    "Apache License, Version 2.0": "Apache-2.0",
-    "ASL 2.0": "Apache-2.0",
+    "Apache 2.0": SPDX_APACHE_2_0,
+    "Apache License 2.0": SPDX_APACHE_2_0,
+    "Apache License, Version 2.0": SPDX_APACHE_2_0,
+    "ASL 2.0": SPDX_APACHE_2_0,
     # BSD variations
-    "BSD": "BSD-3-Clause",
-    "BSD License": "BSD-3-Clause",
-    "BSD-2": "BSD-2-Clause",
-    "BSD-3": "BSD-3-Clause",
-    "Simplified BSD": "BSD-2-Clause",
-    "New BSD": "BSD-3-Clause",
-    "Modified BSD": "BSD-3-Clause",
+    "BSD": SPDX_BSD_3_CLAUSE,
+    "BSD License": SPDX_BSD_3_CLAUSE,
+    "BSD-2": SPDX_BSD_2_CLAUSE,
+    "BSD-3": SPDX_BSD_3_CLAUSE,
+    "Simplified BSD": SPDX_BSD_2_CLAUSE,
+    "New BSD": SPDX_BSD_3_CLAUSE,
+    "Modified BSD": SPDX_BSD_3_CLAUSE,
     # GPL variations
-    "GPL": "GPL-2.0-or-later",
-    "GPLv2": "GPL-2.0",
-    "GPLv2+": "GPL-2.0-or-later",
-    "GPLv3": "GPL-3.0",
-    "GPLv3+": "GPL-3.0-or-later",
-    "GPL v2": "GPL-2.0",
-    "GPL v3": "GPL-3.0",
-    "GNU GPL": "GPL-2.0-or-later",
-    "GNU GPLv2": "GPL-2.0",
-    "GNU GPLv3": "GPL-3.0",
+    "GPL": SPDX_GPL_2_0_OR_LATER,
+    "GPLv2": SPDX_GPL_2_0,
+    "GPLv2+": SPDX_GPL_2_0_OR_LATER,
+    "GPLv3": SPDX_GPL_3_0,
+    "GPLv3+": SPDX_GPL_3_0_OR_LATER,
+    "GPL v2": SPDX_GPL_2_0,
+    "GPL v3": SPDX_GPL_3_0,
+    "GNU GPL": SPDX_GPL_2_0_OR_LATER,
+    "GNU GPLv2": SPDX_GPL_2_0,
+    "GNU GPLv3": SPDX_GPL_3_0,
     # LGPL variations
-    "LGPL": "LGPL-2.1-or-later",
-    "LGPLv2": "LGPL-2.1",
-    "LGPLv2.1": "LGPL-2.1",
-    "LGPLv3": "LGPL-3.0",
-    "GNU LGPL": "LGPL-2.1-or-later",
+    "LGPL": SPDX_LGPL_2_1_OR_LATER,
+    "LGPLv2": SPDX_LGPL_2_1,
+    "LGPLv2.1": SPDX_LGPL_2_1,
+    "LGPLv3": SPDX_LGPL_3_0,
+    "GNU LGPL": SPDX_LGPL_2_1_OR_LATER,
     # AGPL variations
-    "AGPL": "AGPL-3.0",
-    "AGPLv3": "AGPL-3.0",
-    "GNU AGPL": "AGPL-3.0",
+    "AGPL": SPDX_AGPL_3_0,
+    "AGPLv3": SPDX_AGPL_3_0,
+    "GNU AGPL": SPDX_AGPL_3_0,
     # MPL variations
-    "MPL": "MPL-2.0",
-    "MPL 2.0": "MPL-2.0",
-    "Mozilla Public License 2.0": "MPL-2.0",
+    "MPL": SPDX_MPL_2_0,
+    "MPL 2.0": SPDX_MPL_2_0,
+    "Mozilla Public License 2.0": SPDX_MPL_2_0,
     # Other
     "Public Domain": "Unlicense",
     "CC0": "CC0-1.0",
