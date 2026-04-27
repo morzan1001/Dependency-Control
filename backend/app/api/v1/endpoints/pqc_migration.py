@@ -76,23 +76,21 @@ async def _fire_pqc_webhook(
     logged but never re-raised, because the plan has already been delivered
     to the caller by the time this background task runs.
     """
-    try:
-        from app.services.webhooks import webhook_service
+    from app.services.webhooks import webhook_service
 
-        payload = {
-            "event": WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "scope": resolved.scope,
-            "scope_id": resolved.scope_id,
-            "total_items": resp.summary.total_items,
-            "status_counts": resp.summary.status_counts,
-            "mappings_version": resp.mappings_version,
-        }
-        await webhook_service.trigger_webhooks(
-            db,
-            event_type=WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
-            payload=payload,
-            project_id=resolved.scope_id if resolved.scope == "project" else None,
-        )
-    except Exception:
-        logger.exception("PQC migration-plan webhook dispatch failed (non-blocking)")
+    payload = {
+        "event": WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "scope": resolved.scope,
+        "scope_id": resolved.scope_id,
+        "total_items": resp.summary.total_items,
+        "status_counts": resp.summary.status_counts,
+        "mappings_version": resp.mappings_version,
+    }
+    await webhook_service.safe_trigger_webhooks(
+        db,
+        event_type=WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
+        payload=payload,
+        project_id=resolved.scope_id if resolved.scope == "project" else None,
+        context="pqc_migration",
+    )

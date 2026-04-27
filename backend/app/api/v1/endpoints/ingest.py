@@ -387,28 +387,22 @@ async def ingest_sbom(
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 
     # Fire sbom.ingested webhook (best-effort; never blocks ingest)
-    try:
-        await webhook_service.trigger_webhooks(
-            db,
-            WEBHOOK_EVENT_SBOM_INGESTED,
-            {
-                "scan_id": scan_id,
-                "project_id": str(project.id),
-                "pipeline_id": data.pipeline_id,
-                "commit_hash": data.commit_hash,
-                "branch": data.branch,
-                "sboms_processed": sboms_processed,
-                "sboms_failed": sboms_failed,
-                "dependencies_count": total_deps_inserted,
-            },
-            str(project.id),
-        )
-    except Exception as exc:
-        logger.warning(
-            "sbom_ingest: webhook dispatch failed for scan %s (non-fatal): %s",
-            scan_id,
-            exc,
-        )
+    await webhook_service.safe_trigger_webhooks(
+        db,
+        WEBHOOK_EVENT_SBOM_INGESTED,
+        {
+            "scan_id": scan_id,
+            "project_id": str(project.id),
+            "pipeline_id": data.pipeline_id,
+            "commit_hash": data.commit_hash,
+            "branch": data.branch,
+            "sboms_processed": sboms_processed,
+            "sboms_failed": sboms_failed,
+            "dependencies_count": total_deps_inserted,
+        },
+        str(project.id),
+        context="sbom_ingest",
+    )
 
     # Build response message
     message = "Analysis queued successfully"

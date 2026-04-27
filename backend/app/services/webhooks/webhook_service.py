@@ -529,6 +529,40 @@ class WebhookService:
 
         return webhooks
 
+    async def safe_trigger_webhooks(
+        self,
+        db: AsyncIOMotorDatabase,
+        event_type: str,
+        payload: "Mapping[str, Any]",
+        project_id: Optional[str] = None,
+        *,
+        context: str = "webhook",
+    ) -> None:
+        """Fire-and-forget wrapper for ``trigger_webhooks``.
+
+        Webhook delivery is **never** load-bearing for the surrounding
+        operation: a failed dispatch must not roll back the ingest, audit
+        write, report generation, etc. that triggered it. Every caller
+        used to wrap ``trigger_webhooks`` in the same try/except + logger
+        boilerplate; this helper centralises that pattern.
+
+        ``context`` is included in the log message so log readers know
+        which subsystem failed to dispatch.
+        """
+        try:
+            await self.trigger_webhooks(
+                db,
+                event_type=event_type,
+                payload=payload,
+                project_id=project_id,
+            )
+        except Exception:
+            logger.exception(
+                "%s: webhook dispatch for %s failed (non-blocking)",
+                context,
+                event_type,
+            )
+
     async def trigger_webhooks(
         self,
         db: AsyncIOMotorDatabase,

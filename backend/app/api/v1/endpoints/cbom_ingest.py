@@ -197,25 +197,19 @@ async def _persist_crypto_assets(
         )
 
         # Fire crypto_asset.ingested webhook (best-effort; never blocks ingest)
-        try:
-            summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
-            await webhook_service.trigger_webhooks(
-                db,
-                WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
-                {
-                    "scan_id": scan_id,
-                    "project_id": project_id,
-                    "total": summary["total"],
-                    "by_type": summary["by_type"],
-                },
-                project_id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "cbom_ingest: webhook dispatch failed for scan %s (non-fatal): %s",
-                scan_id,
-                exc,
-            )
+        summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
+        await webhook_service.safe_trigger_webhooks(
+            db,
+            WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
+            {
+                "scan_id": scan_id,
+                "project_id": project_id,
+                "total": summary["total"],
+                "by_type": summary["by_type"],
+            },
+            project_id,
+            context="cbom_ingest",
+        )
 
         # Register the CBOM result on the scan and trigger the aggregation
         # worker — identical flow to SBOM ingest (register_result with

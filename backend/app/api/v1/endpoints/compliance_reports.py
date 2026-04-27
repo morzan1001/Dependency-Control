@@ -215,31 +215,29 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
     except Exception:
         logger.exception("Compliance report engine failed for %s", report.id)
 
-    try:
-        from app.services.webhooks import webhook_service
+    from app.services.webhooks import webhook_service
 
-        fresh = await ComplianceReportRepository(db).get(report.id)
-        fresh_status = None
-        fresh_summary: dict = {}
-        if fresh is not None:
-            fresh_status = _status_str(fresh.status)
-            fresh_summary = fresh.summary or {}
-        payload = {
-            "event": WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "report_id": report.id,
-            "framework": _status_str(report.framework),
-            "format": _status_str(report.format),
-            "scope": report.scope,
-            "scope_id": report.scope_id,
-            "status": fresh_status,
-            "summary": fresh_summary,
-        }
-        await webhook_service.trigger_webhooks(
-            db,
-            event_type=WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
-            payload=payload,
-            project_id=report.scope_id if report.scope == "project" else None,
-        )
-    except Exception:
-        logger.exception("Compliance-report webhook dispatch failed (non-blocking)")
+    fresh = await ComplianceReportRepository(db).get(report.id)
+    fresh_status = None
+    fresh_summary: dict = {}
+    if fresh is not None:
+        fresh_status = _status_str(fresh.status)
+        fresh_summary = fresh.summary or {}
+    payload = {
+        "event": WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "report_id": report.id,
+        "framework": _status_str(report.framework),
+        "format": _status_str(report.format),
+        "scope": report.scope,
+        "scope_id": report.scope_id,
+        "status": fresh_status,
+        "summary": fresh_summary,
+    }
+    await webhook_service.safe_trigger_webhooks(
+        db,
+        event_type=WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
+        payload=payload,
+        project_id=report.scope_id if report.scope == "project" else None,
+        context="compliance_reports",
+    )

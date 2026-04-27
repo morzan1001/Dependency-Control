@@ -138,6 +138,11 @@ async def record_policy_change(
         get_analytics_cache().clear()
     except Exception:
         logger.exception("Analytics cache invalidation failed (non-blocking)")
+    # Defensive: _dispatch_webhook delegates to safe_trigger_webhooks
+    # internally, but the surrounding payload construction (entry attribute
+    # access, action.value) could still raise on an unexpected entry shape.
+    # Belt-and-braces: keep the outer try so audit recording never fails
+    # because of a downstream issue.
     try:
         await _dispatch_webhook(db, entry, event_type=WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED)
     except Exception:
@@ -196,11 +201,12 @@ async def _dispatch_webhook(
         "comment": entry.comment,
         "reverted_from_version": entry.reverted_from_version,
     }
-    await webhook_service.trigger_webhooks(
+    await webhook_service.safe_trigger_webhooks(
         db,
         event_type=event_type,
         payload=payload,
         project_id=entry.project_id,
+        context=f"policy_audit:{policy_type}",
     )
 
 
