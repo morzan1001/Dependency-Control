@@ -448,7 +448,7 @@ class ChatToolRegistry:
             waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": args["project_id"]})
             if waiver:
                 return {"waived": True, "waiver": _serialize_doc(waiver)}
-            global_waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "global": True})
+            global_waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
             if global_waiver:
                 return {"waived": True, "waiver": _serialize_doc(global_waiver), "scope": "global"}
             return {"waived": False}
@@ -462,7 +462,7 @@ class ChatToolRegistry:
             return {"waivers": [_serialize_doc(w) for w in waivers]}
 
         if tool_name == "list_global_waivers":
-            cursor = db["waivers"].find({"global": True}, limit=100)
+            cursor = db["waivers"].find({"project_id": None}, limit=100)
             waivers = await cursor.to_list(length=100)
             return {"waivers": [_serialize_doc(w) for w in waivers]}
 
@@ -1039,9 +1039,11 @@ class ChatToolRegistry:
             cutoff = now + _td(days=days)
             cursor = db["waivers"].find(
                 {
-                    "project_id": {"$in": project_ids},
+                    "$or": [
+                        {"project_id": {"$in": project_ids}},
+                        {"project_id": None},
+                    ],
                     "expiration_date": {"$gte": now, "$lte": cutoff},
-                    "status": {"$ne": "expired"},
                 },
                 sort=[("expiration_date", 1)],
                 limit=25,

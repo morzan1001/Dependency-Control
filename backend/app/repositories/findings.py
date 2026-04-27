@@ -100,9 +100,15 @@ class FindingRepository(BaseRepository[FindingRecord]):
         scan_ids: List[str],
         finding_type: str = "vulnerability",
     ) -> Dict[str, int]:
-        """Returns {severity: count} aggregated across `scan_ids`."""
+        """Returns {severity: count} of non-waived findings aggregated across `scan_ids`."""
         pipeline: List[Dict[str, Any]] = [
-            {"$match": {"scan_id": {"$in": scan_ids}, "type": finding_type}},
+            {
+                "$match": {
+                    "scan_id": {"$in": scan_ids},
+                    "type": finding_type,
+                    "waived": {"$ne": True},
+                }
+            },
             {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
         ]
         results = await self.aggregate(pipeline)
@@ -113,13 +119,14 @@ class FindingRepository(BaseRepository[FindingRecord]):
         project_ids: List[str],
         component_names: List[str],
     ) -> Dict[str, int]:
-        """Returns {component_name: vulnerability_count} across `project_ids`."""
+        """Returns {component_name: non_waived_vulnerability_count} across `project_ids`."""
         pipeline: List[Dict[str, Any]] = [
             {
                 "$match": {
                     "project_id": {"$in": project_ids},
                     "component": {"$in": component_names},
                     "type": "vulnerability",
+                    "waived": {"$ne": True},
                 }
             },
             {"$group": {"_id": "$component", "count": {"$sum": 1}}},
