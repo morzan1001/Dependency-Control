@@ -1,8 +1,4 @@
-"""Pure cross-linking helpers extracted from ResultAggregator.
-
-These functions only mutate the *Finding* objects passed in; they do not
-touch any aggregator state, which makes them easy to test in isolation.
-"""
+"""Cross-linking helpers that mutate Finding objects without touching aggregator state."""
 
 from __future__ import annotations
 
@@ -18,9 +14,7 @@ def cross_link_pair(f1: Finding, f2: Finding) -> None:
 
 
 def add_context_to_vulnerability(vuln_finding: Finding, other_finding: Finding) -> None:
-    """
-    Adds contextual information from other finding types to a vulnerability finding.
-    """
+    """Add contextual info from other finding types onto a vulnerability finding."""
     if vuln_finding.type != FindingType.VULNERABILITY:
         return
 

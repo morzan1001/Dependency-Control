@@ -1,9 +1,4 @@
-"""Pure component-name helpers extracted from ResultAggregator.
-
-These are stateless string utilities used during aggregation:
-  * normalize_component  - lowercase + strip
-  * extract_artifact_name - reduce qualified names to a single artifact id
-"""
+"""Stateless component-name helpers used during aggregation."""
 
 from __future__ import annotations
 
