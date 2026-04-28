@@ -21,6 +21,7 @@ import httpx
 from prometheus_client import Counter
 
 from app.core.http_utils import InstrumentedAsyncClient
+from app.services.webhooks.validation import assert_safe_webhook_target
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
     BaseWebhookPayload,
@@ -334,6 +335,8 @@ class WebhookService:
 
         while retry_count < self.max_retries:
             try:
+                await assert_safe_webhook_target(webhook.url)
+
                 async with InstrumentedAsyncClient("Webhook Delivery", timeout=self.timeout) as client:
                     response = await client.post(
                         webhook.url,
@@ -367,6 +370,13 @@ class WebhookService:
                         )
                         last_error = f"HTTP {response.status_code}: {response.text[:200]}"
 
+            except ValueError as e:
+                # Blocked by SSRF policy — don't retry.
+                logger.warning(
+                    f"Webhook {webhook.id} blocked for {event_type}: {e}"
+                )
+                last_error = f"Blocked target: {e}"
+                break
             except httpx.TimeoutException:
                 logger.warning(f"Webhook {webhook.id} timed out for {event_type} (attempt {retry_count + 1})")
                 last_error = "Timeout"
@@ -734,6 +744,8 @@ class WebhookService:
         start_time = time.monotonic()
 
         try:
+            await assert_safe_webhook_target(webhook.url)
+
             async with InstrumentedAsyncClient("Webhook Test", timeout=self.timeout) as client:
                 response = await client.post(
                     webhook.url,
@@ -758,6 +770,13 @@ class WebhookService:
                         "response_time_ms": round(response_time_ms, 2),
                     }
 
+        except ValueError as e:
+            return {
+                "success": False,
+                "status_code": None,
+                "error": f"Blocked target: {e}",
+                "response_time_ms": None,
+            }
         except httpx.TimeoutException:
             return {
                 "success": False,

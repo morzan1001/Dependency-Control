@@ -773,8 +773,12 @@ WEBHOOK_HEADER_SIGNATURE = "X-Webhook-Signature"
 WEBHOOK_HEADER_TEST = "X-Webhook-Test"
 WEBHOOK_USER_AGENT_VALUE = "DependencyControl-Webhook/1.0"
 
-# Webhook URL validation prefixes
-WEBHOOK_ALLOWED_URL_PREFIXES = ("https://", "http://localhost", "http://127.0.0.1")
+# Webhook URL validation
+WEBHOOK_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+# Cloud-metadata hostnames — never an allowed webhook target.
+WEBHOOK_BLOCKED_HOSTNAMES = frozenset(
+    {"metadata.google.internal", "metadata.goog", "metadata"}
+)
 
 SCAN_STATUS_PENDING = "pending"
 SCAN_STATUS_PROCESSING = "processing"

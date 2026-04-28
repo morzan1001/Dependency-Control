@@ -69,7 +69,6 @@ class Webhook(BaseModel):
     @field_validator("url")
     @classmethod
     def _validate_url(cls, v: str) -> str:
-        """Validate that URL is HTTPS (except for localhost in development)."""
         return validate_webhook_url(v)
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
