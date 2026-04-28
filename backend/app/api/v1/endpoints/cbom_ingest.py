@@ -145,6 +145,13 @@ async def ingest_cbom(
     scan_ctx = await manager.find_or_create_scan(payload)
     scan_id = scan_ctx.scan_id
 
+    # Tag the scan as CBOM-bearing so the analysis engine forces crypto
+    # analyzers to run even when no SBOM is attached (engine.py keys on
+    # scan_type == "cbom" for the synthesised empty-SBOM pass).
+    from app.repositories.scans import ScanRepository
+
+    await ScanRepository(db).update_raw(scan_id, {"$set": {"scan_type": "cbom"}})
+
     background_tasks.add_task(
         _persist_crypto_assets,
         db,

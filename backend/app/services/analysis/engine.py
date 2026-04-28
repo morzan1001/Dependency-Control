@@ -27,7 +27,7 @@ from app.services.analyzers import Analyzer
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.reachability_enrichment import enrich_findings_with_reachability
 from app.services.sbom_parser import parse_sbom
-from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers, is_crypto_analyzer
+from app.services.analysis.registry import CRYPTO_ANALYZERS, VULNERABILITY_ANALYZERS, analyzers, is_crypto_analyzer
 from app.services.analysis.stats import (
     build_epss_kev_summary,
     build_reachability_summary,
@@ -276,7 +276,9 @@ async def _process_sbom(
 ) -> List[str]:
     """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
     current_sbom = await _resolve_sbom(item, fs, aggregator)
-    if not current_sbom:
+    # CBOM-only scans synthesise an empty {} so the analyzer loop fires;
+    # only bail when resolution itself failed (returned None).
+    if current_sbom is None:
         return []
 
     fallback_source = f"SBOM #{index + 1}"
@@ -332,6 +334,12 @@ async def _process_sbom(
         effective_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
     else:
         effective_analyzers = [n for n in active_analyzers if n not in CRYPTO_ANALYZERS]
+
+    # CBOM-only scans pass a synthesised empty {} so the analyzer loop runs;
+    # SBOM-format scanners (trivy, grype, osv, deps_dev) would crash on it,
+    # so drop them when no real SBOM content was resolved.
+    if not parsed_components and scan_type == "cbom":
+        effective_analyzers = [n for n in effective_analyzers if n not in VULNERABILITY_ANALYZERS]
 
     # Build base settings dict, merging project license_policy if available
     base_settings = system_settings.model_dump() if system_settings else {}

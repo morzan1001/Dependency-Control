@@ -119,6 +119,10 @@ class Scan(BaseModel):
     # This allows us to keep the Scan document small while preserving the raw data.
     sbom_refs: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Marks scans whose only source is a CBOM (no SBOM); the analysis engine
+    # forces crypto analyzers for these even when no SBOM was attached.
+    scan_type: Optional[str] = None
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = "pending"
     retry_count: int = 0
