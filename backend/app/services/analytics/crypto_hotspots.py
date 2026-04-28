@@ -134,7 +134,7 @@ class CryptoHotspotService:
                 )
             )
 
-        await self._enrich_with_findings(out, project_ids, scan_ids)
+        await self._enrich_with_findings(out, project_ids, scan_ids, group_by)
         return out
 
     def _group_key_stage(self, group_by: GroupBy) -> Any:
@@ -165,8 +165,14 @@ class CryptoHotspotService:
         items: List[HotspotEntry],
         project_ids: Optional[List[str]],
         scan_ids: List[str],
+        group_by: GroupBy,
     ) -> None:
         if not items:
+            return
+        join_field = self._finding_join_field(group_by)
+        if join_field is None:
+            # severity/weakness_tag don't have a clean per-asset join into findings;
+            # leave finding_count/severity_mix at their defaults.
             return
         match: Dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
@@ -179,7 +185,7 @@ class CryptoHotspotService:
             {
                 "$group": {
                     "_id": {
-                        "key": "$details.rule_id",
+                        "key": join_field,
                         "severity": "$severity",
                     },
                     "count": {"$sum": 1},
@@ -190,14 +196,32 @@ class CryptoHotspotService:
         total: Dict[str, int] = {}
         async for row in self.db.findings.aggregate(pipeline):
             key = row["_id"].get("key") or ""
+            if not key:
+                continue
             sev = row["_id"].get("severity") or "UNKNOWN"
-            mix.setdefault(key, {})[sev] = row["count"]
+            mix.setdefault(key, {})[sev] = mix.setdefault(key, {}).get(sev, 0) + row["count"]
             total[key] = total.get(key, 0) + row["count"]
 
         for item in items:
             if item.key in total:
                 item.finding_count = total[item.key]
                 item.severity_mix = mix[item.key]
+
+    @staticmethod
+    def _finding_join_field(group_by: GroupBy) -> Optional[str]:
+        """Map a hotspot grouping dimension to the matching findings field.
+
+        The crypto analyzer copies asset_name / asset_type / primitive into
+        finding.details, so we group findings on the same dimension as the
+        asset aggregation to make the enrichment join cleanly.
+        """
+        if group_by == "name":
+            return "$details.asset_name"
+        if group_by == "primitive":
+            return "$details.primitive"
+        if group_by == "asset_type":
+            return "$details.asset_type"
+        return None
 
     def _cache_key(
         self,
