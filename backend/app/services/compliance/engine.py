@@ -33,6 +33,7 @@ from app.services.compliance.renderers import RENDERER_REGISTRY
 logger = logging.getLogger(__name__)
 
 _DEFAULT_RETENTION_DAYS = 90
+_FINDINGS_LIMIT = 20000
 
 
 class ComplianceReportEngine:
@@ -163,8 +164,24 @@ class ComplianceReportEngine:
         }
         if resolved.project_ids is not None:
             query["project_id"] = {"$in": resolved.project_ids}
-        cursor = db.findings.find(query).limit(20000)
-        return [doc async for doc in cursor]
+        # Drop fields no compliance framework reads to keep peak memory bounded.
+        projection = {
+            "description": 0,
+            "scanners": 0,
+            "found_in": 0,
+            "aliases": 0,
+            "related_findings": 0,
+        }
+        cursor = db.findings.find(query, projection).limit(_FINDINGS_LIMIT)
+        results = [doc async for doc in cursor]
+        if len(results) >= _FINDINGS_LIMIT:
+            logger.warning(
+                "Compliance evaluation hit findings cap (%d) for scope %s; "
+                "report may understate exposure — consider narrowing the scope",
+                _FINDINGS_LIMIT,
+                self._scope_description(resolved),
+            )
+        return results
 
     def _scope_description(self, resolved: ResolvedScope) -> str:
         if resolved.scope == "project":
