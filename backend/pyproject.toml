@@ -28,6 +28,7 @@ markdown = "^3.10"
 prometheus-client = "^0.25.0"
 aiosmtplib = "^5.1.0"
 aiobotocore = "^3.4.0"
+weasyprint = "^65.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"
@@ -54,6 +55,10 @@ warn_return_any = true
 [[tool.mypy.overrides]]
 module = "app.api.*"
 disable_error_code = ["dict-item"]
+
+[[tool.mypy.overrides]]
+module = ["yaml", "weasyprint"]
+ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 120

@@ -1,9 +1,3 @@
-/**
- * Permission System Constants and Helpers
- *
- * This module provides a centralized, fine-grained permission system.
- */
-
 export const Permissions = {
   // System Management
   SYSTEM_MANAGE: "system:manage",
@@ -431,15 +425,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
 ];
 
-/**
- * Check if user has the required permission(s).
- *
- * @param userPermissions - List of permissions the user has
- * @param required - Single permission or list of permissions to check
- * @param requireAll - If true, user must have ALL required permissions.
- *                     If false (default), user must have ANY of the required permissions.
- * @returns True if permission check passes, false otherwise.
- */
+/** When `requireAll` is true, all required permissions must match; otherwise any one suffices. */
 export function hasPermission(
   userPermissions: string[],
   required: string | string[],
@@ -448,21 +434,12 @@ export function hasPermission(
   const requiredList = Array.isArray(required) ? required : [required];
 
   if (requireAll) {
-    // User must have ALL required permissions
     return requiredList.every((perm) => userPermissions.includes(perm));
   } else {
-    // User must have ANY of the required permissions
     return requiredList.some((perm) => userPermissions.includes(perm));
   }
 }
 
-/**
- * Get list of permissions the user is missing.
- *
- * @param userPermissions - List of permissions the user has
- * @param required - Single permission or list of permissions to check
- * @returns List of permissions the user doesn't have.
- */
 export function getMissingPermissions(
   userPermissions: string[],
   required: string | string[]
@@ -471,10 +448,6 @@ export function getMissingPermissions(
   return requiredList.filter((perm) => !userPermissions.includes(perm));
 }
 
-/**
- * Get a flat list of all permission IDs from PERMISSION_GROUPS.
- * Useful for iteration and validation.
- */
 export function getAllPermissionIds(): string[] {
   return PERMISSION_GROUPS.flatMap((group) =>
     group.permissions.map((p) => p.id)

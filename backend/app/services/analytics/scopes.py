@@ -6,12 +6,19 @@ set of project_ids the caller is authorised to query.  Permission gating is
 enforced here so that individual query functions stay scope-agnostic.
 """
 
+import logging
 from dataclasses import dataclass
-from typing import List, Literal, Optional
+from typing import TYPE_CHECKING, Any, List, Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import PERMISSION_ANALYTICS_GLOBAL
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL
+
+logger = logging.getLogger(__name__)
+_USER_PROJECT_SCOPE_LIMIT = 10000
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 Scope = Literal["project", "team", "global", "user"]
 
@@ -30,7 +37,7 @@ class ResolvedScope:
 class ScopeResolver:
     SYSTEM_MANAGE = "system:manage"
 
-    def __init__(self, db: AsyncIOMotorDatabase, user):
+    def __init__(self, db: AsyncIOMotorDatabase, user: "User | Any") -> None:
         self.db = db
         self.user = user
 
@@ -61,16 +68,31 @@ class ScopeResolver:
         return ResolvedScope(scope="team", scope_id=scope_id, project_ids=project_ids)
 
     def _resolve_global(self) -> ResolvedScope:
-        perms = getattr(self.user, "permissions", frozenset()) or frozenset()
+        perms: frozenset[str] = getattr(self.user, "permissions", frozenset()) or frozenset()
         if PERMISSION_ANALYTICS_GLOBAL not in perms and self.SYSTEM_MANAGE not in perms:
-            raise ScopeResolutionError(
-                "Global analytics requires analytics:global or system:manage"
-            )
+            raise ScopeResolutionError("Global analytics requires analytics:global or system:manage")
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 
     async def _resolve_user(self) -> ResolvedScope:
+        # Super-users with PROJECT_READ_ALL see every project under the user
+        # scope. This matches the long-standing SBOM-analytics semantics so
+        # migrating SBOM endpoints to ScopeResolver causes no behaviour
+        # change for those callers.
+        from app.core.permissions import Permissions, has_permission
+
+        perms = getattr(self.user, "permissions", None)
+        if perms is not None and has_permission(perms, Permissions.PROJECT_READ_ALL):
+            all_ids = await self._list_all_project_ids()
+            return ResolvedScope(scope="user", scope_id=None, project_ids=all_ids)
+
         project_ids = await self._list_user_project_ids()
         return ResolvedScope(scope="user", scope_id=None, project_ids=project_ids)
+
+    async def _list_all_project_ids(self) -> List[str]:
+        """Return every project_id in the database — super-user escape hatch."""
+        cursor = self.db.projects.find({}, {"_id": 1}).limit(ANALYTICS_MAX_QUERY_LIMIT)
+        docs = await cursor.to_list(length=ANALYTICS_MAX_QUERY_LIMIT)
+        return [str(d["_id"]) for d in docs]
 
     async def _check_project_member(self, project_id: str) -> bool:
         from app.api.v1.helpers.projects import check_project_access
@@ -84,7 +106,7 @@ class ScopeResolver:
     async def _check_team_member(self, team_id: str) -> bool:
         from app.repositories.teams import TeamRepository
 
-        team = await TeamRepository(self.db).get(team_id)
+        team = await TeamRepository(self.db).get_by_id(team_id)
         if team is None:
             return False
         members = getattr(team, "members", [])
@@ -93,7 +115,9 @@ class ScopeResolver:
     async def _list_team_project_ids(self, team_id: str) -> List[str]:
         from app.repositories.projects import ProjectRepository
 
-        projects = await ProjectRepository(self.db).list_by_team(team_id, limit=1000)
+        projects = await ProjectRepository(self.db).find_many_minimal(
+            {"team_id": team_id}, limit=1000
+        )
         return [str(p.id) for p in projects]
 
     async def _list_user_project_ids(self) -> List[str]:
@@ -110,6 +134,13 @@ class ScopeResolver:
                 {"team_id": {"$in": team_ids}},
             ]
         }
-        cursor = self.db.projects.find(query, {"_id": 1}).limit(10000)
-        docs = await cursor.to_list(length=10000)
+        cursor = self.db.projects.find(query, {"_id": 1}).limit(_USER_PROJECT_SCOPE_LIMIT)
+        docs = await cursor.to_list(length=_USER_PROJECT_SCOPE_LIMIT)
+        if len(docs) >= _USER_PROJECT_SCOPE_LIMIT:
+            logger.warning(
+                "User %s has at least %d accessible projects; analytics scope is "
+                "truncated. Increase _USER_PROJECT_SCOPE_LIMIT or paginate.",
+                self.user.id,
+                _USER_PROJECT_SCOPE_LIMIT,
+            )
         return [str(d["_id"]) for d in docs]

@@ -1,6 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
-import type { AnalyticsScope, GroupingDimension, HotspotEntry } from "@/types/cryptoAnalytics";
+import { useAnalyticsList } from "@/hooks/useAnalyticsList";
+import { formatDate } from "@/lib/utils";
+import type {
+  AnalyticsScope,
+  GroupingDimension,
+  HotspotEntry,
+  HotspotResponse,
+} from "@/types/cryptoAnalytics";
 
 interface Props {
   scope: AnalyticsScope;
@@ -11,13 +17,16 @@ interface Props {
 }
 
 export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Props) {
-  const { data, isLoading } = useQuery({
+  const { items, isLoading, isEmpty } = useAnalyticsList<HotspotResponse, HotspotEntry>({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),
+    selectItems: (resp) => resp.items,
   });
 
-  if (isLoading) return <div className="p-4 text-sm text-muted-foreground">Loading hotspots…</div>;
-  if (!data || data.items.length === 0) {
+  if (isLoading) {
+    return <div className="p-4 text-sm text-muted-foreground">Loading hotspots…</div>;
+  }
+  if (isEmpty) {
     return <div className="p-4 text-sm text-muted-foreground">No hotspots in this scope.</div>;
   }
 
@@ -35,7 +44,7 @@ export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Prop
           </tr>
         </thead>
         <tbody>
-          {data.items.map((e) => (
+          {items.map((e) => (
             <tr
               key={e.key}
               className="border-t cursor-pointer hover:bg-muted/30"
@@ -52,7 +61,7 @@ export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Prop
                 ))}
               </td>
               <td className="p-2 text-xs">{e.project_ids.length}</td>
-              <td className="p-2 text-xs">{new Date(e.last_seen).toLocaleDateString()}</td>
+              <td className="p-2 text-xs">{formatDate(e.last_seen)}</td>
             </tr>
           ))}
         </tbody>

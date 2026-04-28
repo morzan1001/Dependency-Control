@@ -49,9 +49,6 @@ _WEAKNESS_SEVERITY_ORDER = [
 class ProtocolCipherSuiteAnalyzer(Analyzer):
     name = "crypto_protocol_cipher"
 
-    def __init__(self):
-        self._catalog = load_iana_catalog()
-
     async def analyze(
         self,
         sbom: Dict[str, Any],
@@ -65,16 +62,20 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
         if db is None or project_id is None or scan_id is None:
             return {"findings": []}
 
+        # Load (and on first call, fetch + Redis-cache) the IANA catalog
+        # lazily — this mirrors the OSV / deps_dev analyzers which also
+        # fetch their upstream data on-demand rather than at __init__ time.
+        self._catalog = await load_iana_catalog()
+
         try:
             assets = await CryptoAssetRepository(db).list_by_scan(
-                project_id, scan_id, limit=50_000,
+                project_id,
+                scan_id,
+                limit=50_000,
                 asset_type=CryptoAssetType.PROTOCOL,
             )
             effective = await CryptoPolicyResolver(db).resolve(project_id)
-            amp_rules = [
-                r for r in effective.rules
-                if r.enabled and r.match_cipher_weaknesses
-            ]
+            amp_rules = [r for r in effective.rules if r.enabled and r.match_cipher_weaknesses]
 
             findings: List[Dict[str, Any]] = []
             for proto in assets:
@@ -84,15 +85,26 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
                     if entry is None or not entry.weaknesses:
                         continue
                     severity = _severity_from_weaknesses(entry.weaknesses)
-                    findings.append(_build_finding(
-                        proto, suite_name, entry, severity, rule=None,
-                    ))
+                    findings.append(
+                        _build_finding(
+                            proto,
+                            suite_name,
+                            entry,
+                            severity,
+                            rule=None,
+                        )
+                    )
                     for rule in amp_rules:
                         if any(w in rule.match_cipher_weaknesses for w in entry.weaknesses):
-                            findings.append(_build_finding(
-                                proto, suite_name, entry,
-                                _rule_severity(rule), rule=rule,
-                            ))
+                            findings.append(
+                                _build_finding(
+                                    proto,
+                                    suite_name,
+                                    entry,
+                                    _rule_severity(rule),
+                                    rule=rule,
+                                )
+                            )
             return {"findings": findings}
         except Exception as e:
             logger.exception("protocol_cipher analyzer failed: %s", e)
@@ -117,18 +129,15 @@ def _rule_severity(rule: CryptoRule) -> Severity:
         return Severity.MEDIUM
 
 
-def _build_finding(proto: CryptoAsset, suite_name: str,
-                   entry: CipherSuiteEntry, severity: Severity,
-                   rule: Optional[CryptoRule]) -> Dict[str, Any]:
+def _build_finding(
+    proto: CryptoAsset, suite_name: str, entry: CipherSuiteEntry, severity: Severity, rule: Optional[CryptoRule]
+) -> Dict[str, Any]:
     comp_label = f"{proto.protocol_type or proto.name} {proto.version or ''} [bom-ref:{proto.bom_ref}]".strip()
     if rule is None:
         description = f"Cipher suite {suite_name} has weaknesses: {', '.join(entry.weaknesses)}"
     else:
         matched = [w for w in entry.weaknesses if w in rule.match_cipher_weaknesses]
-        description = (
-            f"Rule '{rule.rule_id}' flagged suite {suite_name}: "
-            f"{', '.join(matched)}"
-        )
+        description = f"Rule '{rule.rule_id}' flagged suite {suite_name}: {', '.join(matched)}"
     return {
         "id": str(uuid.uuid4()),
         "type": FindingType.CRYPTO_WEAK_PROTOCOL.value,

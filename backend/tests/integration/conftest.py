@@ -8,8 +8,7 @@ infrastructure is required.
 """
 
 import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -25,22 +24,70 @@ _SET_ON_INSERT = "$setOnInsert"
 # ---------------------------------------------------------------------------
 
 
+def _match_range_ops(value, ops_dict: dict) -> bool:
+    """Evaluate Mongo $gte/$lte/$gt/$lt operators against ``value``.
+
+    Consolidates what used to be two independent implementations (one here,
+    one on _FakeCollection) so every fake-DB matcher agrees. If a range op
+    is present but ``value`` is None the doc does not match — mirroring
+    MongoDB's behaviour with missing fields.
+    """
+    import operator as _op
+
+    _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
+    for op_key, cmp_fn in _CMP.items():
+        if op_key in ops_dict:
+            if value is None:
+                return False
+            try:
+                if not cmp_fn(value, ops_dict[op_key]):
+                    return False
+            except TypeError:
+                return False
+    return True
+
+
 def _fake_match_doc(doc: dict, query: dict) -> bool:
-    """Return True if doc matches a simple MongoDB query (field equality + $in + $regex)."""
+    """Return True if doc matches a simple MongoDB query.
+
+    Supports equality, ``$in``, ``$nin``, ``$ne``, ``$regex``, range ops
+    (``$lt``/``$lte``/``$gt``/``$gte``), ``$exists`` and top-level
+    ``$or``/``$and``.
+    """
     for key, condition in query.items():
+        # Top-level logical operators
+        if key == "$or":
+            if not any(_fake_match_doc(doc, sub) for sub in condition):
+                return False
+            continue
+        if key == "$and":
+            if not all(_fake_match_doc(doc, sub) for sub in condition):
+                return False
+            continue
+
         value = doc.get(key)
         if isinstance(condition, dict):
+            if "$exists" in condition:
+                field_present = key in doc
+                if bool(condition["$exists"]) != field_present:
+                    return False
             if "$in" in condition:
                 if value not in condition["$in"]:
                     return False
+            if "$nin" in condition:
+                if value in condition["$nin"]:
+                    return False
+            if "$ne" in condition:
+                if value == condition["$ne"]:
+                    return False
             if "$regex" in condition:
                 import re
+
                 flags = re.IGNORECASE if condition.get("$options") == "i" else 0
                 if not re.search(condition["$regex"], str(value or ""), flags):
                     return False
-            if "$gte" in condition or "$lte" in condition or "$gt" in condition or "$lt" in condition:
-                # For date range matching, always pass (trend tests use empty data anyway)
-                pass
+            if not _match_range_ops(value, condition):
+                return False
         else:
             if value != condition:
                 return False
@@ -89,7 +136,7 @@ def _fake_group(docs: list, group_spec: dict) -> list:
     id_expr = group_spec.get("_id")
     accumulators = {k: v for k, v in group_spec.items() if k != "_id"}
 
-    groups: dict = {}   # key -> accumulated state
+    groups: dict = {}  # key -> accumulated state
     key_order: list = []
 
     for doc in docs:
@@ -160,6 +207,8 @@ class _FakeCursor:
         self._query = query
         self._skip_n = 0
         self._limit_n = 0
+        self._sort_key: str | None = None
+        self._sort_dir: int = 1  # 1 = ASC, -1 = DESC
 
     def skip(self, n: int) -> "_FakeCursor":
         self._skip_n = n
@@ -169,20 +218,24 @@ class _FakeCursor:
         self._limit_n = n
         return self
 
+    def sort(self, key: str, direction: int = 1) -> "_FakeCursor":
+        self._sort_key = key
+        self._sort_dir = direction
+        return self
+
     def _matches(self, doc: dict) -> bool:
-        for k, v in self._query.items():
-            if isinstance(v, dict) and "$regex" in v:
-                import re
-                flags = re.IGNORECASE if v.get("$options") == "i" else 0
-                if not re.search(v["$regex"], str(doc.get(k, "")), flags):
-                    return False
-            elif doc.get(k) != v:
-                return False
-        return True
+        # Delegate to the shared matcher for full operator support
+        # ($or/$and/$exists/$in/$ne/range ops/$regex).
+        return _fake_match_doc(doc, self._query)
 
     async def to_list(self, length=None) -> list:
         results = [d for d in self._docs.values() if self._matches(d)]
-        results = results[self._skip_n:]
+        if self._sort_key is not None:
+            results.sort(
+                key=lambda d: (d.get(self._sort_key) is None, d.get(self._sort_key)),
+                reverse=(self._sort_dir == -1),
+            )
+        results = results[self._skip_n :]
         if self._limit_n:
             results = results[: self._limit_n]
         return results
@@ -218,20 +271,41 @@ class _FakeCollection:
         result.modified_count = 1
         return result
 
-    async def find_one(self, query):
-        key = query.get("_id") or query.get("_id")
-        if key:
-            return self._docs.get(key)
-        # search by field
+    async def find_one_and_update(self, query, update, return_document=False, **_kwargs):
+        """Atomic find + update. Supports $set and $addToSet operators."""
+        matched_key = None
+        for k, doc in self._docs.items():
+            if all(doc.get(fk) == fv for fk, fv in query.items()):
+                matched_key = k
+                break
+        if matched_key is None:
+            return None
+        before = dict(self._docs[matched_key])
+        set_ops = update.get("$set", {})
+        self._docs[matched_key].update(set_ops)
+        add_to_set = update.get("$addToSet", {})
+        for field, value in add_to_set.items():
+            current = self._docs[matched_key].get(field) or []
+            if value not in current:
+                current.append(value)
+            self._docs[matched_key][field] = current
+        # return_document=True (or ReturnDocument.AFTER) returns the updated doc
+        return self._docs[matched_key] if return_document else before
+
+    async def find_one(self, query, *_args, **_kwargs):
+        # Fast path: straight `_id` lookup (common in repository code).
+        if set(query.keys()) == {"_id"} and not isinstance(query["_id"], dict):
+            return self._docs.get(query["_id"])
+        # General path: full matcher (handles $or, $in, $exists, ranges).
         for doc in self._docs.values():
-            if all(doc.get(k) == v for k, v in query.items()):
+            if _fake_match_doc(doc, query):
                 return doc
         return None
 
     async def count_documents(self, query):
         count = 0
         for doc in self._docs.values():
-            if all(doc.get(k) == v for k, v in query.items()):
+            if self._doc_matches_query(doc, query):
                 count += 1
         return count
 
@@ -273,6 +347,11 @@ class _FakeCollection:
         result.modified_count = len(ops)
         return result
 
+    def _doc_matches_query(self, doc: dict, query: dict) -> bool:
+        # Delegate to the shared matcher so all fake-DB code paths agree
+        # on operator support ($or/$and/$exists/$in/$ne/range ops).
+        return _fake_match_doc(doc, query)
+
     async def delete_one(self, query):
         await asyncio.sleep(0)  # yield to event loop — keeps this a true coroutine
         matched_key = None
@@ -286,6 +365,15 @@ class _FakeCollection:
         result.deleted_count = 1 if matched_key is not None else 0
         return result
 
+    async def delete_many(self, query):
+        await asyncio.sleep(0)  # yield to event loop — keeps this a true coroutine
+        keys_to_delete = [k for k, doc in self._docs.items() if self._doc_matches_query(doc, query)]
+        for k in keys_to_delete:
+            del self._docs[k]
+        result = MagicMock()
+        result.deleted_count = len(keys_to_delete)
+        return result
+
     async def insert_one(self, doc: dict):
         key = doc.get("_id") or str(len(self._docs))
         self._docs[key] = dict(doc)
@@ -295,6 +383,16 @@ class _FakeCollection:
 
     async def create_index(self, *args, **kwargs):
         return None
+
+    async def distinct(self, field: str, filter: dict = None):
+        filter = filter or {}
+        values = []
+        for doc in self._docs.values():
+            if all(doc.get(k) == v for k, v in filter.items()):
+                val = doc.get(field)
+                if val not in values:
+                    values.append(val)
+        return values
 
     def find(self, query=None, projection=None):
         """Return a chainable cursor over matching documents.
@@ -395,6 +493,7 @@ class _FakeDb:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def _project():
     return _make_project()
@@ -438,6 +537,7 @@ async def client(db, _project):
 
             if not username:
                 from fastapi import HTTPException
+
                 raise HTTPException(status_code=401, detail="Invalid token")
 
             # Create a user object matching the token
@@ -451,12 +551,14 @@ async def client(db, _project):
             return user
         except Exception as e:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=401, detail=str(e)) from e
 
     async def _fake_get_current_active_user(current_user: User = Depends(_fake_get_current_user)) -> User:
         """Just return the user from get_current_user."""
         if not current_user.is_active:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=400, detail="Inactive user")
         return current_user
 
@@ -576,6 +678,37 @@ async def owner_auth_headers_proj(client, db):
     project_doc = project_p.model_dump(by_alias=True)
     await db.projects.update_one(
         {"_id": "p"},
+        {_SET_ON_INSERT: project_doc},
+        upsert=True,
+    )
+
+    payload = {
+        "sub": username,
+        "permissions": permissions,
+    }
+    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def owner_auth_headers_proj_p2(client, db):
+    """Auth headers for a user who owns project 'p2' (project-level admin role)."""
+    from app.models.project import ProjectMember, Project
+    from app.core.permissions import PRESET_USER, Permissions
+    from jose import jwt
+    from app.core.config import settings
+
+    username = "ownerp2"
+    permissions = list(PRESET_USER) + [Permissions.PROJECT_READ]
+
+    # Create project "p2" with this user as project-admin member
+    project_p2 = Project(id="p2", name="project-p2")
+    member = ProjectMember(user_id=username, role="admin")
+    project_p2.members = [member]
+
+    project_doc = project_p2.model_dump(by_alias=True)
+    await db.projects.update_one(
+        {"_id": "p2"},
         {_SET_ON_INSERT: project_doc},
         upsert=True,
     )

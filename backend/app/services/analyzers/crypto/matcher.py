@@ -6,7 +6,7 @@ match the asset. Glob matching is case-insensitive.
 """
 
 from fnmatch import fnmatchcase
-from typing import Optional
+from typing import Any, List, Optional
 
 from app.models.crypto_asset import CryptoAsset
 from app.schemas.cbom import CryptoPrimitive
@@ -47,15 +47,13 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
         asset_prim = _coerce_primitive(asset.primitive)
         if asset_prim not in _QUANTUM_VULNERABLE_PRIMITIVES:
             return False
-        if rule.match_name_patterns and not _name_or_variant_matches(
-            asset, rule.match_name_patterns
-        ):
+        if rule.match_name_patterns and not _name_or_variant_matches(asset, rule.match_name_patterns):
             return False
 
     return True
 
 
-def _coerce_primitive(v) -> Optional[CryptoPrimitive]:
+def _coerce_primitive(v: Any) -> Optional[CryptoPrimitive]:
     if v is None:
         return None
     if isinstance(v, CryptoPrimitive):
@@ -66,7 +64,7 @@ def _coerce_primitive(v) -> Optional[CryptoPrimitive]:
         return None
 
 
-def _name_or_variant_matches(asset: CryptoAsset, patterns) -> bool:
+def _name_or_variant_matches(asset: CryptoAsset, patterns: List[str]) -> bool:
     candidates = [asset.name]
     if asset.variant:
         candidates.append(asset.variant)
@@ -81,7 +79,7 @@ def _name_or_variant_matches(asset: CryptoAsset, patterns) -> bool:
     return False
 
 
-def _protocol_version_matches(asset: CryptoAsset, match_list) -> bool:
+def _protocol_version_matches(asset: CryptoAsset, match_list: List[str]) -> bool:
     proto = (asset.protocol_type or "").lower()
     ver = (asset.version or "").lower()
     combined_variants = {

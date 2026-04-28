@@ -1,8 +1,4 @@
-"""
-Invitation Repository
-
-Centralizes all database operations for invitations.
-"""
+"""Repository for invitations."""
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -26,11 +22,9 @@ class InvitationRepository:
         return await self.project_invitations.find_one({"_id": invitation_id})
 
     async def get_project_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """Get project invitation by token."""
         return await self.project_invitations.find_one({"token": token})
 
     async def create_project_invitation(self, invitation: ProjectInvitation) -> ProjectInvitation:
-        """Create a new project invitation."""
         await self.project_invitations.insert_one(invitation.model_dump(by_alias=True))
         return invitation
 
@@ -45,12 +39,10 @@ class InvitationRepository:
         skip: int = 0,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """Find invitations for a project."""
         cursor = self.project_invitations.find({"project_id": project_id}).skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
     async def delete_project_invitations_by_project(self, project_id: str) -> int:
-        """Delete all invitations for a project."""
         result = await self.project_invitations.delete_many({"project_id": project_id})
         return result.deleted_count
 
@@ -80,7 +72,6 @@ class InvitationRepository:
         )
 
     async def create_system_invitation(self, invitation: SystemInvitation) -> SystemInvitation:
-        """Create a new system invitation."""
         await self.system_invitations.insert_one(invitation.model_dump(by_alias=True))
         return invitation
 

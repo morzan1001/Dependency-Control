@@ -2,9 +2,8 @@
 
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
-import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -37,17 +36,15 @@ def _asset_doc(**overrides):
 
 class TestBulkUpsertAndListByScan:
     def test_bulk_upsert_and_list_by_scan(self):
-        assets_data = [
-            _asset_doc(_id=f"asset-{i}", bom_ref=f"c{i}", name=f"algo-{i}")
-            for i in range(5)
-        ]
+        assets_data = [_asset_doc(_id=f"asset-{i}", bom_ref=f"c{i}", name=f"algo-{i}") for i in range(5)]
         collection = create_mock_collection(find=assets_data)
         db = _make_mock_db(collection)
         repo = CryptoAssetRepository(db)
 
         assets = [
-            CryptoAsset(project_id="p1", scan_id="s1", bom_ref=f"c{i}",
-                        name=f"algo-{i}", asset_type=CryptoAssetType.ALGORITHM)
+            CryptoAsset(
+                project_id="p1", scan_id="s1", bom_ref=f"c{i}", name=f"algo-{i}", asset_type=CryptoAssetType.ALGORITHM
+            )
             for i in range(5)
         ]
         inserted = asyncio.run(repo.bulk_upsert("p1", "s1", assets, chunk_size=2))
@@ -59,10 +56,7 @@ class TestBulkUpsertAndListByScan:
 
 class TestListByLimit:
     def test_list_by_scan_respects_limit(self):
-        assets_data = [
-            _asset_doc(_id=f"asset-{i}", bom_ref=f"c{i}", name=f"a{i}")
-            for i in range(10)
-        ]
+        assets_data = [_asset_doc(_id=f"asset-{i}", bom_ref=f"c{i}", name=f"a{i}") for i in range(10)]
         collection = create_mock_collection(find=assets_data[:10])
         db = _make_mock_db(collection)
         repo = CryptoAssetRepository(db)
@@ -78,9 +72,7 @@ class TestListByAssetType:
         db = _make_mock_db(collection)
         repo = CryptoAssetRepository(db)
 
-        algos = asyncio.run(repo.list_by_scan(
-            "p3", "s3", limit=100, asset_type=CryptoAssetType.ALGORITHM
-        ))
+        algos = asyncio.run(repo.list_by_scan("p3", "s3", limit=100, asset_type=CryptoAssetType.ALGORITHM))
         assert len(algos) == 1
         assert algos[0].name == "RSA"
 

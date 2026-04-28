@@ -51,9 +51,11 @@ def _tool_name_from_metadata(tools: Any) -> Optional[str]:
     if isinstance(tools, dict):
         comps = tools.get("components") or []
         if comps:
-            return comps[0].get("name")
+            value = comps[0].get("name")
+            return str(value) if value is not None else None
     elif isinstance(tools, list) and tools:
-        return tools[0].get("name")
+        value = tools[0].get("name")
+        return str(value) if value is not None else None
     return None
 
 
@@ -61,9 +63,11 @@ def _tool_version_from_metadata(tools: Any) -> Optional[str]:
     if isinstance(tools, dict):
         comps = tools.get("components") or []
         if comps:
-            return comps[0].get("version")
+            value = comps[0].get("version")
+            return str(value) if value is not None else None
     elif isinstance(tools, list) and tools:
-        return tools[0].get("version")
+        value = tools[0].get("version")
+        return str(value) if value is not None else None
     return None
 
 
@@ -79,8 +83,7 @@ def parse_crypto_components(
             if asset is not None:
                 out.append(asset)
         except Exception as e:
-            logger.warning("cbom_parser: skipped component %s: %s",
-                           comp.get("bom-ref") or comp.get("name"), e)
+            logger.warning("cbom_parser: skipped component %s: %s", comp.get("bom-ref") or comp.get("name"), e)
     return out
 
 
@@ -98,8 +101,7 @@ def _parse_one(comp: Dict[str, Any], idx: int) -> Optional[ParsedCryptoAsset]:
     try:
         asset_type = CryptoAssetType(asset_type_raw)
     except ValueError:
-        logger.debug("cbom_parser: unknown assetType %r on %s, skipping",
-                     asset_type_raw, name)
+        logger.debug("cbom_parser: unknown assetType %r on %s, skipping", asset_type_raw, name)
         return None
 
     bom_ref = comp.get("bom-ref") or _synthesize_bom_ref(comp, idx)
@@ -168,8 +170,7 @@ def _populate_protocol(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
 def _populate_evidence(asset: ParsedCryptoAsset, evidence: Dict[str, Any]) -> None:
     occurrences = evidence.get("occurrences") or []
     asset.occurrence_locations = [
-        o.get("location") for o in occurrences
-        if isinstance(o, dict) and o.get("location")
+        str(o.get("location")) for o in occurrences if isinstance(o, dict) and o.get("location")
     ]
     detection = evidence.get("detectionContext")
     if isinstance(detection, str):

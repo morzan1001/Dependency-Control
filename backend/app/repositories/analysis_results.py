@@ -1,8 +1,4 @@
-"""
-Analysis Result Repository
-
-Centralizes all database operations for analysis results.
-"""
+"""Repository for analysis results."""
 
 from typing import List
 
@@ -21,7 +17,6 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
         scan_id: str,
         limit: int = 1000,
     ) -> List[AnalysisResult]:
-        """Find analysis results for a scan."""
         return await self.find_many({"scan_id": scan_id}, limit=limit)
 
     async def find_by_scan_ids(
@@ -29,9 +24,7 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
         scan_ids: List[str],
         limit: int = 1000,
     ) -> List[AnalysisResult]:
-        """Find analysis results for multiple scans."""
         return await self.find_many({"scan_id": {"$in": scan_ids}}, limit=limit)
 
     async def delete_by_scan(self, scan_id: str) -> int:
-        """Delete all analysis results for a scan."""
         return await self.delete_many({"scan_id": scan_id})

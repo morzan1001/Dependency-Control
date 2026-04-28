@@ -1,5 +1,4 @@
-// Permission constants are now in permissions.ts
-// Re-export for backwards compatibility
+// Re-export from permissions.ts for legacy import paths.
 export {
   PERMISSION_GROUPS,
   Permissions,
@@ -59,7 +58,6 @@ export const COPY_FEEDBACK_DELAY_MS = 2000;
 export const API_TIMEOUT_MS = 30000;
 export const API_REFRESH_TIMEOUT_MS = 10000;
 
-// Standardized React Query configurations
 export const QUERY_STALE_TIMES = {
   FAST: 2 * 60 * 1000,       // 2 min - frequently changing data (dashboard stats)
   STANDARD: 5 * 60 * 1000,   // 5 min - most data

@@ -9,7 +9,9 @@ from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 
 def _base_rule_kwargs(**overrides):
     base = dict(
-        rule_id="r", name="r", description="",
+        rule_id="r",
+        name="r",
+        description="",
         finding_type=FindingType.CRYPTO_CERT_EXPIRING_SOON,
         default_severity=Severity.HIGH,
         source=CryptoPolicySource.CUSTOM,
@@ -28,13 +30,15 @@ def test_expiry_fields_default_to_none():
 
 
 def test_expiry_fields_accept_positive_int():
-    r = CryptoRule(**_base_rule_kwargs(
-        expiry_critical_days=7,
-        expiry_high_days=30,
-        expiry_medium_days=90,
-        expiry_low_days=180,
-        validity_too_long_days=398,
-    ))
+    r = CryptoRule(
+        **_base_rule_kwargs(
+            expiry_critical_days=7,
+            expiry_high_days=30,
+            expiry_medium_days=90,
+            expiry_low_days=180,
+            validity_too_long_days=398,
+        )
+    )
     assert r.expiry_critical_days == 7
     assert r.expiry_high_days == 30
     assert r.expiry_medium_days == 90
@@ -53,8 +57,10 @@ def test_match_cipher_weaknesses_defaults_to_empty_list():
 
 
 def test_match_cipher_weaknesses_accepts_tag_list():
-    r = CryptoRule(**_base_rule_kwargs(
-        finding_type=FindingType.CRYPTO_WEAK_PROTOCOL,
-        match_cipher_weaknesses=["weak-cipher-rc4", "no-forward-secrecy"],
-    ))
+    r = CryptoRule(
+        **_base_rule_kwargs(
+            finding_type=FindingType.CRYPTO_WEAK_PROTOCOL,
+            match_cipher_weaknesses=["weak-cipher-rc4", "no-forward-secrecy"],
+        )
+    )
     assert "weak-cipher-rc4" in r.match_cipher_weaknesses

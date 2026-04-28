@@ -2,8 +2,8 @@
 /api/v1/ingest/cbom
 
 Accepts CycloneDX 1.6 CBOM payloads (or any CycloneDX SBOM whose components
-include ``type: cryptographic-asset`` entries).  Creates a scan record and
-persists CryptoAssets via CryptoAssetRepository.
+include ``type: cryptographic-asset`` entries).  Creates a scan record via
+``ScanManager`` and persists CryptoAssets via ``CryptoAssetRepository``.
 
 Authentication follows the same ``get_project_for_ingest`` dependency used by
 all other ingest endpoints — the project is resolved from the API key (or OIDC
@@ -11,12 +11,11 @@ Job-Token) attached to the request.  No ``project_name`` lookup is required.
 """
 
 import logging
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.deps import DatabaseDep
 from app.api import deps
@@ -25,8 +24,9 @@ from app.core.constants import WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.repositories.scans import ScanRepository
-from app.services.cbom_parser import parse_cbom
+from app.schemas.ingest import BaseIngest
+from app.services.cbom_parser import ParsedCBOM, parse_cbom
+from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
@@ -35,16 +35,67 @@ router = CustomAPIRouter()
 
 MAX_CRYPTO_ASSETS_PER_SCAN = 50_000
 
-# The same annotated dep used by every other ingest endpoint
 ProjectIngestDep = deps.get_project_for_ingest
 
 
-class CBOMIngestPayload(BaseModel):
-    scan_metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Optional CI/CD context (git_ref, commit_sha, etc.)",
-    )
-    cbom: Dict[str, Any] = Field(..., description="CycloneDX CBOM payload")
+class CBOMIngest(BaseIngest):
+    """CBOM ingest payload — flat shape aligned with SBOMIngest.
+
+    The canonical payload places the CycloneDX CBOM content under the
+    top-level ``cbom`` field and all CI metadata (pipeline_id, commit_hash,
+    branch, job_id, ...) as direct BaseIngest fields, exactly like
+    SBOMIngest. This mirrors the pipeline-template cboms.yml output.
+
+    For backward-compatibility with older clients, a nested
+    ``{"scan_metadata": {...}, "cbom": {...}}`` envelope is also accepted.
+    ``scan_metadata.git_ref`` maps to ``branch`` and
+    ``scan_metadata.commit_sha`` maps to ``commit_hash`` when the canonical
+    fields are absent.
+    """
+
+    cbom: Dict[str, Any] = Field(..., description="CycloneDX 1.6 CBOM payload")
+
+    # Loosen BaseIngest's required fields so legacy payloads without
+    # pipeline_id/commit_hash/branch can still ingest.
+    pipeline_id: Optional[int] = Field(None, description="Unique ID of the pipeline run")  # type: ignore[assignment]
+    commit_hash: Optional[str] = Field(None, description="Git commit hash")  # type: ignore[assignment]
+    branch: Optional[str] = Field(None, description="Git branch name")  # type: ignore[assignment]
+
+    # Accept unknown keys without validation errors (e.g. scan_metadata from
+    # legacy clients) and let the pre-validator fold them into the canonical
+    # fields.
+    model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fold_legacy_scan_metadata(cls, values: Any) -> Any:
+        """If a legacy ``scan_metadata`` envelope is present, fold its
+        fields onto the top-level payload so canonical validation picks
+        them up."""
+        if not isinstance(values, dict):
+            return values
+        meta = values.get("scan_metadata")
+        if not isinstance(meta, dict):
+            return values
+        # Only fill fields that are not already present on the envelope.
+        mappings = {
+            "branch": meta.get("git_ref") or meta.get("branch"),
+            "commit_hash": meta.get("commit_sha") or meta.get("commit_hash"),
+            "pipeline_id": meta.get("pipeline_id"),
+            "pipeline_iid": meta.get("pipeline_iid"),
+            "project_url": meta.get("project_url"),
+            "pipeline_url": meta.get("pipeline_url"),
+            "job_id": meta.get("job_id"),
+            "job_started_at": meta.get("job_started_at"),
+            "commit_message": meta.get("commit_message"),
+            "commit_tag": meta.get("commit_tag"),
+            "project_name": meta.get("project_name"),
+            "pipeline_user": meta.get("pipeline_user"),
+        }
+        for key, value in mappings.items():
+            if value is not None and values.get(key) is None:
+                values[key] = value
+        return values
 
 
 class CBOMIngestResponse(BaseModel):
@@ -60,13 +111,12 @@ class CBOMIngestResponse(BaseModel):
     tags=["cbom-ingest"],
 )
 async def ingest_cbom(
-    payload: CBOMIngestPayload,
+    payload: CBOMIngest,
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
     project: Project = Depends(ProjectIngestDep),
 ) -> CBOMIngestResponse:
-    """
-    Upload a CBOM for a project.
+    """Upload a CBOM for a project.
 
     Requires a valid **API Key** in the ``X-API-Key`` header (or an OIDC
     Job-Token).  The project is resolved from that credential — the same
@@ -74,6 +124,11 @@ async def ingest_cbom(
 
     The payload is parsed synchronously; assets are persisted in a
     background task so the response is returned quickly.
+
+    Scan lifecycle is managed by ``ScanManager``: the scan_id is derived
+    deterministically from (project, pipeline_id, commit_hash) so that
+    re-submission of the same CI run upserts instead of creating a
+    duplicate scan.
     """
     parsed = parse_cbom(payload.cbom)
 
@@ -83,39 +138,17 @@ async def ingest_cbom(
             detail="No cryptographic-asset components found in CBOM payload",
         )
 
-    scan_id = str(uuid.uuid4())
-    project_id = str(project.id)
-    now = datetime.now(timezone.utc)
-
-    # Create the scan document upfront so the background task can update it
-    scan_update: Dict[str, Any] = {
-        "$setOnInsert": {
-            "_id": scan_id,
-            "project_id": project_id,
-            "scan_type": "cbom",
-            "status": "pending",
-            "branch": payload.scan_metadata.get("git_ref", "unknown"),
-            "commit_hash": payload.scan_metadata.get("commit_sha"),
-            "sbom_refs": [],
-            "created_at": now,
-        },
-        "$set": {
-            "updated_at": now,
-            **{
-                k: v
-                for k, v in payload.scan_metadata.items()
-                if k not in ("git_ref", "commit_sha")
-            },
-        },
-    }
-
-    scan_repo = ScanRepository(db)
-    await scan_repo.upsert({"_id": scan_id}, scan_update)
+    # Route through ScanManager so the scan lifecycle (deterministic
+    # scan_id, CI metadata persistence, register_result -> analysis
+    # trigger) matches SBOM and other ingest paths exactly.
+    manager = ScanManager(db, project)
+    scan_ctx = await manager.find_or_create_scan(payload)
+    scan_id = scan_ctx.scan_id
 
     background_tasks.add_task(
         _persist_crypto_assets,
         db,
-        project_id,
+        project,
         scan_id,
         parsed,
     )
@@ -123,11 +156,16 @@ async def ingest_cbom(
     return CBOMIngestResponse(scan_id=scan_id, status="accepted")
 
 
-async def _persist_crypto_assets(db, project_id: str, scan_id: str, parsed) -> None:
-    """Background task: bulk-upsert CryptoAsset records then dispatch analysis."""
-    from app.core.worker import worker_manager
-
-    scan_repo = ScanRepository(db)
+async def _persist_crypto_assets(
+    db: AsyncIOMotorDatabase,
+    project: Project,
+    scan_id: str,
+    parsed: ParsedCBOM,
+) -> None:
+    """Background task: bulk-upsert CryptoAsset records then register
+    the scan result via ScanManager (which queues the analysis worker)."""
+    manager = ScanManager(db, project)
+    project_id = str(project.id)
     try:
         assets = parsed.assets
         partial = False
@@ -152,45 +190,36 @@ async def _persist_crypto_assets(db, project_id: str, scan_id: str, parsed) -> N
         await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
 
         logger.info(
-            "cbom_ingest: persisted %d assets for scan %s%s; queuing analysis",
+            "cbom_ingest: persisted %d assets for scan %s%s; registering result",
             len(crypto_assets),
             scan_id,
             " (partial)" if partial else "",
         )
 
         # Fire crypto_asset.ingested webhook (best-effort; never blocks ingest)
-        try:
-            summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
-            await webhook_service.trigger_webhooks(
-                db,
-                WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
-                {
-                    "scan_id": scan_id,
-                    "project_id": project_id,
-                    "total": summary["total"],
-                    "by_type": summary["by_type"],
-                },
-                project_id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "cbom_ingest: webhook dispatch failed for scan %s (non-fatal): %s",
-                scan_id,
-                exc,
-            )
+        summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
+        await webhook_service.safe_trigger_webhooks(
+            db,
+            WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
+            {
+                "scan_id": scan_id,
+                "project_id": project_id,
+                "total": summary["total"],
+                "by_type": summary["by_type"],
+            },
+            project_id,
+            context="cbom_ingest",
+        )
 
-        # Keep status as "pending" and hand the scan to the analysis worker so
-        # the crypto analyzers run via the standard engine dispatch path.
-        # The engine marks the scan "completed" (or "failed") when done.
-        queued = await worker_manager.add_job(scan_id)
-        if not queued:
-            # Worker is shutting down — mark the scan so housekeeping re-queues it.
-            logger.warning(
-                "cbom_ingest: worker rejected job for scan %s (shutting down); "
-                "scan remains pending for recovery",
-                scan_id,
-            )
+        # Register the CBOM result on the scan and trigger the aggregation
+        # worker — identical flow to SBOM ingest (register_result with
+        # trigger_analysis=True).  The analysis engine marks the scan
+        # completed/failed when the crypto analyzers finish.
+        await manager.register_result(scan_id, "cbom", trigger_analysis=True)
 
     except Exception as exc:
         logger.exception("cbom_ingest background task failed for scan %s: %s", scan_id, exc)
+        from app.repositories.scans import ScanRepository
+
+        scan_repo = ScanRepository(db)
         await scan_repo.update_raw(scan_id, {"$set": {"status": "failed"}})

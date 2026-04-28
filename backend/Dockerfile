@@ -10,7 +10,15 @@ LABEL org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 
 # Install system dependencies, Trivy, and poetry
-RUN apt-get update && apt-get install -y curl \
+# WeasyPrint runtime libs: libcairo2, libpango-1.0-0, libpangoft2-1.0-0,
+# libgdk-pixbuf-2.0-0, shared-mime-info.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        libcairo2 \
+        libgdk-pixbuf-2.0-0 \
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        shared-mime-info \
     && curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin \
     && curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin \
     && curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin \

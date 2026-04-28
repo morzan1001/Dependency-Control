@@ -96,9 +96,7 @@ class ChatService:
             await self.repo.update_conversation_title(conversation_id, str(user.id), title)
 
         # Load history
-        history = await self.repo.get_recent_messages(
-            conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES
-        )
+        history = await self.repo.get_recent_messages(conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES)
 
         # Build context
         available_tools = self.tools.get_available_tool_definitions(user.permissions)
@@ -109,28 +107,20 @@ class ChatService:
             # Admin can tune this via SystemSettings.chat_max_tool_rounds at
             # runtime; otherwise the startup default from config.py applies.
             system_doc = await self.db["system_settings"].find_one({"_id": "current"})
-            max_rounds = (
-                (system_doc or {}).get("chat_max_tool_rounds")
-                or settings.CHAT_MAX_TOOL_ROUNDS
-            )
+            max_rounds = (system_doc or {}).get("chat_max_tool_rounds") or settings.CHAT_MAX_TOOL_ROUNDS
             rounds_used = 0
             warmup_info_sent = False
             for _ in range(max_rounds):
                 rounds_used += 1
                 round_tool_calls = 0
-                stream_iter = self.ollama.chat_stream(
-                    messages, tools=available_tools
-                ).__aiter__()
+                stream_iter = self.ollama.chat_stream(messages, tools=available_tools).__aiter__()
                 while True:
                     try:
                         # First chunk only: if Ollama doesn't produce output
                         # quickly, the model is probably being loaded into VRAM
                         # (first request after idle = 30-60s on L4). Surface
                         # that as an SSE info event so the UI isn't silent.
-                        if (
-                            not first_token_recorded
-                            and total_tool_calls == 0
-                        ):
+                        if not first_token_recorded and total_tool_calls == 0:
                             # Cold-start warmup: the model has to be loaded
                             # into VRAM on the first request after idle (T4
                             # + gemma4 ≈ 60–90 s). We need to emit periodic
@@ -163,15 +153,8 @@ class ChatService:
                                             "takes 30–90 seconds."
                                         )
                                     else:
-                                        msg = (
-                                            f"Still warming up ({int(waited)}s) — "
-                                            "hang tight."
-                                        )
-                                    yield (
-                                        "data: "
-                                        + json.dumps({"type": "info", "message": msg})
-                                        + "\n\n"
-                                    )
+                                        msg = f"Still warming up ({int(waited)}s) — hang tight."
+                                    yield ("data: " + json.dumps({"type": "info", "message": msg}) + "\n\n")
                         else:
                             chunk = await stream_iter.__anext__()
                     except StopAsyncIteration:
@@ -198,12 +181,14 @@ class ChatService:
                         # Execute the tool with user authorization
                         result = await self.tools.execute_tool(tool_name, tool_args, user, self.db)
 
-                        all_tool_calls.append({
-                            "tool_name": tool_name,
-                            "arguments": tool_args,
-                            "result": result,
-                            "duration_ms": int((time.time() - start_time) * 1000),
-                        })
+                        all_tool_calls.append(
+                            {
+                                "tool_name": tool_name,
+                                "arguments": tool_args,
+                                "result": result,
+                                "duration_ms": int((time.time() - start_time) * 1000),
+                            }
+                        )
 
                         yield f"data: {json.dumps({'type': 'tool_call_end', 'tool_name': tool_name, 'arguments': tool_args, 'result': result}, default=str)}\n\n"
 
@@ -271,9 +256,7 @@ class ChatService:
                     # regardless of whether an error was also notified, so the UI stays
                     # consistent on reload.
                     interrupted_content = (
-                        full_response + "\n\n_[stream interrupted]_"
-                        if full_response
-                        else "_[stream interrupted]_"
+                        full_response + "\n\n_[stream interrupted]_" if full_response else "_[stream interrupted]_"
                     )
                     await self.repo.add_message(
                         conversation_id,

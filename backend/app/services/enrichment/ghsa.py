@@ -77,14 +77,13 @@ class GHSAProvider:
 
                     if response.status_code == 404:
                         logger.debug(f"GHSA advisory not found: {ghsa_id}")
-                        # Return empty data for negative cache
+                        # Empty payload becomes a negative cache entry.
                         return GHSAData(
                             ghsa_id=ghsa_id,
                             github_url=f"https://github.com/advisories/{ghsa_id}",
                         ).model_dump()
 
                     if response.status_code == 403:
-                        # Rate limited - exponential backoff
                         wait_time = self._retry_delay * (2**attempt)
                         logger.warning(
                             f"GitHub API rate limited for {ghsa_id}, waiting {wait_time}s (attempt {attempt + 1})"
@@ -97,7 +96,6 @@ class GHSAProvider:
                     response.raise_for_status()
                     data = response.json()
 
-                    # Extract CVE from identifiers
                     cve_id = None
                     aliases = []
                     for identifier in data.get("identifiers", []):
@@ -108,7 +106,6 @@ class GHSAProvider:
                         elif id_value and id_value != ghsa_id:
                             aliases.append(id_value)
 
-                    # Also check aliases field
                     for alias in data.get("aliases", []):
                         if alias.startswith("CVE-") and not cve_id:
                             cve_id = alias
@@ -147,7 +144,7 @@ class GHSAProvider:
                             f"(attempt {attempt + 1}/{self._max_retries})"
                         )
                     else:
-                        # Client error (4xx except 403) - don't retry
+                        # 4xx (other than 403) won't be fixed by retrying.
                         logger.warning(f"GitHub API client error for {ghsa_id}: {e}")
                         return None
                 except Exception as e:
@@ -160,7 +157,7 @@ class GHSAProvider:
             logger.error(f"GHSA {ghsa_id} fetch failed after {self._max_retries} attempts: {last_error}")
             return None
 
-        # Use distributed lock to prevent multiple pods fetching same advisory
+        # Distributed lock prevents multiple pods fetching the same advisory.
         cached = await cache_service.get_or_fetch_with_lock(
             key=cache_key,
             fetch_fn=fetch_from_github,
@@ -172,18 +169,9 @@ class GHSAProvider:
         return None
 
     async def resolve_ghsa_to_cve(self, client: InstrumentedAsyncClient, ghsa_ids: List[str]) -> Dict[str, GHSAData]:
-        """
-        Resolve multiple GHSA IDs to CVEs and get advisory metadata.
+        """Resolve GHSA IDs to CVEs and advisory metadata. Returns {ghsa_id: GHSAData}.
 
-        Uses Redis cache for previously resolved GHSAs.
-        Uses semaphore-based concurrency for parallel fetching with rate limit awareness.
-
-        Args:
-            client: HTTP client
-            ghsa_ids: List of GHSA IDs (e.g., ["GHSA-xxxx-xxxx-xxxx"])
-
-        Returns:
-            Dict mapping GHSA ID to GHSAData (includes CVE if available)
+        Uses Redis cache and a semaphore-bounded concurrent fetch.
         """
         if not ghsa_ids:
             return {}
@@ -191,7 +179,6 @@ class GHSAProvider:
         results: Dict[str, GHSAData] = {}
         missing_ghsas: List[str] = []
 
-        # Check Redis cache for each GHSA (batch get)
         cache_keys = [CacheKeys.ghsa(ghsa_id) for ghsa_id in ghsa_ids]
         cached_data = await cache_service.mget(cache_keys)
 
@@ -204,19 +191,17 @@ class GHSAProvider:
         if missing_ghsas:
             logger.debug(f"Fetching {len(missing_ghsas)} GHSA advisories (cache miss)")
 
-            # Use semaphore to limit concurrent requests based on auth status
+            # Concurrency cap depends on whether we have a GitHub token.
             concurrency = self._get_concurrency_limit()
             semaphore = asyncio.Semaphore(concurrency)
 
             async def fetch_with_semaphore(
                 ghsa_id: str,
             ) -> tuple[str, Optional[GHSAData]]:
-                """Fetch single GHSA with semaphore for rate limiting."""
                 async with semaphore:
                     ghsa_data = await self.fetch_ghsa_advisory(client, ghsa_id)
                     return ghsa_id, ghsa_data
 
-            # Fetch all missing GHSAs concurrently (limited by semaphore)
             tasks = [fetch_with_semaphore(ghsa_id) for ghsa_id in missing_ghsas]
             fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -229,7 +214,7 @@ class GHSAProvider:
                 if ghsa_data:
                     results[ghsa_id] = ghsa_data
                 else:
-                    # Create empty data for failed lookups
+                    # Empty placeholder for lookups that failed all retries.
                     results[ghsa_id] = GHSAData(
                         ghsa_id=ghsa_id,
                         github_url=f"https://github.com/advisories/{ghsa_id}",

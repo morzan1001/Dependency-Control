@@ -1,6 +1,6 @@
 """Read-only endpoints for crypto assets."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import HTTPException, Query
 
@@ -24,15 +24,20 @@ async def list_crypto_assets(
     name_search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-):
+) -> dict[str, Any]:
     """List crypto assets for a scan with pagination and optional filtering."""
     # Check project access
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     repo = CryptoAssetRepository(db)
     items = await repo.list_by_scan(
-        project_id, scan_id, limit=limit, skip=skip,
-        asset_type=asset_type, primitive=primitive, name_search=name_search,
+        project_id,
+        scan_id,
+        limit=limit,
+        skip=skip,
+        asset_type=asset_type,
+        primitive=primitive,
+        name_search=name_search,
     )
     total = await repo.count_by_scan(project_id, scan_id)
     return {
@@ -49,7 +54,7 @@ async def get_crypto_asset(
     asset_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, Any]:
     """Get a single crypto asset by ID."""
     # Check project access
     await check_project_access(project_id, current_user, db, required_role="viewer")
@@ -66,7 +71,7 @@ async def crypto_assets_summary(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, Any]:
     """Get a summary of crypto assets for a scan, grouped by type."""
     # Check project access
     await check_project_access(project_id, current_user, db, required_role="viewer")

@@ -43,15 +43,11 @@ class ChatRepository:
 
     async def get_conversation(self, conversation_id: str, user_id: str) -> Optional[Dict[str, Any]]:
         with track_db_operation(_CONV_COL, "find_one"):
-            return await self.conversations.find_one(
-                {"_id": conversation_id, "user_id": user_id}
-            )
+            return await self.conversations.find_one({"_id": conversation_id, "user_id": user_id})
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
         with track_db_operation(_CONV_COL, "delete"):
-            result = await self.conversations.delete_one(
-                {"_id": conversation_id, "user_id": user_id}
-            )
+            result = await self.conversations.delete_one({"_id": conversation_id, "user_id": user_id})
         if result.deleted_count > 0:
             with track_db_operation(_MSG_COL, "delete_many"):
                 await self.messages.delete_many({"conversation_id": conversation_id})
@@ -96,9 +92,7 @@ class ChatRepository:
             )
         return doc
 
-    async def get_messages(
-        self, conversation_id: str, limit: int = 100, skip: int = 0
-    ) -> List[Dict[str, Any]]:
+    async def get_messages(self, conversation_id: str, limit: int = 100, skip: int = 0) -> List[Dict[str, Any]]:
         with track_db_operation(_MSG_COL, "find"):
             cursor = self.messages.find(
                 {"conversation_id": conversation_id},

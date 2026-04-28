@@ -25,8 +25,12 @@ class CryptoHotspotService:
         self.cache = get_analytics_cache()
 
     async def hotspots(
-        self, *, resolved: ResolvedScope, group_by: GroupBy,
-        scan_id: Optional[str] = None, limit: int = 100,
+        self,
+        *,
+        resolved: ResolvedScope,
+        group_by: GroupBy,
+        scan_id: Optional[str] = None,
+        limit: int = 100,
     ) -> HotspotResponse:
         if group_by not in _SUPPORTED_GROUPINGS:
             raise ValueError(f"unsupported group_by: {group_by!r}")
@@ -59,7 +63,9 @@ class CryptoHotspotService:
         return resp
 
     async def _pick_scan_ids(
-        self, resolved: ResolvedScope, override: Optional[str],
+        self,
+        resolved: ResolvedScope,
+        override: Optional[str],
     ) -> List[str]:
         if override:
             return [override]
@@ -74,24 +80,30 @@ class CryptoHotspotService:
         return [row["scan_id"] async for row in self.db.scans.aggregate(pipeline)]
 
     async def _aggregate(
-        self, *, project_ids: Optional[List[str]],
-        scan_ids: List[str], group_by: GroupBy, limit: int,
+        self,
+        *,
+        project_ids: Optional[List[str]],
+        scan_ids: List[str],
+        group_by: GroupBy,
+        limit: int,
     ) -> List[HotspotEntry]:
         match: Dict[str, Any] = {"scan_id": {"$in": scan_ids}} if scan_ids else {}
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
         group_key = self._group_key_stage(group_by)
-        asset_pipeline = [
+        asset_pipeline: List[Dict[str, Any]] = [
             {"$match": match},
-            {"$group": {
-                "_id": group_key,
-                "asset_count": {"$sum": 1},
-                "project_ids": {"$addToSet": "$project_id"},
-                "locations": {"$push": "$occurrence_locations"},
-                "first_seen": {"$min": "$created_at"},
-                "last_seen": {"$max": "$created_at"},
-            }},
+            {
+                "$group": {
+                    "_id": group_key,
+                    "asset_count": {"$sum": 1},
+                    "project_ids": {"$addToSet": "$project_id"},
+                    "locations": {"$push": "$occurrence_locations"},
+                    "first_seen": {"$min": "$created_at"},
+                    "last_seen": {"$max": "$created_at"},
+                }
+            },
             {"$sort": {"asset_count": -1}},
             {"$limit": limit},
         ]
@@ -108,22 +120,24 @@ class CryptoHotspotService:
                     locations_flat.extend(subl)
                 elif isinstance(subl, str):
                     locations_flat.append(subl)
-            out.append(HotspotEntry(
-                key=key,
-                grouping_dimension=group_by,
-                asset_count=row["asset_count"],
-                finding_count=0,
-                severity_mix={},
-                locations=locations_flat[:20],
-                project_ids=list(row.get("project_ids", [])),
-                first_seen=row.get("first_seen") or now,
-                last_seen=row.get("last_seen") or now,
-            ))
+            out.append(
+                HotspotEntry(
+                    key=key,
+                    grouping_dimension=group_by,
+                    asset_count=row["asset_count"],
+                    finding_count=0,
+                    severity_mix={},
+                    locations=locations_flat[:20],
+                    project_ids=list(row.get("project_ids", [])),
+                    first_seen=row.get("first_seen") or now,
+                    last_seen=row.get("last_seen") or now,
+                )
+            )
 
         await self._enrich_with_findings(out, project_ids, scan_ids)
         return out
 
-    def _group_key_stage(self, group_by: GroupBy):
+    def _group_key_stage(self, group_by: GroupBy) -> Any:
         if group_by == "name":
             return {"name": "$name", "variant": "$variant"}
         if group_by == "primitive":
@@ -136,7 +150,7 @@ class CryptoHotspotService:
             return "$asset_type"
         return None
 
-    def _key_from_row(self, row, group_by: GroupBy) -> Optional[str]:
+    def _key_from_row(self, row: Dict[str, Any], group_by: GroupBy) -> Optional[str]:
         key = row.get("_id")
         if group_by == "name" and isinstance(key, dict):
             name = key.get("name") or ""
@@ -147,8 +161,10 @@ class CryptoHotspotService:
         return None
 
     async def _enrich_with_findings(
-        self, items: List[HotspotEntry],
-        project_ids: Optional[List[str]], scan_ids: List[str],
+        self,
+        items: List[HotspotEntry],
+        project_ids: Optional[List[str]],
+        scan_ids: List[str],
     ) -> None:
         if not items:
             return
@@ -160,13 +176,15 @@ class CryptoHotspotService:
             match["project_id"] = {"$in": project_ids}
         pipeline = [
             {"$match": match},
-            {"$group": {
-                "_id": {
-                    "key": "$details.rule_id",
-                    "severity": "$severity",
-                },
-                "count": {"$sum": 1},
-            }},
+            {
+                "$group": {
+                    "_id": {
+                        "key": "$details.rule_id",
+                        "severity": "$severity",
+                    },
+                    "count": {"$sum": 1},
+                }
+            },
         ]
         mix: Dict[str, Dict[str, int]] = {}
         total: Dict[str, int] = {}
@@ -182,12 +200,13 @@ class CryptoHotspotService:
                 item.severity_mix = mix[item.key]
 
     def _cache_key(
-        self, resolved: ResolvedScope, group_by: GroupBy,
-        scan_ids: List[str], limit: int,
+        self,
+        resolved: ResolvedScope,
+        group_by: GroupBy,
+        scan_ids: List[str],
+        limit: int,
     ) -> tuple:
-        fingerprint = hashlib.sha256(
-            "|".join(sorted(scan_ids)).encode()
-        ).hexdigest()[:16]
+        fingerprint = hashlib.sha256("|".join(sorted(scan_ids)).encode()).hexdigest()[:16]
         return (
             "hotspots",
             resolved.scope,

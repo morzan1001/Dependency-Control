@@ -12,6 +12,33 @@ from app.services.normalizers.utils import (
 if TYPE_CHECKING:
     from app.services.aggregator import ResultAggregator
 
+_CRYPTO_MISUSE_RULE_ID_PREFIX = "crypto-misuse-"
+
+
+def _finding_type_from_rule(rule_id: Any) -> FindingType:
+    """Map a SAST rule ID to the appropriate FindingType.
+
+    Rules whose name starts with ``crypto-misuse-`` (shipped by the
+    pipeline-templates crypto-misuse ruleset) become
+    ``CRYPTO_KEY_MANAGEMENT``. All other SAST findings stay as
+    ``FindingType.SAST``.
+
+    Semgrep/OpenGrep exposes ``check_id`` as either the bare rule name
+    (e.g. ``"crypto-misuse-ecb-mode-python"``) or — when rules are loaded
+    from a path — as a dotted path that embeds the rule name at the end
+    (e.g. ``"rules.crypto-misuse.ecb-mode.crypto-misuse-ecb-mode-python"``).
+    We therefore check the LAST dot-separated segment in addition to the
+    raw string so a nested-path check_id still maps correctly.
+    """
+    if not isinstance(rule_id, str):
+        return FindingType.SAST
+    if rule_id.startswith(_CRYPTO_MISUSE_RULE_ID_PREFIX):
+        return FindingType.CRYPTO_KEY_MANAGEMENT
+    last_segment = rule_id.rsplit(".", 1)[-1]
+    if last_segment.startswith(_CRYPTO_MISUSE_RULE_ID_PREFIX):
+        return FindingType.CRYPTO_KEY_MANAGEMENT
+    return FindingType.SAST
+
 
 def _build_opengrep_description(check_id: str, message: str) -> str:
     """Build description, prefixing with short rule name if check_id is meaningful."""
@@ -82,7 +109,7 @@ def _parse_opengrep_item(item: Dict[str, Any]) -> Finding:
 
     return Finding(
         id=finding_id,
-        type=FindingType.SAST,
+        type=_finding_type_from_rule(check_id),
         severity=severity,
         component=path,  # SAST findings are attached to files
         version=None,

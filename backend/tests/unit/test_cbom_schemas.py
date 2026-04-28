@@ -9,9 +9,7 @@ from app.schemas.cbom import (
 
 
 def test_parsed_crypto_asset_minimal():
-    asset = ParsedCryptoAsset(
-        bom_ref="crypto-1", name="SHA-1", asset_type=CryptoAssetType.ALGORITHM
-    )
+    asset = ParsedCryptoAsset(bom_ref="crypto-1", name="SHA-1", asset_type=CryptoAssetType.ALGORITHM)
     assert asset.bom_ref == "crypto-1"
     assert asset.primitive is None
     assert asset.key_size_bits is None
@@ -53,9 +51,7 @@ def test_parsed_cbom_empty_defaults():
 
 def test_parsed_cbom_with_assets():
     cbom = ParsedCBOM(
-        assets=[
-            ParsedCryptoAsset(bom_ref="a", name="MD5", asset_type=CryptoAssetType.ALGORITHM)
-        ],
+        assets=[ParsedCryptoAsset(bom_ref="a", name="MD5", asset_type=CryptoAssetType.ALGORITHM)],
         parsed_components=1,
     )
     assert len(cbom.assets) == 1

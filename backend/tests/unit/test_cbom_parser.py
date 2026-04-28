@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-import pytest
 
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.cbom_parser import parse_cbom, parse_crypto_components
@@ -69,46 +68,52 @@ def test_missing_crypto_properties_is_skipped():
 
 
 def test_unknown_primitive_falls_back_to_other():
-    components = [{
-        "type": "cryptographic-asset",
-        "bom-ref": "r",
-        "name": "X",
-        "cryptoProperties": {
-            "assetType": "algorithm",
-            "algorithmProperties": {"primitive": "quantum-magic"},
-        },
-    }]
+    components = [
+        {
+            "type": "cryptographic-asset",
+            "bom-ref": "r",
+            "name": "X",
+            "cryptoProperties": {
+                "assetType": "algorithm",
+                "algorithmProperties": {"primitive": "quantum-magic"},
+            },
+        }
+    ]
     assets = parse_crypto_components(components)
     assert len(assets) == 1
     assert assets[0].primitive == CryptoPrimitive.OTHER
 
 
 def test_missing_bom_ref_synthesized():
-    components = [{
-        "type": "cryptographic-asset",
-        "name": "MD5",
-        "cryptoProperties": {
-            "assetType": "algorithm",
-            "algorithmProperties": {"primitive": "hash"},
-        },
-    }]
+    components = [
+        {
+            "type": "cryptographic-asset",
+            "name": "MD5",
+            "cryptoProperties": {
+                "assetType": "algorithm",
+                "algorithmProperties": {"primitive": "hash"},
+            },
+        }
+    ]
     assets = parse_crypto_components(components)
     assert len(assets) == 1
     assert assets[0].bom_ref
 
 
 def test_invalid_not_valid_after_is_none():
-    components = [{
-        "type": "cryptographic-asset",
-        "bom-ref": "cert",
-        "name": "cert",
-        "cryptoProperties": {
-            "assetType": "certificate",
-            "certificateProperties": {
-                "subjectName": "CN=x",
-                "notValidAfter": "not-a-date",
+    components = [
+        {
+            "type": "cryptographic-asset",
+            "bom-ref": "cert",
+            "name": "cert",
+            "cryptoProperties": {
+                "assetType": "certificate",
+                "certificateProperties": {
+                    "subjectName": "CN=x",
+                    "notValidAfter": "not-a-date",
+                },
             },
-        },
-    }]
+        }
+    ]
     assets = parse_crypto_components(components)
     assert assets[0].not_valid_after is None

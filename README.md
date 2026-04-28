@@ -33,7 +33,7 @@ Dependency Control integrates with leading open-source security tools to provide
 These tools run in your pipeline and send data to Dependency Control:
 *   **[Syft](https://github.com/anchore/syft)** - Generates Software Bill of Materials (SBOM) from container images and filesystems.
 *   **[TruffleHog](https://github.com/trufflesecurity/trufflehog)** - Scans for leaked credentials and secrets in your codebase.
-*   **[OpenGrep](https://github.com/opengrep/opengrep)** - Fast and lightweight Static Application Security Testing (SAST).
+*   **[OpenGrep](https://github.com/opengrep/opengrep)** - Fast and lightweight Static Application Security Testing (SAST). Ships with a dedicated **crypto-misuse** ruleset (hardcoded keys, weak RNG, ECB mode, IV reuse, insecure TLS, weak hashes, low PBKDF2 iterations) — see the pipeline-templates repo `rules/crypto-misuse/`.
 *   **[Bearer](https://github.com/bearer/bearer)** - Code security scanning focusing on sensitive data flows and privacy.
 *   **[KICS](https://github.com/Checkmarx/kics)** - Finds security vulnerabilities, compliance issues, and infrastructure misconfigurations in IaC.
 *   **[IBM CBOMkit-theia](https://github.com/IBM/cbomkit-theia)** - Generates a Cryptographic Bill of Materials (CBOM) by scanning source code for cryptographic assets.

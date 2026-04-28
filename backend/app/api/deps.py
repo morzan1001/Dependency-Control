@@ -441,5 +441,5 @@ async def get_project_for_ingest(
 
 
 # Annotated type aliases for FastAPI dependency injection
-DatabaseDep = Annotated[AsyncIOMotorDatabase, Depends(get_database)]
+DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]

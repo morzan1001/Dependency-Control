@@ -1,0 +1,58 @@
+# FIPS 140-3 Approved Security Functions (abridged)
+# Source: NIST SP 800-140C (Symmetric Key), SP 800-140D (Asymmetric Key),
+# SP 800-140F (Hash Functions).
+# This catalog enables algorithm-level conformance checks. Module-level
+# CMVP certification is OUT OF SCOPE.
+
+version: 1
+snapshot_date: "2026-04-20"
+
+approved:
+  symmetric_ciphers:
+    - AES-128
+    - AES-192
+    - AES-256
+    - Triple-DES-Keying-Option-1   # transitional, mark as legacy
+  hash_functions:
+    - SHA-224
+    - SHA-256
+    - SHA-384
+    - SHA-512
+    - SHA-512/224
+    - SHA-512/256
+    - SHA3-224
+    - SHA3-256
+    - SHA3-384
+    - SHA3-512
+    - SHAKE128
+    - SHAKE256
+  asymmetric:
+    - RSA           # with key-size constraint: >= 2048
+    - ECDSA         # with approved curves: P-256, P-384, P-521
+    - EdDSA
+    - ML-KEM
+    - ML-DSA
+    - SLH-DSA
+  macs:
+    - HMAC
+    - CMAC
+    - KMAC
+  kdfs:
+    - PBKDF2
+    - HKDF
+    - KBKDF
+
+disallowed:
+  hash_functions:
+    - MD5
+    - MD-5
+    - SHA-1
+    - SHA1
+  symmetric_ciphers:
+    - DES
+    - DES-CBC
+    - RC4
+    - ARCFOUR
+    - Blowfish          # not FIPS approved
+  asymmetric:
+    - DSA               # disallowed in FIPS 140-3 IG since 2023

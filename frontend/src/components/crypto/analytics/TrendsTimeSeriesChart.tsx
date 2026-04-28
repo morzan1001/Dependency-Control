@@ -4,6 +4,7 @@ import {
   XAxis, YAxis,
 } from "recharts";
 import { getCryptoTrends } from "@/api/cryptoAnalytics";
+import { formatDate } from "@/lib/utils";
 import type {
   AnalyticsScope, TrendBucket, TrendMetric,
 } from "@/types/cryptoAnalytics";
@@ -47,7 +48,7 @@ export function TrendsTimeSeriesChart(p: Props) {
   }
 
   const chartData = data.points.map((pt) => ({
-    date: new Date(pt.timestamp).toLocaleDateString(),
+    date: formatDate(pt.timestamp),
     value: pt.value,
   }));
 

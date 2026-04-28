@@ -1,6 +1,5 @@
 import time
 
-import pytest
 
 from app.services.analytics.cache import TTLCache
 

@@ -181,7 +181,10 @@ async def process_analyzer(
 
         # Crypto analyzers need project_id, scan_id, and db to read crypto assets from DB
         if is_crypto_analyzer(analyzer_name):
-            result = await analyzer.analyze(
+            # Crypto analyzers subclass Analyzer and extend .analyze() with
+            # keyword-only parameters; Liskov-compatible but mypy only sees the
+            # base signature.
+            result = await analyzer.analyze(  # type: ignore[call-arg]
                 sbom,
                 settings=settings,
                 parsed_components=parsed_components,
@@ -307,9 +310,7 @@ async def _process_sbom(
                 )
                 for a in parsed_sbom.crypto_assets
             ]
-            persisted = await CryptoAssetRepository(db).bulk_upsert(
-                project_id, scan_id, crypto_assets
-            )
+            persisted = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
             logger.info(
                 "engine: persisted %d crypto assets from embedded CBOM (scan=%s)",
                 persisted,
@@ -326,9 +327,7 @@ async def _process_sbom(
     # Crypto analyzers are included when:
     #   - scan_type is "cbom" (dedicated CBOM ingest path), OR
     #   - the parsed SBOM itself contains embedded crypto assets.
-    has_crypto = scan_type == "cbom" or (
-        parsed_sbom is not None and bool(getattr(parsed_sbom, "crypto_assets", None))
-    )
+    has_crypto = scan_type == "cbom" or (parsed_sbom is not None and bool(getattr(parsed_sbom, "crypto_assets", None)))
     if has_crypto:
         effective_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
     else:

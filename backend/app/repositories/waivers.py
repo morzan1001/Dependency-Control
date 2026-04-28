@@ -1,8 +1,4 @@
-"""
-Waiver Repository
-
-Centralizes all database operations for waivers.
-"""
+"""Repository for waivers."""
 
 from typing import Any, Dict, List, Optional
 
@@ -22,7 +18,6 @@ class WaiverRepository:
         self.collection = db.waivers
 
     async def get_by_id(self, waiver_id: str) -> Optional[Waiver]:
-        """Get waiver by ID."""
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": waiver_id})
         if data:
@@ -35,25 +30,21 @@ class WaiverRepository:
             return await self.collection.find_one({"_id": waiver_id})
 
     async def create(self, waiver: Waiver) -> Waiver:
-        """Create a new waiver."""
         with track_db_operation(_COL, "insert_one"):
             await self.collection.insert_one(waiver.model_dump(by_alias=True))
         return waiver
 
     async def update(self, waiver_id: str, update_data: Dict[str, Any]) -> Optional[Waiver]:
-        """Update waiver by ID."""
         with track_db_operation(_COL, "update_one"):
             await self.collection.update_one({"_id": waiver_id}, {"$set": update_data})
         return await self.get_by_id(waiver_id)
 
     async def delete(self, waiver_id: str) -> bool:
-        """Delete waiver by ID."""
         with track_db_operation(_COL, "delete_one"):
             result = await self.collection.delete_one({"_id": waiver_id})
         return result.deleted_count > 0
 
     async def delete_many(self, query: Dict[str, Any]) -> int:
-        """Delete multiple waivers matching query."""
         with track_db_operation(_COL, "delete_many"):
             result = await self.collection.delete_many(query)
         return result.deleted_count
@@ -110,7 +101,6 @@ class WaiverRepository:
             return await cursor.to_list(limit)
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
-        """Count waivers matching query."""
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})
 

@@ -48,10 +48,9 @@ async def test_seed_is_idempotent(db):
 @pytest.mark.asyncio
 async def test_seed_skipped_when_version_higher(db):
     from app.models.crypto_policy import CryptoPolicy
+
     repo = CryptoPolicyRepository(db)
-    await repo.upsert_system_policy(
-        CryptoPolicy(scope="system", rules=[], version=CURRENT_SEED_VERSION + 5)
-    )
+    await repo.upsert_system_policy(CryptoPolicy(scope="system", rules=[], version=CURRENT_SEED_VERSION + 5))
     await seed_crypto_policies(db)
     got = await repo.get_system_policy()
     assert got.version == CURRENT_SEED_VERSION + 5

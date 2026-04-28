@@ -38,8 +38,3 @@ export function AnalyticsViewSwitcher({ availableViews, defaultView = "table" }:
     </div>
   );
 }
-
-export function useAnalyticsView(defaultView: AnalyticsView = "table"): AnalyticsView {
-  const [params] = useSearchParams();
-  return (params.get("analytics_view") as AnalyticsView) ?? defaultView;
-}

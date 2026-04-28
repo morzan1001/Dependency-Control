@@ -21,6 +21,7 @@ def test_crypto_finding_types_distinct_from_existing():
         "crypto_cert_self_signed",
         "crypto_cert_validity_too_long",
         "crypto_weak_protocol",
+        "crypto_key_management",
     }
     assert crypto_values.issubset(values)
     # No collision with existing

@@ -52,9 +52,7 @@ async def test_oversized_cbom_is_truncated(client, db, api_key_headers, monkeypa
         },
     }
 
-    resp = await client.post(
-        "/api/v1/ingest/cbom", json=payload, headers=api_key_headers
-    )
+    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
     assert resp.status_code == 202, f"Expected 202 Accepted, got {resp.status_code}: {resp.text}"
     scan_id = resp.json()["scan_id"]
 

@@ -1,8 +1,4 @@
-"""
-Archive Metadata Repository
-
-Centralizes all database operations for archive tracking records.
-"""
+"""Repository for archive tracking records."""
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -70,7 +66,6 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
     ) -> int:
-        """Count archives for a project."""
         query = self._build_filter_query(
             project_id=project_id,
             branch=branch,

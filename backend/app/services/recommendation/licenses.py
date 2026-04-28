@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import get_attr, ModelOrDict
@@ -135,22 +135,22 @@ def detect_license_drift(
         curr_rank = _CATEGORY_RANK.get(curr_info["category"], -1)
 
         if curr_rank > prev_rank:
-            drifted.append({
-                "component": get_attr(f, "component", "unknown"),
-                "version": get_attr(f, "version", "unknown"),
-                "previous_license": prev["license"],
-                "previous_category": prev["category"],
-                "current_license": curr_info["license"],
-                "current_category": curr_info["category"],
-            })
+            drifted.append(
+                {
+                    "component": get_attr(f, "component", "unknown"),
+                    "version": get_attr(f, "version", "unknown"),
+                    "previous_license": prev["license"],
+                    "previous_category": prev["category"],
+                    "current_license": curr_info["license"],
+                    "current_category": curr_info["category"],
+                }
+            )
 
     if not drifted:
         return []
 
     # Determine priority based on how restrictive the drift is
-    has_copyleft_drift = any(
-        _CATEGORY_RANK.get(d["current_category"], 0) >= 2 for d in drifted
-    )
+    has_copyleft_drift = any(_CATEGORY_RANK.get(d["current_category"], 0) >= 2 for d in drifted)
 
     return [
         Recommendation(

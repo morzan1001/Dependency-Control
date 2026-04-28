@@ -38,6 +38,8 @@ class FindingType(str, Enum):
     CRYPTO_CERT_VALIDITY_TOO_LONG = "crypto_cert_validity_too_long"
     # Phase 2: Protocol weakness
     CRYPTO_WEAK_PROTOCOL = "crypto_weak_protocol"
+    # Phase 3: Key management hygiene (crypto-misuse SAST rules)
+    CRYPTO_KEY_MANAGEMENT = "crypto_key_management"
     OTHER = "other"
 
 

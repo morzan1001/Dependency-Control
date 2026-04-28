@@ -2,7 +2,7 @@
 Admin + project-scoped crypto policy endpoints.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Body, Depends, HTTPException, status
 
@@ -14,6 +14,8 @@ from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.policy_audit import PolicyAuditAction
+from app.services.audit.history import record_policy_change
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 router = CustomAPIRouter(tags=["crypto-policies"])
@@ -26,7 +28,7 @@ AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANA
 async def get_system_policy(
     current_user: AdminUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, Any]:
     """Get the system-level crypto policy. Admin only."""
     policy = await CryptoPolicyRepository(db).get_system_policy()
     if policy is None:
@@ -36,12 +38,13 @@ async def get_system_policy(
 
 @router.put("/crypto-policies/system")
 async def put_system_policy(
+    current_user: AdminUserDep,
+    db: DatabaseDep,
     body: dict = Body(...),
-    current_user: AdminUserDep = None,
-    db: DatabaseDep = None,
-):
+) -> dict[str, Any]:
     """Replace the system-level crypto policy, bumping the version. Admin only."""
     rules = [CryptoRule.model_validate(r) for r in body.get("rules") or []]
+    comment = body.get("comment")
     repo = CryptoPolicyRepository(db)
     existing = await repo.get_system_policy()
     new_version = (existing.version + 1) if existing else 1
@@ -54,6 +57,17 @@ async def put_system_policy(
         version=new_version,
         updated_by=updated_by,
     )
+    action = PolicyAuditAction.UPDATE if existing else PolicyAuditAction.CREATE
+    await record_policy_change(
+        db,
+        policy_scope="system",
+        project_id=None,
+        old_policy=existing,
+        new_policy=policy,
+        action=action,
+        actor=current_user,
+        comment=comment,
+    )
     await repo.upsert_system_policy(policy)
     return policy.model_dump(by_alias=True)
 
@@ -63,7 +77,7 @@ async def get_project_policy(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, Any]:
     """Get the project override policy. Returns a stub with empty rules if none exists."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
     policy = await CryptoPolicyRepository(db).get_project_policy(project_id)
@@ -75,13 +89,14 @@ async def get_project_policy(
 @router.put("/projects/{project_id}/crypto-policy")
 async def put_project_policy(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     body: dict = Body(...),
-    current_user: CurrentUserDep = None,
-    db: DatabaseDep = None,
-):
+) -> dict[str, Any]:
     """Create or replace the project override policy. Project owner or admin only."""
     await check_project_access(project_id, current_user, db, required_role="admin")
     rules = [CryptoRule.model_validate(r) for r in body.get("rules") or []]
+    comment = body.get("comment")
     repo = CryptoPolicyRepository(db)
     existing = await repo.get_project_policy(project_id)
     new_version = (existing.version + 1) if existing else 1
@@ -95,6 +110,17 @@ async def put_project_policy(
         version=new_version,
         updated_by=updated_by,
     )
+    action = PolicyAuditAction.UPDATE if existing else PolicyAuditAction.CREATE
+    await record_policy_change(
+        db,
+        policy_scope="project",
+        project_id=project_id,
+        old_policy=existing,
+        new_policy=policy,
+        action=action,
+        actor=current_user,
+        comment=comment,
+    )
     await repo.upsert_project_policy(policy)
     return policy.model_dump(by_alias=True)
 
@@ -107,10 +133,28 @@ async def delete_project_policy(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> None:
     """Delete the project override policy. Project owner or admin only."""
     await check_project_access(project_id, current_user, db, required_role="admin")
-    await CryptoPolicyRepository(db).delete_project_policy(project_id)
+    repo = CryptoPolicyRepository(db)
+    old_policy = await repo.get_project_policy(project_id)
+    new_policy = CryptoPolicy(
+        scope="project",
+        project_id=project_id,
+        rules=[],
+        version=(old_policy.version + 1) if old_policy else 1,
+    )
+    await record_policy_change(
+        db,
+        policy_scope="project",
+        project_id=project_id,
+        old_policy=old_policy,
+        new_policy=new_policy,
+        action=PolicyAuditAction.DELETE,
+        actor=current_user,
+        comment=None,
+    )
+    await repo.delete_project_policy(project_id)
 
 
 @router.get("/projects/{project_id}/crypto-policy/effective")
@@ -118,7 +162,7 @@ async def get_effective_policy(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, Any]:
     """Get the effective merged policy for a project (system defaults merged with overrides)."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
     effective = await CryptoPolicyResolver(db).resolve(project_id)

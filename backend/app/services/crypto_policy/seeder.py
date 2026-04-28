@@ -16,6 +16,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.policy_audit import PolicyAuditAction
+from app.services.audit.history import record_policy_change
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +43,25 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
     if existing is not None and existing.version >= CURRENT_SEED_VERSION:
         logger.info(
             "crypto_policy_seed: skipping, existing version %s >= %s",
-            existing.version, CURRENT_SEED_VERSION,
+            existing.version,
+            CURRENT_SEED_VERSION,
         )
         return
     rules = load_seed_rules()
-    await repo.upsert_system_policy(
-        CryptoPolicy(scope="system", rules=rules, version=CURRENT_SEED_VERSION)
+    new_policy = CryptoPolicy(scope="system", rules=rules, version=CURRENT_SEED_VERSION)
+    await repo.upsert_system_policy(new_policy)
+    await record_policy_change(
+        db,
+        policy_scope="system",
+        project_id=None,
+        old_policy=existing,
+        new_policy=new_policy,
+        action=PolicyAuditAction.SEED,
+        actor=None,
+        comment=None,
     )
     logger.info(
         "crypto_policy_seed: upserted system policy with %d rules (version %d)",
-        len(rules), CURRENT_SEED_VERSION,
+        len(rules),
+        CURRENT_SEED_VERSION,
     )

@@ -5,7 +5,6 @@ import type { ArchiveFilters } from '@/types/archive';
 import type { ApiError } from '@/api/client';
 import { DROPDOWN_PAGE_SIZE } from '@/lib/constants';
 
-// Project list filter interface
 interface ProjectListFilters {
   search: string;
   page: number;
@@ -15,7 +14,6 @@ interface ProjectListFilters {
   teamId?: string;
 }
 
-// Centralized Query Keys
 export const projectKeys = {
   all: ['projects'] as const,
   lists: () => [...projectKeys.all, 'list'] as const,
@@ -105,9 +103,6 @@ export const useProjectsDropdown = () => {
 export const useRotateProjectApiKey = () => {
     return useMutation({
         mutationFn: (id: string) => projectApi.rotateApiKey(id),
-        onSuccess: () => {
-             // Maybe invalidate project details? Usually API key is returned and shown once.
-        }
     })
 }
 

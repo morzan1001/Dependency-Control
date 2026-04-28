@@ -4,7 +4,6 @@ class Logger {
   private readonly level: LogLevel = 'info';
 
   constructor() {
-    // In development, show debug logs
     if (import.meta.env.DEV) {
       this.level = 'debug';
     }

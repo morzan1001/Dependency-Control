@@ -41,19 +41,15 @@ class CryptoRuleAnalyzer(Analyzer):
             return {"findings": []}
 
         try:
-            assets = await CryptoAssetRepository(db).list_by_scan(
-                project_id, scan_id, limit=50_000
-            )
+            assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=50_000)
             effective = await CryptoPolicyResolver(db).resolve(project_id)
-            relevant_finding_types = {
-                ft.value if hasattr(ft, "value") else ft
-                for ft in self.finding_types
-            }
+            relevant_finding_types = {ft.value if hasattr(ft, "value") else ft for ft in self.finding_types}
             rules = [
-                r for r in effective.rules
+                r
+                for r in effective.rules
                 if r.enabled
-                and (r.finding_type if not hasattr(r.finding_type, "value")
-                     else r.finding_type.value) in relevant_finding_types
+                and (r.finding_type if not hasattr(r.finding_type, "value") else r.finding_type.value)
+                in relevant_finding_types
             ]
             findings: List[Dict[str, Any]] = []
             for asset in assets:
@@ -67,22 +63,10 @@ class CryptoRuleAnalyzer(Analyzer):
 
 
 def _build_finding(asset: CryptoAsset, rule: CryptoRule) -> Dict[str, Any]:
-    severity = (
-        rule.default_severity.value
-        if hasattr(rule.default_severity, "value")
-        else rule.default_severity
-    )
-    ft = (
-        rule.finding_type.value
-        if hasattr(rule.finding_type, "value")
-        else rule.finding_type
-    )
+    severity = rule.default_severity.value if hasattr(rule.default_severity, "value") else rule.default_severity
+    ft = rule.finding_type.value if hasattr(rule.finding_type, "value") else rule.finding_type
     src = rule.source.value if hasattr(rule.source, "value") else rule.source
-    component_label = (
-        f"{asset.name}"
-        + (f" ({asset.variant})" if asset.variant else "")
-        + f" [bom-ref:{asset.bom_ref}]"
-    )
+    component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
     return {
         "id": str(uuid.uuid4()),
         "type": ft,
@@ -97,13 +81,13 @@ def _build_finding(asset: CryptoAsset, rule: CryptoRule) -> Dict[str, Any]:
             "policy_source": src,
             "bom_ref": asset.bom_ref,
             "asset_name": asset.name,
-            "asset_type": (asset.asset_type.value
-                           if hasattr(asset.asset_type, "value")
-                           else asset.asset_type),
+            "asset_type": (asset.asset_type.value if hasattr(asset.asset_type, "value") else asset.asset_type),
             "key_size_bits": asset.key_size_bits,
-            "primitive": (asset.primitive.value
-                          if hasattr(asset.primitive, "value")
-                          else asset.primitive),
+            "primitive": (
+                asset.primitive.value
+                if asset.primitive is not None and hasattr(asset.primitive, "value")
+                else asset.primitive
+            ),
             "references": list(rule.references),
         },
         "found_in": list(asset.occurrence_locations),

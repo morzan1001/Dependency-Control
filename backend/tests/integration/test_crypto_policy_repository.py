@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import pytest
 
 from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import FindingType, Severity
@@ -22,7 +21,9 @@ def _make_mock_db(collection):
 
 def _rule(rule_id: str) -> CryptoRule:
     return CryptoRule(
-        rule_id=rule_id, name=rule_id, description="",
+        rule_id=rule_id,
+        name=rule_id,
+        description="",
         finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
         default_severity=Severity.HIGH,
         source=CryptoPolicySource.NIST_SP_800_131A,

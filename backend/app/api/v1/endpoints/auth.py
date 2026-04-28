@@ -709,7 +709,9 @@ async def login_oidc_callback(
         # Read back from PRIMARY to avoid replication lag with secondaryPreferred
         from pymongo import ReadPreference
 
-        users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)
+        # pymongo's ReadPreference.PRIMARY is typed as _ServerMode (Primary), but
+        # motor's .with_options() stub only accepts Optional[ReadPreference].
+        users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         user = await users_primary.find_one({"_id": new_user.id})
         if not user:
             raise HTTPException(

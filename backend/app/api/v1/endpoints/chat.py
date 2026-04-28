@@ -5,6 +5,7 @@ import logging
 import redis.asyncio as redis
 from fastapi import HTTPException, status
 from fastapi.responses import StreamingResponse
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -12,6 +13,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.config import settings
 from app.core.permissions import Permissions, has_permission
 from app.models.system import SystemSettings
+from app.models.user import User
 from app.schemas.chat import (
     ConversationCreate,
     ConversationDetailResponse,
@@ -27,7 +29,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-async def _get_system_settings(db) -> SystemSettings:
+async def _get_system_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
     doc = await db["system_settings"].find_one({"_id": "current"})
     if doc:
         return SystemSettings(**doc)
@@ -42,7 +44,7 @@ def _check_chat_enabled() -> None:
         )
 
 
-def _check_permission(user, permission: str) -> None:
+def _check_permission(user: User, permission: str) -> None:
     if not has_permission(user.permissions, permission):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -55,7 +57,7 @@ async def create_conversation(
     body: ConversationCreate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> ConversationResponse:
     """Create a new chat conversation."""
     _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)
@@ -76,7 +78,7 @@ async def create_conversation(
 async def list_conversations(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> ConversationListResponse:
     """List the current user's chat conversations."""
     _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)
@@ -105,7 +107,7 @@ async def get_conversation(
     conversation_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> ConversationDetailResponse:
     """Get a conversation with its messages."""
     _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)
@@ -135,7 +137,7 @@ async def delete_conversation(
     conversation_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> dict[str, str]:
     """Delete a conversation and all its messages."""
     _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_HISTORY_DELETE)
@@ -154,7 +156,7 @@ async def send_message(
     body: MessageCreate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-):
+) -> StreamingResponse:
     """Send a message and stream the AI response via SSE."""
     _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)

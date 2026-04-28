@@ -11,7 +11,7 @@ import re
 import time
 from contextlib import AbstractContextManager, contextmanager
 from importlib.metadata import version as get_version
-from typing import Any, Callable, Generator
+from typing import Any, Generator
 
 from fastapi import Request, Response
 from prometheus_client import (
@@ -277,10 +277,6 @@ analysis_aggregation_duration_seconds = Histogram(
     buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120),
 )
 
-# ---------------------------------------------------------------------------
-# Archive Metrics
-# ---------------------------------------------------------------------------
-
 archive_operations_total = Counter(
     "archive_operations_total",
     "Total archive operations by type and status",
@@ -412,10 +408,6 @@ webhooks_failed_total = Counter(
     "Total webhook failures by event type",
     ["event_type"],
 )
-
-# ---------------------------------------------------------------------------
-# Chat Metrics
-# ---------------------------------------------------------------------------
 
 chat_messages_total = Counter(
     "dc_chat_messages_total",

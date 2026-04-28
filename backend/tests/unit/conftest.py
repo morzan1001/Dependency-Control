@@ -19,6 +19,7 @@ _REGEX = "$regex"
 # Aggregate pipeline executor (supports the operators used by analytics)
 # ---------------------------------------------------------------------------
 
+
 def _match_doc(doc: dict, condition: dict) -> bool:
     """Return True if doc satisfies a $match condition."""
     for k, v in condition.items():
@@ -92,9 +93,7 @@ def _run_group(docs: list, stage: dict) -> list:
             if "$dateTrunc" in id_expr:
                 key = _resolve_field(doc, id_expr)
             else:
-                key = tuple(
-                    (k, _resolve_field(doc, v)) for k, v in sorted(id_expr.items())
-                )
+                key = tuple((k, _resolve_field(doc, v)) for k, v in sorted(id_expr.items()))
         else:
             key = id_expr
 
@@ -228,6 +227,7 @@ class _FakeCursor:
 
     def _matches(self, doc: dict) -> bool:
         import re
+
         for k, v in self._query.items():
             if not isinstance(v, dict):
                 if doc.get(k) != v:
@@ -246,7 +246,7 @@ class _FakeCursor:
 
     def _filtered(self) -> list:
         results = [d for d in self._docs.values() if self._matches(d)]
-        results = results[self._skip_n:]
+        results = results[self._skip_n :]
         if self._limit_n:
             results = results[: self._limit_n]
         return results

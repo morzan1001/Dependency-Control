@@ -17,9 +17,7 @@ class CryptoPolicyRepository:
         self._col = db[self.COLLECTION]
 
     async def ensure_indexes(self) -> None:
-        await self._col.create_index(
-            [("scope", 1), ("project_id", 1)], unique=True
-        )
+        await self._col.create_index([("scope", 1), ("project_id", 1)], unique=True)
 
     async def get_system_policy(self) -> Optional[CryptoPolicy]:
         doc = await self._col.find_one({"scope": "system", "project_id": None})
@@ -37,9 +35,7 @@ class CryptoPolicyRepository:
         )
 
     async def get_project_policy(self, project_id: str) -> Optional[CryptoPolicy]:
-        doc = await self._col.find_one(
-            {"scope": "project", "project_id": project_id}
-        )
+        doc = await self._col.find_one({"scope": "project", "project_id": project_id})
         return CryptoPolicy.model_validate(doc) if doc else None
 
     async def upsert_project_policy(self, policy: CryptoPolicy) -> None:
@@ -53,6 +49,4 @@ class CryptoPolicyRepository:
         )
 
     async def delete_project_policy(self, project_id: str) -> None:
-        await self._col.delete_one(
-            {"scope": "project", "project_id": project_id}
-        )
+        await self._col.delete_one({"scope": "project", "project_id": project_id})

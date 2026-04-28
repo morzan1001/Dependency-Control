@@ -17,11 +17,16 @@ from app.schemas.analytics import HotspotEntry, ScanDelta
 
 def _key(asset: CryptoAsset) -> Tuple[str, str, str]:
     primitive = asset.primitive
-    primitive_str = primitive.value if hasattr(primitive, "value") else (primitive or "")
+    if primitive is None:
+        primitive_str = ""
+    elif hasattr(primitive, "value"):
+        primitive_str = primitive.value
+    else:
+        primitive_str = str(primitive)
     return (
         asset.name or "",
         asset.variant or "",
-        primitive_str or "",
+        primitive_str,
     )
 
 
@@ -43,8 +48,11 @@ def _to_entry(asset: CryptoAsset, group_dim: str = "name") -> HotspotEntry:
 
 
 async def compute_scan_delta(
-    db: AsyncIOMotorDatabase, project_id: str,
-    *, from_scan: str, to_scan: str,
+    db: AsyncIOMotorDatabase,
+    project_id: str,
+    *,
+    from_scan: str,
+    to_scan: str,
 ) -> ScanDelta:
     repo = CryptoAssetRepository(db)
     from_assets = await repo.list_by_scan(project_id, from_scan, limit=50_000)
