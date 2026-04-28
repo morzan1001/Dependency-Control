@@ -87,6 +87,17 @@ class CryptoHotspotService:
         group_by: GroupBy,
         limit: int,
     ) -> List[HotspotEntry]:
+        # severity and weakness_tag are properties of findings, not assets,
+        # so the aggregation pivots accordingly. Asset-bound dimensions
+        # (name/primitive/asset_type) keep the asset-first pipeline.
+        if group_by in ("severity", "weakness_tag"):
+            return await self._aggregate_by_finding_dimension(
+                project_ids=project_ids,
+                scan_ids=scan_ids,
+                group_by=group_by,
+                limit=limit,
+            )
+
         match: Dict[str, Any] = {"scan_id": {"$in": scan_ids}} if scan_ids else {}
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
@@ -137,6 +148,97 @@ class CryptoHotspotService:
         await self._enrich_with_findings(out, project_ids, scan_ids, group_by)
         return out
 
+    async def _aggregate_by_finding_dimension(
+        self,
+        *,
+        project_ids: Optional[List[str]],
+        scan_ids: List[str],
+        group_by: GroupBy,
+        limit: int,
+    ) -> List[HotspotEntry]:
+        """Aggregate hotspots whose grouping dimension lives on findings.
+
+        For 'severity' we group findings by severity. For 'weakness_tag'
+        we unwind details.weakness_tags (populated by the protocol_cipher
+        analyzer) and group by tag. asset_count is the number of distinct
+        bom_refs contributing to the group, finding_count the raw match
+        count.
+        """
+        match: Dict[str, Any] = {"type": {"$regex": "^crypto_"}}
+        if scan_ids:
+            match["scan_id"] = {"$in": scan_ids}
+        if project_ids is not None:
+            match["project_id"] = {"$in": project_ids}
+
+        pre_stages: List[Dict[str, Any]] = [{"$match": match}]
+        if group_by == "weakness_tag":
+            pre_stages.extend(
+                [
+                    {"$match": {"details.weakness_tags": {"$exists": True, "$ne": []}}},
+                    {"$unwind": "$details.weakness_tags"},
+                ]
+            )
+
+        group_field = "$severity" if group_by == "severity" else "$details.weakness_tags"
+        pipeline: List[Dict[str, Any]] = pre_stages + [
+            {
+                "$group": {
+                    "_id": {"key": group_field, "severity": "$severity"},
+                    "finding_count": {"$sum": 1},
+                    "bom_refs": {"$addToSet": "$details.bom_ref"},
+                    "project_ids": {"$addToSet": "$project_id"},
+                    "first_seen": {"$min": "$scan_created_at"},
+                    "last_seen": {"$max": "$scan_created_at"},
+                }
+            },
+        ]
+
+        accum: Dict[str, Dict[str, Any]] = {}
+        async for row in self.db.findings.aggregate(pipeline):
+            key = (row.get("_id") or {}).get("key")
+            if not key:
+                continue
+            sev = (row.get("_id") or {}).get("severity") or "UNKNOWN"
+            entry = accum.setdefault(
+                key,
+                {
+                    "finding_count": 0,
+                    "bom_refs": set(),
+                    "project_ids": set(),
+                    "severity_mix": {},
+                    "first_seen": None,
+                    "last_seen": None,
+                },
+            )
+            entry["finding_count"] += row["finding_count"]
+            entry["bom_refs"].update(b for b in row.get("bom_refs", []) if b)
+            entry["project_ids"].update(row.get("project_ids", []))
+            entry["severity_mix"][sev] = entry["severity_mix"].get(sev, 0) + row["finding_count"]
+            for field in ("first_seen", "last_seen"):
+                value = row.get(field)
+                if value is None:
+                    continue
+                current = entry[field]
+                if current is None or (field == "first_seen" and value < current) or (field == "last_seen" and value > current):
+                    entry[field] = value
+
+        now = datetime.now(timezone.utc)
+        ranked = sorted(accum.items(), key=lambda kv: kv[1]["finding_count"], reverse=True)[:limit]
+        return [
+            HotspotEntry(
+                key=str(key),
+                grouping_dimension=group_by,
+                asset_count=len(data["bom_refs"]),
+                finding_count=data["finding_count"],
+                severity_mix=data["severity_mix"],
+                locations=[],
+                project_ids=list(data["project_ids"]),
+                first_seen=data["first_seen"] or now,
+                last_seen=data["last_seen"] or now,
+            )
+            for key, data in ranked
+        ]
+
     def _group_key_stage(self, group_by: GroupBy) -> Any:
         if group_by == "name":
             return {"name": "$name", "variant": "$variant"}
@@ -144,10 +246,7 @@ class CryptoHotspotService:
             return "$primitive"
         if group_by == "asset_type":
             return "$asset_type"
-        if group_by == "severity":
-            return "$severity"
-        if group_by == "weakness_tag":
-            return "$asset_type"
+        # severity / weakness_tag take the finding-based path; not used here.
         return None
 
     def _key_from_row(self, row: Dict[str, Any], group_by: GroupBy) -> Optional[str]:
