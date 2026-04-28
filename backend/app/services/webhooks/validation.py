@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from typing import List, Optional
+from typing import List, Optional, Union
 from urllib.parse import urlparse
 
 from app.core.config import settings
@@ -16,9 +16,11 @@ from app.core.constants import (
     WEBHOOK_VALID_EVENTS,
 )
 
+IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
-def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
-    return (
+
+def _is_blocked_ip(ip: IPAddress) -> bool:
+    return bool(
         ip.is_private
         or ip.is_loopback
         or ip.is_link_local
@@ -28,7 +30,7 @@ def _is_blocked_ip(ip: ipaddress._BaseAddress) -> bool:
     )
 
 
-def _parse_ip(host: str) -> Optional[ipaddress._BaseAddress]:
+def _parse_ip(host: str) -> Optional[IPAddress]:
     try:
         return ipaddress.ip_address(host)
     except ValueError:

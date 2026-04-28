@@ -41,6 +41,7 @@ class TestFindingTypeEnum:
             "crypto_cert_self_signed",
             "crypto_cert_validity_too_long",
             "crypto_weak_protocol",
+            "crypto_key_management",
             "other",
         }
         actual = {t.value for t in FindingType}
