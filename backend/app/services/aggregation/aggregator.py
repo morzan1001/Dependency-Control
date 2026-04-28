@@ -36,6 +36,7 @@ from app.services.aggregation.versions import (
     parse_version_key,
     resolve_fixed_versions,
 )
+from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.lifecycle import normalize_eol, normalize_outdated
 from app.services.normalizers.license import normalize_license
@@ -212,6 +213,11 @@ class ResultAggregator:
             "bearer": normalize_bearer,
             "hash_verification": normalize_hash_verification,
             "maintainer_risk": normalize_maintainer_risk,
+            "crypto_weak_algorithm": normalize_crypto,
+            "crypto_weak_key": normalize_crypto,
+            "crypto_quantum_vulnerable": normalize_crypto,
+            "crypto_certificate_lifecycle": normalize_crypto,
+            "crypto_protocol_cipher": normalize_crypto,
         }
 
         if analyzer_name in normalizers:
