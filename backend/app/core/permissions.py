@@ -18,6 +18,7 @@ class Permissions:
     USER_READ_ALL = "user:read_all"
     USER_UPDATE = "user:update"
     USER_DELETE = "user:delete"
+    USER_MANAGE_PERMISSIONS = "user:manage_permissions"
 
     TEAM_CREATE = "team:create"
     TEAM_READ = "team:read"
@@ -77,6 +78,7 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.USER_READ_ALL,
     Permissions.USER_UPDATE,
     Permissions.USER_DELETE,
+    Permissions.USER_MANAGE_PERMISSIONS,
     # Team
     Permissions.TEAM_CREATE,
     Permissions.TEAM_READ,
@@ -213,6 +215,11 @@ PERMISSION_GROUPS = [
                 "id": Permissions.USER_DELETE,
                 "name": "Delete Users",
                 "description": "Delete user accounts",
+            },
+            {
+                "id": Permissions.USER_MANAGE_PERMISSIONS,
+                "name": "Manage User Permissions",
+                "description": "Grant or revoke permissions on user accounts",
             },
         ],
     },

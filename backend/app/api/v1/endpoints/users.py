@@ -22,7 +22,7 @@ from app.api.v1.helpers import (
 from app.core import security
 from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
-from app.core.permissions import Permissions
+from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories import InvitationRepository, UserRepository
 from app.schemas.user import User as UserSchema
@@ -168,13 +168,43 @@ async def update_user(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Dict[str, Any]:
-    """Update user. Requires admin permission or self."""
+    """Update user. Requires user:update or self for profile fields; setting
+    permissions additionally requires user:manage_permissions and the caller
+    can never grant a permission they don't already hold themselves."""
     has_admin_perm = check_admin_or_self(current_user, user_id, [Permissions.USER_UPDATE])
 
     existing_user = await get_user_or_404(user_id, db)
 
     user_repo = UserRepository(db)
     update_data = user_in.model_dump(exclude_unset=True)
+
+    # Permission changes are gated by their own capability so that ordinary
+    # user:update holders (e.g. help-desk admins) cannot escalate privileges,
+    # and even holders of user:manage_permissions cannot grant a permission
+    # they don't already have themselves.
+    if "permissions" in update_data:
+        if not has_permission(current_user.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
+            raise HTTPException(
+                status_code=403,
+                detail="Changing 'permissions' requires user:manage_permissions",
+            )
+        caller_perms = set(current_user.permissions or [])
+        requested = set(update_data["permissions"] or [])
+        unauthorised = requested - caller_perms
+        if unauthorised:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Cannot grant permissions you don't hold: {sorted(unauthorised)}",
+            )
+
+    # is_active is part of normal user:update authority, but a user toggling
+    # their own active state can lock themselves (or every admin) out, so
+    # forbid self-change regardless of permissions held.
+    if "is_active" in update_data and str(current_user.id) == user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot change your own active state",
+        )
 
     # Check email uniqueness if being updated
     if "email" in update_data and update_data["email"] != existing_user.get("email"):
