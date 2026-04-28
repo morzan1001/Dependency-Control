@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { usePackageSuggestions } from '@/hooks/queries/use-broadcast'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -23,13 +23,15 @@ export function PackageAutocomplete({
 }: PackageAutocompleteProps) {
   const [open, setOpen] = useState(false)
   const [inputValue, setInputValue] = useState(value)
+  const [lastSyncedValue, setLastSyncedValue] = useState(value)
+  // Sync internal input with prop value changes from a controlled parent
+  // by adjusting state during render — see https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  if (value !== lastSyncedValue) {
+    setLastSyncedValue(value)
+    setInputValue(value)
+  }
   const debouncedSearch = useDebounce(inputValue, DEBOUNCE_DELAY_MS)
   const containerRef = useRef<HTMLDivElement>(null)
-
-  // Sync internal input with prop value changes
-  useEffect(() => {
-     setInputValue(value)
-  }, [value])
 
   // Fetch suggestions
   const { data: suggestions, isLoading } = usePackageSuggestions(debouncedSearch)

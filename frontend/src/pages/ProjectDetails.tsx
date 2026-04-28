@@ -16,7 +16,7 @@ import { ProjectArchives } from '@/components/project/ProjectArchives'
 import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePage'
 import { isProjectAdmin } from '@/lib/project-roles'
 import { useAuth } from '@/context'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
@@ -47,18 +47,17 @@ export default function ProjectDetails() {
   const activeBranchNames = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
   const deletedBranchNames = useMemo(() => branches?.filter(b => !b.is_active).map(b => b.name) || [], [branches])
 
-  // Initialize selected branches with default branch or all active branches
-  useEffect(() => {
-    if (activeBranchNames.length > 0 && selectedBranches.length === 0) {
-      if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {
-        setSelectedBranches([project.default_branch])
-      } else {
-        setSelectedBranches(activeBranchNames)
-      }
+  // Initialize selected branches once the branches query resolves. Setting
+  // state during render is safe here because the `selectedBranches.length === 0`
+  // guard short-circuits on the very next render — no infinite loop.
+  // See https://react.dev/learn/you-might-not-need-an-effect#initializing-the-application
+  if (activeBranchNames.length > 0 && selectedBranches.length === 0) {
+    if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {
+      setSelectedBranches([project.default_branch])
+    } else {
+      setSelectedBranches(activeBranchNames)
     }
-    // Only run when branches data changes, not when selectedBranches changes (to avoid infinite loop)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeBranchNames, project])
+  }
 
   const toggleBranch = (branch: string) => {
       setSelectedBranches(prev =>
