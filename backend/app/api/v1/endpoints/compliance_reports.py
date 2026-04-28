@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Literal, Optional
 
+from bson import ObjectId
 from fastapi import BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
@@ -155,7 +156,9 @@ async def download_report(
 
     bucket = AsyncIOMotorGridFSBucket(db)
     try:
-        stream = await bucket.open_download_stream(r.artifact_gridfs_id)
+        # artifact_gridfs_id is persisted as a string (json-friendly);
+        # GridFS APIs need an ObjectId.
+        stream = await bucket.open_download_stream(ObjectId(r.artifact_gridfs_id))
     except Exception:
         raise HTTPException(status_code=410, detail="Artifact storage error")
 
@@ -201,7 +204,7 @@ async def delete_report(
     if r.artifact_gridfs_id:
         bucket = AsyncIOMotorGridFSBucket(db)
         try:
-            await bucket.delete(r.artifact_gridfs_id)
+            await bucket.delete(ObjectId(r.artifact_gridfs_id))
         except Exception:
             pass
     await repo.delete(report_id)

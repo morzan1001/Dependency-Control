@@ -48,7 +48,11 @@ async def sweep_expired_compliance_reports(db: AsyncIOMotorDatabase) -> int:
             if not gridfs_id:
                 continue
             try:
-                await bucket.delete(gridfs_id)
+                # gridfs_id is stored as a string for JSON-roundtrip
+                # friendliness; GridFS APIs need an ObjectId.
+                from bson import ObjectId
+
+                await bucket.delete(ObjectId(gridfs_id))
             except Exception as exc:  # missing blob / fake-DB no-op
                 logger.debug(
                     "Could not delete GridFS artifact %s: %s",

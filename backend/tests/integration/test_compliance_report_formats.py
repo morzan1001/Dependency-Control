@@ -44,7 +44,11 @@ def _install_fake_pipeline(monkeypatch):
     store: dict = {}
 
     async def _fake_store(self, db_, artifact_bytes, filename, mime_type):
-        key = f"art-{len(store) + 1}"
+        # Mirror production: GridFS hands back an ObjectId, which the engine
+        # serialises to its string form before persisting on the report.
+        from bson import ObjectId
+
+        key = str(ObjectId())
         store[key] = {"bytes": artifact_bytes, "mime": mime_type, "filename": filename}
         return key
 
@@ -73,7 +77,7 @@ def _install_fake_pipeline(monkeypatch):
             pass
 
         async def open_download_stream(self, gid):
-            entry = store.get(gid)
+            entry = store.get(str(gid))
             if entry is None:
                 raise RuntimeError("not found")
             return _FakeStream(entry["bytes"])
