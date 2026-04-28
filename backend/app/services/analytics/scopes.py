@@ -6,12 +6,16 @@ set of project_ids the caller is authorised to query.  Permission gating is
 enforced here so that individual query functions stay scope-agnostic.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, List, Literal, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL
+
+logger = logging.getLogger(__name__)
+_USER_PROJECT_SCOPE_LIMIT = 10000
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -130,6 +134,13 @@ class ScopeResolver:
                 {"team_id": {"$in": team_ids}},
             ]
         }
-        cursor = self.db.projects.find(query, {"_id": 1}).limit(10000)
-        docs = await cursor.to_list(length=10000)
+        cursor = self.db.projects.find(query, {"_id": 1}).limit(_USER_PROJECT_SCOPE_LIMIT)
+        docs = await cursor.to_list(length=_USER_PROJECT_SCOPE_LIMIT)
+        if len(docs) >= _USER_PROJECT_SCOPE_LIMIT:
+            logger.warning(
+                "User %s has at least %d accessible projects; analytics scope is "
+                "truncated. Increase _USER_PROJECT_SCOPE_LIMIT or paginate.",
+                self.user.id,
+                _USER_PROJECT_SCOPE_LIMIT,
+            )
         return [str(d["_id"]) for d in docs]
