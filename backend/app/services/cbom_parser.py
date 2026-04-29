@@ -133,12 +133,53 @@ def _populate_algorithm(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None
     asset.padding = props.get("padding")
     asset.curve = props.get("curve")
 
-    key_size = props.get("parameterSetIdentifier")
-    if key_size is not None:
+    asset.key_size_bits = _resolve_key_size_bits(asset, props)
+
+
+_KEY_SIZE_PROPERTY_NAMES = (
+    "cryptography:key_size",
+    "cryptography:keySize",
+    "key_size",
+    "keySize",
+)
+
+
+def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> Optional[int]:
+    """Best-effort key-size extraction.
+
+    parameterSetIdentifier is a string in CycloneDX 1.6 (e.g. "P-256",
+    "ML-KEM-1024", "1024"); treat it as a key size only when it's a pure
+    integer. Otherwise fall back to well-known custom properties so
+    producers can carry the bit length explicitly. Anything we can't parse
+    leaves key_size_bits as None and the analyzer simply skips that asset.
+    """
+    raw = props.get("parameterSetIdentifier")
+    if raw is not None:
         try:
-            asset.key_size_bits = int(key_size)
+            return int(raw)
         except (ValueError, TypeError):
-            asset.key_size_bits = None
+            logger.debug(
+                "cbom_parser: parameterSetIdentifier=%r is non-numeric for asset %s; "
+                "falling back to properties for key size",
+                raw,
+                asset.bom_ref or asset.name or "<unknown>",
+            )
+
+    for key in _KEY_SIZE_PROPERTY_NAMES:
+        value = asset.properties.get(key)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            logger.debug(
+                "cbom_parser: property %s=%r is non-numeric for asset %s",
+                key,
+                value,
+                asset.bom_ref or asset.name or "<unknown>",
+            )
+
+    return None
 
 
 def _parse_primitive(raw: Any) -> Optional[CryptoPrimitive]:
