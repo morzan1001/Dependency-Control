@@ -37,6 +37,7 @@ router = CustomAPIRouter(prefix="/compliance", tags=["compliance-reports"])
 
 _MAX_CONCURRENT_PENDING = 10
 _SCOPE_PATTERN = "^(project|team|global|user)$"
+_REPORT_NOT_FOUND = "Report not found"
 
 
 class ReportRequest(BaseModel):
@@ -98,6 +99,22 @@ async def create_report(
     return ReportAck(report_id=report.id, status=_status_str(report.status))
 
 
+async def _user_can_see_report(
+    db: AsyncIOMotorDatabase, user: User, report: ComplianceReport
+) -> bool:
+    """Authoritative scope check: a user may see a report iff the
+    ScopeResolver for the report's (scope, scope_id) resolves successfully
+    for that user. ScopeResolver already enforces project/team membership
+    and the analytics:global capability for the global scope."""
+    try:
+        await ScopeResolver(db, user).resolve(scope=report.scope, scope_id=report.scope_id)
+        return True
+    except Exception:
+        # Includes ScopeResolutionError (PermissionError) and any other
+        # failure (e.g. missing project) — both must hide the report.
+        return False
+
+
 @router.get("/reports")
 async def list_reports(
     scope: Optional[str] = Query(None, pattern=_SCOPE_PATTERN),
@@ -118,7 +135,11 @@ async def list_reports(
         skip=skip,
         limit=limit,
     )
-    return {"reports": [r.model_dump(by_alias=True) for r in reports]}
+    # Drop reports the caller can't see. The page may shrink below `limit`
+    # when the user has partial scope access; pagination of accessible
+    # reports remains stable because skip/limit run on the unfiltered set.
+    visible = [r for r in reports if await _user_can_see_report(db, current_user, r)]
+    return {"reports": [r.model_dump(by_alias=True) for r in visible]}
 
 
 @router.get("/reports/{report_id}")
@@ -129,7 +150,10 @@ async def get_report(
 ) -> dict[str, Any]:
     r = await ComplianceReportRepository(db).get(report_id)
     if r is None:
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
+    if not await _user_can_see_report(db, current_user, r):
+        # Don't leak the report's existence to a caller without scope access.
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     return r.model_dump(by_alias=True)
 
 
@@ -141,7 +165,7 @@ async def download_report(
 ) -> StreamingResponse:
     r = await ComplianceReportRepository(db).get(report_id)
     if r is None:
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     status_val = _status_str(r.status)
     if status_val != "completed":
         raise HTTPException(status_code=409, detail=f"Report not ready (status: {status_val})")
@@ -193,7 +217,7 @@ async def delete_report(
     repo = ComplianceReportRepository(db)
     r = await repo.get(report_id)
     if r is None:
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     if r.requested_by != current_user.id:
         perms: frozenset[str] = getattr(current_user, "permissions", frozenset()) or frozenset()
         if "system:manage" not in perms:
