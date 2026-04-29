@@ -26,6 +26,7 @@ from app.core.constants import (
     SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
+from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +303,14 @@ class SBOMParser:
 
         # Parse components
         components = sbom.get("components", [])
+
+        # Extract cryptographic-asset components into crypto_assets
+        result.crypto_assets = parse_crypto_components(components)
+
         for comp in components:
+            # cryptographic-asset components are handled separately above
+            if comp.get("type") == "cryptographic-asset":
+                continue
             parsed = self._parse_cyclonedx_component(
                 comp,
                 global_source_type,

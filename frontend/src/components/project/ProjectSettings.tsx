@@ -90,13 +90,12 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [gitlabProjectId, setGitlabProjectId] = useState<number | undefined>(project.gitlab_project_id)
   const [gitlabProjectPath, setGitlabProjectPath] = useState<string | undefined>(project.gitlab_project_path)
 
-  // Schema-driven analyzer settings: tracks which analyzer's dialog is open
   const [openSettingsAnalyzer, setOpenSettingsAnalyzer] = useState<string | null>(null)
   const [analyzerSettingsState, setAnalyzerSettingsState] = useState<Record<string, Record<string, unknown>>>(
     project.analyzer_settings || {}
   )
 
-  // Backward-compat: hydrate license_compliance from the legacy license_policy field if present
+  // Back-compat: fall back to legacy `license_policy` when no per-analyzer setting exists.
   const initialLicenseCompliance = analyzerSettingsState.license_compliance || (
     project.license_policy ? { ...project.license_policy } as Record<string, unknown> : {}
   )
@@ -120,12 +119,10 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
 
     const userId = user.id;
 
-    // Enforced settings always win
     if (project.enforce_notification_settings) {
         return project.owner_notification_preferences || {};
     }
 
-    // Project-level preferences (owner or member)
     let projectPrefs: Record<string, string[]> | undefined;
     if (project.members?.some(m => m.user_id === userId && m.role === 'admin')) {
       projectPrefs = project.owner_notification_preferences;
@@ -136,14 +133,12 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       }
     }
 
-    // Use project-level preferences if set, otherwise fall back to global user preferences
     if (projectPrefs && Object.keys(projectPrefs).length > 0) {
       return projectPrefs;
     }
     return user.notification_preferences || {};
   })
 
-  // Use centralized hooks for better caching and consistency
   const { data: teams } = useTeams();
   const { data: branches } = useProjectBranches(projectId);
   const { data: appConfig } = useAppConfig();
@@ -195,7 +190,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const createProjectWebhookMutation = useCreateProjectWebhook()
   const deleteWebhookMutation = useDeleteWebhook()
 
-  // Wrapper to include projectId in the mutation
   const createWebhookMutation = {
     mutateAsync: (data: WebhookCreate) => 
       createProjectWebhookMutation.mutateAsync({ projectId, data }).then(result => {
@@ -205,7 +199,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     isPending: createProjectWebhookMutation.isPending,
   }
 
-  // Add refetch on delete success
   const handleDeleteWebhook = async (id: string) => {
     await deleteWebhookMutation.mutateAsync(id)
     refetchWebhooks()
@@ -559,12 +552,13 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       {openSettingsAnalyzer && (() => {
         const schema = getSettingsSchema(openSettingsAnalyzer)
         if (!schema) return null
-        // For license_compliance, hydrate with legacy license_policy as fallback
         const currentValues = openSettingsAnalyzer === 'license_compliance'
           ? initialLicenseCompliance
           : (analyzerSettingsState[openSettingsAnalyzer] || {})
         return (
           <AnalyzerSettingsDialog
+            // Remount on analyzer switch so internal state re-initializes from currentValues.
+            key={openSettingsAnalyzer}
             open={true}
             onOpenChange={(isOpen) => { if (!isOpen) setOpenSettingsAnalyzer(null) }}
             schema={schema}

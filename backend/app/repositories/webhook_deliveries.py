@@ -1,9 +1,4 @@
-"""
-Webhook Deliveries Repository
-
-Manages webhook delivery audit logs.
-Tracks all webhook delivery attempts (successful and failed) for compliance and debugging.
-"""
+"""Audit log of webhook delivery attempts."""
 
 import uuid
 from datetime import datetime, timezone

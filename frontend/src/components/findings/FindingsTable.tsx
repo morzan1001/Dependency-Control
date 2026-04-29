@@ -59,7 +59,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
             try {
                 // Try the internal UUID first (what the backend emits as .id),
                 // fall back to the stable finding_id string (e.g. "CVE-X").
-                let res = await scanApi.getFindings(scanId, { search: deepLinkFindingId, skip: 0, limit: 200 })
+                const res = await scanApi.getFindings(scanId, { search: deepLinkFindingId, skip: 0, limit: 200 })
                 let found = res.items.find(f => f.id === deepLinkFindingId)
                     || res.items.find(f => (f as { finding_id?: string }).finding_id === deepLinkFindingId)
                 if (!found && res.items.length === 1) found = res.items[0]
@@ -118,9 +118,16 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
 
     const allRows = data ? data.pages.flatMap((d) => d.items) : []
 
+    // Derive the scroll-target row index purely from props/data (no ref reads
+    // during render). `hasScrolledRef` is only consulted inside the effect
+    // below to guarantee we scroll at most once per mount.
+    const scrollTargetIndex = severity
+        ? allRows.findIndex(f => f.severity?.toUpperCase() === severity.toUpperCase())
+        : -1
+
     // Scroll to first finding matching the target severity (from URL param)
     useEffect(() => {
-        if (!severity || hasScrolledRef.current || allRows.length === 0) return
+        if (!severity || hasScrolledRef.current || scrollTargetIndex < 0) return
         const targetRow = scrollTargetRef.current
         if (targetRow) {
             targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -128,7 +135,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
             setTimeout(() => targetRow.classList.remove('ring-2', 'ring-primary', 'ring-offset-1'), 3000)
             hasScrolledRef.current = true
         }
-    }, [severity, allRows.length])
+    }, [severity, scrollTargetIndex])
 
     // IntersectionObserver on sentinel element triggers loading the next page
     // when the user scrolls near the bottom of the table.
@@ -226,15 +233,12 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {(() => { let scrollTargetFound = false; return allRows.map((finding) => {
+                        {allRows.map((finding, index) => {
                             const sourceInfo = getSourceInfo(finding?.source_type)
-                            // Set ref on the first row matching the target severity for scroll-to
-                            let isScrollTarget = false
-                            if (severity && !scrollTargetFound && !hasScrolledRef.current
-                                && finding.severity?.toUpperCase() === severity.toUpperCase()) {
-                                isScrollTarget = true
-                                scrollTargetFound = true
-                            }
+                            // Attach the scroll-to ref to the first row whose severity matches
+                            // the URL param. The index is derived purely from `allRows` above
+                            // (no ref reads during render).
+                            const isScrollTarget = index === scrollTargetIndex
                             return (
                                 <TableRow
                                     ref={isScrollTarget ? scrollTargetRef : undefined}
@@ -355,7 +359,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                     </TableCell>
                                 </TableRow>
                             )
-                        })})()}
+                        })}
                         {isFetchingNextPage && (
                             <TableRow>
                                 <TableCell colSpan={6} className="p-4 text-center">

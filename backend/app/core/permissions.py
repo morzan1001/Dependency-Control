@@ -18,6 +18,7 @@ class Permissions:
     USER_READ_ALL = "user:read_all"
     USER_UPDATE = "user:update"
     USER_DELETE = "user:delete"
+    USER_MANAGE_PERMISSIONS = "user:manage_permissions"
 
     TEAM_CREATE = "team:create"
     TEAM_READ = "team:read"
@@ -39,6 +40,7 @@ class Permissions:
     ANALYTICS_HOTSPOTS = "analytics:hotspots"
     ANALYTICS_SEARCH = "analytics:search"
     ANALYTICS_RECOMMENDATIONS = "analytics:recommendations"
+    ANALYTICS_GLOBAL = "analytics:global"
 
     NOTIFICATIONS_BROADCAST = "notifications:broadcast"
 
@@ -76,6 +78,7 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.USER_READ_ALL,
     Permissions.USER_UPDATE,
     Permissions.USER_DELETE,
+    Permissions.USER_MANAGE_PERMISSIONS,
     # Team
     Permissions.TEAM_CREATE,
     Permissions.TEAM_READ,
@@ -97,6 +100,7 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.ANALYTICS_HOTSPOTS,
     Permissions.ANALYTICS_SEARCH,
     Permissions.ANALYTICS_RECOMMENDATIONS,
+    Permissions.ANALYTICS_GLOBAL,
     # Notifications
     Permissions.NOTIFICATIONS_BROADCAST,
     # Waivers
@@ -212,6 +216,11 @@ PERMISSION_GROUPS = [
                 "name": "Delete Users",
                 "description": "Delete user accounts",
             },
+            {
+                "id": Permissions.USER_MANAGE_PERMISSIONS,
+                "name": "Manage User Permissions",
+                "description": "Grant or revoke permissions on user accounts",
+            },
         ],
     },
     {
@@ -322,6 +331,11 @@ PERMISSION_GROUPS = [
                 "id": Permissions.ANALYTICS_RECOMMENDATIONS,
                 "name": "View Recommendations",
                 "description": "View security recommendations",
+            },
+            {
+                "id": Permissions.ANALYTICS_GLOBAL,
+                "name": "Global Analytics",
+                "description": "Query analytics across all projects system-wide",
             },
         ],
     },

@@ -1,0 +1,17 @@
+# NIST Post-Quantum Cryptography migration
+# https://csrc.nist.gov/Projects/post-quantum-cryptography
+
+rules:
+  - rule_id: pqc-quantum-vulnerable-pke
+    name: Public-key algorithm is vulnerable to Shor's algorithm
+    description: >
+      RSA, DSA, DH, ECDH, ECDSA, and ECC-based key-exchange algorithms are
+      vulnerable to a cryptographically-relevant quantum computer. NIST
+      recommends migration to ML-KEM, ML-DSA, and SLH-DSA by 2035.
+    finding_type: crypto_quantum_vulnerable
+    default_severity: MEDIUM
+    match_name_patterns: ["RSA", "DSA", "ECDSA", "ECDH", "DH", "Diffie-Hellman", "EC-DSA"]
+    quantum_vulnerable: true
+    source: nist-pqc
+    references:
+      - https://csrc.nist.gov/Projects/post-quantum-cryptography

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useRef } from "react"
 import { useBroadcast, useBroadcastHistory } from "@/hooks/queries/use-broadcast"
 import { AdvisoryPackage, NotificationChannel } from "@/types/broadcast"
 import { useTeams } from "@/hooks/queries/use-teams"
@@ -48,10 +48,25 @@ export default function Broadcasts() {
   const [isCalculating, setIsCalculating] = useState(false)
   const [channels, setChannels] = useState<NotificationChannel[]>(["email"])
 
-  useEffect(() => {
+  // Reset impact counters when any input the impact depends on changes.
+  // Adjust state during render rather than via useEffect — see
+  // https://react.dev/learn/you-might-not-need-an-effect#resetting-all-state-when-a-prop-changes
+  const [lastImpactInputs, setLastImpactInputs] = useState({
+    activeTab,
+    announcementTarget,
+    packages,
+    selectedTeams,
+  })
+  if (
+    lastImpactInputs.activeTab !== activeTab
+    || lastImpactInputs.announcementTarget !== announcementTarget
+    || lastImpactInputs.packages !== packages
+    || lastImpactInputs.selectedTeams !== selectedTeams
+  ) {
+    setLastImpactInputs({ activeTab, announcementTarget, packages, selectedTeams })
     setImpactCount(null)
     setImpactProjectCount(null)
-  }, [activeTab, announcementTarget, packages, selectedTeams])
+  }
 
   const handleChannelToggle = (channel: NotificationChannel) => {
     setChannels(current =>

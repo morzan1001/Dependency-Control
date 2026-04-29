@@ -14,6 +14,7 @@
 | Category | Capabilities |
 |----------|-------------|
 | **Security Analysis** | Vulnerability scanning (Trivy, Grype, OSV), Secret detection, SAST, Malware & Typosquatting detection |
+| **Cryptographic Analysis** | Cryptographic Bill of Materials (CBOM), weak-algorithm detection, key-size enforcement, quantum-vulnerability assessment |
 | **Compliance** | License compliance checking, End-of-Life monitoring, Policy enforcement with waivers |
 | **Management** | Project & Team management, Role-based access control, 2FA authentication |
 | **Integrations** | GitLab CI/CD (OIDC), GitHub Actions (OIDC), Webhooks, Email/Slack/Mattermost notifications |
@@ -32,9 +33,10 @@ Dependency Control integrates with leading open-source security tools to provide
 These tools run in your pipeline and send data to Dependency Control:
 *   **[Syft](https://github.com/anchore/syft)** - Generates Software Bill of Materials (SBOM) from container images and filesystems.
 *   **[TruffleHog](https://github.com/trufflesecurity/trufflehog)** - Scans for leaked credentials and secrets in your codebase.
-*   **[OpenGrep](https://github.com/opengrep/opengrep)** - Fast and lightweight Static Application Security Testing (SAST).
+*   **[OpenGrep](https://github.com/opengrep/opengrep)** - Fast and lightweight Static Application Security Testing (SAST). Ships with a dedicated **crypto-misuse** ruleset (hardcoded keys, weak RNG, ECB mode, IV reuse, insecure TLS, weak hashes, low PBKDF2 iterations) — see the pipeline-templates repo `rules/crypto-misuse/`.
 *   **[Bearer](https://github.com/bearer/bearer)** - Code security scanning focusing on sensitive data flows and privacy.
 *   **[KICS](https://github.com/Checkmarx/kics)** - Finds security vulnerabilities, compliance issues, and infrastructure misconfigurations in IaC.
+*   **[IBM CBOMkit-theia](https://github.com/IBM/cbomkit-theia)** - Generates a Cryptographic Bill of Materials (CBOM) by scanning source code for cryptographic assets.
 
 ### SBOM Analysis (Internal)
 Once an SBOM is ingested, the backend performs deep analysis using:
@@ -45,6 +47,17 @@ Once an SBOM is ingested, the backend performs deep analysis using:
 *   **Malware Detection** - Checks packages against known open-source malware databases.
 *   **Typosquatting** - Detects potential typosquatting attacks in dependency names.
 *   **License Compliance** - Analyzes licenses for compliance and risk.
+
+### Cryptographic Analysis
+
+**Dependency Control** ingests CycloneDX-1.6 Cryptographic Bills of Materials (CBOMs) produced by [IBM CBOMkit-theia](https://github.com/IBM/cbomkit-theia) and analyses them against configurable cryptographic policies.
+
+Detects weak algorithms (MD5, SHA-1, DES, RC4), insufficient key sizes (e.g. RSA-1024), and quantum-vulnerable public-key algorithms (RSA, ECC, DH). Policies are editable per-project and seeded with industry standards: NIST SP 800-131A, BSI TR-02102, CNSA 2.0, and NIST PQC recommendations.
+
+Ready-to-use pipeline templates are available in the [dependency-control-pipeline-templates](https://github.com/zakmccracken/dependency-control-pipeline-templates) repository:
+
+*   **GitLab CI** — [`cbom-scan.gitlab-ci.yml`](https://github.com/zakmccracken/dependency-control-pipeline-templates/blob/main/cbom-scan.gitlab-ci.yml)
+*   **GitHub Actions** — [`cbom-scan.github-actions.yml`](https://github.com/zakmccracken/dependency-control-pipeline-templates/blob/main/cbom-scan.github-actions.yml)
 
 ## 🛠️ Quick Start (Docker Compose)
 

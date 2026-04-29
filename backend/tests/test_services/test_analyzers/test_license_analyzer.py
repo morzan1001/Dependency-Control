@@ -458,9 +458,7 @@ class TestEvaluateLicenseWithContext:
 
     def test_strong_copyleft_internal_only_returns_info(self):
         """GPL with internal-only distribution produces INFO."""
-        result = self._evaluate_with_policy(
-            "GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY
-        )
+        result = self._evaluate_with_policy("GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY)
         assert result is not None
         assert result["severity"] == Severity.INFO.value
         assert result["context_reason"] is not None
@@ -468,9 +466,7 @@ class TestEvaluateLicenseWithContext:
 
     def test_strong_copyleft_open_source_returns_info(self):
         """GPL with open source project produces INFO."""
-        result = self._evaluate_with_policy(
-            "GPL-3.0", distribution_model=DistributionModel.OPEN_SOURCE
-        )
+        result = self._evaluate_with_policy("GPL-3.0", distribution_model=DistributionModel.OPEN_SOURCE)
         assert result is not None
         assert result["severity"] == Severity.INFO.value
         assert result["context_reason"] is not None
@@ -500,9 +496,7 @@ class TestEvaluateLicenseWithContext:
 
     def test_network_copyleft_cli_batch_returns_low(self):
         """AGPL with CLI/batch deployment produces LOW."""
-        result = self._evaluate_with_policy(
-            "AGPL-3.0", deployment_model=DeploymentModel.CLI_BATCH
-        )
+        result = self._evaluate_with_policy("AGPL-3.0", deployment_model=DeploymentModel.CLI_BATCH)
         assert result is not None
         assert result["severity"] == Severity.LOW.value
         assert result["context_reason"] is not None
@@ -510,17 +504,13 @@ class TestEvaluateLicenseWithContext:
 
     def test_network_copyleft_desktop_returns_low(self):
         """AGPL with desktop deployment produces LOW."""
-        result = self._evaluate_with_policy(
-            "AGPL-3.0", deployment_model=DeploymentModel.DESKTOP
-        )
+        result = self._evaluate_with_policy("AGPL-3.0", deployment_model=DeploymentModel.DESKTOP)
         assert result is not None
         assert result["severity"] == Severity.LOW.value
 
     def test_network_copyleft_embedded_returns_low(self):
         """AGPL with embedded deployment produces LOW."""
-        result = self._evaluate_with_policy(
-            "AGPL-3.0", deployment_model=DeploymentModel.EMBEDDED
-        )
+        result = self._evaluate_with_policy("AGPL-3.0", deployment_model=DeploymentModel.EMBEDDED)
         assert result is not None
         assert result["severity"] == Severity.LOW.value
 
@@ -602,9 +592,7 @@ class TestEvaluateLicenseWithContext:
 
     def test_context_fields_present_when_adjusted(self):
         """Both context_reason and effective_severity present when severity is reduced."""
-        result = self._evaluate_with_policy(
-            "GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY
-        )
+        result = self._evaluate_with_policy("GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY)
         assert "context_reason" in result
         assert "effective_severity" in result
         assert result["effective_severity"] == Severity.HIGH.value
@@ -645,9 +633,7 @@ class TestSpdxExpressionEvaluation:
         """'MIT OR GPL-3.0' should evaluate as MIT (permissive, no finding)."""
         policy = LicensePolicy()
         or_groups = [["MIT"], ["GPL-3.0"]]
-        result = self.analyzer._evaluate_expression(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
+        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
         # MIT is permissive → no issue, which is the least restrictive
         assert result is None
 
@@ -655,9 +641,7 @@ class TestSpdxExpressionEvaluation:
         """'GPL-3.0 OR LGPL-3.0' should pick LGPL (INFO) over GPL (HIGH)."""
         policy = LicensePolicy()
         or_groups = [["GPL-3.0"], ["LGPL-3.0"]]
-        result = self.analyzer._evaluate_expression(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
+        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
         assert result is not None
         assert result["severity"] == Severity.INFO.value
         assert result["license"] == "LGPL-3.0"
@@ -666,9 +650,7 @@ class TestSpdxExpressionEvaluation:
         """'MIT AND GPL-3.0' should evaluate as GPL (most restrictive)."""
         policy = LicensePolicy()
         or_groups = [["MIT", "GPL-3.0"]]
-        result = self.analyzer._evaluate_expression(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
+        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
         assert result is not None
         assert result["severity"] == Severity.HIGH.value
 
@@ -676,18 +658,14 @@ class TestSpdxExpressionEvaluation:
         """'MIT OR Apache-2.0' → both permissive → no finding."""
         policy = LicensePolicy()
         or_groups = [["MIT"], ["Apache-2.0"]]
-        result = self.analyzer._evaluate_expression(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
+        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
         assert result is None
 
     def test_evaluate_or_respects_policy(self):
         """'GPL-3.0 OR AGPL-3.0' with internal_only picks GPL (INFO)."""
         policy = LicensePolicy(distribution_model=DistributionModel.INTERNAL_ONLY)
         or_groups = [["GPL-3.0"], ["AGPL-3.0"]]
-        result = self.analyzer._evaluate_expression(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
+        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
         # Both become INFO with internal_only, but GPL is evaluated first
         assert result is not None
         assert result["severity"] == Severity.INFO.value

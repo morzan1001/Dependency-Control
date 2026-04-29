@@ -1,8 +1,4 @@
-"""
-Broadcast Repository
-
-Centralizes all database operations for broadcasts.
-"""
+"""Repository for broadcasts."""
 
 from typing import List
 

@@ -1,6 +1,6 @@
 """Tests for chat data models."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.models.chat import Conversation, Message
 

@@ -191,7 +191,7 @@ api.interceptors.response.use(
             return api(originalRequest);
           }
         } catch {
-          // Refresh failed
+          // refresh failed; fall through to logout
         }
       }
 

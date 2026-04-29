@@ -13,7 +13,10 @@ import { ProjectWaivers } from '@/components/project/ProjectWaivers'
 import { ProjectMembers } from '@/components/project/ProjectMembers'
 import { ProjectSettings } from '@/components/project/ProjectSettings'
 import { ProjectArchives } from '@/components/project/ProjectArchives'
-import { useState, useEffect, useMemo } from 'react'
+import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePage'
+import { isProjectAdmin } from '@/lib/project-roles'
+import { useAuth } from '@/context'
+import { useState, useMemo } from 'react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import {
@@ -33,6 +36,7 @@ export default function ProjectDetails() {
   const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
 
+  const { permissions } = useAuth()
   const { data: project, isLoading: isLoadingProject } = useProject(id!)
 
   const { data: branches } = useProjectBranches(id!)
@@ -43,18 +47,17 @@ export default function ProjectDetails() {
   const activeBranchNames = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
   const deletedBranchNames = useMemo(() => branches?.filter(b => !b.is_active).map(b => b.name) || [], [branches])
 
-  // Initialize selected branches with default branch or all active branches
-  useEffect(() => {
-    if (activeBranchNames.length > 0 && selectedBranches.length === 0) {
-      if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {
-        setSelectedBranches([project.default_branch])
-      } else {
-        setSelectedBranches(activeBranchNames)
-      }
+  // Initialize selected branches once the branches query resolves. Setting
+  // state during render is safe here because the `selectedBranches.length === 0`
+  // guard short-circuits on the very next render — no infinite loop.
+  // See https://react.dev/learn/you-might-not-need-an-effect#initializing-the-application
+  if (activeBranchNames.length > 0 && selectedBranches.length === 0) {
+    if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {
+      setSelectedBranches([project.default_branch])
+    } else {
+      setSelectedBranches(activeBranchNames)
     }
-    // Only run when branches data changes, not when selectedBranches changes (to avoid infinite loop)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeBranchNames, project])
+  }
 
   const toggleBranch = (branch: string) => {
       setSelectedBranches(prev =>
@@ -160,6 +163,7 @@ export default function ProjectDetails() {
             <TabsTrigger value="waivers">Waivers</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
             <TabsTrigger value="archives">Archives</TabsTrigger>
+            <TabsTrigger value="crypto-policy">Crypto Policy</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
           
@@ -256,6 +260,13 @@ export default function ProjectDetails() {
 
         <TabsContent value="archives" className="space-y-4">
           <ProjectArchives projectId={project.id} />
+        </TabsContent>
+
+        <TabsContent value="crypto-policy" className="space-y-4">
+          <CryptoPolicyOverridePage
+            projectId={project.id}
+            canEdit={user ? isProjectAdmin(project, user.id, permissions) : false}
+          />
         </TabsContent>
 
         {user && (

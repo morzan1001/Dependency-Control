@@ -1,9 +1,4 @@
-"""
-Token Blacklist Repository
-
-Manages blacklisted JWT tokens for logout functionality.
-Tokens are automatically removed after expiration via MongoDB TTL index.
-"""
+"""Blacklisted JWT tokens for logout. A MongoDB TTL index removes expired entries."""
 
 from datetime import datetime
 
@@ -11,7 +6,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 
 class TokenBlacklistRepository:
-    """Repository for token blacklist operations."""
 
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db

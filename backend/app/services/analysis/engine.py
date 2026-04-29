@@ -27,7 +27,7 @@ from app.services.analyzers import Analyzer
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.reachability_enrichment import enrich_findings_with_reachability
 from app.services.sbom_parser import parse_sbom
-from app.services.analysis.registry import analyzers
+from app.services.analysis.registry import CRYPTO_ANALYZERS, VULNERABILITY_ANALYZERS, analyzers, is_crypto_analyzer
 from app.services.analysis.stats import (
     build_epss_kev_summary,
     build_reachability_summary,
@@ -171,6 +171,7 @@ async def process_analyzer(
     settings: Optional[Dict[str, Any]] = None,
     fallback_source: str = "unknown-sbom",
     parsed_components: Optional[List[Dict[str, Any]]] = None,
+    project_id: Optional[str] = None,
 ) -> str:
     analyzer_start_time = time.time()
     try:
@@ -178,8 +179,21 @@ async def process_analyzer(
         if analysis_scans_total:
             analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
-        # Pass parsed components to analyzer if available
-        result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
+        # Crypto analyzers need project_id, scan_id, and db to read crypto assets from DB
+        if is_crypto_analyzer(analyzer_name):
+            # Crypto analyzers subclass Analyzer and extend .analyze() with
+            # keyword-only parameters; Liskov-compatible but mypy only sees the
+            # base signature.
+            result = await analyzer.analyze(  # type: ignore[call-arg]
+                sbom,
+                settings=settings,
+                parsed_components=parsed_components,
+                project_id=project_id,
+                scan_id=scan_id,
+                db=db,
+            )
+        else:
+            result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
 
         # Track duration
         if analysis_duration_seconds:
@@ -257,15 +271,20 @@ async def _process_sbom(
     system_settings: Any,
     project_license_policy: Optional[Dict[str, Any]] = None,
     project_analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = None,
+    project_id: Optional[str] = None,
+    scan_type: Optional[str] = None,
 ) -> List[str]:
     """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
     current_sbom = await _resolve_sbom(item, fs, aggregator)
-    if not current_sbom:
+    # CBOM-only scans synthesise an empty {} so the analyzer loop fires;
+    # only bail when resolution itself failed (returned None).
+    if current_sbom is None:
         return []
 
     fallback_source = f"SBOM #{index + 1}"
 
     parsed_components: List[Dict[str, Any]] = []
+    parsed_sbom = None
     try:
         parsed_sbom = parse_sbom(current_sbom)
         parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
@@ -278,6 +297,49 @@ async def _process_sbom(
         logger.warning(f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing")
         if analysis_sbom_parse_errors_total:
             analysis_sbom_parse_errors_total.inc()
+
+    # Persist embedded CBOM crypto assets when the SBOM contained any
+    if parsed_sbom is not None and parsed_sbom.crypto_assets and project_id:
+        try:
+            from app.models.crypto_asset import CryptoAsset
+            from app.repositories.crypto_asset import CryptoAssetRepository
+
+            crypto_assets = [
+                CryptoAsset(
+                    project_id=project_id,
+                    scan_id=scan_id,
+                    **a.model_dump(),
+                )
+                for a in parsed_sbom.crypto_assets
+            ]
+            persisted = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
+            logger.info(
+                "engine: persisted %d crypto assets from embedded CBOM (scan=%s)",
+                persisted,
+                scan_id,
+            )
+        except Exception as cbom_err:
+            logger.warning(
+                "engine: failed to persist embedded CBOM crypto assets for scan %s: %s",
+                scan_id,
+                cbom_err,
+            )
+
+    # Determine whether this scan has crypto data to run crypto analyzers against.
+    # Crypto analyzers are included when:
+    #   - scan_type is "cbom" (dedicated CBOM ingest path), OR
+    #   - the parsed SBOM itself contains embedded crypto assets.
+    has_crypto = scan_type == "cbom" or (parsed_sbom is not None and bool(getattr(parsed_sbom, "crypto_assets", None)))
+    if has_crypto:
+        effective_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
+    else:
+        effective_analyzers = [n for n in active_analyzers if n not in CRYPTO_ANALYZERS]
+
+    # CBOM-only scans pass a synthesised empty {} so the analyzer loop runs;
+    # SBOM-format scanners (trivy, grype, osv, deps_dev) would crash on it,
+    # so drop them when no real SBOM content was resolved.
+    if not parsed_components and scan_type == "cbom":
+        effective_analyzers = [n for n in effective_analyzers if n not in VULNERABILITY_ANALYZERS]
 
     # Build base settings dict, merging project license_policy if available
     base_settings = system_settings.model_dump() if system_settings else {}
@@ -304,8 +366,9 @@ async def _process_sbom(
             settings=_settings_for(analyzer_name),
             fallback_source=fallback_source,
             parsed_components=(parsed_components if parsed_components else None),
+            project_id=project_id,
         )
-        for analyzer_name in active_analyzers
+        for analyzer_name in effective_analyzers
         if analyzer_name in analyzers
     ]
 
@@ -572,6 +635,13 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         return False
 
     project_id: Optional[str] = scan_doc.project_id
+    scan_type: Optional[str] = getattr(scan_doc, "scan_type", None)
+
+    # For CBOM scans, always include crypto analyzers regardless of project config.
+    # For non-CBOM scans, crypto analyzer filtering is handled per-SBOM in _process_sbom
+    # based on whether the parsed SBOM contains embedded crypto assets.
+    if scan_type == "cbom":
+        active_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
 
     # 0. Cleanup previous results for internal analyzers
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
@@ -603,8 +673,18 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     # Initialize GridFS
     fs = AsyncIOMotorGridFSBucket(db)
 
+    # For CBOM-only scans there are no SBOM files, but crypto analyzers still
+    # need to run (they read from DB via project_id+scan_id).  Synthesise a
+    # single empty-SBOM pass so the per-SBOM analyzer loop fires.
+    if sboms:
+        sboms_to_process = sboms
+    elif scan_type == "cbom":
+        sboms_to_process = [{}]
+    else:
+        sboms_to_process = []
+
     # Process SBOMs sequentially to save memory
-    for index, item in enumerate(sboms):
+    for index, item in enumerate(sboms_to_process):
         sbom_results = await _process_sbom(
             index,
             item,
@@ -616,6 +696,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
             system_settings,
             project_license_policy=project_license_policy,
             project_analyzer_settings=project_analyzer_settings,
+            project_id=project_id,
+            scan_type=scan_type,
         )
         results_summary.extend(sbom_results)
 
@@ -638,6 +720,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     del dependency_enrichments
 
     # 3. Prepare finding records for insertion
+    scan_created_at: Optional[datetime] = getattr(scan_doc, "created_at", None)
     findings_to_insert: List[Dict[str, Any]] = []
     vulnerability_findings: List[Dict[str, Any]] = []
     for f in aggregated_findings:
@@ -646,6 +729,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         record["project_id"] = project_id
         record["finding_id"] = f.id
         record["_id"] = str(uuid.uuid4())
+        record.setdefault("scan_created_at", scan_created_at)
         findings_to_insert.append(record)
         if record.get("type") == "vulnerability":
             vulnerability_findings.append(record)

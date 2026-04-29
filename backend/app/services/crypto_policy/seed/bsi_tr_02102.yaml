@@ -1,0 +1,29 @@
+# BSI TR-02102-1 Cryptographic Mechanisms: Recommendations and Key Lengths
+# https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html
+
+rules:
+  - rule_id: bsi-02102-sha1-deprecated
+    name: BSI deprecates SHA-1 for all uses
+    description: BSI TR-02102-1 considers SHA-1 non-recommended as of 2024.
+    finding_type: crypto_weak_algorithm
+    default_severity: MEDIUM
+    match_name_patterns: ["SHA-1", "SHA1"]
+    match_primitive: hash
+    source: bsi-tr-02102
+
+  - rule_id: bsi-02102-rc4
+    name: RC4 is disallowed
+    description: RC4 has known biases and is not recommended.
+    finding_type: crypto_weak_algorithm
+    default_severity: HIGH
+    match_name_patterns: ["RC4", "ARCFOUR"]
+    match_primitive: stream-cipher
+    source: bsi-tr-02102
+
+  - rule_id: bsi-02102-tls-min-12
+    name: TLS versions below 1.2 are disallowed
+    description: TLS 1.0 and 1.1 are non-compliant.
+    finding_type: crypto_weak_algorithm
+    default_severity: HIGH
+    match_protocol_versions: ["TLS 1.0", "TLS 1.1", "tls 1.0", "tls 1.1", "tls/1.0", "tls/1.1"]
+    source: bsi-tr-02102

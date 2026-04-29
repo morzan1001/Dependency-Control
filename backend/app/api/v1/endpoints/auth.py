@@ -59,7 +59,7 @@ from app.api.v1.helpers.responses import (
     RESP_501,
 )
 from app.schemas.user import User as UserSchema
-from app.schemas.user import UserCreate, UserPasswordReset
+from app.schemas.user import UserPasswordReset, UserSignup
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +285,7 @@ async def refresh_token(
 @router.post("/signup", response_model=UserSchema, summary="Register a new user", responses=RESP_400_403)
 async def create_user(
     background_tasks: BackgroundTasks,
-    user_in: UserCreate,
+    user_in: UserSignup,
     db: DatabaseDep,
 ) -> Any:
     """
@@ -301,12 +301,6 @@ async def create_user(
             detail="Signup is currently disabled.",
         )
 
-    if not user_in.password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password is required for registration",
-        )
-
     user_repo = UserRepository(db)
 
     if await user_repo.exists_by_username(user_in.username):
@@ -320,12 +314,19 @@ async def create_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The user with this email already exists in the system.",
         )
-    user_dict = user_in.model_dump()
-    hashed_password = security.get_password_hash(user_dict.pop("password"))
-    user_dict["hashed_password"] = hashed_password
-    user_dict["is_verified"] = False
 
-    new_user = User(**user_dict)
+    new_user = User(
+        email=user_in.email,
+        username=user_in.username,
+        hashed_password=security.get_password_hash(user_in.password),
+        slack_username=user_in.slack_username,
+        mattermost_username=user_in.mattermost_username,
+        notification_preferences=user_in.notification_preferences,
+        permissions=[],
+        is_active=True,
+        is_verified=False,
+        auth_provider="local",
+    )
     await user_repo.create(new_user)
 
     # Send verification email if SMTP is configured
@@ -709,7 +710,9 @@ async def login_oidc_callback(
         # Read back from PRIMARY to avoid replication lag with secondaryPreferred
         from pymongo import ReadPreference
 
-        users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)
+        # pymongo's ReadPreference.PRIMARY is typed as _ServerMode (Primary), but
+        # motor's .with_options() stub only accepts Optional[ReadPreference].
+        users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         user = await users_primary.find_one({"_id": new_user.id})
         if not user:
             raise HTTPException(

@@ -38,9 +38,7 @@ export function useChatStream(
       setStreamingContent('');
       setStreamingToolCalls([]);
       setStreamingInfo(null);
-      // Optimistically render the user's own message immediately so they
-      // don't stare at an empty UI while Ollama warms up; this is cleared
-      // once the conversation is refetched after the stream completes.
+      // Optimistic echo so the UI isn't empty during Ollama warmup; cleared on refetch.
       setPendingUserMessage({ content, images });
 
       try {
@@ -54,7 +52,7 @@ export function useChatStream(
 
           switch (event.type) {
             case 'token':
-              // Any real output means warmup is done — clear the info banner.
+              // First real token means warmup is done.
               setStreamingInfo(null);
               setStreamingContent((prev) => prev + event.content);
               break;
@@ -86,7 +84,6 @@ export function useChatStream(
           }
         }
       } catch (err) {
-        // Ignore AbortError — user intentionally cancelled
         if (!(err instanceof DOMException && err.name === 'AbortError')) {
           setStreamState((prev) => ({
             ...prev,

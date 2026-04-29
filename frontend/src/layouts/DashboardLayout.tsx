@@ -1,5 +1,5 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, MessageSquare, type LucideIcon } from 'lucide-react'
+import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, MessageSquare, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/context'
@@ -11,6 +11,7 @@ interface NavItem {
   label: string
   icon: LucideIcon
   show: boolean
+  exact?: boolean
 }
 
 export default function DashboardLayout() {
@@ -80,6 +81,13 @@ export default function DashboardLayout() {
       href: '/settings',
       label: 'Settings',
       icon: Settings,
+      show: hasPermission('system:manage'),
+      exact: true
+    },
+    {
+      href: '/settings/crypto-policy',
+      label: 'Crypto Policy',
+      icon: ShieldCheck,
       show: hasPermission('system:manage')
     },
   ].filter(item => item.show)
@@ -95,13 +103,16 @@ export default function DashboardLayout() {
         <nav className="space-y-1 px-4 flex-1">
           {navItems.map((item) => {
             const Icon = item.icon
+            const isActive = item.exact
+              ? location.pathname === item.href
+              : location.pathname.startsWith(item.href)
             return (
               <Link
                 key={item.href}
                 to={item.href}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  location.pathname.startsWith(item.href)
+                  isActive
                     ? "bg-primary text-primary-foreground"
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 )}

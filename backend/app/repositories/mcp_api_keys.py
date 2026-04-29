@@ -51,8 +51,7 @@ class MCPApiKeyRepository:
             "prefix": token[: len(_TOKEN_PREFIX) + 8],  # e.g. "mcp_aBcDeFgH"
             "token_hash": hash_token(token),
             "created_at": datetime.now(timezone.utc),
-            "expires_at": datetime.now(timezone.utc)
-            + timedelta(days=max(1, min(expires_in_days, 365))),
+            "expires_at": datetime.now(timezone.utc) + timedelta(days=max(1, min(expires_in_days, 365))),
             "last_used_at": None,
             "revoked_at": None,
         }
@@ -62,9 +61,7 @@ class MCPApiKeyRepository:
 
     async def list_for_user(self, user_id: str) -> List[Dict[str, Any]]:
         with track_db_operation(_COL, "find"):
-            cursor = self.collection.find(
-                {"user_id": user_id}, sort=[("created_at", -1)]
-            )
+            cursor = self.collection.find({"user_id": user_id}, sort=[("created_at", -1)])
             return await cursor.to_list(length=100)
 
     async def get_by_plaintext(self, plaintext: str) -> Optional[Dict[str, Any]]:

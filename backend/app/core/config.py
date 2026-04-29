@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # Timeout for webhook deliveries (depends on webhook endpoint response times)
     WEBHOOK_TIMEOUT_SECONDS: float = 30.0
     WEBHOOK_MAX_RETRIES: int = 3
+    # Set False in production to block webhook targets at loopback hosts.
+    WEBHOOK_ALLOW_LOCALHOST: bool = True
 
     # Timeout for notification providers (Slack, Mattermost API latency)
     NOTIFICATION_HTTP_TIMEOUT_SECONDS: float = 30.0

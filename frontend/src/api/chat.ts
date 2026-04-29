@@ -13,10 +13,6 @@ const getBaseUrl = () => {
   return import.meta.env.VITE_API_URL || '/api/v1';
 };
 
-/**
- * Attempts to refresh the access token by calling the refresh endpoint.
- * Returns true if a new token was obtained and stored in localStorage, false otherwise.
- */
 async function tryRefreshToken(): Promise<boolean> {
   const refreshToken = localStorage.getItem('refresh_token');
   if (!refreshToken) return false;
@@ -53,10 +49,6 @@ async function tryRefreshToken(): Promise<boolean> {
   }
 }
 
-/**
- * Tries to parse a single SSE data line into a ChatSSEEvent.
- * Returns the event on success, or null if the line is not a data line or is malformed.
- */
 function parseSseLine(line: string): ChatSSEEvent | null {
   if (!line.startsWith('data: ')) return null;
   try {
@@ -66,9 +58,6 @@ function parseSseLine(line: string): ChatSSEEvent | null {
   }
 }
 
-/**
- * Reads the SSE stream from a Response and yields ChatSSEEvents.
- */
 async function* readSseStream(
   response: Response,
   signal?: AbortSignal,
@@ -102,9 +91,6 @@ async function* readSseStream(
   }
 }
 
-/**
- * Resolves the error event to yield for a non-ok response.
- */
 async function resolveErrorEvent(response: Response): Promise<ChatSSEEvent> {
   if (response.status === 429) {
     const retryAfter = response.headers.get('Retry-After');
@@ -114,9 +100,6 @@ async function resolveErrorEvent(response: Response): Promise<ChatSSEEvent> {
   return { type: 'error', message: (body as { detail?: string }).detail || 'Request failed' };
 }
 
-/**
- * Performs the raw fetch for sendMessage, reading the current token from localStorage.
- */
 function performSendMessageFetch(
   conversationId: string,
   content: string,
@@ -164,7 +147,6 @@ export const chatApi = {
     let response = await performSendMessageFetch(conversationId, content, images, signal);
 
     if (response.status === 401) {
-      // Try to refresh token and retry once
       const refreshed = await tryRefreshToken();
       if (refreshed) {
         response = await performSendMessageFetch(conversationId, content, images, signal);

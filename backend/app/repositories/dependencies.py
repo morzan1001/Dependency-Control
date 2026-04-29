@@ -1,8 +1,4 @@
-"""
-Dependency Repository
-
-Centralizes all database operations for dependencies.
-"""
+"""Repository for dependencies."""
 
 from typing import Any, Dict, List, Optional
 
@@ -11,13 +7,10 @@ from app.repositories.base import BaseRepository
 
 
 class DependencyRepository(BaseRepository[Dependency]):
-    """Repository for dependency database operations."""
-
     collection_name = "dependencies"
     model_class = Dependency
 
     async def get_by_name(self, name: str) -> Optional[Dependency]:
-        """Get first dependency by name."""
         return await self.find_one({"name": name})
 
     async def find_by_scan(
@@ -26,7 +19,6 @@ class DependencyRepository(BaseRepository[Dependency]):
         skip: int = 0,
         limit: int = 10000,
     ) -> List[Dependency]:
-        """Find dependencies for a scan."""
         return await self.find_many({"scan_id": scan_id}, skip=skip, limit=limit)
 
     async def find_all(
@@ -34,24 +26,18 @@ class DependencyRepository(BaseRepository[Dependency]):
         query: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Find all dependencies matching query (returns raw dicts).
-
-        Consider using iterate() for large result sets to avoid
-        loading all documents into memory at once.
-        """
+        """Returns raw dicts. Use iterate() for large result sets to avoid loading
+        everything into memory at once."""
         cursor = self.collection.find(query or {}, projection)
         return await cursor.to_list(None)
 
     async def delete_by_scan(self, scan_id: str) -> int:
-        """Delete all dependencies for a scan."""
         return await self.delete_many({"scan_id": scan_id})
 
     async def count_by_scan(self, scan_id: str) -> int:
-        """Count dependencies for a scan."""
         return await self.count({"scan_id": scan_id})
 
     async def get_unique_packages(self, scan_ids: List[str]) -> int:
-        """Get count of unique packages across scans."""
         pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$name"}},
@@ -61,7 +47,6 @@ class DependencyRepository(BaseRepository[Dependency]):
         return result[0]["count"] if result else 0
 
     async def get_type_distribution(self, scan_ids: List[str]) -> List[Dict[str, Any]]:
-        """Get dependency type distribution across scans."""
         pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
@@ -70,15 +55,6 @@ class DependencyRepository(BaseRepository[Dependency]):
         return await self.aggregate(pipeline)
 
     async def get_distinct_types(self, scan_ids: List[str]) -> List[str]:
-        """
-        Get list of all distinct dependency types across scans.
-
-        Args:
-            scan_ids: List of scan IDs to search
-
-        Returns:
-            Sorted list of unique dependency type names
-        """
         pipeline: List[Dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$type"}},

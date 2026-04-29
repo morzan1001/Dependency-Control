@@ -1,10 +1,6 @@
-"""
-Webhook Service for triggering webhooks on various events.
-
-Supports multiple event types:
-- scan_completed: Triggered when a scan finishes
-- vulnerability_found: Triggered when critical vulnerabilities are detected
-- analysis_failed: Triggered when analysis fails
+"""Webhook delivery service. Canonical event names are dot-notation
+(e.g. ``scan.completed``); snake_case aliases are still accepted via
+WEBHOOK_EVENT_ALIASES in core.constants.
 """
 
 from __future__ import annotations
@@ -25,6 +21,7 @@ import httpx
 from prometheus_client import Counter
 
 from app.core.http_utils import InstrumentedAsyncClient
+from app.services.webhooks.validation import assert_safe_webhook_target
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
     BaseWebhookPayload,
@@ -39,6 +36,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.config import settings
 from app.core.constants import (
     WEBHOOK_BACKOFF_BASE,
+    WEBHOOK_EVENT_ALIASES,
     WEBHOOK_EVENT_ANALYSIS_FAILED,
     WEBHOOK_EVENT_SCAN_COMPLETED,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -51,12 +49,28 @@ from app.core.constants import (
     WEBHOOK_HEADER_USER_AGENT,
     WEBHOOK_USER_AGENT_VALUE,
 )
-# Avoid circular import - webhook.py imports validation.py from this package
-# Import moved to method level where needed
+
+
+def _normalize_event_name(event_type: str) -> str:
+    """Canonicalize a webhook event name to its dot-notation form."""
+    return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
+
+
+def _event_match_set(event_type: str) -> List[str]:
+    """Subscriptions may store the canonical dot-notation name or the snake_case
+    alias — return both forms so either subscription type matches."""
+    canonical = _normalize_event_name(event_type)
+    names = [canonical]
+    for alias, target in WEBHOOK_EVENT_ALIASES.items():
+        if target == canonical and alias not in names:
+            names.append(alias)
+    if event_type not in names:
+        names.append(event_type)
+    return names
+
 
 logger = logging.getLogger(__name__)
 
-# Import metrics for webhook tracking
 webhooks_triggered_total: Optional[Counter] = None
 webhooks_failed_total: Optional[Counter] = None
 
@@ -67,12 +81,7 @@ except ImportError:
 
 
 class WebhookService:
-    """
-    Service for triggering webhooks on various events.
-
-    Handles webhook delivery with retries, signature generation,
-    and delivery tracking for multi-pod deployments.
-    """
+    """Webhook delivery with retries, HMAC signing, and per-delivery audit logging."""
 
     def __init__(
         self,
@@ -158,19 +167,6 @@ class WebhookService:
         project_name: str,
         scan_url: Optional[str] = None,
     ) -> BaseWebhookPayload:
-        """
-        Build common payload structure used by all webhook events.
-
-        Args:
-            event_type: Type of event
-            scan_id: Scan ID
-            project_id: Project ID
-            project_name: Project name
-            scan_url: Optional URL to view scan results
-
-        Returns:
-            Base payload dictionary with typed structure
-        """
         scan: ScanPayload = {
             "id": scan_id,
             "url": scan_url,
@@ -192,23 +188,14 @@ class WebhookService:
         webhook_id: str,
         success: bool,
     ) -> None:
-        """
-        Update webhook delivery status in database with circuit breaker logic.
-
-        This is crucial for multi-pod deployments to track delivery state.
-
-        Args:
-            db: Database connection
-            webhook_id: Webhook ID to update
-            success: Whether the delivery was successful
-        """
+        """Track delivery state in DB with circuit-breaker — required for multi-pod
+        deployments where any pod may fire a webhook."""
         from datetime import timedelta
 
         try:
             now = datetime.now(timezone.utc)
 
             if success:
-                # Reset circuit breaker on success
                 await db.webhooks.update_one(
                     {"_id": webhook_id},
                     {
@@ -221,12 +208,10 @@ class WebhookService:
                     },
                 )
             else:
-                # Increment failure counters
-                # Circuit breaker: After 5 consecutive failures, disable for 1 hour
+                # Circuit breaker: 5 consecutive failures disable webhook for 1h.
                 CIRCUIT_BREAKER_THRESHOLD = 5
                 CIRCUIT_BREAKER_DURATION_HOURS = 1
 
-                # First, increment failure counters
                 await db.webhooks.update_one(
                     {"_id": webhook_id},
                     {
@@ -235,15 +220,13 @@ class WebhookService:
                     },
                 )
 
-                # Then, atomically activate circuit breaker if threshold is reached
-                # This uses a conditional update that only activates the circuit breaker
-                # when consecutive_failures >= threshold, making it atomic and race-safe
+                # Conditional update is race-safe: only flips when threshold is
+                # reached and breaker isn't already active (prevents duplicate logs).
                 circuit_until = now + timedelta(hours=CIRCUIT_BREAKER_DURATION_HOURS)
                 result = await db.webhooks.find_one_and_update(
                     {
                         "_id": webhook_id,
                         "consecutive_failures": {"$gte": CIRCUIT_BREAKER_THRESHOLD},
-                        # Only activate if not already activated (prevents duplicate logs)
                         "$or": [
                             {"circuit_breaker_until": {"$exists": False}},
                             {"circuit_breaker_until": None},
@@ -352,6 +335,8 @@ class WebhookService:
 
         while retry_count < self.max_retries:
             try:
+                await assert_safe_webhook_target(webhook.url)
+
                 async with InstrumentedAsyncClient("Webhook Delivery", timeout=self.timeout) as client:
                     response = await client.post(
                         webhook.url,
@@ -385,6 +370,13 @@ class WebhookService:
                         )
                         last_error = f"HTTP {response.status_code}: {response.text[:200]}"
 
+            except ValueError as e:
+                # Blocked by SSRF policy — don't retry.
+                logger.warning(
+                    f"Webhook {webhook.id} blocked for {event_type}: {e}"
+                )
+                last_error = f"Blocked target: {e}"
+                break
             except httpx.TimeoutException:
                 logger.warning(f"Webhook {webhook.id} timed out for {event_type} (attempt {retry_count + 1})")
                 last_error = "Timeout"
@@ -463,10 +455,15 @@ class WebhookService:
 
         now = datetime.now(timezone.utc)
 
-        # Base query with circuit breaker filter
+        # Base query with circuit breaker filter. Subscriptions may store the
+        # event under either its canonical dot-notation name or the legacy
+        # snake_case alias; match either form. MongoDB's array-membership
+        # behaviour means `events: {"$in": [...]}` matches docs whose
+        # `events` array contains any of the listed values.
+        event_names = _event_match_set(event_type)
         base_conditions: Dict[str, Any] = {
             "is_active": True,
-            "events": event_type,
+            "events": {"$in": event_names},
             "$or": [
                 {"circuit_breaker_until": {"$exists": False}},
                 {"circuit_breaker_until": None},
@@ -499,6 +496,40 @@ class WebhookService:
         )
 
         return webhooks
+
+    async def safe_trigger_webhooks(
+        self,
+        db: AsyncIOMotorDatabase,
+        event_type: str,
+        payload: "Mapping[str, Any]",
+        project_id: Optional[str] = None,
+        *,
+        context: str = "webhook",
+    ) -> None:
+        """Fire-and-forget wrapper for ``trigger_webhooks``.
+
+        Webhook delivery is **never** load-bearing for the surrounding
+        operation: a failed dispatch must not roll back the ingest, audit
+        write, report generation, etc. that triggered it. Every caller
+        used to wrap ``trigger_webhooks`` in the same try/except + logger
+        boilerplate; this helper centralises that pattern.
+
+        ``context`` is included in the log message so log readers know
+        which subsystem failed to dispatch.
+        """
+        try:
+            await self.trigger_webhooks(
+                db,
+                event_type=event_type,
+                payload=payload,
+                project_id=project_id,
+            )
+        except Exception:
+            logger.exception(
+                "%s: webhook dispatch for %s failed (non-blocking)",
+                context,
+                event_type,
+            )
 
     async def trigger_webhooks(
         self,
@@ -713,6 +744,8 @@ class WebhookService:
         start_time = time.monotonic()
 
         try:
+            await assert_safe_webhook_target(webhook.url)
+
             async with InstrumentedAsyncClient("Webhook Test", timeout=self.timeout) as client:
                 response = await client.post(
                     webhook.url,
@@ -737,6 +770,13 @@ class WebhookService:
                         "response_time_ms": round(response_time_ms, 2),
                     }
 
+        except ValueError as e:
+            return {
+                "success": False,
+                "status_code": None,
+                "error": f"Blocked target: {e}",
+                "response_time_ms": None,
+            }
         except httpx.TimeoutException:
             return {
                 "success": False,

@@ -1,0 +1,16 @@
+# CNSA Suite 2.0 — NSA's Commercial National Security Algorithm Suite
+# https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF
+
+rules:
+  - rule_id: cnsa20-rsa-min-3072
+    name: CNSA 2.0 requires RSA ≥ 3072 bits for classical use
+    description: >
+      CNSA 2.0 mandates 3072-bit RSA during the transition period to
+      post-quantum algorithms.
+    finding_type: crypto_weak_key
+    default_severity: MEDIUM
+    match_name_patterns: ["RSA"]
+    match_primitive: pke
+    match_min_key_size_bits: 3072
+    enabled: false  # opt-in — strictly CNSA-compliant environments only
+    source: cnsa-2.0

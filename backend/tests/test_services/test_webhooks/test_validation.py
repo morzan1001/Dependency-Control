@@ -1,8 +1,11 @@
 """Tests for webhook URL and event validation."""
 
+from unittest.mock import patch
+
 import pytest
 
 from app.services.webhooks.validation import (
+    assert_safe_webhook_target,
     validate_webhook_url,
     validate_webhook_url_optional,
     validate_webhook_events,
@@ -25,8 +28,12 @@ class TestValidateWebhookUrl:
         result = validate_webhook_url("http://127.0.0.1:8080/hook")
         assert result == "http://127.0.0.1:8080/hook"
 
+    def test_http_ipv6_loopback_passes(self):
+        result = validate_webhook_url("http://[::1]:8080/hook")
+        assert result == "http://[::1]:8080/hook"
+
     def test_http_non_localhost_raises(self):
-        with pytest.raises(ValueError, match="HTTPS"):
+        with pytest.raises(ValueError, match="Plain HTTP"):
             validate_webhook_url("http://example.com/webhook")
 
     def test_empty_string_raises(self):
@@ -34,12 +41,69 @@ class TestValidateWebhookUrl:
             validate_webhook_url("")
 
     def test_ftp_url_raises(self):
-        with pytest.raises(ValueError, match="HTTPS"):
+        with pytest.raises(ValueError, match="scheme"):
             validate_webhook_url("ftp://example.com/webhook")
 
     def test_no_protocol_raises(self):
-        with pytest.raises(ValueError, match="HTTPS"):
+        with pytest.raises(ValueError, match="scheme"):
             validate_webhook_url("example.com/webhook")
+
+    def test_userinfo_bypass_rejected(self):
+        with pytest.raises(ValueError, match="Plain HTTP"):
+            validate_webhook_url("http://localhost@evil.com/hook")
+
+    def test_userinfo_bypass_with_127_rejected(self):
+        with pytest.raises(ValueError, match="Plain HTTP"):
+            validate_webhook_url("http://127.0.0.1@evil.com/hook")
+
+    def test_suffix_bypass_rejected(self):
+        with pytest.raises(ValueError, match="Plain HTTP"):
+            validate_webhook_url("http://localhost.evil.com/hook")
+
+    def test_suffix_bypass_127_rejected(self):
+        with pytest.raises(ValueError, match="Plain HTTP"):
+            validate_webhook_url("http://127.0.0.1.evil.com/hook")
+
+    def test_uppercase_https_passes(self):
+        result = validate_webhook_url("HTTPS://example.com/hook")
+        assert result == "HTTPS://example.com/hook"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://192.168.1.1/admin",
+            "https://10.0.0.5/hook",
+            "https://172.16.0.1/hook",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://[fc00::1]/hook",
+            "https://[fe80::1]/hook",
+            "https://0.0.0.0/hook",
+            "https://224.0.0.1/hook",
+        ],
+    )
+    def test_private_and_reserved_ip_literals_rejected(self, url):
+        with pytest.raises(ValueError, match="private|reserved|link-local"):
+            validate_webhook_url(url)
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "metadata.google.internal",
+            "metadata.goog",
+            "metadata",
+        ],
+    )
+    def test_blocked_metadata_hostnames_rejected(self, host):
+        with pytest.raises(ValueError, match="not an allowed target"):
+            validate_webhook_url(f"https://{host}/latest/meta-data/")
+
+    def test_localhost_disabled_via_setting(self):
+        with patch("app.services.webhooks.validation.settings") as s:
+            s.WEBHOOK_ALLOW_LOCALHOST = False
+            with pytest.raises(ValueError, match="Localhost"):
+                validate_webhook_url("http://localhost:8080/hook")
+            with pytest.raises(ValueError, match="Localhost"):
+                validate_webhook_url("http://127.0.0.1/hook")
 
 
 class TestValidateWebhookUrlOptional:
@@ -53,6 +117,48 @@ class TestValidateWebhookUrlOptional:
     def test_invalid_url_raises(self):
         with pytest.raises(ValueError):
             validate_webhook_url_optional("http://example.com/hook")
+
+
+class TestAssertSafeWebhookTarget:
+    @pytest.mark.asyncio
+    async def test_loopback_host_skipped(self):
+        await assert_safe_webhook_target("http://localhost:8080/hook")
+        await assert_safe_webhook_target("http://127.0.0.1/hook")
+        await assert_safe_webhook_target("http://[::1]/hook")
+
+    @pytest.mark.asyncio
+    async def test_blocked_ip_literal_rejected(self):
+        with pytest.raises(ValueError, match="blocked IP range"):
+            await assert_safe_webhook_target("https://192.168.1.1/hook")
+
+    @pytest.mark.asyncio
+    async def test_resolved_to_private_ip_rejected(self):
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("10.0.0.5", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            with pytest.raises(ValueError, match="resolves to"):
+                await assert_safe_webhook_target("https://attacker.example.com/hook")
+
+    @pytest.mark.asyncio
+    async def test_resolved_to_metadata_ip_rejected(self):
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("169.254.169.254", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            with pytest.raises(ValueError, match="resolves to"):
+                await assert_safe_webhook_target("https://metadata-spoof.example.com/")
+
+    @pytest.mark.asyncio
+    async def test_resolved_to_public_ip_passes(self):
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            await assert_safe_webhook_target("https://example.com/hook")
 
 
 class TestValidateWebhookEvents:

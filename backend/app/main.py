@@ -8,14 +8,19 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.core.config import settings
 from app.core.metrics import PrometheusMiddleware, metrics_endpoint
-from app.db.mongodb import close_mongo_connection, connect_to_mongo
+from app.db.mongodb import close_mongo_connection, connect_to_mongo, get_database
 from app.api import health
 from app.api.v1.endpoints import (
     analytics,
     archives,
     auth,
     callgraph,
+    cbom_ingest,
     chat,
+    compliance_reports,
+    crypto_analytics,
+    crypto_assets,
+    crypto_policies,
     github_instances,
     gitlab_instances,
     ingest,
@@ -24,6 +29,8 @@ from app.api.v1.endpoints import (
     mcp,
     mcp_keys,
     notifications,
+    policy_audit,
+    pqc_migration,
     projects,
     scripts,
     system,
@@ -34,6 +41,14 @@ from app.api.v1.endpoints import (
 )
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
+from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.policy_audit_entry import PolicyAuditRepository
+from app.services.audit.retention import prune_old_audit_entries
+from app.services.compliance.retention import sweep_expired_compliance_reports
+from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.analytics.migrations import backfill_scan_created_at
 
 # Configure logging
 logging.basicConfig(
@@ -94,6 +109,31 @@ async def startup_event() -> None:
             await connect_to_mongo()
             await init_db()  # Creates indexes + initial admin user
 
+            # CBOM: ensure crypto collection indexes and seed built-in policies
+            db = await get_database()
+            await CryptoAssetRepository(db).ensure_indexes()
+            await CryptoPolicyRepository(db).ensure_indexes()
+            await PolicyAuditRepository(db).ensure_indexes()
+            await ComplianceReportRepository(db).ensure_indexes()
+            await seed_crypto_policies(db)
+            from app.services.crypto_policy.validation import validate_persisted_policies
+
+            await validate_persisted_policies(db)
+            await backfill_scan_created_at(db)
+            await prune_old_audit_entries(db)
+            await sweep_expired_compliance_reports(db)
+
+            # WeasyPrint health-check: non-fatal, PDF reports depend on it
+            try:
+                import weasyprint  # noqa: F401
+
+                logger.info("WeasyPrint is available")
+            except Exception as e:
+                logger.warning(
+                    "WeasyPrint is NOT available - PDF compliance reports will fail: %s",
+                    e,
+                )
+
             # Initialize S3 bucket for archive storage (if configured)
             from app.core.s3 import ensure_bucket_exists, is_archive_enabled
 
@@ -133,6 +173,7 @@ app.get("/metrics", include_in_schema=False)(metrics_endpoint)
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}", tags=["auth"])
 app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest"])
+app.include_router(cbom_ingest.router, prefix=f"{settings.API_V1_STR}", tags=["cbom-ingest"])
 app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(teams.router, prefix=f"{settings.API_V1_STR}/teams", tags=["teams"])
@@ -168,6 +209,12 @@ app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", 
 app.include_router(archives.router, prefix=f"{settings.API_V1_STR}/projects", tags=["archives"])
 app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archives", tags=["archives-admin"])
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
+app.include_router(crypto_assets.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-assets"])
+app.include_router(crypto_policies.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-policies"])
+app.include_router(policy_audit.router, prefix=f"{settings.API_V1_STR}", tags=["policy-audit"])
+app.include_router(crypto_analytics.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-analytics"])
+app.include_router(compliance_reports.router, prefix=f"{settings.API_V1_STR}", tags=["compliance-reports"])
+app.include_router(pqc_migration.router, prefix=f"{settings.API_V1_STR}", tags=["pqc-migration"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])

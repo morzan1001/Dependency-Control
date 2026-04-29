@@ -1,8 +1,4 @@
-"""
-Webhook Repository
-
-Centralizes all database operations for webhooks.
-"""
+"""Repository for webhooks."""
 
 from typing import Any, Dict, List, Optional
 
@@ -19,7 +15,6 @@ class WebhookRepository:
         self.collection = db.webhooks
 
     async def get_by_id(self, webhook_id: str) -> Optional[Webhook]:
-        """Get webhook by ID."""
         data = await self.collection.find_one({"_id": webhook_id})
         if data:
             return Webhook(**data)
@@ -30,17 +25,14 @@ class WebhookRepository:
         return await self.collection.find_one({"_id": webhook_id})
 
     async def create(self, webhook: Webhook) -> Webhook:
-        """Create a new webhook."""
         await self.collection.insert_one(webhook.model_dump(by_alias=True))
         return webhook
 
     async def update(self, webhook_id: str, update_data: Dict[str, Any]) -> Optional[Webhook]:
-        """Update webhook by ID."""
         await self.collection.update_one({"_id": webhook_id}, {"$set": update_data})
         return await self.get_by_id(webhook_id)
 
     async def delete(self, webhook_id: str) -> bool:
-        """Delete webhook by ID."""
         result = await self.collection.delete_one({"_id": webhook_id})
         return result.deleted_count > 0
 
@@ -52,7 +44,6 @@ class WebhookRepository:
         sort_by: str = "created_at",
         sort_order: int = -1,
     ) -> List[Webhook]:
-        """Find webhooks for a project."""
         cursor = self.collection.find({"project_id": project_id}).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Webhook(**doc) for doc in docs]
@@ -65,7 +56,6 @@ class WebhookRepository:
         sort_by: str = "created_at",
         sort_order: int = -1,
     ) -> List[Webhook]:
-        """Find webhooks for a team."""
         cursor = self.collection.find({"team_id": team_id}).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Webhook(**doc) for doc in docs]
@@ -95,21 +85,17 @@ class WebhookRepository:
         sort_by: str = "created_at",
         sort_order: int = -1,
     ) -> List[Webhook]:
-        """Find multiple webhooks matching query."""
         cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Webhook(**doc) for doc in docs]
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
-        """Count webhooks matching query."""
         return await self.collection.count_documents(query or {})
 
     async def count_by_project(self, project_id: str) -> int:
-        """Count webhooks for a project."""
         return await self.collection.count_documents({"project_id": project_id})
 
     async def count_by_team(self, team_id: str) -> int:
-        """Count webhooks for a team."""
         return await self.collection.count_documents({"team_id": team_id})
 
     async def count_global(self) -> int:
@@ -132,7 +118,6 @@ class WebhookRepository:
     async def find_by_event(
         self, project_id: Optional[str], event_type: str, team_id: Optional[str] = None
     ) -> List[Webhook]:
-        """Find webhooks subscribed to a specific event type."""
         query: Dict[str, Any] = {"events": event_type, "is_active": True}
 
         if project_id:

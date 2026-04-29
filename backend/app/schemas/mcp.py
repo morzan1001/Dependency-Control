@@ -42,6 +42,7 @@ class MCPKeyListResponse(BaseModel):
 
 # ── MCP JSON-RPC 2.0 envelope types ─────────────────────────────────────
 
+
 class JSONRPCRequest(BaseModel):
     jsonrpc: str = "2.0"
     id: Optional[Any] = None

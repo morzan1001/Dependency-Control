@@ -105,16 +105,15 @@ class EPSSProvider:
             if cache_mapping:
                 await cache_service.mset(cache_mapping, CacheTTL.EPSS_SCORE)
 
-            # Small delay between batches to be nice to the API
+            # Throttle between batches to stay polite to the FIRST.org API.
             if i + self._batch_size < len(missing_cves):
                 await asyncio.sleep(0.5)
 
     async def load_epss_scores(self, client: InstrumentedAsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
-        """Load EPSS scores for given CVEs, using Redis cache where available."""
+        """Load EPSS scores for `cves`, hitting Redis cache first."""
         result = {}
         missing_cves = []
 
-        # Check Redis cache first (batch get)
         cache_keys = [CacheKeys.epss(cve) for cve in cves]
         cached_data = await cache_service.mget(cache_keys)
 
@@ -124,7 +123,6 @@ class EPSSProvider:
             else:
                 missing_cves.append(cve)
 
-        # Fetch missing in batches from API
         if missing_cves:
             logger.debug(
                 f"Fetching EPSS data for {len(missing_cves)} CVEs ({len(cves) - len(missing_cves)} from cache)"

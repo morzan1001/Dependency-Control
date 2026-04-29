@@ -3,10 +3,10 @@ import type { FindingDetails } from '@/types/scan'
 import { AlertTriangle, Building, Calendar, ExternalLink, FileText, User } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 
-// Skip rendering for these redundant fields that are shown elsewhere
+// Fields rendered elsewhere; skip in this generic detail view.
 const skipFields = new Set(['license', 'severity', 'type', 'message', 'id', 'component', 'version', 'fixed_version'])
 
-// Fields that should be grouped together in a row (e.g., cycle and lts for EOL)
+// Fields displayed side-by-side (e.g. cycle + lts for EOL).
 const rowGroupFields = new Set(['cycle', 'lts'])
 
 function isUrl(value: unknown): value is string {
@@ -24,7 +24,6 @@ function isEmptyValue(value: unknown): boolean {
   return false
 }
 
-// Render a single array item as either a link or a badge
 function renderArrayItem(key: string, item: unknown, index: number) {
   if (isUrl(item)) {
     return (
@@ -47,9 +46,7 @@ function renderArrayItem(key: string, item: unknown, index: number) {
   )
 }
 
-// Helper to render a value based on its type
 function renderValue(key: string, value: unknown) {
-  // Handle license_url specially - render as link
   if (key === 'license_url' && typeof value === 'string') {
     return (
       <a
@@ -64,7 +61,6 @@ function renderValue(key: string, value: unknown) {
     )
   }
 
-  // Handle URLs in any field
   if (isUrl(value)) {
     return (
       <a href={value} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">
@@ -73,7 +69,6 @@ function renderValue(key: string, value: unknown) {
     )
   }
 
-  // Handle dates
   if (isDateField(key)) {
     const formatted = formatDate(String(value))
     if (formatted !== 'N/A' && formatted !== String(value)) {
@@ -81,12 +76,10 @@ function renderValue(key: string, value: unknown) {
     }
   }
 
-  // Handle booleans
   if (typeof value === 'boolean') {
     return <Badge variant={value ? 'default' : 'secondary'}>{value ? 'Yes' : 'No'}</Badge>
   }
 
-  // Handle arrays
   if (Array.isArray(value)) {
     const hasUrls = value.some(isUrl)
     if (hasUrls) {
@@ -108,18 +101,15 @@ function renderValue(key: string, value: unknown) {
     )
   }
 
-  // Handle nested objects
   if (typeof value === 'object' && value !== null) {
     return (
       <pre className="bg-muted p-2 rounded text-xs overflow-auto max-h-32">{JSON.stringify(value, null, 2)}</pre>
     )
   }
 
-  // Default: render as string
   return <span className="break-all">{String(value)}</span>
 }
 
-// Get appropriate icon for field
 function getFieldIcon(key: string) {
   if (key.includes('url') || key.includes('link')) return ExternalLink
   if (key.includes('date') || key.includes('eol') || key.includes('end_of_life')) return Calendar
@@ -130,7 +120,6 @@ function getFieldIcon(key: string) {
   return null
 }
 
-// Format field name for display
 function formatFieldName(key: string) {
   return key
     .replaceAll('_', ' ')
@@ -142,13 +131,11 @@ function formatFieldName(key: string) {
 }
 
 export function AdditionalDetailsView({ details }: Readonly<{ details: FindingDetails }>) {
-  // Filter out empty values and redundant fields
   const filteredEntries = Object.entries(details as Record<string, unknown>).filter(([key, value]) => {
     if (skipFields.has(key)) return false
     return !isEmptyValue(value)
   })
 
-  // Separate grouped fields from regular fields
   const groupedEntries = filteredEntries.filter(([key]) => rowGroupFields.has(key))
   const regularEntries = filteredEntries.filter(([key]) => !rowGroupFields.has(key))
 
@@ -158,7 +145,6 @@ export function AdditionalDetailsView({ details }: Readonly<{ details: FindingDe
 
   return (
     <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-      {/* Grouped fields (cycle + lts) displayed side by side */}
       {groupedEntries.length > 0 && (
         <div className="grid grid-cols-2 gap-4">
           {groupedEntries.map(([key, value]) => {
@@ -175,7 +161,6 @@ export function AdditionalDetailsView({ details }: Readonly<{ details: FindingDe
           })}
         </div>
       )}
-      {/* Regular fields */}
       {regularEntries.map(([key, value]) => {
         const Icon = getFieldIcon(key)
         return (

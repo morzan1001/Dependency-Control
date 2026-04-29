@@ -20,6 +20,7 @@ class TruffleHogFinding(BaseModel):
         if isinstance(v, int):
             return str(v)
         return v
+
     DecoderName: Optional[str] = None
     Verified: Optional[bool] = None
     Raw: Optional[str] = None

@@ -1,15 +1,8 @@
-"""
-Distributed Cache Service using Redis
+"""Async Redis-backed cache for cross-pod deduplication of external API calls.
 
-Provides a shared cache layer for all backend pods to reduce external API calls
-and avoid rate limiting issues when running multiple replicas.
-
-Key features:
-- Automatic JSON serialization/deserialization
-- TTL-based expiration
-- Graceful fallback when Redis is unavailable
-- Batch operations for efficiency
-- Cache key prefixing for namespace isolation
+Use this for results that have calendar-time cost or upstream rate limits;
+for in-process memoization of cheap MongoDB aggregations use
+``app.services.analytics.cache.TTLCache`` instead.
 """
 
 import asyncio
@@ -33,7 +26,6 @@ T = TypeVar("T")
 REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
 
-# Import metrics for cache monitoring
 cache_hits_total: Optional[Counter] = None
 cache_misses_total: Optional[Counter] = None
 cache_operations_total: Optional[Counter] = None
@@ -110,7 +102,6 @@ class CacheKeys:
 
     @staticmethod
     def osv(purl: str) -> str:
-        # Use hash for long PURLs
         purl_hash = hashlib.md5(purl.encode()).hexdigest()[:16]
         return f"osv:{purl_hash}"
 
@@ -156,12 +147,8 @@ class CacheKeys:
 
 
 class CacheService:
-    """
-    Distributed cache service using Redis.
-
-    Designed for horizontal scaling - all pods share the same cache,
-    dramatically reducing duplicate API calls to external services.
-    """
+    """Distributed cache service using Redis — all pods share the same store
+    so duplicate external API calls stay deduplicated horizontally."""
 
     RECONNECT_INTERVAL_SECONDS = 30
 
@@ -173,16 +160,12 @@ class CacheService:
         self._unavailable_since: float = 0
 
     async def get_client(self) -> redis.Redis:
-        """Get or create Redis client with connection pooling.
-
-        Uses a lock to prevent race conditions when multiple coroutines
-        try to initialize the client simultaneously.
-        """
+        """Get or create the Redis client. Locked to avoid races when several
+        coroutines hit the first call simultaneously."""
         if self._client is not None and self._pool is not None:
             return self._client
 
         async with self._lock:
-            # Double-check after acquiring lock
             if self._client is not None and self._pool is not None:
                 return self._client
 
@@ -194,7 +177,6 @@ class CacheService:
                     max_connections=20,
                 )
                 self._client = redis.Redis(connection_pool=self._pool)
-                # Test connection
                 await self._client.ping()  # type: ignore[misc]
                 self._available = True
                 self._unavailable_since = 0
@@ -207,7 +189,6 @@ class CacheService:
         return self._client
 
     def _should_retry_connection(self) -> bool:
-        """Check if enough time has passed to retry connecting to Redis."""
         if self._available:
             return False
         if self._unavailable_since == 0:
@@ -216,14 +197,11 @@ class CacheService:
         return elapsed >= self.RECONNECT_INTERVAL_SECONDS
 
     def _mark_unavailable(self) -> None:
-        """Mark Redis as unavailable and record the time for reconnect backoff."""
         self._available = False
         self._unavailable_since = time.monotonic()
 
     async def _try_reconnect(self) -> bool:
-        """Attempt to reconnect to Redis. Returns True if successful."""
         try:
-            # Reset client so get_client() creates a new connection
             self._client = None
             self._pool = None
             await self.get_client()
@@ -234,7 +212,6 @@ class CacheService:
             return False
 
     async def _ensure_available(self) -> bool:
-        """Check availability and attempt reconnect if needed. Returns True if usable."""
         if self._available:
             return True
         if self._should_retry_connection():
@@ -242,7 +219,6 @@ class CacheService:
         return False
 
     async def close(self) -> None:
-        """Close Redis connection pool."""
         if self._client:
             await self._client.aclose()
             self._client = None
@@ -251,19 +227,10 @@ class CacheService:
             self._pool = None
 
     def _make_key(self, key: str) -> str:
-        """Create prefixed cache key."""
         return f"{settings.CACHE_PREFIX}{key}"
 
     async def get(self, key: str) -> Optional[Any]:
-        """
-        Get value from cache.
-
-        Args:
-            key: Cache key (will be prefixed automatically)
-
-        Returns:
-            Cached value or None if not found/expired
-        """
+        """Returns cached value or None if not found/expired."""
         if not await self._ensure_available():
             return None
 
@@ -298,17 +265,7 @@ class CacheService:
                 cache_operation_duration_seconds.labels(operation="get").observe(time.time() - _start)
 
     async def set(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> bool:
-        """
-        Set value in cache with TTL.
-
-        Args:
-            key: Cache key (will be prefixed automatically)
-            value: Value to cache (must be JSON serializable)
-            ttl_seconds: Time-to-live in seconds (default from settings)
-
-        Returns:
-            True if cached successfully, False otherwise
-        """
+        """Set a JSON-serializable value with TTL (defaults to CACHE_DEFAULT_TTL_HOURS)."""
         if not await self._ensure_available():
             return False
 
@@ -341,7 +298,6 @@ class CacheService:
                 cache_operation_duration_seconds.labels(operation="set").observe(time.time() - _start)
 
     async def delete(self, key: str) -> bool:
-        """Delete a key from cache."""
         if not await self._ensure_available():
             return False
 
@@ -367,15 +323,7 @@ class CacheService:
                 cache_operation_duration_seconds.labels(operation="delete").observe(time.time() - _start)
 
     async def mget(self, keys: List[str]) -> Dict[str, Any]:
-        """
-        Batch get multiple keys.
-
-        Args:
-            keys: List of cache keys
-
-        Returns:
-            Dict mapping keys to their values (None for missing keys)
-        """
+        """Batch get; returns {key: value-or-None}."""
         if not keys:
             return {}
         if not await self._ensure_available():
@@ -413,16 +361,7 @@ class CacheService:
                 cache_operation_duration_seconds.labels(operation="mget").observe(time.time() - _start)
 
     async def mset(self, mapping: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
-        """
-        Batch set multiple key-value pairs with TTL.
-
-        Args:
-            mapping: Dict of key-value pairs to cache
-            ttl_seconds: TTL for all keys
-
-        Returns:
-            True if all cached successfully
-        """
+        """Batch set with shared TTL."""
         if not mapping:
             return False
         if not await self._ensure_available():
@@ -460,28 +399,11 @@ class CacheService:
         fetch_fn: Callable[[], Any],
         ttl_seconds: Optional[int] = None,
     ) -> Any:
-        """
-        Get from cache or fetch and cache if missing.
-
-        This is the primary method for cache-through pattern:
-        1. Check cache for existing value
-        2. If not found, call fetch_fn to get fresh data
-        3. Cache the result for future requests
-
-        Args:
-            key: Cache key
-            fetch_fn: Async function to call if cache miss
-            ttl_seconds: TTL for cached value
-
-        Returns:
-            Cached or freshly fetched value
-        """
-        # Try cache first
+        """Cache-through: return cached value, otherwise call fetch_fn and cache the result."""
         cached = await self.get(key)
         if cached is not None:
             return cached
 
-        # Cache miss - fetch fresh data
         try:
             data = await fetch_fn()
             if data is not None:
@@ -499,36 +421,16 @@ class CacheService:
         lock_ttl_seconds: int = 30,
         max_wait_seconds: float = 5.0,
     ) -> Optional[Any]:
+        """Cache-through with a distributed lock so only one pod fetches on miss
+        while peers wait for the result. Prevents cache-stampede on multi-pod deploys.
+
+        Flow: check cache → try lock → if locked: fetch+cache+release; else wait+retry cache.
         """
-        Get from cache or fetch with distributed lock to prevent cache stampede.
-
-        In a multi-pod deployment, when cache expires, all pods would normally
-        try to fetch the same data simultaneously. This method uses a Redis lock
-        to ensure only one pod fetches while others wait for the result.
-
-        Flow:
-        1. Check cache - return if hit
-        2. Try to acquire lock
-        3. If lock acquired: fetch, cache, release lock
-        4. If lock not acquired: wait and retry cache
-
-        Args:
-            key: Cache key
-            fetch_fn: Async function to call if cache miss
-            ttl_seconds: TTL for cached value
-            lock_ttl_seconds: TTL for the lock (prevents deadlock if pod crashes)
-            max_wait_seconds: Max time to wait for another pod's fetch
-
-        Returns:
-            Cached or freshly fetched value, or None if fetch fails
-        """
-        # Try cache first
         cached = await self.get(key)
         if cached is not None:
             return cached
 
         if not self._available:
-            # Redis unavailable - just fetch without locking
             try:
                 return await fetch_fn()
             except Exception as e:
@@ -539,48 +441,41 @@ class CacheService:
         try:
             client = await self.get_client()
 
-            # Try to acquire distributed lock using SETNX
             lock_acquired = await client.set(
                 self._make_key(lock_key),
                 "1",
-                nx=True,  # Only set if not exists
-                ex=lock_ttl_seconds,  # Auto-expire to prevent deadlock
+                nx=True,
+                ex=lock_ttl_seconds,  # Auto-expire to prevent deadlock on pod crash.
             )
 
             if lock_acquired:
-                # This pod won the race - fetch the data
                 try:
                     data = await fetch_fn()
                     if data is not None:
                         await self.set(key, data, ttl_seconds)
                     else:
-                        # Cache negative result with short TTL
+                        # Negative cache so peers don't all retry the failed fetch.
                         await self.set(key, {}, CacheTTL.NEGATIVE_RESULT)
                     return data
                 finally:
-                    # Always release lock
                     await client.delete(self._make_key(lock_key))
             else:
-                # Another pod is fetching - wait and check cache
-                wait_interval = 0.1  # 100ms
+                wait_interval = 0.1
                 waited = 0.0
 
                 while waited < max_wait_seconds:
                     await asyncio.sleep(wait_interval)
                     waited += wait_interval
 
-                    # Check if data is now in cache
                     cached = await self.get(key)
                     if cached is not None:
                         return cached
 
-                    # Check if lock was released (fetch completed but cache empty)
+                    # Lock released but no value cached → fetch returned None.
                     lock_exists = await client.exists(self._make_key(lock_key))
                     if not lock_exists:
-                        # Lock released but no data - return None (negative cache)
                         return await self.get(key)
 
-                # Timeout - try fetching ourselves as fallback
                 logger.warning(f"Lock wait timeout for {key}, fetching anyway")
                 try:
                     data = await fetch_fn()
@@ -593,7 +488,6 @@ class CacheService:
 
         except redis.ConnectionError:
             self._available = False
-            # Fallback to direct fetch
             try:
                 return await fetch_fn()
             except Exception as e:
@@ -601,25 +495,17 @@ class CacheService:
                 return None
         except Exception as e:
             logger.warning(f"get_or_fetch_with_lock error for {key}: {e}")
-            # Fallback to direct fetch
             try:
                 return await fetch_fn()
             except Exception:
                 return None
 
     async def health_check(self) -> Dict[str, Any]:
-        """
-        Get cache health status and statistics.
-
-        Returns:
-            Dict with health info and Redis stats
-        """
         try:
             client = await self.get_client()
             info = await client.info(section="memory")
             stats = await client.info(section="stats")
 
-            # Update Prometheus metrics
             total_keys = await client.dbsize()
             connected_clients_count = stats.get("connected_clients", 0)
 
@@ -647,22 +533,13 @@ class CacheService:
             }
 
     def _calculate_hit_rate(self, hits: int, misses: int) -> float:
-        """Calculate cache hit rate as percentage."""
         total = hits + misses
         if total == 0:
             return 0.0
         return round((hits / total) * 100, 2)
 
     async def invalidate_pattern(self, pattern: str) -> int:
-        """
-        Delete all keys matching a pattern.
-
-        Args:
-            pattern: Redis pattern (e.g., "epss:*" to clear all EPSS cache)
-
-        Returns:
-            Number of keys deleted
-        """
+        """Delete all keys matching `pattern` (e.g. "epss:*"). Returns count deleted."""
         if not self._available:
             return 0
 
@@ -670,7 +547,7 @@ class CacheService:
             client = await self.get_client()
             full_pattern = self._make_key(pattern)
 
-            # Use SCAN to avoid blocking on large keyspaces
+            # SCAN avoids blocking on large keyspaces.
             deleted = 0
             cursor = 0
             while True:
@@ -688,34 +565,25 @@ class CacheService:
             return 0
 
 
-# Global cache service instance
 cache_service = CacheService()
 
 
 async def update_cache_stats() -> None:
-    """
-    Update cache statistics Prometheus metrics.
-
-    This function should be called periodically (e.g., in housekeeping loop)
-    to keep cache metrics current for Prometheus scraping.
-    """
+    """Refresh cache Prometheus metrics — call from the housekeeping loop."""
     try:
         if not cache_service._available:
             return
 
         client = await cache_service.get_client()
 
-        # Get various info sections
         stats = await client.info(section="stats")
         memory_info = await client.info(section="memory")
         clients_info = await client.info(section="clients")
 
         total_keys = await client.dbsize()
 
-        # Extract metrics from info sections
-        # connected_clients is in the clients section for DragonflyDB
+        # DragonflyDB exposes connected_clients in the clients section, not stats.
         connected_clients_count = clients_info.get("connected_clients", stats.get("connected_clients", 0))
-        # used_memory is in bytes
         used_memory = memory_info.get("used_memory", 0)
 
         if cache_keys_total:

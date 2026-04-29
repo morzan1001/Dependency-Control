@@ -29,6 +29,7 @@ from typing import Any, Dict
 
 from fastapi import Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -76,7 +77,7 @@ class _RpcError(Exception):
 
 
 async def _resolve_user_from_token(
-    authorization: str, db
+    authorization: str, db: "AsyncIOMotorDatabase[Any]"
 ) -> tuple[User, Dict[str, Any]]:
     """Validate Bearer token and return the (user, key_doc) pair.
 
@@ -118,11 +119,13 @@ def _tools_list_payload() -> Dict[str, Any]:
     tools = []
     for td in get_tool_definitions():
         fn = td.get("function", {})
-        tools.append({
-            "name": fn.get("name", ""),
-            "description": fn.get("description", ""),
-            "inputSchema": fn.get("parameters", {"type": "object", "properties": {}}),
-        })
+        tools.append(
+            {
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "inputSchema": fn.get("parameters", {"type": "object", "properties": {}}),
+            }
+        )
     return {"tools": tools}
 
 
@@ -130,7 +133,7 @@ async def _handle_tool_call(
     registry: ChatToolRegistry,
     params: Dict[str, Any],
     user: User,
-    db,
+    db: "AsyncIOMotorDatabase[Any]",
 ) -> Dict[str, Any]:
     """Execute a tool call and format the result for MCP.
 
@@ -158,7 +161,7 @@ async def _handle_tool_call(
     }
 
 
-async def _dispatch(method: str, params: Dict[str, Any], user: User, db) -> Any:
+async def _dispatch(method: str, params: Dict[str, Any], user: User, db: "AsyncIOMotorDatabase[Any]") -> Any:
     if method == "initialize":
         # The client sends its protocolVersion + clientInfo; we echo the
         # protocol version we implement and advertise only 'tools'.
@@ -209,7 +212,7 @@ async def mcp_rpc(
     request: Request,
     db: DatabaseDep,
     authorization: str = Header(default=""),
-):
+) -> Any:
     user, _ = await _resolve_user_from_token(authorization, db)
 
     try:

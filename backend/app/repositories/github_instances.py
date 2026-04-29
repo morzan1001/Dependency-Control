@@ -1,8 +1,4 @@
-"""
-GitHub Instance Repository
-
-Centralizes all database operations for GitHub instances.
-"""
+"""Repository for GitHub instances."""
 
 from typing import Any, Dict, List, Optional
 
@@ -19,7 +15,6 @@ class GitHubInstanceRepository:
         self.collection = db.github_instances
 
     async def get_by_id(self, instance_id: str) -> Optional[GitHubInstance]:
-        """Get instance by ID."""
         data = await self.collection.find_one({"_id": instance_id})
         if data:
             return GitHubInstance(**data)
@@ -41,7 +36,6 @@ class GitHubInstanceRepository:
         return None
 
     async def list_active(self, skip: int = 0, limit: int = 100) -> List[GitHubInstance]:
-        """List all active instances."""
         cursor = self.collection.find({"is_active": True}).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [GitHubInstance(**doc) for doc in docs]
@@ -53,15 +47,12 @@ class GitHubInstanceRepository:
         return [GitHubInstance(**doc) for doc in docs]
 
     async def count_active(self) -> int:
-        """Count active instances."""
         return await self.collection.count_documents({"is_active": True})
 
     async def count_all(self) -> int:
-        """Count all instances."""
         return await self.collection.count_documents({})
 
     async def create(self, instance: GitHubInstance) -> GitHubInstance:
-        """Create a new instance."""
         doc = instance.model_dump(by_alias=True)
         if instance.access_token is not None:
             doc["access_token"] = instance.access_token

@@ -1,0 +1,72 @@
+# PQC migration mappings — source: NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA),
+# FIPS 205 (SLH-DSA), CNSA 2.0 algorithm suite.
+version: 1
+snapshot_date: "2026-04-20"
+
+mappings:
+  - source_family: "RSA"
+    source_primitive: pke
+    use_case: "key-exchange"
+    recommended_pqc: "ML-KEM-768"
+    standard: "FIPS 203"
+    notes: |
+      For RSA key-transport -> ML-KEM. ML-KEM-768 provides ~192-bit
+      classical / NIST Level 3 post-quantum security.
+
+  - source_family: "RSA"
+    source_primitive: signature
+    use_case: "digital-signature"
+    recommended_pqc: "ML-DSA-65"
+    standard: "FIPS 204"
+    notes: |
+      For RSA signatures -> ML-DSA. ML-DSA-65 ~ NIST Level 3. SLH-DSA
+      (FIPS 205, hash-based) is an alternative when signature-size and
+      stateful-risk are acceptable.
+
+  - source_family: "ECDSA"
+    source_primitive: signature
+    use_case: "digital-signature"
+    recommended_pqc: "ML-DSA-65"
+    standard: "FIPS 204"
+    notes: |
+      Migrate ECDSA-P256/P384 signatures to ML-DSA-65.
+
+  - source_family: "ECDH"
+    source_primitive: kem
+    use_case: "key-exchange"
+    recommended_pqc: "ML-KEM-768"
+    standard: "FIPS 203"
+    notes: |
+      ECDH key agreement -> ML-KEM KEM.
+
+  - source_family: "DH"
+    source_primitive: kem
+    use_case: "key-exchange"
+    recommended_pqc: "ML-KEM-768"
+    standard: "FIPS 203"
+    notes: |
+      Classical Diffie-Hellman is already considered legacy; migrate to
+      ML-KEM. Note hybrid ECDHE+ML-KEM during transition is acceptable.
+
+  - source_family: "DSA"
+    source_primitive: signature
+    use_case: "digital-signature"
+    recommended_pqc: "ML-DSA-65"
+    standard: "FIPS 204"
+    notes: |
+      DSA is already disallowed by NIST SP 800-131A. Direct migration to
+      ML-DSA-65.
+
+timelines:
+  - name: "CNSA 2.0 baseline"
+    deadline: "2030-01-01"
+    applies_to: ["RSA", "ECDSA", "ECDH"]
+  - name: "NIST SP 800-131A transition target"
+    deadline: "2035-01-01"
+    applies_to: ["RSA", "ECDSA", "DH", "DSA"]
+
+# Vulnerable-family aliases that may appear in asset names from CBOM tools.
+family_aliases:
+  "Diffie-Hellman": "DH"
+  "EC-DSA": "ECDSA"
+  "ecDSA": "ECDSA"

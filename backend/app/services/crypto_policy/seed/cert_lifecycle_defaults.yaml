@@ -1,0 +1,30 @@
+# Certificate lifecycle defaults — Phase 2
+# The analyzer picks severity via the threshold ladder on each rule.
+# Rules with all thresholds unset produce no finding; so an admin who wants to
+# disable expiry detection can simply set enabled=false on this rule.
+
+rules:
+  - rule_id: cert-expiry-default
+    name: Default certificate expiry thresholds
+    description: >
+      Emit CRITICAL at ≤7 days, HIGH at ≤30 days, MEDIUM at ≤90 days,
+      LOW at ≤180 days before certificate expiry.
+    finding_type: crypto_cert_expiring_soon
+    default_severity: MEDIUM
+    expiry_critical_days: 7
+    expiry_high_days: 30
+    expiry_medium_days: 90
+    expiry_low_days: 180
+    source: custom
+
+  - rule_id: cert-validity-max-398
+    name: Public-TLS certificate validity period cap
+    description: >
+      CA/Browser Forum baseline since 2020-09-01 mandates a maximum public-TLS
+      certificate validity of 398 days. Disabled by default; enable explicitly
+      in policy if you enforce this standard.
+    finding_type: crypto_cert_validity_too_long
+    default_severity: LOW
+    validity_too_long_days: 398
+    enabled: false
+    source: custom

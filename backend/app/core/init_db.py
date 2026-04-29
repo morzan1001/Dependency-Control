@@ -13,18 +13,16 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
-# MongoDB operator for partialFilterExpression type checks
 MONGO_TYPE = "$type"
 
 
 async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """
-    Migrate project indexes from sparse to partialFilterExpression.
+    """Migrate project indexes from sparse to partialFilterExpression.
 
-    MongoDB's sparse compound indexes don't skip documents with explicit null values
-    (only documents where the fields are completely absent). Since Pydantic serializes
-    None as null, this caused DuplicateKeyError when creating projects without
-    GitLab/GitHub integration. partialFilterExpression correctly handles this.
+    MongoDB sparse compound indexes only skip documents where the indexed fields
+    are absent — explicit null values (which Pydantic serializes from None) still
+    collide on uniqueness, breaking projects without GitLab/GitHub integration.
+    partialFilterExpression handles null correctly.
     """
     projects_collection = database["projects"]
     existing_indexes = await projects_collection.index_information()
@@ -43,10 +41,9 @@ async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
 
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Creates indexes for all collections to ensure performance."""
+    """Create indexes for all collections."""
     logger.info("Creating database indexes...")
 
-    # Migrate old sparse indexes to partialFilterExpression (one-time migration)
     await _migrate_project_indexes(database)
 
     # Users
@@ -63,13 +60,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["teams"].create_index("members.user_id")
 
     # Scans
-    # Note: standalone project_id index removed — covered by compound indexes
-    # (project_id, created_at), (project_id, pipeline_id), (project_id, status), etc.
-    await database["scans"].create_index("pipeline_id")  # For CI/CD lookups
-    # Note: standalone status index removed — covered by (status, analysis_started_at)
-    # and (project_id, status) compound indexes
+    await database["scans"].create_index("pipeline_id")
     await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
-    # Compound index for efficient retrieval of project scans sorted by date
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
 
     # Analysis Results
@@ -83,16 +75,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["waivers"].create_index("expiration_date")
     await database["waivers"].create_index([("project_id", pymongo.ASCENDING), ("expiration_date", pymongo.DESCENDING)])
 
-    # Dependencies (New Normalized Collection)
-    # Note: standalone project_id removed — covered by (project_id, name) compound
-    # Note: standalone scan_id removed — covered by multiple compounds: (scan_id, name),
-    # (scan_id, direct), (scan_id, name, version), (scan_id, source_type), etc.
+    # Dependencies
     await database["dependencies"].create_index("name")
     await database["dependencies"].create_index("purl")
-    # Note: standalone version, type, direct removed — always queried with scan_id,
-    # covered by respective compound indexes
-    # Unique constraint to prevent duplicate dependencies in the same scan
-    # This allows safe upsert operations and prevents race conditions during SBOM ingestion
+    # Unique key permits idempotent upserts during concurrent SBOM ingestion.
     await database["dependencies"].create_index(
         [
             ("scan_id", pymongo.ASCENDING),
@@ -101,25 +87,19 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("purl", pymongo.ASCENDING),
         ],
         unique=True,
-        sparse=True,  # Allow null purl values
+        sparse=True,  # null purl is permitted, won't conflict on uniqueness
     )
-    # Compound index for fast search within a project
     await database["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
-    # Compound index for analytics queries
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
 
-    # Findings (New Normalized Collection)
-    # Note: standalone project_id removed — covered by (project_id, component, type) compound
-    # Note: standalone scan_id removed — covered by multiple compounds: (scan_id, severity),
-    # (scan_id, waived), (scan_id, type), (scan_id, component, version), (scan_id, reachable)
+    # Findings
     await database["findings"].create_index("severity")
     await database["findings"].create_index("type")
-    await database["findings"].create_index("finding_id")  # Logical ID (CVE)
-    # Compound for fast retrieval of scan results
+    await database["findings"].create_index("finding_id")  # Logical CVE id, not _id.
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("severity", pymongo.DESCENDING)])
 
-    # Finding Records - Analytics indexes
+    # Finding Records
     await database["finding_records"].create_index(
         [("project_id", pymongo.ASCENDING), ("finding.component", pymongo.ASCENDING)]
     )
@@ -134,8 +114,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("scan_id", pymongo.ASCENDING), ("finding.type", pymongo.ASCENDING)]
     )
 
-    # Projects - Additional indexes
-    # GitLab Multi-Instance Support: Compound index ensures project_id is unique per instance
+    # GitLab compound index: project_id must be unique per instance.
     await database["projects"].create_index(
         [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_project_id", pymongo.ASCENDING)],
         unique=True,
@@ -144,13 +123,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             "gitlab_project_id": {MONGO_TYPE: "int"},
         },
     )
-    await database["projects"].create_index("gitlab_instance_id")  # For instance-wide queries
+    await database["projects"].create_index("gitlab_instance_id")
     await database["projects"].create_index("latest_scan_id")
     await database["projects"].create_index("retention_days")
     await database["projects"].create_index([("last_scan_at", pymongo.DESCENDING)])
     await database["projects"].create_index([("created_at", pymongo.DESCENDING)])
 
-    # Scans - Additional compound indexes for common query patterns
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)])
     await database["scans"].create_index(
@@ -169,11 +147,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
     await database["scans"].create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
     await database["scans"].create_index("original_scan_id")
-    await database["scans"].create_index("latest_rescan_id")  # For fast rescan history traversal
+    await database["scans"].create_index("latest_rescan_id")
 
-    # Findings - Additional indexes for analytics and stats
-    # Note: standalone waived, component, version removed — always queried with scan_id
-    # or project_id, covered by respective compound indexes
     await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)])
@@ -192,7 +167,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ]
     )
 
-    # Dependencies - Additional compound indexes
     await database["dependencies"].create_index(
         [
             ("scan_id", pymongo.ASCENDING),
@@ -200,13 +174,10 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.ASCENDING),
         ]
     )
-    # Note: standalone source_type removed — covered by (scan_id, source_type) compound
 
-    # Waivers - Additional indexes for finding/package lookups
     await database["waivers"].create_index("finding_id")
     await database["waivers"].create_index("package_name")
 
-    # Webhooks - Extended with circuit breaker and performance indexes
     await database["webhooks"].create_index("project_id")
     await database["webhooks"].create_index(
         [("is_active", pymongo.ASCENDING), ("circuit_breaker_until", pymongo.ASCENDING)]
@@ -214,37 +185,34 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["webhooks"].create_index([("project_id", pymongo.ASCENDING), ("is_active", pymongo.ASCENDING)])
     await database["webhooks"].create_index("events")
 
-    # Webhook Deliveries - Audit trail (NEW)
     await database["webhook_deliveries"].create_index(
         [("webhook_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)]
     )
     await database["webhook_deliveries"].create_index(
         [("success", pymongo.ASCENDING), ("webhook_id", pymongo.ASCENDING)]
     )
-    # TTL Index: Auto-delete after 30 days
+    # TTL: drops deliveries after 30 days.
     await database["webhook_deliveries"].create_index([("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000)
 
-    # Distributed Locks - Multi-pod coordination (NEW)
-    # TTL Index: Auto-delete expired locks
+    # TTL: auto-cleans expired distributed locks.
     await database["distributed_locks"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
-    # Token Blacklist - Logout invalidation (NEW)
     await database["token_blacklist"].create_index("jti", unique=True)
-    # TTL Index: Auto-delete after token expiration
+    # TTL: drops blacklisted JWTs after they would have expired anyway.
     await database["token_blacklist"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
 
-    # GitLab Instances - Multi-Instance Support (NEW)
+    # GitLab Instances
     await database["gitlab_instances"].create_index("url", unique=True)
     await database["gitlab_instances"].create_index("name", unique=True)
     await database["gitlab_instances"].create_index("is_active")
     await database["gitlab_instances"].create_index("is_default")
 
-    # GitHub Instances - Multi-Instance Support
+    # GitHub Instances
     await database["github_instances"].create_index("url", unique=True)
     await database["github_instances"].create_index("name", unique=True)
     await database["github_instances"].create_index("is_active")
 
-    # GitHub Multi-Instance: Compound index ensures repository_id is unique per instance
+    # GitHub compound index: repository_id must be unique per instance.
     await database["projects"].create_index(
         [("github_instance_id", pymongo.ASCENDING), ("github_repository_id", pymongo.ASCENDING)],
         unique=True,
@@ -254,15 +222,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         },
     )
 
-    # Scans - Additional index for reachability pending
     await database["scans"].create_index(
         [("reachability_pending", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)]
     )
 
-    # Dependencies - Source type filtering
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("source_type", pymongo.ASCENDING)])
 
-    # Findings - Reachability analysis
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("reachable", pymongo.ASCENDING)])
 
     # System Invitations
@@ -278,7 +243,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("is_used", pymongo.ASCENDING), ("expires_at", pymongo.ASCENDING)]
     )
 
-    # Dependency Enrichments (cached package metadata)
+    # Cached package metadata.
     await database["dependency_enrichments"].create_index("purl", unique=True)
 
     # Invitations
@@ -321,8 +286,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         name="mcp_keys_token_lookup",
         unique=True,
     )
-    # TTL index: Mongo will remove docs automatically ~once per minute when
-    # expires_at has passed. No need for a housekeeping job.
+    # TTL: Mongo expires docs after expires_at, no housekeeping job needed.
     await mcp_api_keys.create_index(
         [("expires_at", pymongo.ASCENDING)],
         name="mcp_keys_ttl",
@@ -336,20 +300,16 @@ async def init_db() -> None:
     """Initialize the database with indexes and initial admin user."""
     database = await get_database()
 
-    # Create indexes
     await create_indexes(database)
 
     user_collection = database["users"]
 
-    # Check if any user exists
     if await user_collection.count_documents({}) == 0:
         logger.info("No users found. Creating initial admin user.")
 
-        # Generate a secure random password
         password = secrets.token_urlsafe(16)
         hashed_password = get_password_hash(password)
 
-        # Create the initial user with all permissions
         user = User(
             username="admin",
             email="admin@example.com",
@@ -357,11 +317,9 @@ async def init_db() -> None:
             permissions=list(ALL_PERMISSIONS),
         )
 
-        # Insert into database
         await user_collection.insert_one(user.model_dump(by_alias=True))
 
-        # Print credentials to stdout ONLY (not logs) - password shown once
-        # SECURITY: Never log passwords to persistent log files
+        # SECURITY: print credentials to stdout only — never write to log files.
         print("\n" + "=" * 60)
         print("INITIAL ADMIN USER CREATED")
         print("-" * 60)
@@ -377,6 +335,5 @@ async def init_db() -> None:
     else:
         logger.info("Users already exist. Skipping initial user creation.")
 
-    # Update database statistics metrics
     await update_db_stats(database)
     logger.info("Database statistics metrics initialized.")

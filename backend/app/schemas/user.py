@@ -43,6 +43,20 @@ class UserCreate(UserBase):
         return validate_password_strength(v)
 
 
+class UserSignup(BaseModel):
+    email: EmailStr
+    username: str
+    password: str
+    slack_username: Optional[str] = None
+    mattermost_username: Optional[str] = None
+    notification_preferences: Optional[dict[str, list[str]]] = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     username: Optional[str] = None

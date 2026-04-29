@@ -83,7 +83,8 @@ class OllamaClient:
                             yield {
                                 "type": "done",
                                 "total_tokens": chunk.get("eval_count", 0),
-                                "eval_rate": chunk.get("eval_count", 0) / max(chunk.get("eval_duration", 1) / 1e9, 0.001),
+                                "eval_rate": chunk.get("eval_count", 0)
+                                / max(chunk.get("eval_duration", 1) / 1e9, 0.001),
                             }
                             return
 

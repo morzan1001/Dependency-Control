@@ -160,6 +160,49 @@ class NotificationService:
                 if isinstance(result, Exception):
                     logger.error(f"Notification task failed: {result}")
 
+    async def notify_users_with_permission(
+        self,
+        db: Any,
+        *,
+        permission: str | List[str],
+        event_type: str,
+        subject: str,
+        message: str,
+        forced_channels: Optional[List[str]] = None,
+        html_message: Optional[str] = None,
+        slack_blocks: Optional[List[Dict[str, Any]]] = None,
+        mattermost_props: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Send notifications to all active users whose ``permissions`` list contains
+        any of the given permission(s).
+
+        Used for system-scope events (e.g. crypto policy changes) that should
+        reach admins and global analytics viewers regardless of project membership.
+        """
+        perms = [permission] if isinstance(permission, str) else list(permission)
+        if not perms:
+            return
+
+        cursor = db.users.find({"permissions": {"$in": perms}, "is_active": True})
+        # Bounded fetch — there are O(admins) in practice; keep a safe ceiling.
+        user_docs = await cursor.to_list(length=1000)
+        if not user_docs:
+            return
+
+        users = [User(**u) for u in user_docs]
+        await self.notify_users(
+            users,
+            event_type=event_type,
+            subject=subject,
+            message=message,
+            db=db,
+            forced_channels=forced_channels,
+            html_message=html_message,
+            slack_blocks=slack_blocks,
+            mattermost_props=mattermost_props,
+        )
+
     async def notify_project_members(
         self,
         project: Project,

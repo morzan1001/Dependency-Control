@@ -1,0 +1,37 @@
+{
+  "results": [
+    {
+      "check_id": "crypto-misuse-hardcoded-keys-python-cryptography",
+      "path": "src/app/auth.py",
+      "start": {"line": 42, "col": 5},
+      "end": {"line": 42, "col": 70},
+      "extra": {
+        "message": "Hardcoded cryptographic key detected.",
+        "severity": "ERROR",
+        "lines": "key = b\"s3cret-hardcoded-key-shouldnotbeincommit==\""
+      }
+    },
+    {
+      "check_id": "crypto-misuse-ecb-mode-python",
+      "path": "src/app/crypto.py",
+      "start": {"line": 17, "col": 9},
+      "end": {"line": 17, "col": 45},
+      "extra": {
+        "message": "ECB mode leaks patterns in plaintext.",
+        "severity": "ERROR",
+        "lines": "cipher = AES.new(key, AES.MODE_ECB)"
+      }
+    },
+    {
+      "check_id": "python.lang.bad-import",
+      "path": "src/app/utils.py",
+      "start": {"line": 3, "col": 1},
+      "end": {"line": 3, "col": 14},
+      "extra": {
+        "message": "Do not use deprecated import.",
+        "severity": "WARNING",
+        "lines": "import outdated_lib"
+      }
+    }
+  ]
+}

@@ -37,7 +37,7 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import ProjectRepository, TeamRepository
+from app.repositories import ProjectRepository
 
 # MongoDB aggregation pipeline operators
 MONGO_MATCH = "$match"
@@ -59,28 +59,17 @@ def require_analytics_permission(user: User, permission: str) -> None:
 
 
 async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str]:
-    """Get list of project IDs the user has access to."""
-    project_repo = ProjectRepository(db)
-    team_repo = TeamRepository(db)
+    """Get list of project IDs the user has access to.
 
-    if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
-        projects = await project_repo.find_many_ids({}, limit=ANALYTICS_MAX_QUERY_LIMIT)
-        return [p.id for p in projects]
+    Thin shim over ``ScopeResolver(db, user).resolve(scope='user', ...)`` so
+    SBOM-analytics and CBOM-analytics share the same authorisation /
+    project-selection logic.  Kept as a function for backward compatibility
+    with existing call sites; new code should use ``ScopeResolver`` directly.
+    """
+    from app.services.analytics.scopes import ScopeResolver
 
-    user_teams = await team_repo.find_by_member(str(user.id))
-    user_team_ids = [str(t.id) for t in user_teams]
-
-    projects = await project_repo.find_many_ids(
-        {
-            "$or": [
-                {"members.user_id": str(user.id)},
-                {"team_id": {"$in": user_team_ids}},
-            ]
-        },
-        limit=ANALYTICS_MAX_QUERY_LIMIT,
-    )
-
-    return [p.id for p in projects]
+    resolved = await ScopeResolver(db, user).resolve(scope="user", scope_id=None)
+    return resolved.project_ids or []
 
 
 async def _resolve_active_scan_ids(
