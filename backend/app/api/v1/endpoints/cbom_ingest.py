@@ -13,7 +13,7 @@ Job-Token) attached to the request.  No ``project_name`` lookup is required.
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import BackgroundTasks, Depends, HTTPException, status
+from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -34,8 +34,33 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 MAX_CRYPTO_ASSETS_PER_SCAN = 50_000
+# 25 MiB. The 50_000-asset cap takes effect only after parsing; this guards
+# the deserializer itself against oversized payloads. A typical
+# pipeline-emitted CBOM is well under 1 MiB; large monorepos may approach
+# a few MiB. Chunked uploads bypass the header check and fall back to
+# whatever the ASGI server allows.
+MAX_CBOM_BODY_BYTES = 25 * 1024 * 1024
 
 ProjectIngestDep = deps.get_project_for_ingest
+
+
+def _enforce_body_size_limit(request: Request) -> None:
+    """Reject oversized CBOM uploads before Pydantic parses them."""
+    raw = request.headers.get("content-length")
+    if raw is None:
+        return
+    try:
+        size = int(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Content-Length header")
+    if size > MAX_CBOM_BODY_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"CBOM payload exceeds {MAX_CBOM_BODY_BYTES} bytes "
+                f"({size} bytes received). Split the upload or raise the limit."
+            ),
+        )
 
 
 class CBOMIngest(BaseIngest):
@@ -109,6 +134,7 @@ class CBOMIngestResponse(BaseModel):
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest CBOM",
     tags=["cbom-ingest"],
+    dependencies=[Depends(_enforce_body_size_limit)],
 )
 async def ingest_cbom(
     payload: CBOMIngest,
