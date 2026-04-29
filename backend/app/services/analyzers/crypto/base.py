@@ -53,32 +53,74 @@ class CryptoRuleAnalyzer(Analyzer):
             ]
             findings: List[Dict[str, Any]] = []
             for asset in assets:
-                for rule in rules:
-                    if rule_matches(asset, rule):
-                        findings.append(_build_finding(asset, rule))
+                matched_rules = [r for r in rules if rule_matches(asset, r)]
+                if not matched_rules:
+                    continue
+                # Multiple frameworks may match the same asset (e.g. SHA-1
+                # is flagged by both BSI TR-02102 and NIST SP 800-131A).
+                # Emit one finding per (asset, finding_type), keep the
+                # strictest severity, and record every matched rule in
+                # details so the audit trail and compliance evaluators
+                # still see the cross-framework agreement.
+                findings.append(_build_finding_dedup(asset, matched_rules))
             return {"findings": findings}
         except Exception as e:
             logger.exception("crypto analyzer %s failed: %s", self.name, e)
             return {"error": str(e), "findings": []}
 
 
+_SEVERITY_RANK = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1, "UNKNOWN": 0}
+
+
 def _build_finding(asset: CryptoAsset, rule: CryptoRule) -> Dict[str, Any]:
-    severity = rule.default_severity.value if hasattr(rule.default_severity, "value") else rule.default_severity
-    ft = rule.finding_type.value if hasattr(rule.finding_type, "value") else rule.finding_type
-    src = rule.source.value if hasattr(rule.source, "value") else rule.source
+    return _build_finding_dedup(asset, [rule])
+
+
+def _build_finding_dedup(asset: CryptoAsset, rules: List[CryptoRule]) -> Dict[str, Any]:
+    """Build one finding for an asset that matched ``rules``.
+
+    The lead rule (the one whose attributes are projected onto the
+    top-level Finding fields) is the strictest by default_severity.
+    Every other matched rule still appears under
+    ``details.matched_rules`` so compliance evaluators and audit views
+    can attribute the finding to multiple frameworks without inflating
+    findings_count or severity_mix counts.
+    """
+    lead = max(rules, key=lambda r: _SEVERITY_RANK.get(_severity_str(r.default_severity), 0))
+    severity = _severity_str(lead.default_severity)
+    ft = lead.finding_type.value if hasattr(lead.finding_type, "value") else lead.finding_type
     component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
+
+    matched_rules_detail = [
+        {
+            "rule_id": r.rule_id,
+            "rule_name": r.name,
+            "policy_source": r.source.value if hasattr(r.source, "value") else r.source,
+            "severity": _severity_str(r.default_severity),
+        }
+        for r in rules
+    ]
+    aggregated_references: List[str] = []
+    seen_refs: set = set()
+    for r in rules:
+        for ref in r.references:
+            if ref not in seen_refs:
+                seen_refs.add(ref)
+                aggregated_references.append(ref)
+
     return {
         "id": str(uuid.uuid4()),
         "type": ft,
         "severity": severity,
         "component": component_label,
         "version": asset.variant or "",
-        "description": rule.description or rule.name,
+        "description": lead.description or lead.name,
         "scanners": ["crypto_rule_analyzer"],
         "details": {
-            "rule_id": rule.rule_id,
-            "rule_name": rule.name,
-            "policy_source": src,
+            "rule_id": lead.rule_id,
+            "rule_name": lead.name,
+            "policy_source": lead.source.value if hasattr(lead.source, "value") else lead.source,
+            "matched_rules": matched_rules_detail,
             "bom_ref": asset.bom_ref,
             "asset_name": asset.name,
             "asset_type": (asset.asset_type.value if hasattr(asset.asset_type, "value") else asset.asset_type),
@@ -88,8 +130,12 @@ def _build_finding(asset: CryptoAsset, rule: CryptoRule) -> Dict[str, Any]:
                 if asset.primitive is not None and hasattr(asset.primitive, "value")
                 else asset.primitive
             ),
-            "references": list(rule.references),
+            "references": aggregated_references,
         },
         "found_in": list(asset.occurrence_locations),
         "aliases": [],
     }
+
+
+def _severity_str(s: Any) -> str:
+    return s.value if hasattr(s, "value") else str(s)
