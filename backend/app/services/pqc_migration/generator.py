@@ -168,17 +168,25 @@ class PQCMigrationPlanGenerator:
     async def _latest_scan_for_project(self, project_id: str) -> Optional[dict]:
         """Most recent completed/partial scan for a project, or None.
 
-        Uses find().to_list() + in-memory filter so it works against both the
-        real motor driver and the in-process fake database used in integration
-        tests (which doesn't support `$in` queries or `find_one(sort=...)`).
+        Pushes the status filter and the sort into MongoDB so the driver
+        only fetches one document; previously the code pulled up to 1000
+        scans per project and filtered in memory, which silently dropped
+        older scans on high-volume projects and wasted bandwidth.
         """
-        cursor = self.db.scans.find({"project_id": project_id})
-        docs = await cursor.to_list(length=1000)
-        completed = [d for d in docs if d.get("status") in ("completed", "partial")]
-        if not completed:
+        cursor = (
+            self.db.scans.find(
+                {
+                    "project_id": project_id,
+                    "status": {"$in": ["completed", "partial"]},
+                }
+            )
+            .sort("created_at", -1)
+            .limit(1)
+        )
+        docs = await cursor.to_list(length=1)
+        if not docs:
             return None
-        completed.sort(key=_created_at, reverse=True)
-        first: Dict[str, Any] = completed[0]
+        first: Dict[str, Any] = docs[0]
         return first
 
     def _find_mapping(self, family: str, primitive: Any) -> Optional[PQCMapping]:
