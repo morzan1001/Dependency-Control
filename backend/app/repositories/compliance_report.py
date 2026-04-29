@@ -41,6 +41,7 @@ class ComplianceReportRepository:
         status: Optional[ReportStatus] = None,
         skip: int = 0,
         limit: int = 50,
+        extra_filter: Optional[Dict[str, Any]] = None,
     ) -> List[ComplianceReport]:
         query: Dict[str, Any] = {}
         if scope:
@@ -51,6 +52,10 @@ class ComplianceReportRepository:
             query["framework"] = framework.value if hasattr(framework, "value") else framework
         if status:
             query["status"] = status.value if hasattr(status, "value") else status
+        if extra_filter:
+            # Combine via $and so callers can pass an $or visibility clause
+            # without colliding with the field-level filters above.
+            query = {"$and": [query, extra_filter]} if query else extra_filter
         cursor = self._col.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [ComplianceReport.model_validate(d) for d in docs]

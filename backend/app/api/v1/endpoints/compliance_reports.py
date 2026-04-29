@@ -13,7 +13,7 @@ Report generation is done in a FastAPI BackgroundTask, which hands off to
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 
 from bson import ObjectId
 from fastapi import BackgroundTasks, Depends, HTTPException, Query
@@ -127,6 +127,49 @@ async def _user_can_see_report(
         return False
 
 
+async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> Dict[str, Any]:
+    """Build the ``$or`` filter that captures every scope a user may see.
+
+    Pushed into the repo query so list pagination is honest: skip/limit
+    run on already-filtered results, every page returns up to ``limit``
+    accessible reports, and clients can paginate without seeing
+    inexplicable shrinks. The filter matches:
+
+    - scope=user iff the caller is the requester (or holds system:manage).
+    - scope=project iff the project_id is in the caller's accessible set.
+    - scope=team iff the team_id is in the caller's team membership.
+    - scope=global iff the caller holds analytics:global or system:manage.
+    """
+    from app.core.permissions import Permissions, has_permission
+    from app.repositories.teams import TeamRepository
+
+    perms = getattr(user, "permissions", []) or []
+    is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
+    user_id = str(user.id)
+
+    branches: List[Dict[str, Any]] = []
+
+    user_branch: Dict[str, Any] = {"scope": "user"}
+    if not is_super:
+        user_branch["requested_by"] = user_id
+    branches.append(user_branch)
+
+    project_ids = await ScopeResolver(db, user)._list_user_project_ids()  # noqa: SLF001
+    if project_ids:
+        branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
+
+    team_repo = TeamRepository(db)
+    user_teams = await team_repo.find_by_member(user_id)
+    team_ids = [str(t.id) for t in user_teams]
+    if team_ids:
+        branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
+
+    if is_super or has_permission(perms, Permissions.ANALYTICS_GLOBAL):
+        branches.append({"scope": "global"})
+
+    return {"$or": branches}
+
+
 @router.get("/reports")
 async def list_reports(
     scope: Optional[str] = Query(None, pattern=_SCOPE_PATTERN),
@@ -139,6 +182,7 @@ async def list_reports(
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     repo = ComplianceReportRepository(db)
+    visibility = await _build_visibility_filter(db, current_user)
     reports = await repo.list(
         scope=scope,
         scope_id=scope_id,
@@ -146,12 +190,9 @@ async def list_reports(
         status=status,
         skip=skip,
         limit=limit,
+        extra_filter=visibility,
     )
-    # Drop reports the caller can't see. The page may shrink below `limit`
-    # when the user has partial scope access; pagination of accessible
-    # reports remains stable because skip/limit run on the unfiltered set.
-    visible = [r for r in reports if await _user_can_see_report(db, current_user, r)]
-    return {"reports": [r.model_dump(by_alias=True) for r in visible]}
+    return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
 
 @router.get("/reports/{report_id}")

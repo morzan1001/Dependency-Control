@@ -47,12 +47,39 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
     return True
 
 
+def _resolve_dotted(doc: dict, path: str):
+    """Resolve a Mongo-style dotted path against a doc, recursing into
+    list elements (so 'members.user_id' on doc {members:[{user_id:X}]}
+    returns [X]). Returns the raw value, a list of values when a list
+    appears anywhere along the path, or None when the path doesn't
+    exist."""
+    if "." not in path:
+        return doc.get(path)
+    head, _, rest = path.partition(".")
+    cur = doc.get(head)
+    if cur is None:
+        return None
+    if isinstance(cur, list):
+        out: list = []
+        for el in cur:
+            if isinstance(el, dict):
+                resolved = _resolve_dotted(el, rest)
+                if isinstance(resolved, list):
+                    out.extend(resolved)
+                elif resolved is not None:
+                    out.append(resolved)
+        return out if out else None
+    if isinstance(cur, dict):
+        return _resolve_dotted(cur, rest)
+    return None
+
+
 def _fake_match_doc(doc: dict, query: dict) -> bool:
     """Return True if doc matches a simple MongoDB query.
 
     Supports equality, ``$in``, ``$nin``, ``$ne``, ``$regex``, range ops
-    (``$lt``/``$lte``/``$gt``/``$gte``), ``$exists`` and top-level
-    ``$or``/``$and``.
+    (``$lt``/``$lte``/``$gt``/``$gte``), ``$exists``, dotted field paths
+    (recursing into list elements), and top-level ``$or``/``$and``.
     """
     for key, condition in query.items():
         # Top-level logical operators
@@ -65,7 +92,20 @@ def _fake_match_doc(doc: dict, query: dict) -> bool:
                 return False
             continue
 
-        value = doc.get(key)
+        value = _resolve_dotted(doc, key)
+        # When the dotted path landed in a list (e.g. 'members.user_id'
+        # against a list of member dicts), Mongo's semantics treat any
+        # element matching as a match. Equality + $in + $regex should
+        # therefore broadcast across the list.
+        if isinstance(value, list) and not isinstance(condition, list):
+            if isinstance(condition, dict):
+                # let the operator branch handle each element via $in semantics
+                # by feeding the list through to the existing logic.
+                pass
+            else:
+                if condition in value:
+                    continue
+                return False
         if isinstance(condition, dict):
             if "$exists" in condition:
                 field_present = key in doc
