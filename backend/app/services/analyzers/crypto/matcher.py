@@ -44,10 +44,11 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
             return False
 
     if rule.quantum_vulnerable is True:
+        # CryptoRule's validator guarantees match_name_patterns is non-empty
+        # when quantum_vulnerable=True, so the pattern match was already
+        # enforced above. We only need the primitive gate here.
         asset_prim = _coerce_primitive(asset.primitive)
         if asset_prim not in _QUANTUM_VULNERABLE_PRIMITIVES:
-            return False
-        if rule.match_name_patterns and not _name_or_variant_matches(asset, rule.match_name_patterns):
             return False
 
     return True

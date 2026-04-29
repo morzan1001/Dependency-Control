@@ -8,7 +8,7 @@ and a finding_type + default_severity (what to emit when it matches).
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoPrimitive
@@ -85,3 +85,17 @@ class CryptoRule(BaseModel):
     references: List[str] = Field(default_factory=list, description="URLs to supporting standards or documentation")
 
     model_config = ConfigDict(use_enum_values=True)
+
+    @model_validator(mode="after")
+    def _quantum_vulnerable_requires_name_patterns(self) -> "CryptoRule":
+        # Without name patterns the matcher would tag every PKE/SIGNATURE/KEM
+        # asset as quantum-vulnerable — including post-quantum primitives
+        # (ML-KEM, ML-DSA, SLH-DSA) which are themselves KEM/SIGNATURE.
+        # Forcing patterns means rule authors must enumerate the classical
+        # algorithms they actually want to flag.
+        if self.quantum_vulnerable is True and not self.match_name_patterns:
+            raise ValueError(
+                "quantum_vulnerable=True requires match_name_patterns to be set "
+                "(otherwise post-quantum primitives like ML-KEM would also match)"
+            )
+        return self
