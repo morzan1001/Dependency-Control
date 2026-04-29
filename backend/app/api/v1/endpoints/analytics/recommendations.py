@@ -122,6 +122,11 @@ async def get_project_recommendations(
     iac_count = sum(1 for f in findings if f.type == "iac")
     license_count = sum(1 for f in findings if f.type == "license")
     quality_count = sum(1 for f in findings if f.type == "quality")
+    crypto_count = sum(
+        1
+        for f in findings
+        if isinstance(f.type, str) and f.type.startswith("crypto_")
+    )
 
     summary: Dict[str, Any] = {
         "base_image_updates": 0,
@@ -135,6 +140,7 @@ async def get_project_recommendations(
         "iac_issues": 0,
         "license_issues": 0,
         "quality_issues": 0,
+        "crypto_issues": 0,
         "outdated_deps": 0,
         "fragmentation_issues": 0,
         "trend_alerts": 0,
@@ -146,6 +152,7 @@ async def get_project_recommendations(
             "iac": iac_count,
             "license": license_count,
             "quality": quality_count,
+            "crypto": crypto_count,
         },
     }
 
@@ -188,6 +195,15 @@ async def get_project_recommendations(
             summary["trend_alerts"] += 1
         elif rec_type in ("cross_project_pattern", "shared_vulnerability"):
             summary["cross_project_issues"] += impact_total
+        elif rec_type in (
+            "replace_weak_algorithm",
+            "increase_key_size",
+            "upgrade_protocol",
+            "pqc_migration",
+            "rotate_certificate",
+            "replace_weak_cipher_suite",
+        ):
+            summary["crypto_issues"] += impact_total
 
     return RecommendationsResponse(
         project_id=project_id,

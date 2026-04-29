@@ -22,6 +22,7 @@ from app.services.recommendation import (
     iac,
     licenses,
     quality,
+    crypto as crypto_recs,
     dependencies as dep_analysis,
     trends,
     graph,
@@ -204,6 +205,21 @@ class RecommendationEngine:
             recommendations,
             lambda: quality.process_quality(findings_by_type.get("quality", [])),
             "quality",
+        )
+
+        # 6b. Process CRYPTO issues (weak algorithms, key sizes, protocols,
+        # cipher suites, certificate lifecycle, quantum-vulnerable primitives,
+        # and key-management SAST hits).
+        crypto_findings = [
+            f
+            for ft, group in findings_by_type.items()
+            if ft in crypto_recs.CRYPTO_FINDING_TYPES
+            for f in group
+        ]
+        _safe_extend(
+            recommendations,
+            lambda: crypto_recs.process_crypto(crypto_findings),
+            "crypto",
         )
 
         # 7. Dependency Hygiene (Outdated, Fragmentation, Dev-in-Prod)

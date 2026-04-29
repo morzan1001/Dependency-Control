@@ -69,6 +69,14 @@ class RecommendationType(str, Enum):
     TOXIC_DEPENDENCY = "toxic_dependency"  # Package with multiple risk factors
     ATTACK_SURFACE_REDUCTION = "attack_surface_reduction"  # Remove unnecessary deps
 
+    # Crypto-related
+    REPLACE_WEAK_ALGORITHM = "replace_weak_algorithm"  # Broken/disallowed primitive
+    INCREASE_KEY_SIZE = "increase_key_size"  # Key shorter than policy minimum
+    UPGRADE_PROTOCOL = "upgrade_protocol"  # Deprecated TLS / SSH / IPsec version
+    PQC_MIGRATION = "pqc_migration"  # Quantum-vulnerable primitive
+    ROTATE_CERTIFICATE = "rotate_certificate"  # Expiring or expired cert
+    REPLACE_WEAK_CIPHER_SUITE = "replace_weak_cipher_suite"  # Bad TLS suite
+
 
 class Priority(str, Enum):
     """Recommendation priority levels."""
