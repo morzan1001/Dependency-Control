@@ -149,37 +149,50 @@ def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> O
 
     parameterSetIdentifier is a string in CycloneDX 1.6 (e.g. "P-256",
     "ML-KEM-1024", "1024"); treat it as a key size only when it's a pure
-    integer. Otherwise fall back to well-known custom properties so
+    positive integer. Otherwise fall back to well-known custom properties so
     producers can carry the bit length explicitly. Anything we can't parse
     leaves key_size_bits as None and the analyzer simply skips that asset.
     """
+    asset_label = asset.bom_ref or asset.name or "<unknown>"
+
+    coerced = _coerce_positive_int(props.get("parameterSetIdentifier"))
+    if coerced is not None:
+        return coerced
     raw = props.get("parameterSetIdentifier")
     if raw is not None:
-        try:
-            return int(raw)
-        except (ValueError, TypeError):
-            logger.debug(
-                "cbom_parser: parameterSetIdentifier=%r is non-numeric for asset %s; "
-                "falling back to properties for key size",
-                raw,
-                asset.bom_ref or asset.name or "<unknown>",
-            )
+        logger.debug(
+            "cbom_parser: parameterSetIdentifier=%r not a positive integer for asset %s; "
+            "falling back to properties for key size",
+            raw,
+            asset_label,
+        )
 
     for key in _KEY_SIZE_PROPERTY_NAMES:
         value = asset.properties.get(key)
         if value is None:
             continue
-        try:
-            return int(value)
-        except (ValueError, TypeError):
-            logger.debug(
-                "cbom_parser: property %s=%r is non-numeric for asset %s",
-                key,
-                value,
-                asset.bom_ref or asset.name or "<unknown>",
-            )
+        coerced = _coerce_positive_int(value)
+        if coerced is not None:
+            return coerced
+        logger.debug(
+            "cbom_parser: property %s=%r not a positive integer for asset %s",
+            key,
+            value,
+            asset_label,
+        )
 
     return None
+
+
+def _coerce_positive_int(raw: Any) -> Optional[int]:
+    """Reject bools (Python's int(True)==1 footgun) and non-positive values."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = int(raw)
+    except (ValueError, TypeError):
+        return None
+    return value if value > 0 else None
 
 
 def _parse_primitive(raw: Any) -> Optional[CryptoPrimitive]:
