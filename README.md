@@ -1,6 +1,6 @@
 # Dependency Control
 
-**Dependency Control** is a centralized security and compliance platform for managing software supply chain risks. It aggregates SBOMs, secret scans, SAST, and IaC analysis to provide a unified view of your project's security posture.
+**Dependency Control** is a centralized security and compliance platform for managing software supply chain risks. It aggregates SBOMs, CBOMs, secret scans, SAST, and IaC analysis to provide a unified view of your project's security and cryptographic posture.
 
 [![Lines of Code](https://sonarcloud.io/api/project_badges/measure?project=morzan1001_Dependency-Control&metric=ncloc)](https://sonarcloud.io/summary/new_code?id=morzan1001_Dependency-Control)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=morzan1001_Dependency-Control&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=morzan1001_Dependency-Control)
@@ -14,11 +14,16 @@
 | Category | Capabilities |
 |----------|-------------|
 | **Security Analysis** | Vulnerability scanning (Trivy, Grype, OSV), Secret detection, SAST, Malware & Typosquatting detection |
-| **Cryptographic Analysis** | Cryptographic Bill of Materials (CBOM), weak-algorithm detection, key-size enforcement, quantum-vulnerability assessment |
-| **Compliance** | License compliance checking, End-of-Life monitoring, Policy enforcement with waivers |
-| **Management** | Project & Team management, Role-based access control, 2FA authentication |
-| **Integrations** | GitLab CI/CD (OIDC), GitHub Actions (OIDC), Webhooks, Email/Slack/Mattermost notifications |
-| **Visibility** | Risk scoring, Trend analysis, SBOM inventory, Centralized dashboard |
+| **Cryptographic Analysis** | CycloneDX 1.6 CBOM ingestion, weak-algorithm / weak-key / weak-protocol detection, certificate lifecycle, cipher-suite weakness checks (IANA-backed), quantum-vulnerability assessment |
+| **Crypto Policy Engine** | System-wide policy seeded from NIST SP 800-131A, BSI TR-02102, CNSA 2.0 and NIST PQC; per-project overrides, full audit trail with revert |
+| **Compliance Reports** | NIST SP 800-131A, BSI TR-02102, FIPS 140-3, ISO/IEC 19790, CNSA 2.0, License Audit, CVE Remediation SLA, PQC Migration Plan — JSON / CSV / SARIF / PDF |
+| **Crypto Analytics** | Hotspots (per asset name / primitive / type / severity / weakness tag), trend series, scan-to-scan deltas |
+| **PQC Migration** | Per-asset post-quantum migration plan (ML-KEM / ML-DSA / SLH-DSA mappings, deadlines, priority scoring) |
+| **License & Lifecycle** | License compliance, End-of-Life monitoring, policy enforcement with scoped waivers |
+| **Recommendations** | Prioritised remediations across vulnerabilities, secrets, SAST, IaC, licenses, quality, and crypto findings |
+| **Management** | Project & Team management, fine-grained permissions, 2FA, project API keys |
+| **Integrations** | GitLab CI/CD (OIDC), GitHub Actions (OIDC), Webhooks, Email/Slack/Mattermost notifications, MCP server for LLM clients |
+| **Visibility** | Risk scoring, trend analysis, SBOM/CBOM inventory, centralized dashboard, Metabase analytics |
 
 <p align="center">
   <img src="assets/pipeline.png" width="48%" alt="Pipeline Integration" />
@@ -52,7 +57,48 @@ Once an SBOM is ingested, the backend performs deep analysis using:
 
 **Dependency Control** ingests CycloneDX-1.6 Cryptographic Bills of Materials (CBOMs) produced by [IBM CBOMkit-theia](https://github.com/IBM/cbomkit-theia) and analyses them against configurable cryptographic policies.
 
-Detects weak algorithms (MD5, SHA-1, DES, RC4), insufficient key sizes (e.g. RSA-1024), and quantum-vulnerable public-key algorithms (RSA, ECC, DH). Policies are editable per-project and seeded with industry standards: NIST SP 800-131A, BSI TR-02102, CNSA 2.0, and NIST PQC recommendations.
+**Detection coverage**
+
+*   **Weak algorithms** — MD5, SHA-1, DES, 3DES, RC4 and other primitives disallowed by the active policy.
+*   **Weak keys** — RSA below the policy minimum (2048 / 3072 bits depending on framework), short DSA/ECDSA parameters.
+*   **Quantum-vulnerable primitives** — classical RSA, DH, ECDH, ECDSA, EC-DSA flagged for PQC migration; post-quantum primitives (ML-KEM, ML-DSA, SLH-DSA) are explicitly not flagged.
+*   **Weak protocols** — TLS 1.0 / 1.1, SSHv1 and similar deprecated versions.
+*   **Cipher-suite weaknesses** — backed by the live IANA TLS cipher-suite registry (Redis-cached, with a bundled YAML fallback) so suites like `TLS_RSA_WITH_RC4_128_SHA` surface their weakness tags (`weak-cipher-rc4`, `weak-mac-sha1`, `no-forward-secrecy`, …).
+*   **Certificate lifecycle** — expired / expiring-soon / not-yet-valid / weak-signature / weak-key / self-signed / validity-too-long.
+*   **Key-management hygiene** — fed from the OpenGrep crypto-misuse SAST ruleset (hardcoded keys, weak RNG, ECB mode, IV reuse, insecure TLS, weak hashes, low PBKDF2 iterations).
+
+**Policy engine**
+
+*   Seeded with **NIST SP 800-131A**, **BSI TR-02102**, **CNSA 2.0** and **NIST PQC** recommendations.
+*   Per-project overrides editable via the dashboard.
+*   Full **policy audit trail** (every create / update / delete / revert recorded, with diff view and revert action).
+*   Multi-framework matches collapse into a single finding with `details.matched_rules` listing every framework that flagged the asset.
+
+**Compliance reports**
+
+Generate point-in-time reports against any of the bundled frameworks:
+
+| Framework | Use case |
+|-----------|----------|
+| `nist-sp-800-131a` | NIST algorithm transition status |
+| `bsi-tr-02102` | German BSI cryptographic catalog |
+| `fips-140-3` | FIPS 140-3 algorithm-level conformance |
+| `iso-19790` | ISO/IEC 19790:2012 (algorithm-level, FIPS-aligned) |
+| `cnsa-2.0` | NSA CNSA 2.0 PQC / classical guidance |
+| `license-audit` | SPDX-driven license risk audit |
+| `cve-remediation-sla` | Time-to-fix tracking against severity SLAs |
+| `pqc-migration-plan` | Per-asset post-quantum transition target |
+
+Output formats: JSON, CSV, SARIF, PDF (PDF requires WeasyPrint / Pango / Cairo system libraries in the runtime image).
+
+**Crypto analytics**
+
+*   `GET /api/v1/analytics/crypto/hotspots` — top crypto hotspots grouped by asset name, primitive, asset type, severity, or weakness tag.
+*   `GET /api/v1/analytics/crypto/trends` — time-bucketed crypto finding / asset trends.
+*   `GET /api/v1/analytics/crypto/scan-delta` — added / removed / unchanged crypto assets between two scans.
+*   `GET /api/v1/analytics/crypto/pqc-migration` — generated PQC migration plan for the current scope.
+
+**Pipeline templates**
 
 Ready-to-use pipeline templates are available in the [dependency-control-pipeline-templates](https://github.com/zakmccracken/dependency-control-pipeline-templates) repository:
 
@@ -121,10 +167,20 @@ Enable **GitHub Integration** in the System Settings, then use the `ACTIONS_ID_T
 For other systems (Jenkins, etc.), generate a Project API Key in the dashboard and use the `X-API-Key` header.
 
 ```bash
+# SBOM ingest
 curl -X POST "https://api.dependencycontrol.local/api/v1/ingest" \
   -H "x-api-key: $DEP_CONTROL_API_KEY" \
-  ...
+  -H "Content-Type: application/json" \
+  --data-binary @sbom-payload.json
+
+# CBOM ingest (CycloneDX 1.6 with cryptographic-asset components)
+curl -X POST "https://api.dependencycontrol.local/api/v1/ingest/cbom" \
+  -H "x-api-key: $DEP_CONTROL_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data-binary @cbom-payload.json
 ```
+
+CBOM payloads are capped at 25 MiB; oversized uploads return `413 Payload Too Large`.
 
 👉 **See [ci-cd/](ci-cd/) for complete pipeline examples.**
 

@@ -72,5 +72,19 @@ def main():
         f'"version": "{new_version}"'
     )
 
+    # 5. Update CHANGELOG.md top-of-file release header.
+    # The script only rewrites the first "# Release X.Y.Z" line so writing
+    # actual changelog entries stays a manual step — we just keep the
+    # header in sync with the propagated version.
+    changelog_path = os.path.join(root_dir, 'CHANGELOG.md')
+    if os.path.exists(changelog_path):
+        update_file(
+            changelog_path,
+            r'\A# Release [^\n]+',
+            f'# Release {new_version}',
+        )
+    else:
+        print(f"CHANGELOG.md not found at {changelog_path}; skipping")
+
 if __name__ == "__main__":
     main()
