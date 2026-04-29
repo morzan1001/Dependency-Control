@@ -105,7 +105,19 @@ async def _user_can_see_report(
     """Authoritative scope check: a user may see a report iff the
     ScopeResolver for the report's (scope, scope_id) resolves successfully
     for that user. ScopeResolver already enforces project/team membership
-    and the analytics:global capability for the global scope."""
+    and the analytics:global capability for the global scope.
+
+    Special case for scope='user': ScopeResolver._resolve_user ignores
+    scope_id (it always returns the *caller's* projects), so it would
+    happily resolve another user's report. Gate explicitly on the
+    requester id (with system:manage as an admin escape hatch).
+    """
+    if report.scope == "user":
+        if report.requested_by == str(user.id):
+            return True
+        from app.core.permissions import Permissions, has_permission
+
+        return has_permission(getattr(user, "permissions", []) or [], Permissions.SYSTEM_MANAGE)
     try:
         await ScopeResolver(db, user).resolve(scope=report.scope, scope_id=report.scope_id)
         return True
