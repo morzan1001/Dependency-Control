@@ -38,7 +38,7 @@ class Iso19790Framework:
         # the closure-captured control_id matches the framework. Reusing
         # the FIPS controls would carry FIPS-140-3-* identifiers into the
         # ISO report (the closure captures the original prefix).
-        out = build_disallowed_algorithm_controls(self._fips._data, control_id_prefix="ISO-19790")
+        out = build_disallowed_algorithm_controls(self._fips.data, control_id_prefix="ISO-19790")
         out.append(
             ControlDefinition(
                 control_id="ISO-19790-RSA-MIN-2048",

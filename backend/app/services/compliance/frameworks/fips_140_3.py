@@ -38,14 +38,20 @@ class Fips1403Framework:
     )
 
     @cached_property
-    def _data(self) -> Dict[str, Dict[str, List[str]]]:
+    def data(self) -> Dict[str, Dict[str, List[str]]]:
+        """Public, read-only view of the FIPS approved-functions YAML.
+
+        Exposed so derived frameworks (e.g. ISO 19790) can build their
+        own controls from the same source data without reaching into a
+        private attribute.
+        """
         with _DATA_PATH.open() as f:
             loaded = yaml.safe_load(f) or {}
         return loaded if isinstance(loaded, dict) else {}
 
     @cached_property
     def controls(self) -> List[ControlDefinition]:
-        out = build_disallowed_algorithm_controls(self._data, control_id_prefix="FIPS-140-3")
+        out = build_disallowed_algorithm_controls(self.data, control_id_prefix="FIPS-140-3")
         out.append(
             ControlDefinition(
                 control_id="FIPS-140-3-RSA-MIN-2048",
