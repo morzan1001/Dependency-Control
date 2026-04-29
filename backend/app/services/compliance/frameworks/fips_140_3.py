@@ -45,26 +45,7 @@ class Fips1403Framework:
 
     @cached_property
     def controls(self) -> List[ControlDefinition]:
-        disallowed: Dict[str, List[str]] = self._data.get("disallowed") or {}
-        out: List[ControlDefinition] = []
-        for category, algos in disallowed.items():
-            title = f"Disallowed {category.replace('_', ' ')}"
-            out.append(
-                ControlDefinition(
-                    control_id=f"FIPS-140-3-{category.upper()}",
-                    title=title,
-                    description=(
-                        f"No crypto asset may use an algorithm in the disallowed "
-                        f"{category} list per NIST SP 800-140C/D/F. "
-                        f"Disallowed set: {', '.join(algos)}"
-                    ),
-                    severity=Severity.HIGH,
-                    remediation=(f"Replace disallowed {category} algorithms with members of the approved set."),
-                    maps_to_rule_ids=[],
-                    maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
-                    custom_evaluator=_make_disallowed_evaluator(algos, category, title),
-                )
-            )
+        out = build_disallowed_algorithm_controls(self._data, control_id_prefix="FIPS-140-3")
         out.append(
             ControlDefinition(
                 control_id="FIPS-140-3-RSA-MIN-2048",
@@ -87,11 +68,55 @@ class Fips1403Framework:
         return evaluate_framework(self, data)
 
 
+def build_disallowed_algorithm_controls(
+    data: Dict[str, Dict[str, List[str]]],
+    *,
+    control_id_prefix: str,
+) -> List[ControlDefinition]:
+    """Build the disallowed-category controls shared by FIPS 140-3 and the
+    derived ISO 19790 framework. The control_id_prefix lets the caller
+    choose between e.g. ``FIPS-140-3-`` and ``ISO-19790-`` so reports
+    don't accidentally surface a foreign framework's identifiers."""
+    disallowed: Dict[str, List[str]] = data.get("disallowed") or {}
+    out: List[ControlDefinition] = []
+    for category, algos in disallowed.items():
+        title = f"Disallowed {category.replace('_', ' ')}"
+        control_id = f"{control_id_prefix}-{category.upper()}"
+        out.append(
+            ControlDefinition(
+                control_id=control_id,
+                title=title,
+                description=(
+                    f"No crypto asset may use an algorithm in the disallowed "
+                    f"{category} list per NIST SP 800-140C/D/F. "
+                    f"Disallowed set: {', '.join(algos)}"
+                ),
+                severity=Severity.HIGH,
+                remediation=(f"Replace disallowed {category} algorithms with members of the approved set."),
+                maps_to_rule_ids=[],
+                maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
+                custom_evaluator=_make_disallowed_evaluator(
+                    algos=algos,
+                    category=category,
+                    title=title,
+                    control_id=control_id,
+                ),
+            )
+        )
+    return out
+
+
 def _make_disallowed_evaluator(
-    algos: List[str], category: str, title: str
+    *,
+    algos: List[str],
+    category: str,
+    title: str,
+    control_id: str,
 ) -> Callable[[EvaluationInput], ControlResult]:
     """Return a custom evaluator that walks crypto_assets and flags direct
-    use of any algorithm name in the disallowed list."""
+    use of any algorithm name in the disallowed list. The control_id is
+    captured by closure so derived frameworks (ISO 19790) emit the right
+    identifier instead of inheriting FIPS' prefix."""
     norm_disallowed = {a.upper() for a in algos}
 
     def evaluator(data: EvaluationInput) -> ControlResult:
@@ -113,7 +138,7 @@ def _make_disallowed_evaluator(
         else:
             status = ControlStatus.NOT_APPLICABLE
         return ControlResult(
-            control_id=f"FIPS-140-3-{category.upper()}",
+            control_id=control_id,
             title=title,
             description=(
                 f"Disallowed {category}: {', '.join(algos)}. Observed: {', '.join(sorted(set(hits_names))) or 'none'}"
