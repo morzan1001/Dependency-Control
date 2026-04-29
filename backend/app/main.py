@@ -116,6 +116,9 @@ async def startup_event() -> None:
             await PolicyAuditRepository(db).ensure_indexes()
             await ComplianceReportRepository(db).ensure_indexes()
             await seed_crypto_policies(db)
+            from app.services.crypto_policy.validation import validate_persisted_policies
+
+            await validate_persisted_policies(db)
             await backfill_scan_created_at(db)
             await prune_old_audit_entries(db)
             await sweep_expired_compliance_reports(db)
