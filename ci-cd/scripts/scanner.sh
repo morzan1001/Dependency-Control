@@ -3,10 +3,13 @@
 set -euo pipefail
 
 # Configuration & Constants
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.1.0"
 TEMP_DIR="${TMPDIR:-/tmp}/dep-control-$$"
 AUTH_HEADER=""
 readonly MSG_BUILDING_PAYLOAD="Building payload..."
+# Mirrors the cap enforced by /api/v1/ingest/cbom; warn before the server
+# rejects the upload with 413.
+readonly CBOM_MAX_BYTES=$((25 * 1024 * 1024))
 
 # Colors for output (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -272,6 +275,85 @@ scan_sbom() {
     
     upload_results "/api/v1/ingest" "$TEMP_DIR/payload.json"
     return 0
+}
+
+# Scanner: CBOM (CycloneDX cryptographic-asset payload)
+#
+# Generation is deliberately out of scope: tools like IBM CBOMkit-theia
+# (https://github.com/IBM/cbomkit-theia) need either Docker or a Go
+# toolchain — too heavy to auto-install in every CI runner. Reference
+# pipelines in the dependency-control-pipeline-templates repo handle
+# generation; this function only uploads a pre-built CBOM.
+scan_cbom() {
+    log_info "=== CBOM Upload ==="
+
+    mkdir -p "$TEMP_DIR"
+
+    # Resolve the CBOM file: explicit env var first, then first positional
+    # arg, then the conventional names a CycloneDX producer would emit.
+    local cbom_file="${CBOM_FILE:-${1:-}}"
+    if [[ -z "$cbom_file" ]]; then
+        for candidate in cbom.json bom.cbom.json cyclonedx-cbom.json; do
+            if [[ -f "$candidate" ]]; then
+                cbom_file="$candidate"
+                break
+            fi
+        done
+    fi
+
+    if [[ -z "$cbom_file" ]] || [[ ! -f "$cbom_file" ]]; then
+        log_warn "No CBOM file found. Set CBOM_FILE or place cbom.json in the working directory."
+        log_info "  Generate one with: docker run --rm -v \$(pwd):/src ghcr.io/ibm/cbomkit-theia /src"
+        return 0
+    fi
+
+    # Reject obvious non-JSON before paying the upload cost.
+    if ! jq -e . "$cbom_file" >/dev/null 2>&1; then
+        log_error "CBOM file '$cbom_file' is not valid JSON."
+        return 1
+    fi
+
+    # Body-size cap mirrors /api/v1/ingest/cbom (25 MiB). Stat output
+    # differs between BSD and GNU; -c 'size' works on both modern coreutils.
+    local size
+    size=$(stat -c%s "$cbom_file" 2>/dev/null || stat -f%z "$cbom_file" 2>/dev/null || echo 0)
+    if [[ "$size" -gt "$CBOM_MAX_BYTES" ]]; then
+        log_error "CBOM file is ${size} bytes; the server limit is ${CBOM_MAX_BYTES} bytes (25 MiB). Aborting upload."
+        return 1
+    fi
+
+    log_info "Uploading CBOM ($size bytes) from $cbom_file"
+    log_info "$MSG_BUILDING_PAYLOAD"
+
+    jq -n \
+        --arg pn "$PROJECT_NAME" \
+        --arg br "$BRANCH" \
+        --arg ch "$COMMIT_HASH" \
+        --arg pipeline_id "$PIPELINE_ID" \
+        --arg pipeline_iid "$PIPELINE_IID" \
+        --arg project_url "$PROJECT_URL" \
+        --arg pipeline_url "$PIPELINE_URL" \
+        --arg job_id "$JOB_ID" \
+        --arg job_started_at "$JOB_STARTED_AT" \
+        --arg commit_message "$COMMIT_MESSAGE" \
+        --arg commit_tag "$COMMIT_TAG" \
+        --slurpfile cbom "$cbom_file" \
+        '{
+            project_name: $pn,
+            branch: $br,
+            commit_hash: $ch,
+            pipeline_id: ($pipeline_id | tonumber),
+            pipeline_iid: ($pipeline_iid | tonumber),
+            project_url: $project_url,
+            pipeline_url: $pipeline_url,
+            job_id: ($job_id | tonumber),
+            job_started_at: $job_started_at,
+            commit_message: $commit_message,
+            commit_tag: $commit_tag,
+            cbom: $cbom[0]
+        }' > "$TEMP_DIR/cbom_payload.json"
+
+    upload_results "/api/v1/ingest/cbom" "$TEMP_DIR/cbom_payload.json"
 }
 
 # Scanner: TruffleHog (Secrets)
@@ -595,6 +677,12 @@ run_all() {
     local failed=0
     
     scan_sbom || failed=$((failed + 1))
+    # CBOM upload is only attempted when the user supplied a file —
+    # generation lives in dedicated pipeline templates, so there's
+    # nothing for `all` to do without one.
+    if [[ -n "${CBOM_FILE:-}" ]]; then
+        scan_cbom || failed=$((failed + 1))
+    fi
     scan_secrets || failed=$((failed + 1))
     scan_sast || failed=$((failed + 1))
     scan_iac || failed=$((failed + 1))
@@ -618,18 +706,20 @@ Usage: $0 <command> [options]
 
 Commands:
   sbom        Generate and upload SBOM using Syft
+  cbom        Upload a pre-built CycloneDX 1.6 CBOM
   secrets     Run TruffleHog secret scan
   sast        Run OpenGrep/Semgrep SAST scan
   iac         Run KICS Infrastructure-as-Code scan
   bearer      Run Bearer privacy/security scan
   callgraph   Generate and upload callgraph for reachability analysis
-  all         Run all enabled scans
+  all         Run all enabled scans (CBOM upload runs only when CBOM_FILE is set)
 
 Environment Variables:
   DEP_CONTROL_URL            URL of the Dependency Control instance (required)
   DEP_CONTROL_API_KEY        API Key for authentication
   DEP_CONTROL_TOKEN          OIDC Token for authentication (GitLab/GitHub)
   DEP_CONTROL_OIDC_AUDIENCE  OIDC audience claim (default: "dependency-control")
+  CBOM_FILE                  Path to a pre-built CBOM JSON (used by 'cbom' / 'all')
 
 Authentication (checked in order):
   1. DEP_CONTROL_API_KEY          - Project API key (any CI provider)
@@ -674,6 +764,9 @@ main() {
     case "$command" in
         sbom)
             scan_sbom
+            ;;
+        cbom)
+            scan_cbom "${2:-}"
             ;;
         secrets)
             scan_secrets
