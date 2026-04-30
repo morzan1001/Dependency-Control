@@ -182,6 +182,25 @@ curl -X POST "https://api.dependencycontrol.local/api/v1/ingest/cbom" \
 
 CBOM payloads are capped at 25 MiB; oversized uploads return `413 Payload Too Large`.
 
+### Pinning the bundled scanner
+
+The backend serves a reusable `scanner.sh` for SBOM/CBOM/secret/SAST/IaC ingestion. Every released version is **frozen** under `ci-cd/scripts/versions/scanner-X.Y.Z.sh` and is reachable through `?v=X.Y.Z`; the unversioned URL serves whichever version is currently the latest pointer.
+
+```bash
+# Discover the current frozen versions and their hashes
+curl -sSL "$DEP_CONTROL_URL/api/v1/scripts" | jq
+
+# Pin the version + hash you reviewed; future deploys won't change the bytes
+SCANNER_VERSION="1.1.0"
+SCANNER_SHA256="<from manifest>"
+
+curl -sSfL "$DEP_CONTROL_URL/api/v1/scripts/scanner.sh?v=$SCANNER_VERSION" -o scanner.sh
+echo "$SCANNER_SHA256  scanner.sh" | sha256sum -c -
+bash scanner.sh all
+```
+
+Without `?v` the response is the latest pointer and may change on any backend deploy — fine for ad-hoc use, never pin a hash against it.
+
 👉 **See [ci-cd/](ci-cd/) for complete pipeline examples.**
 
 ## 🤖 MCP Integration
