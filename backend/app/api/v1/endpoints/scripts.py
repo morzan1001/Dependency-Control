@@ -22,6 +22,7 @@ keep downloading the exact bytes they reviewed.
 import hashlib
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -66,9 +67,12 @@ def validate_script_name(script_name: str) -> None:
             detail=f"Script '{script_name}' not found",
         )
 
-    # Path traversal protection: ensure resolved path is within SCRIPTS_DIR
+    # Path traversal protection: ensure resolved path is within SCRIPTS_DIR.
+    # Use Path.is_relative_to instead of str.startswith — the latter
+    # would incorrectly accept a sibling like /app/ci-cd/scripts/foo-evil
+    # against base /app/ci-cd/scripts/foo.
     script_path = (SCRIPTS_DIR / script_name).resolve()
-    if not str(script_path).startswith(str(SCRIPTS_DIR.resolve())):
+    if not script_path.is_relative_to(SCRIPTS_DIR.resolve()):
         logger.warning(f"Path traversal attempt detected for script: {script_name}")
         raise HTTPException(
             status_code=404,
@@ -112,6 +116,24 @@ def _resolve_script_path(script_name: str, version: Optional[str]) -> Path:
     return (VERSIONS_DIR / versioned_name).resolve()
 
 
+def _read_and_describe(script_path: Path) -> tuple[str, str, str]:
+    """Read a script file and compute (content, embedded_version, sha256)."""
+    content = script_path.read_text()
+    return content, get_script_version(content), compute_sha256(content)
+
+
+@lru_cache(maxsize=256)
+def _read_and_describe_frozen(script_path_str: str) -> tuple[str, str, str]:
+    """Cached read+hash for frozen versions.
+
+    Released bytes never change for the lifetime of the process, so the
+    SHA256 of a versioned file can safely be memoised. The latest pointer
+    is intentionally not cached — it changes on every backend deploy and
+    callers expect the live bytes.
+    """
+    return _read_and_describe(Path(script_path_str))
+
+
 def get_script_content(script_name: str, version: Optional[str] = None) -> tuple[str, str, str]:
     """
     Get script content, version, and hash for either the latest pointer
@@ -129,16 +151,16 @@ def get_script_content(script_name: str, version: Optional[str] = None) -> tuple
     """
     script_path = _resolve_script_path(script_name, version)
     base = VERSIONS_DIR.resolve() if version else SCRIPTS_DIR.resolve()
-    if not str(script_path).startswith(str(base)):
+    # is_relative_to avoids the str.startswith prefix-collision pitfall
+    # (e.g. /…/versions-evil being treated as inside /…/versions).
+    if not script_path.is_relative_to(base):
         raise FileNotFoundError(f"Script {script_name} not found")
     if not script_path.exists():
         raise FileNotFoundError(f"Script {script_name} not found")
 
-    content = script_path.read_text()
-    detected_version = get_script_version(content)
-    sha256_hash = compute_sha256(content)
-
-    return content, detected_version, sha256_hash
+    if version is not None:
+        return _read_and_describe_frozen(str(script_path))
+    return _read_and_describe(script_path)
 
 
 def list_available_versions(script_name: str) -> list[str]:
