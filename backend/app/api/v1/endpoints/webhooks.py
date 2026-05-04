@@ -212,6 +212,10 @@ async def update_webhook(
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    # Re-detect webhook_type when URL changes and no explicit type was provided.
+    if "url" in update_data and "webhook_type" not in update_data:
+        update_data["webhook_type"] = detect_webhook_type(update_data["url"])
+
     # Update and return updated webhook
     updated_webhook = await webhook_repo.update(webhook_id, update_data)
     return updated_webhook

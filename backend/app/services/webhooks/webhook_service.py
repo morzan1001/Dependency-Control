@@ -784,7 +784,10 @@ class WebhookService:
             },
         }
 
-        # Teams webhooks always show the dedicated test card, regardless of event_type.
+        # Teams webhooks always show the test card, regardless of event_type.
+        # We bypass _format_payload here because test_payload carries event="scan.completed"
+        # (the default), and routing through _format_payload would produce a scan card instead.
+        # If this logic ever changes, update _format_payload's "test" branch in parallel.
         if webhook.webhook_type == "teams":
             formatted_test_payload = TeamsFormatter.build_test_card()
         else:

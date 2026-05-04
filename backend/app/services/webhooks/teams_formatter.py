@@ -132,10 +132,10 @@ class TeamsFormatter:
         vulns: dict,
         scan_url: Optional[str] = None,
     ) -> dict:
-        critical = vulns.get("critical", 0)
-        high = vulns.get("high", 0)
-        kev = vulns.get("kev", 0)
-        high_epss = vulns.get("high_epss", 0)
+        critical = int(vulns.get("critical", 0) or 0)
+        high = int(vulns.get("high", 0) or 0)
+        kev = int(vulns.get("kev", 0) or 0)
+        high_epss = int(vulns.get("high_epss", 0) or 0)
         top = vulns.get("top", [])
 
         container_style = "attention" if critical > 0 else "warning"
