@@ -17,6 +17,7 @@ from app.schemas.crypto_policy import CryptoRule
 from app.schemas.policy_audit import PolicyAuditAction
 from app.services.audit.history import record_policy_change
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
+from app.services.crypto_policy.seeder import seed_crypto_policies
 
 router = CustomAPIRouter(tags=["crypto-policies"])
 
@@ -29,10 +30,14 @@ async def get_system_policy(
     current_user: AdminUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    """Get the system-level crypto policy. Admin only."""
-    policy = await CryptoPolicyRepository(db).get_system_policy()
+    """Get the system-level crypto policy. Seeds defaults on first access if missing."""
+    repo = CryptoPolicyRepository(db)
+    policy = await repo.get_system_policy()
     if policy is None:
-        raise HTTPException(status_code=404, detail="System policy not seeded")
+        await seed_crypto_policies(db)
+        policy = await repo.get_system_policy()
+    if policy is None:
+        raise HTTPException(status_code=500, detail="Failed to initialize system policy")
     return policy.model_dump(by_alias=True)
 
 

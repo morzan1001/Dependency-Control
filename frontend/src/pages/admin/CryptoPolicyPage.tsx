@@ -7,7 +7,7 @@ import type { CryptoRule } from "@/types/cryptoPolicy";
 
 export function CryptoPolicyPage() {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["crypto-policy-system"],
     queryFn: getSystemPolicy,
   });
@@ -21,7 +21,11 @@ export function CryptoPolicyPage() {
     onError: (e: Error) => toast.error(`Save failed: ${e.message}`),
   });
 
-  if (isLoading || !data) return <div>Loading…</div>;
+  if (isLoading) return <div>Loading…</div>;
+  if (isError || !data) {
+    const msg = (error as Error)?.message ?? "Unknown error";
+    return <div className="p-6 text-destructive">Failed to load system policy: {msg}</div>;
+  }
 
   return (
     <div className="space-y-6 p-6">

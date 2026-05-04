@@ -8,8 +8,8 @@ import { PolicyAuditTimeline } from "@/components/audit/PolicyAuditTimeline";
 import type { CryptoRule } from "@/types/cryptoPolicy";
 
 interface Props {
-  projectId: string;
-  canEdit: boolean;
+  readonly projectId: string;
+  readonly canEdit: boolean;
 }
 
 export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
@@ -42,8 +42,9 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
     },
   });
 
-  if (effective.isLoading || override.isLoading || !effective.data || !override.data) {
-    return <div>Loading…</div>;
+  if (effective.isLoading || override.isLoading) return <div>Loading…</div>;
+  if (effective.isError || override.isError || !effective.data || !override.data) {
+    return <div className="p-6 text-destructive">Failed to load crypto policy.</div>;
   }
 
   return (
