@@ -156,8 +156,8 @@ def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
     hostname = (parsed.hostname or "").lower()
     path = parsed.path or ""
 
-    if hostname.endswith("webhook.office.com"):
+    if hostname == "webhook.office.com" or hostname.endswith(".webhook.office.com"):
         return "teams"
-    if hostname.endswith("logic.azure.com") and "/workflows/" in path:
+    if (hostname == "logic.azure.com" or hostname.endswith(".logic.azure.com")) and "/workflows/" in path:
         return "teams"
     return "generic"

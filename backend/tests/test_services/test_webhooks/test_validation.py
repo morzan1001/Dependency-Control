@@ -241,3 +241,14 @@ class TestDetectWebhookType:
 
     def test_generic_https_url(self):
         assert detect_webhook_type("https://my-server.example.com/webhook") == "generic"
+
+    def test_office_com_non_webhook_subdomain_is_generic(self):
+        # hostname ends with 'webhook.office.com' chars but has no separating dot
+        assert detect_webhook_type("https://evilwebhook.office.com/abc") == "generic"
+
+    def test_logic_azure_non_logic_subdomain_is_generic(self):
+        # hostname ends with 'logic.azure.com' chars but has no separating dot
+        assert detect_webhook_type("https://evil-logic.azure.com/workflows/abc") == "generic"
+
+    def test_empty_string_returns_generic(self):
+        assert detect_webhook_type("") == "generic"
