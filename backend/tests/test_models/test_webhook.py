@@ -82,3 +82,72 @@ class TestWebhookSerialization:
         )
         dumped = webhook.model_dump(by_alias=True)
         assert "_id" in dumped
+
+
+class TestWebhookTypeField:
+    def test_defaults_to_generic(self):
+        webhook = Webhook(url="https://example.com/hook", events=["scan_completed"])
+        assert webhook.webhook_type == "generic"
+
+    def test_accepts_teams(self):
+        webhook = Webhook(
+            url="https://example.com/hook",
+            events=["scan_completed"],
+            webhook_type="teams",
+        )
+        assert webhook.webhook_type == "teams"
+
+    def test_rejects_unknown_type(self):
+        with pytest.raises(ValidationError):
+            Webhook(
+                url="https://example.com/hook",
+                events=["scan_completed"],
+                webhook_type="discord",
+            )
+
+
+class TestWebhookCreateSchemaType:
+    def test_webhook_type_optional_defaults_none(self):
+        from app.schemas.webhook import WebhookCreate
+        schema = WebhookCreate(url="https://example.com/hook", events=["scan_completed"])
+        assert schema.webhook_type is None
+
+    def test_webhook_type_accepts_teams(self):
+        from app.schemas.webhook import WebhookCreate
+        schema = WebhookCreate(
+            url="https://example.com/hook",
+            events=["scan_completed"],
+            webhook_type="teams",
+        )
+        assert schema.webhook_type == "teams"
+
+    def test_webhook_type_accepts_generic(self):
+        from app.schemas.webhook import WebhookCreate
+        schema = WebhookCreate(
+            url="https://example.com/hook",
+            events=["scan_completed"],
+            webhook_type="generic",
+        )
+        assert schema.webhook_type == "generic"
+
+    def test_webhook_type_rejects_unknown(self):
+        from app.schemas.webhook import WebhookCreate
+        with pytest.raises(ValidationError):
+            WebhookCreate(
+                url="https://example.com/hook",
+                events=["scan_completed"],
+                webhook_type="pagerduty",
+            )
+
+    def test_webhook_response_includes_type(self):
+        from app.schemas.webhook import WebhookResponse
+        from datetime import datetime, timezone
+        resp = WebhookResponse(
+            id="abc",
+            url="https://example.com/hook",
+            events=["scan_completed"],
+            is_active=True,
+            created_at=datetime.now(timezone.utc),
+            webhook_type="teams",
+        )
+        assert resp.webhook_type == "teams"

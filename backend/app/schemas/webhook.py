@@ -3,7 +3,7 @@ Webhook API schemas for request/response validation.
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -24,6 +24,7 @@ class WebhookCreate(BaseModel):
     events: List[str]
     secret: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
+    webhook_type: Optional[Literal["generic", "teams"]] = None
 
     @field_validator("events")
     @classmethod
@@ -46,6 +47,7 @@ class WebhookUpdate(BaseModel):
     is_active: Optional[bool] = None
     secret: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
+    webhook_type: Optional[Literal["generic", "teams"]] = None
 
     @field_validator("events")
     @classmethod
@@ -73,6 +75,7 @@ class WebhookResponse(BaseModel):
     created_at: datetime
     last_triggered_at: Optional[datetime] = None
     last_failure_at: Optional[datetime] = None
+    webhook_type: str
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -4,7 +4,7 @@ Webhook model for MongoDB storage.
 
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -33,6 +33,7 @@ class Webhook(BaseModel):
         secret: Optional secret for HMAC signature verification (not returned in API responses)
         headers: Optional custom headers to include in requests
         is_active: Whether the webhook is enabled
+        webhook_type: Type of webhook (generic or teams) for payload formatting
         created_at: Creation timestamp
         last_triggered_at: Last successful delivery timestamp
         last_failure_at: Last failed delivery timestamp
@@ -50,6 +51,7 @@ class Webhook(BaseModel):
     secret: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
     is_active: bool = True
+    webhook_type: Literal["generic", "teams"] = "generic"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_triggered_at: Optional[datetime] = None
     last_failure_at: Optional[datetime] = None
