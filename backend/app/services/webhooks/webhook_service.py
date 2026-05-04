@@ -31,6 +31,7 @@ from app.services.webhooks.types import (
     TestWebhookPayload,
     VulnerabilityFoundPayload,
 )
+from app.services.webhooks.teams_formatter import TeamsFormatter
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
@@ -295,6 +296,47 @@ class WebhookService:
         except Exception as e:
             logger.error(f"Failed to log webhook delivery: {e}")
 
+    def _format_payload(
+        self,
+        webhook: "Webhook",
+        event_type: str,
+        raw_payload: "Mapping[str, Any]",
+    ) -> "Mapping[str, Any]":
+        if webhook.webhook_type != "teams":
+            return raw_payload
+
+        normalized = _normalize_event_name(event_type)
+        project_name = raw_payload.get("project", {}).get("name", "Unknown Project")
+        scan_url = raw_payload.get("scan", {}).get("url")
+
+        if normalized == WEBHOOK_EVENT_SCAN_COMPLETED:
+            return TeamsFormatter.build_scan_completed_card(
+                project_name=project_name,
+                _scan_id=raw_payload.get("scan", {}).get("id", ""),
+                findings=raw_payload.get("findings", {"total": 0, "stats": {}}),
+                scan_url=scan_url,
+            )
+        if normalized == WEBHOOK_EVENT_VULNERABILITY_FOUND:
+            return TeamsFormatter.build_vulnerability_found_card(
+                project_name=project_name,
+                _scan_id=raw_payload.get("scan", {}).get("id", ""),
+                vulns=raw_payload.get("vulnerabilities", {"critical": 0, "high": 0, "kev": 0, "high_epss": 0, "top": []}),
+                scan_url=scan_url,
+            )
+        if normalized == WEBHOOK_EVENT_ANALYSIS_FAILED:
+            return TeamsFormatter.build_analysis_failed_card(
+                project_name=project_name,
+                error=str(raw_payload.get("error", "Unknown error")),
+                scan_url=scan_url,
+            )
+        if event_type == "test":
+            return TeamsFormatter.build_test_card()
+        return TeamsFormatter.build_generic_card(
+            subject=normalized.replace(".", " ").title(),
+            message=f"Event for project **{project_name}**",
+            url=scan_url,
+        )
+
     async def _send_webhook(
         self,
         db: AsyncIOMotorDatabase,
@@ -326,7 +368,8 @@ class WebhookService:
 
         See module docstring for detailed architecture recommendations.
         """
-        json_payload = json.dumps(payload)
+        formatted_payload = self._format_payload(webhook, event_type, payload)
+        json_payload = json.dumps(formatted_payload)
         headers = self._build_headers(webhook, event_type, json_payload)
 
         retry_count = 0
@@ -738,7 +781,8 @@ class WebhookService:
             },
         }
 
-        json_payload = json.dumps(test_payload)
+        formatted_test_payload = self._format_payload(webhook, event_type, test_payload)
+        json_payload = json.dumps(formatted_test_payload)
         headers = self._build_headers(webhook, event_type, json_payload, is_test=True)
 
         start_time = time.monotonic()
