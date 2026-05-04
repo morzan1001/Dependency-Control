@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.webhook import Webhook
+from app.schemas.webhook import WebhookCreate, WebhookResponse, WebhookUpdate
 
 
 class TestWebhookModel:
@@ -108,12 +109,10 @@ class TestWebhookTypeField:
 
 class TestWebhookCreateSchemaType:
     def test_webhook_type_optional_defaults_none(self):
-        from app.schemas.webhook import WebhookCreate
         schema = WebhookCreate(url="https://example.com/hook", events=["scan_completed"])
         assert schema.webhook_type is None
 
     def test_webhook_type_accepts_teams(self):
-        from app.schemas.webhook import WebhookCreate
         schema = WebhookCreate(
             url="https://example.com/hook",
             events=["scan_completed"],
@@ -122,7 +121,6 @@ class TestWebhookCreateSchemaType:
         assert schema.webhook_type == "teams"
 
     def test_webhook_type_accepts_generic(self):
-        from app.schemas.webhook import WebhookCreate
         schema = WebhookCreate(
             url="https://example.com/hook",
             events=["scan_completed"],
@@ -131,7 +129,6 @@ class TestWebhookCreateSchemaType:
         assert schema.webhook_type == "generic"
 
     def test_webhook_type_rejects_unknown(self):
-        from app.schemas.webhook import WebhookCreate
         with pytest.raises(ValidationError):
             WebhookCreate(
                 url="https://example.com/hook",
@@ -140,7 +137,6 @@ class TestWebhookCreateSchemaType:
             )
 
     def test_webhook_response_includes_type(self):
-        from app.schemas.webhook import WebhookResponse
         from datetime import datetime, timezone
         resp = WebhookResponse(
             id="abc",
@@ -151,3 +147,7 @@ class TestWebhookCreateSchemaType:
             webhook_type="teams",
         )
         assert resp.webhook_type == "teams"
+
+    def test_webhook_update_rejects_unknown_type(self):
+        with pytest.raises(ValidationError):
+            WebhookUpdate(webhook_type="pagerduty")

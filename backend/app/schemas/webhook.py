@@ -75,7 +75,7 @@ class WebhookResponse(BaseModel):
     created_at: datetime
     last_triggered_at: Optional[datetime] = None
     last_failure_at: Optional[datetime] = None
-    webhook_type: str
+    webhook_type: Literal["generic", "teams"]
 
     model_config = ConfigDict(from_attributes=True)
 
