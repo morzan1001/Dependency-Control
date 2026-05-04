@@ -37,6 +37,17 @@ const TREND_METRICS: TrendMetric[] = [
   "unique_cipher_suites",
 ];
 
+const TREND_METRIC_LABELS: Record<TrendMetric, string> = {
+  total_crypto_findings: "Total Crypto Findings",
+  quantum_vulnerable_findings: "Quantum Vulnerable Findings",
+  weak_algo_findings: "Weak Algorithm Findings",
+  weak_key_findings: "Weak Key Findings",
+  cert_expiring_soon: "Certificates Expiring Soon",
+  cert_expired: "Expired Certificates",
+  unique_algorithms: "Unique Algorithms",
+  unique_cipher_suites: "Unique Cipher Suites",
+};
+
 const TREND_PRESETS = [
   { label: "7d", days: 7 },
   { label: "30d", days: 30 },
@@ -124,7 +135,7 @@ function TrendsSection() {
         <Select value={metric} onValueChange={(v) => setMetric(v as TrendMetric)}>
           <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {TREND_METRICS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+            {TREND_METRICS.map((m) => <SelectItem key={m} value={m}>{TREND_METRIC_LABELS[m]}</SelectItem>)}
           </SelectContent>
         </Select>
         <div className="flex gap-1">
