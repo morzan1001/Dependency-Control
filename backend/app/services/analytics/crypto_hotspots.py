@@ -219,7 +219,11 @@ class CryptoHotspotService:
                 if value is None:
                     continue
                 current = entry[field]
-                if current is None or (field == "first_seen" and value < current) or (field == "last_seen" and value > current):
+                if (
+                    current is None
+                    or (field == "first_seen" and value < current)
+                    or (field == "last_seen" and value > current)
+                ):
                     entry[field] = value
 
         now = datetime.now(timezone.utc)

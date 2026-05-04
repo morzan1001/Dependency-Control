@@ -76,9 +76,7 @@ class _RpcError(Exception):
         self.message = message
 
 
-async def _resolve_user_from_token(
-    authorization: str, db: "AsyncIOMotorDatabase[Any]"
-) -> tuple[User, Dict[str, Any]]:
+async def _resolve_user_from_token(authorization: str, db: "AsyncIOMotorDatabase[Any]") -> tuple[User, Dict[str, Any]]:
     """Validate Bearer token and return the (user, key_doc) pair.
 
     Raises HTTPException on any failure so FastAPI serialises it correctly.

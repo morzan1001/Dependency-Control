@@ -4,16 +4,12 @@ from app.services.audit.history import compute_license_policy_change_summary
 
 
 def test_initial_policy_summary():
-    s = compute_license_policy_change_summary(
-        old=None, new={"distribution_model": "distributed"}
-    )
+    s = compute_license_policy_change_summary(old=None, new={"distribution_model": "distributed"})
     assert "Initial license policy" in s
 
 
 def test_cleared_policy_summary():
-    s = compute_license_policy_change_summary(
-        old={"distribution_model": "distributed"}, new={}
-    )
+    s = compute_license_policy_change_summary(old={"distribution_model": "distributed"}, new={})
     assert s == "License policy cleared"
 
 

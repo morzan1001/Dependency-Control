@@ -141,8 +141,7 @@ async def get_impact_analysis(
                 findings_by_severity=SeverityBreakdown(**severity_counts),
                 fix_impact_score=base_impact,
                 affected_project_names=[
-                    project_name_map.get(pid, "Unknown")
-                    for pid in accessible_impact_project_ids[:5]
+                    project_name_map.get(pid, "Unknown") for pid in accessible_impact_project_ids[:5]
                 ],
                 max_epss_score=enrichment_data.max_epss,
                 epss_percentile=enrichment_data.max_percentile,

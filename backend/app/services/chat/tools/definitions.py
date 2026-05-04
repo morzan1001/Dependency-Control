@@ -1004,7 +1004,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 ]
 
 
-
 TOOL_PERMISSIONS: Dict[str, List[str]] = {
     # Most tools just need project:read (access is further scoped by build_user_project_query)
     "list_global_waivers": [Permissions.WAIVER_READ_ALL],

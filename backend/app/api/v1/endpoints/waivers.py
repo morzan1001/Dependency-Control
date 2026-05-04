@@ -36,6 +36,7 @@ def _invalidate_analytics_cache() -> None:
     except Exception:  # pragma: no cover — defensive; clear() has no I/O
         pass
 
+
 router = CustomAPIRouter()
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"

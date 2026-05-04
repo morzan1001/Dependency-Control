@@ -21,9 +21,7 @@ class JsonRenderer:
         disclaimer: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
         framework_key_str = (
-            evaluation.framework_key
-            if isinstance(evaluation.framework_key, str)
-            else evaluation.framework_key.value
+            evaluation.framework_key if isinstance(evaluation.framework_key, str) else evaluation.framework_key.value
         )
         payload: dict = {
             "framework": framework_key_str,

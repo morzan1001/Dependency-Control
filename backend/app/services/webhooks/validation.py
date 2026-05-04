@@ -21,12 +21,7 @@ IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 def _is_blocked_ip(ip: IPAddress) -> bool:
     return bool(
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
+        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
     )
 
 
@@ -68,9 +63,7 @@ def validate_webhook_url(url: str) -> str:
 
     ip = _parse_ip(host)
     if ip is not None and not is_loopback_host and _is_blocked_ip(ip):
-        raise ValueError(
-            f"Webhook host '{host}' is in a private, reserved, or link-local range"
-        )
+        raise ValueError(f"Webhook host '{host}' is in a private, reserved, or link-local range")
 
     return url
 
@@ -95,9 +88,7 @@ async def assert_safe_webhook_target(url: str) -> None:
     ip_literal = _parse_ip(host)
     if ip_literal is not None:
         if _is_blocked_ip(ip_literal):
-            raise ValueError(
-                f"Refusing webhook delivery: host '{host}' is in a blocked IP range"
-            )
+            raise ValueError(f"Refusing webhook delivery: host '{host}' is in a blocked IP range")
         return
 
     loop = asyncio.get_event_loop()
@@ -113,10 +104,7 @@ async def assert_safe_webhook_target(url: str) -> None:
         except ValueError:
             continue
         if _is_blocked_ip(resolved):
-            raise ValueError(
-                f"Refusing webhook delivery: host '{host}' resolves to "
-                f"blocked address {resolved}"
-            )
+            raise ValueError(f"Refusing webhook delivery: host '{host}' resolves to blocked address {resolved}")
 
 
 def validate_webhook_events(events: List[str], allow_empty: bool = False) -> List[str]:

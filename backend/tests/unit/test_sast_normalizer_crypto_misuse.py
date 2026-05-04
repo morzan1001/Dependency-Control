@@ -38,16 +38,10 @@ def test_crypto_misuse_rule_mapped_when_check_id_has_dotted_path_prefix():
         _finding_type_from_rule(".semgrep.rules.crypto-misuse-hardcoded-keys-python")
         == FindingType.CRYPTO_KEY_MANAGEMENT
     )
-    assert (
-        _finding_type_from_rule("my-org.crypto-misuse-weak-rng-java")
-        == FindingType.CRYPTO_KEY_MANAGEMENT
-    )
+    assert _finding_type_from_rule("my-org.crypto-misuse-weak-rng-java") == FindingType.CRYPTO_KEY_MANAGEMENT
 
     # Regression: the bare rule-name form still works.
-    assert (
-        _finding_type_from_rule("crypto-misuse-ecb-mode-go")
-        == FindingType.CRYPTO_KEY_MANAGEMENT
-    )
+    assert _finding_type_from_rule("crypto-misuse-ecb-mode-go") == FindingType.CRYPTO_KEY_MANAGEMENT
 
 
 def test_dotted_path_without_crypto_misuse_segment_is_plain_sast():

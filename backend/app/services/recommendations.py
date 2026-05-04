@@ -211,10 +211,7 @@ class RecommendationEngine:
         # cipher suites, certificate lifecycle, quantum-vulnerable primitives,
         # and key-management SAST hits).
         crypto_findings = [
-            f
-            for ft, group in findings_by_type.items()
-            if ft in crypto_recs.CRYPTO_FINDING_TYPES
-            for f in group
+            f for ft, group in findings_by_type.items() if ft in crypto_recs.CRYPTO_FINDING_TYPES for f in group
         ]
         _safe_extend(
             recommendations,

@@ -65,9 +65,9 @@ class TestVersionRegex:
     @pytest.mark.parametrize(
         "bad",
         [
-            "1.0",          # too few segments
-            "1.0.0.0",      # too many segments
-            "1.0.0-rc1",    # suffixes not allowed
+            "1.0",  # too few segments
+            "1.0.0.0",  # too many segments
+            "1.0.0-rc1",  # suffixes not allowed
             "../../etc",
             "..",
             "",

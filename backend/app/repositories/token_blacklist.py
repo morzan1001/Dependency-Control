@@ -6,7 +6,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 
 class TokenBlacklistRepository:
-
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db.token_blacklist

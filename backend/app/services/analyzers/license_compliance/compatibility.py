@@ -10,9 +10,7 @@ from .constants import LICENSE_DATABASE, LICENSE_INCOMPATIBILITIES
 from .normalizer import extract_licenses, normalize_license
 
 
-def check_pair_conflict(
-    a: Dict[str, str], b: Dict[str, str], seen: set
-) -> Optional[Dict[str, Any]]:
+def check_pair_conflict(a: Dict[str, str], b: Dict[str, str], seen: set) -> Optional[Dict[str, Any]]:
     """Check if two component-license entries conflict. Returns an issue dict or None."""
     if a["license"] == b["license"]:
         return None

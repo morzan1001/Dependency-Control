@@ -122,11 +122,7 @@ async def get_project_recommendations(
     iac_count = sum(1 for f in findings if f.type == "iac")
     license_count = sum(1 for f in findings if f.type == "license")
     quality_count = sum(1 for f in findings if f.type == "quality")
-    crypto_count = sum(
-        1
-        for f in findings
-        if isinstance(f.type, str) and f.type.startswith("crypto_")
-    )
+    crypto_count = sum(1 for f in findings if isinstance(f.type, str) and f.type.startswith("crypto_"))
 
     summary: Dict[str, Any] = {
         "base_image_updates": 0,

@@ -213,9 +213,7 @@ async def generate_pqc_migration_plan(
     the project-member check so scope construction stays consistent with every
     other analytics path."""
     pkg = _pkg()
-    resolved = await pkg.ScopeResolver(db, user).resolve(
-        scope="project", scope_id=project_id
-    )
+    resolved = await pkg.ScopeResolver(db, user).resolve(scope="project", scope_id=project_id)
     gen = pkg.PQCMigrationPlanGenerator(db)
     resp = await gen.generate(resolved=resolved, limit=limit)
     dumped: Dict[str, Any] = resp.model_dump()

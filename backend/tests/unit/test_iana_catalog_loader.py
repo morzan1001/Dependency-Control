@@ -78,9 +78,7 @@ def test_current_catalog_version_is_one():
 async def test_catalog_drift_sentinel():
     """Catch accidental catalog wipes."""
     cat = await load_iana_catalog()
-    assert len(cat) > 20, (
-        f"IANA catalog has only {len(cat)} entries — likely accidental wipe."
-    )
+    assert len(cat) > 20, f"IANA catalog has only {len(cat)} entries — likely accidental wipe."
 
 
 @pytest.mark.asyncio

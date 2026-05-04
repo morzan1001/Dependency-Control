@@ -99,9 +99,7 @@ async def create_report(
     return ReportAck(report_id=report.id, status=_status_str(report.status))
 
 
-async def _user_can_see_report(
-    db: AsyncIOMotorDatabase, user: User, report: ComplianceReport
-) -> bool:
+async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: ComplianceReport) -> bool:
     """Authoritative scope check: a user may see a report iff the
     ScopeResolver for the report's (scope, scope_id) resolves successfully
     for that user. ScopeResolver already enforces project/team membership

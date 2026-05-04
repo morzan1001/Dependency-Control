@@ -1,6 +1,5 @@
 """Tests for chat tool definitions and authorization."""
 
-
 from app.core.permissions import Permissions, PRESET_USER, PRESET_ADMIN
 from app.services.chat.tools import ChatToolRegistry, get_tool_definitions
 

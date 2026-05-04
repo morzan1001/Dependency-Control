@@ -70,9 +70,7 @@ async def test_audit_prune_enforces_min_cutoff(client, db, admin_auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_project_audit_prune_enforces_min_cutoff(
-    client, db, owner_auth_headers_proj
-):
+async def test_project_audit_prune_enforces_min_cutoff(client, db, owner_auth_headers_proj):
     """Same guard applies to the per-project prune endpoint."""
     recent = datetime.now(timezone.utc) - timedelta(days=15)
     resp = await client.delete(
@@ -83,9 +81,7 @@ async def test_project_audit_prune_enforces_min_cutoff(
 
 
 @pytest.mark.asyncio
-async def test_audit_prune_allows_cutoff_at_minimum_boundary(
-    client, db, admin_auth_headers
-):
+async def test_audit_prune_allows_cutoff_at_minimum_boundary(client, db, admin_auth_headers):
     """An explicit 90-day-old cutoff (== the boundary) is accepted — the
     check is strictly-greater-than, not greater-or-equal."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=91)

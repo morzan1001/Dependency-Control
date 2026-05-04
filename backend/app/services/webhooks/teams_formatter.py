@@ -6,7 +6,6 @@ _ACTION_OPEN_URL = "Action.OpenUrl"
 
 
 class TeamsFormatter:
-
     @staticmethod
     def _wrap_card(
         body: List[dict],
@@ -59,9 +58,7 @@ class TeamsFormatter:
         return TeamsFormatter._wrap_card(body, summary="DependencyControl test webhook")
 
     @staticmethod
-    def build_generic_card(
-        subject: str, message: str, url: Optional[str] = None
-    ) -> dict:
+    def build_generic_card(subject: str, message: str, url: Optional[str] = None) -> dict:
         body = [
             {
                 "type": "TextBlock",
@@ -170,9 +167,7 @@ class TeamsFormatter:
         ]
 
         if top:
-            top_items: List[dict] = [
-                {"type": "TextBlock", "text": "**Top Vulnerabilities**", "weight": "Bolder"}
-            ]
+            top_items: List[dict] = [{"type": "TextBlock", "text": "**Top Vulnerabilities**", "weight": "Bolder"}]
             for vuln in top[:3]:
                 cve_id = vuln.get("cve_id", "Unknown")
                 severity = vuln.get("severity", "Unknown")

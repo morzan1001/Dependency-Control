@@ -54,9 +54,7 @@ class CveRemediationSlaFramework:
     controls: List[ControlDefinition] = []
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        raise RuntimeError(
-            "CveRemediationSlaFramework is async-only; callers must dispatch via evaluate_async()"
-        )
+        raise RuntimeError("CveRemediationSlaFramework is async-only; callers must dispatch via evaluate_async()")
 
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
         findings = data.findings or []
@@ -64,9 +62,7 @@ class CveRemediationSlaFramework:
 
         controls: List[ControlResult] = []
         for severity, sla_days, title in _SLA_BUCKETS:
-            overdue = [
-                f for f in findings if _is_overdue(f, severity, sla_days, now)
-            ]
+            overdue = [f for f in findings if _is_overdue(f, severity, sla_days, now)]
             status, evidence = _classify(overdue)
             controls.append(
                 ControlResult(

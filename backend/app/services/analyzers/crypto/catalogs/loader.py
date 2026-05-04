@@ -42,9 +42,7 @@ logger = logging.getLogger(__name__)
 CURRENT_IANA_CATALOG_VERSION = 1
 
 _CATALOG_FALLBACK_PATH = Path(__file__).parent / "iana_tls_cipher_suites.yaml"
-_IANA_CSV_URL = (
-    "https://www.iana.org/assignments/tls-parameters/tls-parameters-4.csv"
-)
+_IANA_CSV_URL = "https://www.iana.org/assignments/tls-parameters/tls-parameters-4.csv"
 _IANA_CSV_TIMEOUT = 15.0
 _IANA_CSV_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB — registry is ~200 KiB today
 _IANA_CACHE_KEY = "iana:tls_cipher_suites:v1"
@@ -111,8 +109,7 @@ async def load_iana_catalog() -> Dict[str, CipherSuiteEntry]:
             return catalog
 
         logger.warning(
-            "IANA catalog: live fetch + Redis lookup both failed, "
-            "falling back to bundled snapshot at %s",
+            "IANA catalog: live fetch + Redis lookup both failed, falling back to bundled snapshot at %s",
             _CATALOG_FALLBACK_PATH,
         )
         fallback_raw = _load_fallback_yaml()

@@ -299,10 +299,7 @@ def _enforce_min_prune_cutoff(cutoff: datetime) -> None:
     if cutoff > min_age_boundary:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"before must be at least {days} days in the past to preserve "
-                "forensic history"
-            ),
+            detail=(f"before must be at least {days} days in the past to preserve forensic history"),
         )
 
 

@@ -11,9 +11,7 @@ async def test_generate_pqc_migration_plan_returns_response():
     db = MagicMock()
     user = MagicMock(id="u1", permissions=frozenset())
     resolver = MagicMock(
-        resolve=AsyncMock(
-            return_value=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-        )
+        resolve=AsyncMock(return_value=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]))
     )
     with (
         patch(

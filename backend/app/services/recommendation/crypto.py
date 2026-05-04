@@ -168,9 +168,7 @@ def _build_recommendation(
     )
 
 
-def _title_and_description(
-    finding_type: str, asset_name: str, findings: List[ModelOrDict]
-) -> Tuple[str, str]:
+def _title_and_description(finding_type: str, asset_name: str, findings: List[ModelOrDict]) -> Tuple[str, str]:
     count = len(findings)
     plural = "s" if count != 1 else ""
     if finding_type == "crypto_weak_algorithm":
@@ -220,9 +218,7 @@ def _title_and_description(
     )
 
 
-def _suggested_replacement(
-    finding_type: str, asset_name: str, findings: List[ModelOrDict]
-) -> Optional[str]:
+def _suggested_replacement(finding_type: str, asset_name: str, findings: List[ModelOrDict]) -> Optional[str]:
     if finding_type == "crypto_weak_algorithm":
         return _ALGORITHM_REPLACEMENTS.get(asset_name.upper())
     if finding_type == "crypto_weak_key":

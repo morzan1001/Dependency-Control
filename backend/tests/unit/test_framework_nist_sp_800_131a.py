@@ -1,5 +1,3 @@
-
-
 from app.schemas.compliance import (
     ControlStatus,
     FrameworkEvaluation,

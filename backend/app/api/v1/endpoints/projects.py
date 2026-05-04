@@ -595,11 +595,7 @@ async def update_project(
                 from app.schemas.policy_audit import PolicyAuditAction
                 from app.services.audit.history import record_license_policy_change
 
-                action = (
-                    PolicyAuditAction.CREATE
-                    if not old_license_policy
-                    else PolicyAuditAction.UPDATE
-                )
+                action = PolicyAuditAction.CREATE if not old_license_policy else PolicyAuditAction.UPDATE
                 await record_license_policy_change(
                     db,
                     project_id=project_id,
@@ -626,7 +622,11 @@ def _resolve_license_policy(project: Project) -> Optional[Dict[str, Any]]:
     location since Phase 2 refactors; ``project.license_policy`` is the
     legacy top-level field. We prefer the canonical one when both are set.
     """
-    settings = (project.analyzer_settings or {}).get("license_compliance") if getattr(project, "analyzer_settings", None) else None
+    settings = (
+        (project.analyzer_settings or {}).get("license_compliance")
+        if getattr(project, "analyzer_settings", None)
+        else None
+    )
     if settings:
         return dict(settings)
     legacy = getattr(project, "license_policy", None)

@@ -47,8 +47,7 @@ _POLICY_TO_CATEGORY: Dict[str, Dict[str, Any]] = {
         "control_id": "LICENSE-AUDIT-NETWORK-COPYLEFT",
         "title": "No network-copyleft licenses",
         "description": (
-            "Network-copyleft licenses (AGPL, SSPL) trigger disclosure "
-            "obligations on network use. Policy forbids them."
+            "Network-copyleft licenses (AGPL, SSPL) trigger disclosure obligations on network use. Policy forbids them."
         ),
         "categories": ["network_copyleft"],
         "severity": Severity.HIGH,
@@ -70,9 +69,7 @@ class LicenseAuditFramework:
     controls: List[ControlDefinition] = []
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        raise RuntimeError(
-            "LicenseAuditFramework is async-only; callers must dispatch via evaluate_async()"
-        )
+        raise RuntimeError("LicenseAuditFramework is async-only; callers must dispatch via evaluate_async()")
 
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
         policy = _extract_license_policy(data)
@@ -98,11 +95,7 @@ class LicenseAuditFramework:
                     )
                 )
                 continue
-            matching = [
-                f
-                for f in findings
-                if _is_license_violation(f, cfg["categories"])
-            ]
+            matching = [f for f in findings if _is_license_violation(f, cfg["categories"])]
             status, evidence = _classify(matching)
             controls.append(
                 ControlResult(
@@ -129,10 +122,7 @@ class LicenseAuditFramework:
             ControlResult(
                 control_id="LICENSE-AUDIT-LICENSE-IDENTIFIED",
                 title="All components have identified licenses",
-                description=(
-                    "Components without a known license cannot be audited; "
-                    "this control flags those."
-                ),
+                description=("Components without a known license cannot be audited; this control flags those."),
                 status=status,
                 severity=Severity.MEDIUM,
                 evidence_finding_ids=evidence,

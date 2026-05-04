@@ -47,8 +47,7 @@ def test_csv_renderer_includes_disclaimer_comment():
     rep = _report()
     rep.format = ReportFormat.CSV
     disclaimer = (
-        "Algorithm-level conformance only. Module-level CMVP (FIPS 140-3) "
-        "validation is out of scope of this tool."
+        "Algorithm-level conformance only. Module-level CMVP (FIPS 140-3) validation is out of scope of this tool."
     )
     out, _, _ = r.render(_evaluation(), rep, disclaimer=disclaimer)
     text = out.decode("utf-8")

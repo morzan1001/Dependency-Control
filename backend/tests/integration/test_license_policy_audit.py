@@ -8,9 +8,7 @@ from app.repositories.policy_audit_entry import PolicyAuditRepository
 
 
 @pytest.mark.asyncio
-async def test_project_update_records_license_policy_change(
-    client, db, owner_auth_headers_proj
-):
+async def test_project_update_records_license_policy_change(client, db, owner_auth_headers_proj):
     # Initial update sets license policy — counts as CREATE.
     resp = await client.put(
         "/api/v1/projects/p",
@@ -62,9 +60,7 @@ async def test_project_update_records_license_policy_change(
 
 
 @pytest.mark.asyncio
-async def test_project_update_without_license_change_creates_no_audit_entry(
-    client, db, owner_auth_headers_proj
-):
+async def test_project_update_without_license_change_creates_no_audit_entry(client, db, owner_auth_headers_proj):
     # Update a non-license field — audit repo should be unchanged.
     resp = await client.put(
         "/api/v1/projects/p",
@@ -80,9 +76,7 @@ async def test_project_update_without_license_change_creates_no_audit_entry(
 
 
 @pytest.mark.asyncio
-async def test_license_policy_audit_list_endpoint(
-    client, db, owner_auth_headers_proj
-):
+async def test_license_policy_audit_list_endpoint(client, db, owner_auth_headers_proj):
     """GET /projects/{id}/license-policy/audit returns the entries."""
     # Seed via project update
     await client.put(
@@ -103,9 +97,7 @@ async def test_license_policy_audit_list_endpoint(
 
 
 @pytest.mark.asyncio
-async def test_license_policy_audit_get_by_version_endpoint(
-    client, db, owner_auth_headers_proj
-):
+async def test_license_policy_audit_get_by_version_endpoint(client, db, owner_auth_headers_proj):
     """GET /projects/{id}/license-policy/audit/{version} returns one entry."""
     await client.put(
         "/api/v1/projects/p",
@@ -123,9 +115,7 @@ async def test_license_policy_audit_get_by_version_endpoint(
 
 
 @pytest.mark.asyncio
-async def test_license_policy_audit_404_on_unknown_version(
-    client, db, owner_auth_headers_proj
-):
+async def test_license_policy_audit_404_on_unknown_version(client, db, owner_auth_headers_proj):
     resp = await client.get(
         "/api/v1/projects/p/license-policy/audit/99",
         headers=owner_auth_headers_proj,
@@ -134,9 +124,7 @@ async def test_license_policy_audit_404_on_unknown_version(
 
 
 @pytest.mark.asyncio
-async def test_license_policy_entries_isolated_from_crypto(
-    client, db, owner_auth_headers_proj
-):
+async def test_license_policy_entries_isolated_from_crypto(client, db, owner_auth_headers_proj):
     """A license-policy write must NOT appear in the crypto-policy audit
     timeline and vice versa."""
     resp = await client.put(
@@ -155,11 +143,7 @@ async def test_license_policy_entries_isolated_from_crypto(
     assert resp.status_code == 200
 
     repo = PolicyAuditRepository(db)
-    license_entries = await repo.list(
-        policy_scope="project", project_id="p", policy_type="license", limit=10
-    )
-    crypto_entries = await repo.list(
-        policy_scope="project", project_id="p", policy_type="crypto", limit=10
-    )
+    license_entries = await repo.list(policy_scope="project", project_id="p", policy_type="license", limit=10)
+    crypto_entries = await repo.list(policy_scope="project", project_id="p", policy_type="crypto", limit=10)
     assert len(license_entries) == 1
     assert crypto_entries == []

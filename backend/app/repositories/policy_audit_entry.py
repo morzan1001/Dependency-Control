@@ -34,9 +34,7 @@ class PolicyAuditRepository:
     async def ensure_indexes(self) -> None:
         # (policy_type, policy_scope, project_id, version) — uniqueness so
         # crypto and license policies may both have version 1 for one project.
-        await self._col.create_index(
-            [("policy_type", 1), ("policy_scope", 1), ("project_id", 1), ("version", -1)]
-        )
+        await self._col.create_index([("policy_type", 1), ("policy_scope", 1), ("project_id", 1), ("version", -1)])
         # Index without policy_type for queries that don't filter on it.
         await self._col.create_index([("policy_scope", 1), ("project_id", 1), ("version", -1)])
         await self._col.create_index([("timestamp", -1)])

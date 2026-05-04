@@ -43,10 +43,7 @@ class Iso19790Framework:
             ControlDefinition(
                 control_id="ISO-19790-RSA-MIN-2048",
                 title="RSA minimum key size",
-                description=(
-                    "Per ISO/IEC 19790:2012 Annex D and FIPS 140-3, RSA keys "
-                    "must be at least 2048 bits."
-                ),
+                description=("Per ISO/IEC 19790:2012 Annex D and FIPS 140-3, RSA keys must be at least 2048 bits."),
                 severity=Severity.HIGH,
                 remediation="Rotate any RSA keys shorter than 2048 bits.",
                 maps_to_rule_ids=["nist-131a-rsa-min-2048"],

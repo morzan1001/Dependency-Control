@@ -124,9 +124,7 @@ def evaluate_strong_copyleft(
             obligations=license_info.obligations,
             purl=purl,
             license_url=lic_url,
-            context_reason=(
-                "Severity reduced: project is internal-only, GPL distribution obligations do not apply."
-            ),
+            context_reason=("Severity reduced: project is internal-only, GPL distribution obligations do not apply."),
             effective_severity=Severity.HIGH.value,
         )
 
@@ -145,9 +143,7 @@ def evaluate_strong_copyleft(
             obligations=license_info.obligations,
             purl=purl,
             license_url=lic_url,
-            context_reason=(
-                "Severity reduced: project is open source, GPL source disclosure is already satisfied."
-            ),
+            context_reason=("Severity reduced: project is open source, GPL source disclosure is already satisfied."),
             effective_severity=Severity.HIGH.value,
         )
 
@@ -324,9 +320,7 @@ def apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> N
         issue["severity"] = new_severity
         existing_reason = issue.get("context_reason", "")
         transitive_note = "Severity reduced: transitive dependency (not directly included)."
-        issue["context_reason"] = (
-            f"{existing_reason} {transitive_note}".strip() if existing_reason else transitive_note
-        )
+        issue["context_reason"] = f"{existing_reason} {transitive_note}".strip() if existing_reason else transitive_note
 
 
 def should_include_finding(issue: Dict[str, Any], is_transitive: bool) -> bool:

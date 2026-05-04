@@ -36,8 +36,7 @@ async def validate_persisted_policies(db: AsyncIOMotorDatabase[Any]) -> int:
         except Exception as exc:
             invalid += 1
             logger.warning(
-                "crypto_policy_validation: persisted policy fails validation "
-                "(scope=%s, project_id=%s): %s",
+                "crypto_policy_validation: persisted policy fails validation (scope=%s, project_id=%s): %s",
                 scope,
                 project_id,
                 exc,

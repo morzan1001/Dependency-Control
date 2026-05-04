@@ -16,9 +16,7 @@ async def test_sbom_ingested_dispatches_webhook(client, db, api_key_headers):
     dispatched_calls: list = []
 
     def _capture_trigger(inner_db, event_type, payload, project_id=None):
-        dispatched_calls.append(
-            {"event": event_type, "payload": payload, "project_id": project_id}
-        )
+        dispatched_calls.append({"event": event_type, "payload": payload, "project_id": project_id})
 
     request_payload = {
         "pipeline_id": 123456,
@@ -51,9 +49,7 @@ async def test_sbom_ingested_dispatches_webhook(client, db, api_key_headers):
         ),
         patch("app.api.v1.endpoints.ingest.AsyncIOMotorGridFSBucket"),
     ):
-        resp = await client.post(
-            "/api/v1/ingest", json=request_payload, headers=api_key_headers
-        )
+        resp = await client.post("/api/v1/ingest", json=request_payload, headers=api_key_headers)
         assert resp.status_code == 202, resp.text
         scan_id = resp.json()["scan_id"]
 
@@ -63,9 +59,7 @@ async def test_sbom_ingested_dispatches_webhook(client, db, api_key_headers):
         (c for c in dispatched_calls if c["event"] == "sbom.ingested"),
         None,
     )
-    assert sbom_call is not None, (
-        f"Expected sbom.ingested event; got: {[c['event'] for c in dispatched_calls]}"
-    )
+    assert sbom_call is not None, f"Expected sbom.ingested event; got: {[c['event'] for c in dispatched_calls]}"
     wp = sbom_call["payload"]
     assert wp["scan_id"] == scan_id
     assert wp["branch"] == "main"

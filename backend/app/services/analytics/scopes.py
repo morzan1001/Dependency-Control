@@ -115,9 +115,7 @@ class ScopeResolver:
     async def _list_team_project_ids(self, team_id: str) -> List[str]:
         from app.repositories.projects import ProjectRepository
 
-        projects = await ProjectRepository(self.db).find_many_minimal(
-            {"team_id": team_id}, limit=1000
-        )
+        projects = await ProjectRepository(self.db).find_many_minimal({"team_id": team_id}, limit=1000)
         return [str(p.id) for p in projects]
 
     async def _list_user_project_ids(self) -> List[str]:
