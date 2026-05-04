@@ -14,7 +14,7 @@ import { User } from '@/types/user'
 import { getErrorMessage } from '@/lib/utils'
 import { useAuth } from '@/context/useAuth'
 import {
-  isProjectOwner,
+  isProjectAdmin,
   canUpdateProject,
   canDeleteProject,
   canRotateApiKey,
@@ -77,7 +77,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const canCreateWh = canCreateProjectWebhook(project, userId, permissions)
   const canDeleteWh = canDeleteProjectWebhook(project, userId, permissions)
   const canEditCryptoPolicy = isProjectAdmin(project, userId, permissions)
-  const isMember = isProjectOwner(project, userId) || !!project.members?.some(m => m.user_id === userId)
+  const isMember = !!project.members?.some(m => m.user_id === userId)
   
   const [name, setName] = useState(project.name)
   const [teamId, setTeamId] = useState<string | undefined>(project.team_id || "none")
