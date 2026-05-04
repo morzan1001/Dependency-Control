@@ -16,14 +16,14 @@ import { useDialogState } from "@/hooks/use-dialog-state"
 import { formatDate } from "@/lib/utils"
 
 interface WebhookManagerProps {
-  webhooks: Webhook[]
-  isLoading: boolean
-  onCreate: (data: WebhookCreate) => Promise<Webhook>
-  onDelete: (id: string) => Promise<void>
-  title?: string
-  description?: string
-  createPermission?: string | boolean
-  deletePermission?: string | boolean
+  readonly webhooks: Webhook[]
+  readonly isLoading: boolean
+  readonly onCreate: (data: WebhookCreate) => Promise<Webhook>
+  readonly onDelete: (id: string) => Promise<void>
+  readonly title?: string
+  readonly description?: string
+  readonly createPermission?: string | boolean
+  readonly deletePermission?: string | boolean
 }
 
 export function WebhookManager({ 
@@ -90,6 +90,11 @@ export function WebhookManager({
       description: "Fires on every create/update/delete/revert of a crypto policy.",
     },
     {
+      id: "license_policy.changed",
+      label: "License policy changed",
+      description: "Fires on every create/update/delete/revert of a license policy.",
+    },
+    {
       id: "compliance_report.generated",
       label: "Compliance report generated",
       description: "Fires when a compliance report completes successfully.",
@@ -102,8 +107,14 @@ export function WebhookManager({
   ]
 
   const handleCreate = async () => {
+    if (!newWebhook.url || newWebhook.events.length === 0) return
     try {
-      await onCreate(newWebhook)
+      const payload: WebhookCreate = {
+        url: newWebhook.url,
+        events: newWebhook.events,
+        ...(newWebhook.secret ? { secret: newWebhook.secret } : {}),
+      }
+      await onCreate(payload)
       createDialog.closeDialog()
       setNewWebhook({ url: "", events: [], secret: "" })
       toast.success("Webhook created")

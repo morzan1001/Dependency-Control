@@ -14,4 +14,5 @@ export interface WebhookCreate {
   url: string;
   events: string[];
   secret?: string;
+  webhook_type?: "generic" | "teams";
 }
