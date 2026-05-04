@@ -18,6 +18,14 @@ const GROUPINGS: GroupingDimension[] = [
   "name", "primitive", "asset_type", "weakness_tag", "severity",
 ];
 
+const GROUPING_LABELS: Record<GroupingDimension, string> = {
+  name: "Name",
+  primitive: "Primitive",
+  asset_type: "Asset Type",
+  weakness_tag: "Weakness Tag",
+  severity: "Severity",
+};
+
 const TREND_METRICS: TrendMetric[] = [
   "total_crypto_findings",
   "quantum_vulnerable_findings",
@@ -45,13 +53,13 @@ function autoBucket(days: number): TrendBucket {
 export function CryptoAnalyticsTab() {
   return (
     <Tabs defaultValue="hotspots" className="space-y-4">
-      <TabsList>
-        <TabsTrigger value="hotspots">Hotspots</TabsTrigger>
-        <TabsTrigger value="trends">Trends</TabsTrigger>
-        <TabsTrigger value="inventory">Inventory</TabsTrigger>
-        <TabsTrigger value="findings">Findings</TabsTrigger>
-        <TabsTrigger value="pqc-migration">PQC Migration</TabsTrigger>
-        <TabsTrigger value="compliance-reports">Compliance Reports</TabsTrigger>
+      <TabsList className="bg-transparent border-b border-border rounded-none w-full justify-start h-9 p-0 gap-6">
+        <TabsTrigger value="hotspots" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Hotspots</TabsTrigger>
+        <TabsTrigger value="trends" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Trends</TabsTrigger>
+        <TabsTrigger value="inventory" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Inventory</TabsTrigger>
+        <TabsTrigger value="findings" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Findings</TabsTrigger>
+        <TabsTrigger value="pqc-migration" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">PQC Migration</TabsTrigger>
+        <TabsTrigger value="compliance-reports" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none h-full px-1 text-sm">Compliance Reports</TabsTrigger>
       </TabsList>
 
       <TabsContent value="hotspots">
@@ -88,7 +96,7 @@ function HotspotsSection() {
         <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupingDimension)}>
           <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {GROUPINGS.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+            {GROUPINGS.map((g) => <SelectItem key={g} value={g}>{GROUPING_LABELS[g]}</SelectItem>)}
           </SelectContent>
         </Select>
         <div className="ml-auto">
