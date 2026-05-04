@@ -80,7 +80,7 @@ class TeamsFormatter:
     @staticmethod
     def build_scan_completed_card(
         project_name: str,
-        scan_id: str,
+        _scan_id: str,
         findings: dict,
         scan_url: Optional[str] = None,
     ) -> dict:
@@ -94,8 +94,9 @@ class TeamsFormatter:
             {"title": "Total Findings", "value": str(total)},
         ]
         for severity, count in stats.items():
-            if count and int(count) > 0:
-                facts.append({"title": severity.capitalize(), "value": str(count)})
+            count_int = int(count) if count else 0
+            if count_int > 0:
+                facts.append({"title": severity.replace("_", " ").title(), "value": str(count_int)})
 
         body = [
             {
@@ -119,7 +120,7 @@ class TeamsFormatter:
     @staticmethod
     def build_vulnerability_found_card(
         project_name: str,
-        scan_id: str,
+        _scan_id: str,
         vulns: dict,
         scan_url: Optional[str] = None,
     ) -> dict:
@@ -141,6 +142,8 @@ class TeamsFormatter:
         if high_epss > 0:
             facts.append({"title": "High EPSS", "value": str(high_epss)})
 
+        title_text = "🚨 Critical Vulnerabilities Found" if critical > 0 else "⚠️ High Vulnerabilities Found"
+
         body: List[dict] = [
             {
                 "type": "Container",
@@ -150,7 +153,7 @@ class TeamsFormatter:
                         "type": "TextBlock",
                         "size": "ExtraLarge",
                         "weight": "Bolder",
-                        "text": "🚨 Critical Vulnerabilities Found",
+                        "text": title_text,
                         "wrap": True,
                     }
                 ],
