@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 from urllib.parse import urlparse
 
 from app.core.config import settings
@@ -141,3 +141,23 @@ def validate_webhook_event_type(event_type: str) -> str:
     if event_type not in WEBHOOK_ACCEPTED_EVENT_NAMES:
         raise ValueError(f"Invalid event type: {event_type}. Valid events: {WEBHOOK_VALID_EVENTS}")
     return event_type
+
+
+def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
+    """Detect webhook type based on URL patterns.
+
+    Returns "teams" for Microsoft Teams-specific URLs:
+    - *.webhook.office.com (Classic Teams Incoming Webhooks)
+    - *.logic.azure.com with /workflows/ in path (Power Automate)
+
+    Returns "generic" for all other HTTPS URLs.
+    """
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+
+    if hostname == "webhook.office.com" or hostname.endswith(".webhook.office.com"):
+        return "teams"
+    if (hostname == "logic.azure.com" or hostname.endswith(".logic.azure.com")) and "/workflows/" in path:
+        return "teams"
+    return "generic"

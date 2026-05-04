@@ -6,6 +6,7 @@ import pytest
 
 from app.services.webhooks.validation import (
     assert_safe_webhook_target,
+    detect_webhook_type,
     validate_webhook_url,
     validate_webhook_url_optional,
     validate_webhook_events,
@@ -213,3 +214,41 @@ class TestValidateWebhookEventType:
     def test_invalid_single_event_raises(self):
         with pytest.raises(ValueError, match="Invalid event"):
             validate_webhook_event_type("bogus_event")
+
+
+class TestDetectWebhookType:
+    def test_classic_teams_incoming_webhook(self):
+        url = "https://contoso.webhook.office.com/webhookb2/abc123/IncomingWebhook/xyz"
+        assert detect_webhook_type(url) == "teams"
+
+    def test_teams_subdomain_variant(self):
+        url = "https://outlook.webhook.office.com/webhookb2/abc"
+        assert detect_webhook_type(url) == "teams"
+
+    def test_power_automate_workflows_url(self):
+        url = "https://prod-12.westeurope.logic.azure.com/workflows/abc123/triggers/manual/paths/invoke"
+        assert detect_webhook_type(url) == "teams"
+
+    def test_logic_azure_without_workflows_path(self):
+        url = "https://management.logic.azure.com/something-else"
+        assert detect_webhook_type(url) == "generic"
+
+    def test_github_webhook(self):
+        assert detect_webhook_type("https://smee.io/abc123") == "generic"
+
+    def test_slack_webhook(self):
+        assert detect_webhook_type("https://hooks.slack.com/services/T123/B456/xyz") == "generic"
+
+    def test_generic_https_url(self):
+        assert detect_webhook_type("https://my-server.example.com/webhook") == "generic"
+
+    def test_office_com_non_webhook_subdomain_is_generic(self):
+        # hostname ends with 'webhook.office.com' chars but has no separating dot
+        assert detect_webhook_type("https://evilwebhook.office.com/abc") == "generic"
+
+    def test_logic_azure_non_logic_subdomain_is_generic(self):
+        # hostname ends with 'logic.azure.com' chars but has no separating dot
+        assert detect_webhook_type("https://evil-logic.azure.com/workflows/abc") == "generic"
+
+    def test_empty_string_returns_generic(self):
+        assert detect_webhook_type("") == "generic"

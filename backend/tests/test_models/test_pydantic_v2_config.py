@@ -310,9 +310,11 @@ class TestFromAttributes:
             events=["scan_completed"],
             is_active=True,
             created_at=datetime.now(timezone.utc),
+            webhook_type="generic",
         )
         assert resp.id == "wh-1"
         assert resp.url == "https://example.com/hook"
+        assert resp.webhook_type == "generic"
 
     def test_github_instance_response_from_dict(self):
         from app.schemas.github_instance import GitHubInstanceResponse

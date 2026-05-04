@@ -34,6 +34,7 @@ from app.schemas.webhook import (
     WebhookTestResponse,
     WebhookUpdate,
 )
+from app.services.webhooks.validation import detect_webhook_type
 from app.services.webhooks.webhook_service import webhook_service
 
 router = CustomAPIRouter()
@@ -53,9 +54,11 @@ async def create_webhook(
     """
     await check_webhook_create_permission(project_id, current_user, db)
 
-    webhook_repo = WebhookRepository(db)
-    webhook = Webhook(project_id=project_id, **webhook_in.model_dump())
+    resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
+    webhook_data = webhook_in.model_dump(exclude={"webhook_type"})
+    webhook = Webhook(project_id=project_id, webhook_type=resolved_type, **webhook_data)
 
+    webhook_repo = WebhookRepository(db)
     return await webhook_repo.create(webhook)
 
 
@@ -94,9 +97,11 @@ async def create_global_webhook(
     Global webhooks are triggered for all projects.
     Requires 'system:manage' permission.
     """
-    webhook_repo = WebhookRepository(db)
-    webhook = Webhook(project_id=None, **webhook_in.model_dump())
+    resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
+    webhook_data = webhook_in.model_dump(exclude={"webhook_type"})
+    webhook = Webhook(project_id=None, webhook_type=resolved_type, **webhook_data)
 
+    webhook_repo = WebhookRepository(db)
     return await webhook_repo.create(webhook)
 
 
@@ -135,9 +140,11 @@ async def create_team_webhook(
     """
     await check_team_webhook_create_permission(team_id, current_user, db)
 
-    webhook_repo = WebhookRepository(db)
-    webhook = Webhook(team_id=team_id, **webhook_in.model_dump())
+    resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
+    webhook_data = webhook_in.model_dump(exclude={"webhook_type"})
+    webhook = Webhook(team_id=team_id, webhook_type=resolved_type, **webhook_data)
 
+    webhook_repo = WebhookRepository(db)
     return await webhook_repo.create(webhook)
 
 

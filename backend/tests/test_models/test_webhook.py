@@ -1,9 +1,11 @@
 """Tests for Webhook model."""
 
 import pytest
+from datetime import datetime, timezone
 from pydantic import ValidationError
 
 from app.models.webhook import Webhook
+from app.schemas.webhook import WebhookCreate, WebhookResponse, WebhookUpdate
 
 
 class TestWebhookModel:
@@ -82,3 +84,70 @@ class TestWebhookSerialization:
         )
         dumped = webhook.model_dump(by_alias=True)
         assert "_id" in dumped
+
+
+class TestWebhookTypeField:
+    def test_defaults_to_generic(self):
+        webhook = Webhook(url="https://example.com/hook", events=["scan_completed"])
+        assert webhook.webhook_type == "generic"
+
+    def test_accepts_teams(self):
+        webhook = Webhook(
+            url="https://example.com/hook",
+            events=["scan_completed"],
+            webhook_type="teams",
+        )
+        assert webhook.webhook_type == "teams"
+
+    def test_rejects_unknown_type(self):
+        with pytest.raises(ValidationError):
+            Webhook(
+                url="https://example.com/hook",
+                events=["scan_completed"],
+                webhook_type="discord",
+            )
+
+
+class TestWebhookCreateSchemaType:
+    def test_webhook_type_optional_defaults_none(self):
+        schema = WebhookCreate(url="https://example.com/hook", events=["scan_completed"])
+        assert schema.webhook_type is None
+
+    def test_webhook_type_accepts_teams(self):
+        schema = WebhookCreate(
+            url="https://example.com/hook",
+            events=["scan_completed"],
+            webhook_type="teams",
+        )
+        assert schema.webhook_type == "teams"
+
+    def test_webhook_type_accepts_generic(self):
+        schema = WebhookCreate(
+            url="https://example.com/hook",
+            events=["scan_completed"],
+            webhook_type="generic",
+        )
+        assert schema.webhook_type == "generic"
+
+    def test_webhook_type_rejects_unknown(self):
+        with pytest.raises(ValidationError):
+            WebhookCreate(
+                url="https://example.com/hook",
+                events=["scan_completed"],
+                webhook_type="pagerduty",
+            )
+
+    def test_webhook_response_includes_type(self):
+        resp = WebhookResponse(
+            id="abc",
+            url="https://example.com/hook",
+            events=["scan_completed"],
+            is_active=True,
+            created_at=datetime.now(timezone.utc),
+            webhook_type="teams",
+        )
+        assert resp.webhook_type == "teams"
+
+    def test_webhook_update_rejects_unknown_type(self):
+        with pytest.raises(ValidationError):
+            WebhookUpdate(webhook_type="pagerduty")
