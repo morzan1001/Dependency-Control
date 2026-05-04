@@ -1,6 +1,5 @@
 """Integration tests for Teams webhook type auto-detection."""
 
-
 from app.models.webhook import Webhook
 from app.schemas.webhook import WebhookCreate, WebhookUpdate
 from app.services.webhooks.validation import detect_webhook_type
@@ -76,7 +75,6 @@ class TestWebhookModelCreationWithType:
 
     def test_webhook_response_exposes_type(self):
         from app.schemas.webhook import WebhookResponse
-        from datetime import datetime, timezone
 
         webhook = Webhook(
             url="https://contoso.webhook.office.com/webhookb2/abc",

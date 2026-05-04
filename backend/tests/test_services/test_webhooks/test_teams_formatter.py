@@ -1,7 +1,5 @@
 """Unit tests for TeamsFormatter Adaptive Card builders."""
 
-import pytest
-
 from app.services.webhooks.teams_formatter import TeamsFormatter
 
 
@@ -63,122 +61,143 @@ class TestBuildGenericCard:
 
 class TestBuildScanCompletedCard:
     def test_good_style_when_no_findings(self):
-        card = _get_card(TeamsFormatter.build_scan_completed_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            findings={"total": 0, "stats": {}},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_scan_completed_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                findings={"total": 0, "stats": {}},
+            )
+        )
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "good"
 
     def test_warning_style_when_only_non_critical_findings(self):
-        card = _get_card(TeamsFormatter.build_scan_completed_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            findings={"total": 5, "stats": {"high": 5}},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_scan_completed_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                findings={"total": 5, "stats": {"high": 5}},
+            )
+        )
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "warning"
 
     def test_attention_style_when_critical_findings(self):
-        card = _get_card(TeamsFormatter.build_scan_completed_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            findings={"total": 3, "stats": {"critical": 2, "high": 1}},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_scan_completed_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                findings={"total": 3, "stats": {"critical": 2, "high": 1}},
+            )
+        )
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "attention"
 
     def test_factset_contains_project_and_total(self):
-        card = _get_card(TeamsFormatter.build_scan_completed_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            findings={"total": 3, "stats": {}},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_scan_completed_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                findings={"total": 3, "stats": {}},
+            )
+        )
         factset = next(b for b in card["body"] if b["type"] == "FactSet")
         titles = [f["title"] for f in factset["facts"]]
         assert "Project" in titles
         assert "Total Findings" in titles
 
     def test_view_button_when_url_given(self):
-        card = _get_card(TeamsFormatter.build_scan_completed_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            findings={"total": 0, "stats": {}},
-            scan_url="https://app.example.com/scans/1",
-        ))
+        card = _get_card(
+            TeamsFormatter.build_scan_completed_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                findings={"total": 0, "stats": {}},
+                scan_url="https://app.example.com/scans/1",
+            )
+        )
         assert card["actions"][0]["type"] == "Action.OpenUrl"
         assert card["actions"][0]["url"] == "https://app.example.com/scans/1"
 
     def test_no_actions_when_no_url(self):
-        card = _get_card(TeamsFormatter.build_scan_completed_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            findings={"total": 0, "stats": {}},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_scan_completed_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                findings={"total": 0, "stats": {}},
+            )
+        )
         assert "actions" not in card
 
 
 class TestBuildVulnerabilityFoundCard:
     def test_attention_style_when_critical(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 2, "high": 1, "kev": 0, "high_epss": 0, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 2, "high": 1, "kev": 0, "high_epss": 0, "top": []},
+            )
+        )
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "attention"
 
     def test_warning_style_when_only_high(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 0, "high": 3, "kev": 0, "high_epss": 0, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 0, "high": 3, "kev": 0, "high_epss": 0, "top": []},
+            )
+        )
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "warning"
 
     def test_factset_shows_critical_and_high(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 2, "high": 5, "kev": 0, "high_epss": 0, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 2, "high": 5, "kev": 0, "high_epss": 0, "top": []},
+            )
+        )
         factset = next(b for b in card["body"] if b["type"] == "FactSet")
         titles = [f["title"] for f in factset["facts"]]
         assert "Critical" in titles
         assert "High" in titles
 
     def test_kev_shown_when_nonzero(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 1, "high": 0, "kev": 2, "high_epss": 0, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 1, "high": 0, "kev": 2, "high_epss": 0, "top": []},
+            )
+        )
         factset = next(b for b in card["body"] if b["type"] == "FactSet")
         titles = [f["title"] for f in factset["facts"]]
         assert "Known Exploited (KEV)" in titles
 
     def test_kev_omitted_when_zero(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 1, "high": 0, "kev": 0, "high_epss": 0, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 1, "high": 0, "kev": 0, "high_epss": 0, "top": []},
+            )
+        )
         factset = next(b for b in card["body"] if b["type"] == "FactSet")
         titles = [f["title"] for f in factset["facts"]]
         assert "Known Exploited (KEV)" not in titles
 
     def test_top_vulns_shown_max_three(self):
-        top = [
-            {"cve_id": f"CVE-2024-{i}", "severity": "Critical", "component": "lib"}
-            for i in range(5)
-        ]
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 5, "high": 0, "kev": 0, "high_epss": 0, "top": top},
-        ))
+        top = [{"cve_id": f"CVE-2024-{i}", "severity": "Critical", "component": "lib"} for i in range(5)]
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 5, "high": 0, "kev": 0, "high_epss": 0, "top": top},
+            )
+        )
         containers = [b for b in card["body"] if b["type"] == "Container"]
         cve_blocks = []
         for container in containers:
@@ -188,59 +207,71 @@ class TestBuildVulnerabilityFoundCard:
         assert len(cve_blocks) == 3
 
     def test_high_epss_shown_when_nonzero(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 0, "high": 1, "kev": 0, "high_epss": 3, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 0, "high": 1, "kev": 0, "high_epss": 3, "top": []},
+            )
+        )
         factset = next(b for b in card["body"] if b["type"] == "FactSet")
         titles = [f["title"] for f in factset["facts"]]
         assert "High EPSS" in titles
 
     def test_high_epss_omitted_when_zero(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 1, "high": 0, "kev": 0, "high_epss": 0, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 1, "high": 0, "kev": 0, "high_epss": 0, "top": []},
+            )
+        )
         factset = next(b for b in card["body"] if b["type"] == "FactSet")
         titles = [f["title"] for f in factset["facts"]]
         assert "High EPSS" not in titles
 
     def test_title_is_high_when_only_high_findings(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 0, "high": 3, "kev": 0, "high_epss": 0, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 0, "high": 3, "kev": 0, "high_epss": 0, "top": []},
+            )
+        )
         container = next(b for b in card["body"] if b["type"] == "Container")
         header = next(i for i in container["items"] if i["type"] == "TextBlock")
         assert "High" in header["text"]
         assert "Critical" not in header["text"]
 
     def test_no_actions_when_no_url(self):
-        card = _get_card(TeamsFormatter.build_vulnerability_found_card(
-            project_name="MyApp",
-            _scan_id="scan-1",
-            vulns={"critical": 1, "high": 0, "kev": 0, "high_epss": 0, "top": []},
-        ))
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 1, "high": 0, "kev": 0, "high_epss": 0, "top": []},
+            )
+        )
         assert "actions" not in card
 
 
 class TestBuildAnalysisFailedCard:
     def test_attention_style(self):
-        card = _get_card(TeamsFormatter.build_analysis_failed_card(
-            project_name="MyApp",
-            error="Timeout during SBOM analysis",
-        ))
+        card = _get_card(
+            TeamsFormatter.build_analysis_failed_card(
+                project_name="MyApp",
+                error="Timeout during SBOM analysis",
+            )
+        )
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "attention"
 
     def test_factset_shows_project_and_error(self):
-        card = _get_card(TeamsFormatter.build_analysis_failed_card(
-            project_name="MyApp",
-            error="Timeout during SBOM analysis",
-        ))
+        card = _get_card(
+            TeamsFormatter.build_analysis_failed_card(
+                project_name="MyApp",
+                error="Timeout during SBOM analysis",
+            )
+        )
         factset = next(b for b in card["body"] if b["type"] == "FactSet")
         titles = [f["title"] for f in factset["facts"]]
         values = [f["value"] for f in factset["facts"]]

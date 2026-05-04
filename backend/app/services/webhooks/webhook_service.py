@@ -273,7 +273,9 @@ class WebhookService:
             return TeamsFormatter.build_vulnerability_found_card(
                 project_name=project_name,
                 _scan_id=raw_payload.get("scan", {}).get("id", ""),
-                vulns=raw_payload.get("vulnerabilities", {"critical": 0, "high": 0, "kev": 0, "high_epss": 0, "top": []}),
+                vulns=raw_payload.get(
+                    "vulnerabilities", {"critical": 0, "high": 0, "kev": 0, "high_epss": 0, "top": []}
+                ),
                 scan_url=scan_url,
             )
         if normalized == WEBHOOK_EVENT_ANALYSIS_FAILED:
@@ -346,9 +348,7 @@ class WebhookService:
 
             except ValueError as e:
                 # SSRF policy violation — don't retry.
-                logger.warning(
-                    f"Webhook {webhook.id} blocked for {event_type}: {e}"
-                )
+                logger.warning(f"Webhook {webhook.id} blocked for {event_type}: {e}")
                 last_error = f"Blocked target: {e}"
                 break
             except httpx.TimeoutException:
@@ -610,6 +610,7 @@ class WebhookService:
 
         # Teams always gets the test card; bypass _format_payload because test_payload
         # carries event="scan.completed" and would produce a scan card instead.
+        formatted_test_payload: Mapping[str, Any]
         if webhook.webhook_type == "teams":
             formatted_test_payload = TeamsFormatter.build_test_card()
         else:
