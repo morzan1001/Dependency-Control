@@ -1,6 +1,7 @@
 """Tests for Webhook model."""
 
 import pytest
+from datetime import datetime, timezone
 from pydantic import ValidationError
 
 from app.models.webhook import Webhook
@@ -137,7 +138,6 @@ class TestWebhookCreateSchemaType:
             )
 
     def test_webhook_response_includes_type(self):
-        from datetime import datetime, timezone
         resp = WebhookResponse(
             id="abc",
             url="https://example.com/hook",
