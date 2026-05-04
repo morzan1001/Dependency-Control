@@ -47,6 +47,8 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
     ? canManageTeamMembers(team, currentUser.id, permissions)
     : false;
 
+  const adminCount = team?.members.filter(m => m.role === 'admin').length ?? 0;
+
 
 
   return (
@@ -106,7 +108,7 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                       </TableCell>
                       {canManage && (
                         <TableCell>
-                          {!isSelf && canManage && (
+                          {canManage && (!isSelf || adminCount > 1) && (
                             <Button
                               variant="ghost"
                               size="icon"
