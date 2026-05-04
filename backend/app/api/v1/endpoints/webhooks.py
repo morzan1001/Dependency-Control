@@ -207,16 +207,14 @@ async def update_webhook(
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
     await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)
 
-    # Build update dict with only provided fields
     update_data = webhook_update.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    # Re-detect webhook_type when URL changes and no explicit type was provided.
+    # Re-detect type when URL changes without an explicit webhook_type override.
     if "url" in update_data and "webhook_type" not in update_data:
         update_data["webhook_type"] = detect_webhook_type(update_data["url"])
 
-    # Update and return updated webhook
     updated_webhook = await webhook_repo.update(webhook_id, update_data)
     return updated_webhook
 
@@ -259,7 +257,6 @@ async def test_webhook(
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
     await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)
 
-    # Send test webhook
     result = await webhook_service.test_webhook(webhook, test_request.event_type)
 
     return WebhookTestResponse(**result)

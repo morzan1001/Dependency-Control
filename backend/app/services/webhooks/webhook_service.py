@@ -1,7 +1,5 @@
-"""Webhook delivery service. Canonical event names are dot-notation
-(e.g. ``scan.completed``); snake_case aliases are still accepted via
-WEBHOOK_EVENT_ALIASES in core.constants.
-"""
+"""Webhook delivery service. Canonical event names are dot-notation (scan.completed);
+snake_case aliases are accepted via WEBHOOK_EVENT_ALIASES."""
 
 from __future__ import annotations
 
@@ -89,27 +87,10 @@ class WebhookService:
         timeout: Optional[float] = None,
         max_retries: Optional[int] = None,
     ):
-        """
-        Initialize the webhook service.
-
-        Args:
-            timeout: Timeout for webhook HTTP requests in seconds (default from settings)
-            max_retries: Maximum number of retry attempts for failed deliveries (default from settings)
-        """
         self.timeout = timeout if timeout is not None else settings.WEBHOOK_TIMEOUT_SECONDS
         self.max_retries = max_retries if max_retries is not None else settings.WEBHOOK_MAX_RETRIES
 
     def _generate_signature(self, secret: str, payload: str) -> str:
-        """
-        Generate HMAC signature for webhook payload.
-
-        Args:
-            secret: Webhook secret for signing
-            payload: JSON payload as string
-
-        Returns:
-            HMAC-SHA256 signature as hex string
-        """
         return hmac.new(
             secret.encode("utf-8"),
             payload.encode("utf-8"),
@@ -123,18 +104,6 @@ class WebhookService:
         json_payload: str,
         is_test: bool = False,
     ) -> Dict[str, str]:
-        """
-        Build HTTP headers for webhook request.
-
-        Args:
-            webhook: Webhook configuration
-            event_type: Type of event being triggered
-            json_payload: JSON-encoded payload for signature generation
-            is_test: Whether this is a test request
-
-        Returns:
-            Dictionary of HTTP headers
-        """
         timestamp = str(int(time.time()))
 
         headers = {
@@ -145,16 +114,13 @@ class WebhookService:
             WEBHOOK_HEADER_ID: webhook.id,
         }
 
-        # Add test header if this is a test request
         if is_test:
             headers[WEBHOOK_HEADER_TEST] = "true"
 
-        # Add signature if secret is configured
         if webhook.secret:
             signature = self._generate_signature(webhook.secret, json_payload)
             headers[WEBHOOK_HEADER_SIGNATURE] = f"sha256={signature}"
 
-        # Add custom headers if configured
         if webhook.headers:
             headers.update(webhook.headers)
 
@@ -260,19 +226,6 @@ class WebhookService:
         error: Optional[str] = None,
         retry_count: int = 0,
     ) -> None:
-        """
-        Log webhook delivery for audit trail using WebhookDeliveriesRepository.
-
-        Args:
-            db: Database connection
-            webhook_id: Webhook ID
-            event_type: Event type
-            payload: Payload sent
-            success: Whether delivery was successful
-            status_code: HTTP status code received
-            error: Error message if failed
-            retry_count: Number of retries attempted
-        """
         from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
 
         try:
@@ -344,34 +297,10 @@ class WebhookService:
         payload: "Mapping[str, Any]",
         event_type: str,
     ) -> bool:
-        """
-        Send a single webhook with retries and audit logging.
-
-        Args:
-            db: Database connection for status updates
-            webhook: Webhook configuration
-            payload: Payload to send
-            event_type: Type of event being triggered
-
-        Returns:
-            True if successful, False otherwise
-
-        NOTE: Retry Persistence
-        -----------------------
-        Current implementation uses in-memory retry (asyncio.sleep).
-        If pod crashes during retry, the delivery is lost.
-
-        For production-grade reliability, consider implementing:
-        - Persistent retry queue (Redis/RabbitMQ)
-        - Background worker for retry processing
-        - Dead letter queue for exhausted retries
-
-        See module docstring for detailed architecture recommendations.
-        """
+        """Send a single webhook with retries. Retries are in-memory — delivery is lost if the pod crashes mid-retry."""
         formatted_payload = self._format_payload(webhook, event_type, payload)
         json_payload = json.dumps(formatted_payload)
-        # For Teams webhooks the body is an Adaptive Card; sign the raw event payload
-        # instead so any relay that verifies X-Webhook-Signature can still do so.
+        # Teams: sign the raw event payload so relays can verify X-Webhook-Signature.
         signing_payload = json.dumps(payload) if webhook.webhook_type == "teams" else json_payload
         headers = self._build_headers(webhook, event_type, signing_payload)
 
@@ -398,7 +327,6 @@ class WebhookService:
                             f"(status: {response.status_code})"
                         )
                         await self._update_webhook_status(db, webhook.id, success=True)
-                        # Log successful delivery
                         await self._log_webhook_delivery(
                             db,
                             webhook.id,
@@ -417,7 +345,7 @@ class WebhookService:
                         last_error = f"HTTP {response.status_code}: {response.text[:200]}"
 
             except ValueError as e:
-                # Blocked by SSRF policy — don't retry.
+                # SSRF policy violation — don't retry.
                 logger.warning(
                     f"Webhook {webhook.id} blocked for {event_type}: {e}"
                 )
@@ -438,12 +366,10 @@ class WebhookService:
                 # Exponential backoff: 1s, 2s, 4s (with base=2)
                 await asyncio.sleep(WEBHOOK_BACKOFF_BASE ** (retry_count - 1))
 
-        # All retries failed
         logger.error(
             f"Webhook {webhook.id} failed after {self.max_retries} attempts for {event_type}. Last error: {last_error}"
         )
         await self._update_webhook_status(db, webhook.id, success=False)
-        # Log failed delivery
         await self._log_webhook_delivery(
             db,
             webhook.id,
@@ -459,17 +385,6 @@ class WebhookService:
     async def _fetch_webhooks_by_query(
         self, db: AsyncIOMotorDatabase, query: Dict[str, Any], label: str
     ) -> List["Webhook"]:
-        """
-        Fetch and parse webhooks matching a MongoDB query.
-
-        Args:
-            db: Database connection
-            query: MongoDB query dict
-            label: Label for error logging (e.g. "project", "team", "global")
-
-        Returns:
-            List of parsed Webhook objects
-        """
         from app.models.webhook import Webhook
 
         results: List[Webhook] = []
@@ -484,28 +399,12 @@ class WebhookService:
     async def _get_webhooks_for_event(
         self, db: AsyncIOMotorDatabase, project_id: Optional[str], event_type: str
     ) -> List["Webhook"]:
-        """
-        Fetch all active webhooks for a given event type and project.
-        Includes project-specific, team-level, and global webhooks.
-        Filters out webhooks in circuit breaker state.
-
-        Args:
-            db: Database connection
-            project_id: Project ID (None for global webhooks only)
-            event_type: Type of event
-
-        Returns:
-            List of matching webhooks (excluding those in circuit breaker state)
-        """
+        """Active webhooks for the event across project, team, and global scope, excluding circuit-broken ones."""
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc)
 
-        # Base query with circuit breaker filter. Subscriptions may store the
-        # event under either its canonical dot-notation name or the legacy
-        # snake_case alias; match either form. MongoDB's array-membership
-        # behaviour means `events: {"$in": [...]}` matches docs whose
-        # `events` array contains any of the listed values.
+        # Match both dot-notation and snake_case alias forms stored in subscriptions.
         event_names = _event_match_set(event_type)
         base_conditions: Dict[str, Any] = {
             "is_active": True,
@@ -520,12 +419,10 @@ class WebhookService:
         webhooks: List["Webhook"] = []
 
         if project_id:
-            # Project-specific webhooks
             webhooks.extend(
                 await self._fetch_webhooks_by_query(db, {**base_conditions, "project_id": project_id}, "project")
             )
 
-            # Team webhooks: look up the project's team_id
             try:
                 project_doc = await db.projects.find_one({"_id": project_id}, {"team_id": 1})
                 team_id = project_doc.get("team_id") if project_doc else None
@@ -536,7 +433,6 @@ class WebhookService:
             except Exception as e:
                 logger.error(f"Failed to look up team webhooks for project {project_id}: {e}")
 
-        # Global webhooks (both project_id and team_id are None)
         webhooks.extend(
             await self._fetch_webhooks_by_query(db, {**base_conditions, "project_id": None, "team_id": None}, "global")
         )
@@ -552,17 +448,7 @@ class WebhookService:
         *,
         context: str = "webhook",
     ) -> None:
-        """Fire-and-forget wrapper for ``trigger_webhooks``.
-
-        Webhook delivery is **never** load-bearing for the surrounding
-        operation: a failed dispatch must not roll back the ingest, audit
-        write, report generation, etc. that triggered it. Every caller
-        used to wrap ``trigger_webhooks`` in the same try/except + logger
-        boilerplate; this helper centralises that pattern.
-
-        ``context`` is included in the log message so log readers know
-        which subsystem failed to dispatch.
-        """
+        """Non-blocking trigger_webhooks — a failed dispatch never rolls back the caller."""
         try:
             await self.trigger_webhooks(
                 db,
@@ -584,15 +470,6 @@ class WebhookService:
         payload: "Mapping[str, Any]",
         project_id: Optional[str] = None,
     ) -> None:
-        """
-        Trigger all webhooks for a given event.
-
-        Args:
-            db: Database connection
-            event_type: Type of event (scan_completed, vulnerability_found, etc.)
-            payload: Payload to send to webhooks
-            project_id: Optional project ID for project-specific webhooks
-        """
         try:
             webhooks = await self._get_webhooks_for_event(db, project_id, event_type)
 
@@ -604,16 +481,12 @@ class WebhookService:
                 f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})"
             )
 
-            # Track metric
             if webhooks_triggered_total:
                 webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
 
-            # Trigger webhooks concurrently
             tasks = [self._send_webhook(db, webhook, payload, event_type) for webhook in webhooks]
-
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Count failures for metrics
             failed_count = 0
             for idx, result in enumerate(results):
                 if isinstance(result, Exception):
@@ -622,7 +495,6 @@ class WebhookService:
                 elif result is False:
                     failed_count += 1
 
-            # Track failure metrics
             if failed_count > 0 and webhooks_failed_total:
                 webhooks_failed_total.labels(event_type=event_type).inc(failed_count)
 
@@ -643,18 +515,6 @@ class WebhookService:
         stats: Dict[str, Any],
         scan_url: Optional[str] = None,
     ) -> None:
-        """
-        Trigger webhooks when a scan completes.
-
-        Args:
-            db: Database connection
-            scan_id: Scan ID
-            project_id: Project ID
-            project_name: Project name
-            findings_count: Total number of findings
-            stats: Statistics about findings (severity breakdown, etc.)
-            scan_url: Optional URL to view scan results
-        """
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_SCAN_COMPLETED,
             scan_id=scan_id,
@@ -685,21 +545,6 @@ class WebhookService:
         top_vulnerabilities: List[Dict[str, Any]],
         scan_url: Optional[str] = None,
     ) -> None:
-        """
-        Trigger webhooks when critical vulnerabilities are found.
-
-        Args:
-            db: Database connection
-            scan_id: Scan ID
-            project_id: Project ID
-            project_name: Project name
-            critical_count: Number of critical vulnerabilities
-            high_count: Number of high vulnerabilities
-            kev_count: Number of KEV (Known Exploited Vulnerabilities)
-            high_epss_count: Number of high EPSS score vulnerabilities
-            top_vulnerabilities: List of top vulnerabilities with details
-            scan_url: Optional URL to view scan results
-        """
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_VULNERABILITY_FOUND,
             scan_id=scan_id,
@@ -729,17 +574,6 @@ class WebhookService:
         error_message: str,
         scan_url: Optional[str] = None,
     ) -> None:
-        """
-        Trigger webhooks when analysis fails.
-
-        Args:
-            db: Database connection
-            scan_id: Scan ID
-            project_id: Project ID
-            project_name: Project name
-            error_message: Error message describing the failure
-            scan_url: Optional URL to view scan results
-        """
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_ANALYSIS_FAILED,
             scan_id=scan_id,
@@ -759,16 +593,6 @@ class WebhookService:
         webhook: "Webhook",
         event_type: str = WEBHOOK_EVENT_SCAN_COMPLETED,
     ) -> Dict[str, Any]:
-        """
-        Send a test webhook to verify configuration.
-
-        Args:
-            webhook: Webhook configuration to test
-            event_type: Event type for the test payload
-
-        Returns:
-            Dict with success status, status_code, error, and response_time_ms
-        """
         test_payload: TestWebhookPayload = {
             "event": event_type,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -784,16 +608,14 @@ class WebhookService:
             },
         }
 
-        # Teams webhooks always show the test card, regardless of event_type.
-        # We bypass _format_payload here because test_payload carries event="scan.completed"
-        # (the default), and routing through _format_payload would produce a scan card instead.
-        # If this logic ever changes, update _format_payload's "test" branch in parallel.
+        # Teams always gets the test card; bypass _format_payload because test_payload
+        # carries event="scan.completed" and would produce a scan card instead.
         if webhook.webhook_type == "teams":
             formatted_test_payload = TeamsFormatter.build_test_card()
         else:
             formatted_test_payload = self._format_payload(webhook, event_type, test_payload)
         json_payload = json.dumps(formatted_test_payload)
-        # Sign the raw event payload so any relay can verify X-Webhook-Signature.
+        # Teams: sign the raw event payload so relays can verify X-Webhook-Signature.
         signing_payload = json.dumps(test_payload) if webhook.webhook_type == "teams" else json_payload
         headers = self._build_headers(webhook, event_type, signing_payload, is_test=True)
 

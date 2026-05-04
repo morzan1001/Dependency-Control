@@ -144,15 +144,7 @@ def validate_webhook_event_type(event_type: str) -> str:
 
 
 def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
-    """Detect webhook type based on URL patterns.
-
-    Returns "teams" for Microsoft Teams-specific URLs:
-    - *.webhook.office.com (Classic Teams Incoming Webhooks)
-    - *.logic.azure.com with /workflows/ in path (Power Automate via Logic Apps)
-    - *.api.powerplatform.com with /workflows/ in path (Power Automate via Power Platform)
-
-    Returns "generic" for all other HTTPS URLs.
-    """
+    """Returns "teams" for *.webhook.office.com, *.logic.azure.com/workflows/, and *.api.powerplatform.com/workflows/."""
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower()
     path = parsed.path or ""
