@@ -14,6 +14,7 @@ import {
   NotificationsSettingsTab,
   IntegrationsSettingsTab,
   ChatSettingsTab,
+  CryptoPolicySettingsTab,
 } from "@/components/settings"
 
 // Inner component that handles the form state
@@ -85,6 +86,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
+          <TabsTrigger value="crypto-policy">Crypto Policy</TabsTrigger>
           {chatEnabled && <TabsTrigger value="chat">Chat</TabsTrigger>}
         </TabsList>
 
@@ -111,6 +113,10 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
         
         <TabsContent value="integrations">
           <IntegrationsSettingsTab {...tabProps} />
+        </TabsContent>
+
+        <TabsContent value="crypto-policy">
+          <CryptoPolicySettingsTab />
         </TabsContent>
 
         {chatEnabled && (

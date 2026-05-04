@@ -29,6 +29,7 @@ import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { WebhookManager } from '@/components/WebhookManager'
+import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePage'
 import { AlertTriangle, RefreshCw, Copy, Trash2, Info, Settings } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
@@ -75,6 +76,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const canEnforce = canEnforceNotifications(project, userId, permissions)
   const canCreateWh = canCreateProjectWebhook(project, userId, permissions)
   const canDeleteWh = canDeleteProjectWebhook(project, userId, permissions)
+  const canEditCryptoPolicy = isProjectAdmin(project, userId, permissions)
   const isMember = isProjectOwner(project, userId) || !!project.members?.some(m => m.user_id === userId)
   
   const [name, setName] = useState(project.name)
@@ -569,6 +571,8 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
           />
         )
       })()}
+
+      <CryptoPolicyOverridePage projectId={projectId} canEdit={canEditCryptoPolicy} />
 
       <Card>
         <CardHeader>
