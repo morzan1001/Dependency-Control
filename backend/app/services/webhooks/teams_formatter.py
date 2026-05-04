@@ -2,6 +2,8 @@
 
 from typing import List, Optional
 
+_ACTION_OPEN_URL = "Action.OpenUrl"
+
 
 class TeamsFormatter:
 
@@ -74,7 +76,7 @@ class TeamsFormatter:
                 "wrap": True,
             },
         ]
-        actions = [{"type": "Action.OpenUrl", "title": "View in DependencyControl", "url": url}] if url else None
+        actions = [{"type": _ACTION_OPEN_URL, "title": "View in DependencyControl", "url": url}] if url else None
         return TeamsFormatter._wrap_card(body, actions, summary=subject)
 
     @staticmethod
@@ -87,7 +89,13 @@ class TeamsFormatter:
         total = findings.get("total", 0)
         stats = findings.get("stats", {})
 
-        container_style = "good" if total == 0 else "warning"
+        has_critical = int(stats.get("critical", 0) or 0) > 0
+        if total == 0:
+            container_style = "good"
+        elif has_critical:
+            container_style = "attention"
+        else:
+            container_style = "warning"
 
         facts = [
             {"title": "Project", "value": project_name},
@@ -114,7 +122,7 @@ class TeamsFormatter:
             },
             {"type": "FactSet", "facts": facts},
         ]
-        actions = [{"type": "Action.OpenUrl", "title": "View Scan Results", "url": scan_url}] if scan_url else None
+        actions = [{"type": _ACTION_OPEN_URL, "title": "View Scan Results", "url": scan_url}] if scan_url else None
         return TeamsFormatter._wrap_card(body, actions, summary=f"Scan completed for {project_name}")
 
     @staticmethod
@@ -174,7 +182,7 @@ class TeamsFormatter:
                 )
             body.append({"type": "Container", "items": top_items})
 
-        actions = [{"type": "Action.OpenUrl", "title": "View Vulnerabilities", "url": scan_url}] if scan_url else None
+        actions = [{"type": _ACTION_OPEN_URL, "title": "View Vulnerabilities", "url": scan_url}] if scan_url else None
         return TeamsFormatter._wrap_card(body, actions, summary=f"Vulnerabilities found in {project_name}")
 
     @staticmethod
@@ -205,5 +213,5 @@ class TeamsFormatter:
                 ],
             },
         ]
-        actions = [{"type": "Action.OpenUrl", "title": "View Details", "url": scan_url}] if scan_url else None
+        actions = [{"type": _ACTION_OPEN_URL, "title": "View Details", "url": scan_url}] if scan_url else None
         return TeamsFormatter._wrap_card(body, actions, summary=f"Analysis failed for {project_name}")

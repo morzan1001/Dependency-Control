@@ -1,6 +1,9 @@
-"""Unit tests for WebhookService._format_payload."""
+"""Unit tests for WebhookService._format_payload and test_webhook."""
 
+import json
 import pytest
+
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.webhook import Webhook
 from app.services.webhooks.webhook_service import WebhookService
@@ -107,3 +110,58 @@ class TestFormatPayloadTeamsWebhook:
         result = service._format_payload(webhook, "scan_completed", make_scan_payload())
         assert result["type"] == "message"
         assert result["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive"
+
+
+def _make_mock_http_client(status_code: int = 200):
+    """Return a mock InstrumentedAsyncClient context manager with the given response status."""
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    return mock_client
+
+
+class TestTestWebhookForTeams:
+    """Verify that test_webhook() sends the accent-styled test card for Teams webhooks."""
+
+    @pytest.mark.asyncio
+    async def test_sends_test_card_regardless_of_event_type(self):
+        webhook = make_webhook("teams")
+        webhook.url = "https://example.test/teams-hook"
+
+        mock_client = _make_mock_http_client()
+
+        with (
+            patch("app.services.webhooks.webhook_service.assert_safe_webhook_target"),
+            patch("app.services.webhooks.webhook_service.InstrumentedAsyncClient", return_value=mock_client),
+        ):
+            service = WebhookService()
+            result = await service.test_webhook(webhook)
+
+        assert result["success"] is True
+        sent = json.loads(mock_client.post.call_args.kwargs["content"])
+        assert sent["type"] == "message"
+        card = sent["attachments"][0]["content"]
+        container = next(b for b in card["body"] if b["type"] == "Container")
+        assert container["style"] == "accent"
+
+    @pytest.mark.asyncio
+    async def test_generic_webhook_sends_raw_scan_payload(self):
+        webhook = make_webhook("generic")
+        webhook.url = "https://example.test/generic-hook"
+
+        mock_client = _make_mock_http_client()
+
+        with (
+            patch("app.services.webhooks.webhook_service.assert_safe_webhook_target"),
+            patch("app.services.webhooks.webhook_service.InstrumentedAsyncClient", return_value=mock_client),
+        ):
+            service = WebhookService()
+            result = await service.test_webhook(webhook)
+
+        assert result["success"] is True
+        sent = json.loads(mock_client.post.call_args.kwargs["content"])
+        assert sent.get("event") == "scan.completed"
+        assert "attachments" not in sent

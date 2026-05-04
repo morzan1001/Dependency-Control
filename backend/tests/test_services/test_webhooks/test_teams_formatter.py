@@ -71,14 +71,23 @@ class TestBuildScanCompletedCard:
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "good"
 
-    def test_warning_style_when_findings_exist(self):
+    def test_warning_style_when_only_non_critical_findings(self):
         card = _get_card(TeamsFormatter.build_scan_completed_card(
             project_name="MyApp",
             _scan_id="scan-1",
-            findings={"total": 5, "stats": {"critical": 1}},
+            findings={"total": 5, "stats": {"high": 5}},
         ))
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "warning"
+
+    def test_attention_style_when_critical_findings(self):
+        card = _get_card(TeamsFormatter.build_scan_completed_card(
+            project_name="MyApp",
+            _scan_id="scan-1",
+            findings={"total": 3, "stats": {"critical": 2, "high": 1}},
+        ))
+        container = next(b for b in card["body"] if b["type"] == "Container")
+        assert container["style"] == "attention"
 
     def test_factset_contains_project_and_total(self):
         card = _get_card(TeamsFormatter.build_scan_completed_card(

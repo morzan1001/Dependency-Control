@@ -148,7 +148,8 @@ def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
 
     Returns "teams" for Microsoft Teams-specific URLs:
     - *.webhook.office.com (Classic Teams Incoming Webhooks)
-    - *.logic.azure.com with /workflows/ in path (Power Automate)
+    - *.logic.azure.com with /workflows/ in path (Power Automate via Logic Apps)
+    - *.api.powerplatform.com with /workflows/ in path (Power Automate via Power Platform)
 
     Returns "generic" for all other HTTPS URLs.
     """
@@ -159,5 +160,7 @@ def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
     if hostname == "webhook.office.com" or hostname.endswith(".webhook.office.com"):
         return "teams"
     if (hostname == "logic.azure.com" or hostname.endswith(".logic.azure.com")) and "/workflows/" in path:
+        return "teams"
+    if (hostname == "api.powerplatform.com" or hostname.endswith(".api.powerplatform.com")) and "/workflows/" in path:
         return "teams"
     return "generic"

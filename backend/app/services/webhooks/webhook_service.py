@@ -370,7 +370,10 @@ class WebhookService:
         """
         formatted_payload = self._format_payload(webhook, event_type, payload)
         json_payload = json.dumps(formatted_payload)
-        headers = self._build_headers(webhook, event_type, json_payload)
+        # For Teams webhooks the body is an Adaptive Card; sign the raw event payload
+        # instead so any relay that verifies X-Webhook-Signature can still do so.
+        signing_payload = json.dumps(payload) if webhook.webhook_type == "teams" else json_payload
+        headers = self._build_headers(webhook, event_type, signing_payload)
 
         retry_count = 0
         last_error: Optional[str] = None
@@ -781,9 +784,15 @@ class WebhookService:
             },
         }
 
-        formatted_test_payload = self._format_payload(webhook, event_type, test_payload)
+        # Teams webhooks always show the dedicated test card, regardless of event_type.
+        if webhook.webhook_type == "teams":
+            formatted_test_payload = TeamsFormatter.build_test_card()
+        else:
+            formatted_test_payload = self._format_payload(webhook, event_type, test_payload)
         json_payload = json.dumps(formatted_test_payload)
-        headers = self._build_headers(webhook, event_type, json_payload, is_test=True)
+        # Sign the raw event payload so any relay can verify X-Webhook-Signature.
+        signing_payload = json.dumps(test_payload) if webhook.webhook_type == "teams" else json_payload
+        headers = self._build_headers(webhook, event_type, signing_payload, is_test=True)
 
         start_time = time.monotonic()
 

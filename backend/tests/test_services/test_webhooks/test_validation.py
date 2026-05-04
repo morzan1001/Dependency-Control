@@ -250,5 +250,16 @@ class TestDetectWebhookType:
         # hostname ends with 'logic.azure.com' chars but has no separating dot
         assert detect_webhook_type("https://evil-logic.azure.com/workflows/abc") == "generic"
 
+    def test_power_platform_automate_url(self):
+        url = (
+            "https://default047b2e1fa2714bc197a4703bf7adf1.35.environment.api.powerplatform.com"
+            "/powerautomate/automations/direct/workflows/67fa2e06/triggers/manual/paths/invoke"
+        )
+        assert detect_webhook_type(url) == "teams"
+
+    def test_power_platform_without_workflows_path(self):
+        url = "https://api.powerplatform.com/other/path"
+        assert detect_webhook_type(url) == "generic"
+
     def test_empty_string_returns_generic(self):
         assert detect_webhook_type("") == "generic"
