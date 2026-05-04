@@ -329,7 +329,7 @@ class WebhookService:
                 error=str(raw_payload.get("error", "Unknown error")),
                 scan_url=scan_url,
             )
-        if event_type == "test":
+        if event_type == "test":  # "test" has no alias; event_type == normalized here
             return TeamsFormatter.build_test_card()
         return TeamsFormatter.build_generic_card(
             subject=normalized.replace(".", " ").title(),
