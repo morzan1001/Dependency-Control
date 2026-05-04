@@ -1,4 +1,24 @@
-# Release 1.5.6
+# Release 1.5.7
+
+## 🚀 Features
+
+- feat: add webhook_type field to Webhook model and schemas (#0)
+- feat: add detect_webhook_type() for Teams URL auto-detection (#0)
+- feat: add TeamsFormatter with Adaptive Card builders (#0)
+- feat: apply Adaptive Card formatting for Teams webhooks at delivery time (#0)
+- feat: auto-detect Teams webhook type in all create endpoints (#0)
+
+## 🐛 Fixes
+
+- fix: tighten WebhookResponse type, fix test imports, add WebhookUpdate type test (#0)
+- fix: move datetime import to module level in webhook tests (#0)
+- fix: add dot-boundary to detect_webhook_type hostname checks (#0)
+- fix: address TeamsFormatter code review issues (unused param, conditional title, type safety, tests) (#0)
+- fix: remove unused pytest import in integration test (#0)
+
+
+
+# Release 1.5.7
 
 
 
