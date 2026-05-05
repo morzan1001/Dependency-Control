@@ -8,6 +8,7 @@ export const Permissions = {
   USER_READ_ALL: "user:read_all",
   USER_UPDATE: "user:update",
   USER_DELETE: "user:delete",
+  USER_MANAGE_PERMISSIONS: "user:manage_permissions",
 
   // Team Management
   TEAM_CREATE: "team:create",
@@ -32,6 +33,7 @@ export const Permissions = {
   ANALYTICS_HOTSPOTS: "analytics:hotspots",
   ANALYTICS_SEARCH: "analytics:search",
   ANALYTICS_RECOMMENDATIONS: "analytics:recommendations",
+  ANALYTICS_GLOBAL: "analytics:global",
 
   // Notifications
   NOTIFICATIONS_BROADCAST: "notifications:broadcast",
@@ -47,6 +49,12 @@ export const Permissions = {
   WEBHOOK_READ: "webhook:read",
   WEBHOOK_UPDATE: "webhook:update",
   WEBHOOK_DELETE: "webhook:delete",
+
+  // Archives
+  ARCHIVE_READ: "archive:read",
+  ARCHIVE_RESTORE: "archive:restore",
+  ARCHIVE_DOWNLOAD: "archive:download",
+  ARCHIVE_READ_ALL: "archive:read_all",
 
   // Chat
   CHAT_ACCESS: "chat:access",
@@ -69,6 +77,7 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.USER_READ_ALL,
   Permissions.USER_UPDATE,
   Permissions.USER_DELETE,
+  Permissions.USER_MANAGE_PERMISSIONS,
   // Team
   Permissions.TEAM_CREATE,
   Permissions.TEAM_READ,
@@ -90,6 +99,7 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.ANALYTICS_HOTSPOTS,
   Permissions.ANALYTICS_SEARCH,
   Permissions.ANALYTICS_RECOMMENDATIONS,
+  Permissions.ANALYTICS_GLOBAL,
   // Notifications
   Permissions.NOTIFICATIONS_BROADCAST,
   // Waivers
@@ -102,6 +112,11 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.WEBHOOK_READ,
   Permissions.WEBHOOK_UPDATE,
   Permissions.WEBHOOK_DELETE,
+  // Archives
+  Permissions.ARCHIVE_READ,
+  Permissions.ARCHIVE_RESTORE,
+  Permissions.ARCHIVE_DOWNLOAD,
+  Permissions.ARCHIVE_READ_ALL,
   // Chat
   Permissions.CHAT_ACCESS,
   Permissions.CHAT_HISTORY_READ,
@@ -134,6 +149,9 @@ export const PRESET_USER: Permission[] = [
   Permissions.ANALYTICS_RECOMMENDATIONS,
   // Waivers - can view own waivers
   Permissions.WAIVER_READ,
+  // Archives - can view and download archives for accessible projects
+  Permissions.ARCHIVE_READ,
+  Permissions.ARCHIVE_DOWNLOAD,
   // Webhooks - managed via project roles (admin), no global override needed
 ];
 
@@ -150,6 +168,8 @@ export const PRESET_VIEWER: Permission[] = [
   Permissions.ANALYTICS_SUMMARY,
   // Waivers - can view waivers
   Permissions.WAIVER_READ,
+  // Archives - can view archives
+  Permissions.ARCHIVE_READ,
 ];
 
 export interface PermissionItem {
@@ -207,6 +227,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         id: Permissions.USER_DELETE,
         label: "Delete Users",
         description: "Delete users",
+      },
+      {
+        id: Permissions.USER_MANAGE_PERMISSIONS,
+        label: "Manage User Permissions",
+        description: "Grant or revoke permissions on user accounts",
       },
     ],
   },
@@ -319,6 +344,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         label: "View Recommendations",
         description: "View security recommendations",
       },
+      {
+        id: Permissions.ANALYTICS_GLOBAL,
+        label: "Global Analytics",
+        description: "Query analytics across all projects system-wide",
+      },
     ],
   },
   {
@@ -384,6 +414,33 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         id: Permissions.WEBHOOK_DELETE,
         label: "Delete Webhooks",
         description: "Delete any webhook",
+      },
+    ],
+  },
+  {
+    id: "archive",
+    title: "Archives",
+    description: "Permissions for managing scan archives",
+    permissions: [
+      {
+        id: Permissions.ARCHIVE_READ,
+        label: "Read Archives",
+        description: "View archived scans for accessible projects",
+      },
+      {
+        id: Permissions.ARCHIVE_RESTORE,
+        label: "Restore Archives",
+        description: "Restore archived scans back to the database",
+      },
+      {
+        id: Permissions.ARCHIVE_DOWNLOAD,
+        label: "Download Archives",
+        description: "Download archived scan bundles",
+      },
+      {
+        id: Permissions.ARCHIVE_READ_ALL,
+        label: "Read All Archives",
+        description: "View archives across all projects",
       },
     ],
   },
