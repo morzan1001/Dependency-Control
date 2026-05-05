@@ -22,7 +22,7 @@ from app.services.audit.history import record_policy_change
 logger = logging.getLogger(__name__)
 
 # Bump this whenever the content of any seed/*.yaml changes.
-CURRENT_SEED_VERSION = 3
+CURRENT_SEED_VERSION = 1
 
 _SEED_DIR = Path(__file__).parent / "seed"
 
