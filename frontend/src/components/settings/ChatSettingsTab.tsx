@@ -1,6 +1,3 @@
-import { Info } from 'lucide-react';
-
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -44,39 +41,6 @@ export function ChatSettingsTab({
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>AI Chat Assistant</CardTitle>
-          <CardDescription>
-            The chat feature is enabled at deploy-time via the Helm value{' '}
-            <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">chat.enabled</code>
-            {' '}(which also deploys Ollama). Use the controls below to tune
-            runtime limits.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Alert>
-            <Info className="h-4 w-4" />
-            <AlertTitle>Permissions</AlertTitle>
-            <AlertDescription>
-              Grant chat access via the user management page. Three permissions
-              control the feature:
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
-                <li>
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">chat:access</code> — use the chat, create conversations, send messages
-                </li>
-                <li>
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">chat:history_read</code> — browse past conversations
-                </li>
-                <li>
-                  <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">chat:history_delete</code> — delete own conversations
-                </li>
-              </ul>
-            </AlertDescription>
-          </Alert>
-        </CardContent>
-      </Card>
-
       <Card>
         <CardHeader>
           <CardTitle>Rate limits</CardTitle>

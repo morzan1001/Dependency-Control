@@ -128,6 +128,39 @@ class TestBuildScanCompletedCard:
         )
         assert "actions" not in card
 
+    def test_nested_dict_stats_do_not_raise(self):
+        # Real scan documents contain nested dicts in stats (threat_intel, reachability,
+        # prioritized). The formatter must skip those and only render severity counts.
+        stats_with_nested = {
+            "critical": 3,
+            "high": 60,
+            "medium": 64,
+            "low": 2,
+            "info": 385,
+            "unknown": 0,
+            "risk_score": 1.4,
+            "adjusted_risk_score": 1.9,
+            "threat_intel": {"kev_count": 0, "high_epss_count": 0},
+            "reachability": {"analyzed_count": 0, "reachable_count": 0},
+            "prioritized": {"total": 514, "critical": 3},
+        }
+        card = _get_card(
+            TeamsFormatter.build_scan_completed_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                findings={"total": 514, "stats": stats_with_nested},
+            )
+        )
+        factset = next(b for b in card["body"] if b["type"] == "FactSet")
+        titles = [f["title"] for f in factset["facts"]]
+        # Nested dict keys must not appear as fact titles
+        assert "Threat Intel" not in titles
+        assert "Reachability" not in titles
+        assert "Prioritized" not in titles
+        # Severity keys must still appear
+        assert "Critical" in titles
+        assert "High" in titles
+
 
 class TestBuildVulnerabilityFoundCard:
     def test_attention_style_when_critical(self):

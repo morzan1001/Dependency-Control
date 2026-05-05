@@ -3,6 +3,7 @@
 from typing import List, Optional
 
 _ACTION_OPEN_URL = "Action.OpenUrl"
+_SEVERITY_KEYS = ("critical", "high", "medium", "low", "info", "unknown")
 
 
 class TeamsFormatter:
@@ -98,10 +99,11 @@ class TeamsFormatter:
             {"title": "Project", "value": project_name},
             {"title": "Total Findings", "value": str(total)},
         ]
-        for severity, count in stats.items():
+        for severity in _SEVERITY_KEYS:
+            count = stats.get(severity, 0)
             count_int = int(count) if count else 0
             if count_int > 0:
-                facts.append({"title": severity.replace("_", " ").title(), "value": str(count_int)})
+                facts.append({"title": severity.title(), "value": str(count_int)})
 
         body = [
             {

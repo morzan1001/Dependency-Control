@@ -5,6 +5,7 @@ import {
 } from "@/api/cryptoPolicy";
 import { CryptoPolicyEditor } from "@/components/crypto/CryptoPolicyEditor";
 import { PolicyAuditTimeline } from "@/components/audit/PolicyAuditTimeline";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CryptoRule } from "@/types/cryptoPolicy";
 
 interface Props {
@@ -48,30 +49,35 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="rounded border bg-muted/20 p-3 text-sm">
-        Effective policy: system version {effective.data.system_version}
-        {effective.data.override_version
-          ? ` + override version ${effective.data.override_version}`
-          : " (no override active)"}
-      </div>
-      <CryptoPolicyEditor
-        title="Project override"
-        subtitle="Rules added or edited here apply on top of the system policy for this project only."
-        initialRules={override.data.rules}
-        readOnly={!canEdit}
-        onSave={async (rules) => { await save.mutateAsync(rules); }}
-        onResetOverride={
-          canEdit && override.data.rules.length > 0
-            ? async () => { await reset.mutateAsync(); }
-            : undefined
-        }
-      />
-      <PolicyAuditTimeline
-        policyScope="project"
-        projectId={projectId}
-        canRevert={canEdit}
-      />
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Cryptographic Policy</CardTitle>
+        <CardDescription>
+          Effective policy: system version {effective.data.system_version}
+          {effective.data.override_version
+            ? ` + override version ${effective.data.override_version}`
+            : " (no override active)"}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <CryptoPolicyEditor
+          title="Project override"
+          subtitle="Rules added or edited here apply on top of the system policy for this project only."
+          initialRules={override.data.rules}
+          readOnly={!canEdit}
+          onSave={async (rules) => { await save.mutateAsync(rules); }}
+          onResetOverride={
+            canEdit && override.data.rules.length > 0
+              ? async () => { await reset.mutateAsync(); }
+              : undefined
+          }
+        />
+        <PolicyAuditTimeline
+          policyScope="project"
+          projectId={projectId}
+          canRevert={canEdit}
+        />
+      </CardContent>
+    </Card>
   );
 }
