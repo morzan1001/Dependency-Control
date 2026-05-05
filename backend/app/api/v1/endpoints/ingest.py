@@ -39,6 +39,7 @@ from app.schemas.ingest import (
 from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
+from app.services.notifications.service import safe_notify_project_event
 from app.services.sbom_parser import parse_sbom
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
@@ -401,6 +402,15 @@ async def ingest_sbom(
             "dependencies_count": total_deps_inserted,
         },
         str(project.id),
+        context="sbom_ingest",
+    )
+
+    await safe_notify_project_event(
+        db,
+        project_id=str(project.id),
+        event_type="sbom_ingested",
+        subject=f"SBOM ingested: {project.name}",
+        message=f"{sboms_processed} SBOM(s) ingested for project {project.name} ({total_deps_inserted} dependencies).",
         context="sbom_ingest",
     )
 

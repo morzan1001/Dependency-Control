@@ -77,7 +77,7 @@ export const ANALYTICS_PERMISSIONS = [
 export const POST_PROCESSOR_ANALYZERS = ['epss_kev', 'reachability'] as const;
 
 // Per-user notification events. Must match `NOTIFICATION_EVENTS` in
-// backend/app/core/constants.py. Webhook-only events are tracked separately.
+// backend/app/core/constants.py.
 export const NOTIFICATION_EVENTS = [
   {
     id: 'analysis_completed',
@@ -85,9 +85,24 @@ export const NOTIFICATION_EVENTS = [
     description: 'When a dependency scan finishes.',
   },
   {
+    id: 'analysis_failed',
+    label: 'Analysis Failed',
+    description: 'When a scan errors out and could not complete.',
+  },
+  {
     id: 'vulnerability_found',
     label: 'Vulnerability Found',
     description: 'When critical/high vulnerabilities or KEV entries are detected.',
+  },
+  {
+    id: 'sbom_ingested',
+    label: 'SBOM Ingested',
+    description: 'When new SBOM data is uploaded for the project (can be noisy in CI).',
+  },
+  {
+    id: 'crypto_asset_ingested',
+    label: 'Crypto Asset Ingested',
+    description: 'When new CBOM/crypto asset data is uploaded for the project.',
   },
   {
     id: 'crypto_policy_changed',
@@ -98,6 +113,16 @@ export const NOTIFICATION_EVENTS = [
     id: 'license_policy_changed',
     label: 'License Policy Changed',
     description: 'When the project\'s license policy is updated.',
+  },
+  {
+    id: 'compliance_report_generated',
+    label: 'Compliance Report Generated',
+    description: 'When a new compliance report is rendered for the project.',
+  },
+  {
+    id: 'pqc_migration_plan_generated',
+    label: 'PQC Migration Plan Generated',
+    description: 'When a new post-quantum migration plan is generated for the project.',
   },
 ] as const;
 

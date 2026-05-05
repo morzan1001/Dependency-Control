@@ -307,3 +307,39 @@ class NotificationService:
 
 
 notification_service = NotificationService()
+
+
+async def safe_notify_project_event(
+    db: Any,
+    project_id: Optional[str],
+    event_type: str,
+    subject: str,
+    message: str,
+    *,
+    html_message: Optional[str] = None,
+    context: str = "notify",
+) -> None:
+    """Look up the project and dispatch the event to its members.
+
+    Best-effort: a missing project, missing repository, or any provider error
+    is logged but never raised. Mirrors webhook_service.safe_trigger_webhooks
+    so callers can fire-and-forget alongside webhook dispatch.
+    """
+    if not project_id:
+        return
+    try:
+        from app.repositories.projects import ProjectRepository  # late import: circular
+
+        project = await ProjectRepository(db).get_by_id(project_id)
+        if project is None:
+            return
+        await notification_service.notify_project_members(
+            project=project,
+            event_type=event_type,
+            subject=subject,
+            message=message,
+            db=db,
+            html_message=html_message,
+        )
+    except Exception:
+        logger.exception("%s: notification dispatch for %s failed (non-blocking)", context, event_type)

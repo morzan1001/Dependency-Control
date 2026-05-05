@@ -318,3 +318,15 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
         project_id=report.scope_id if report.scope == "project" else None,
         context="compliance_reports",
     )
+
+    if report.scope == "project" and report.scope_id:
+        from app.services.notifications.service import safe_notify_project_event
+
+        await safe_notify_project_event(
+            db,
+            project_id=report.scope_id,
+            event_type="compliance_report_generated",
+            subject=f"Compliance report ready ({_status_str(report.framework)})",
+            message=f"A new {_status_str(report.framework)} compliance report ({_status_str(report.format)}) is available for this project.",
+            context="compliance_reports",
+        )

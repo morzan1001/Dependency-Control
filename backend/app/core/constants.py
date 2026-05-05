@@ -647,18 +647,28 @@ NOTIFICATION_CHANNELS = [
 ]
 
 # Per-user notification event types — events that flow through individual user
-# preferences (channel-toggleable in UI). Webhook-only events are tracked
-# separately in WEBHOOK_EVENT_* below and don't appear here.
+# preferences (channel-toggleable in UI). Each entry has a matching webhook
+# event in WEBHOOK_EVENT_* below; users opt in to channels per event.
 NOTIFICATION_EVENT_ANALYSIS_COMPLETED = "analysis_completed"
 NOTIFICATION_EVENT_VULNERABILITY_FOUND = "vulnerability_found"
+NOTIFICATION_EVENT_ANALYSIS_FAILED = "analysis_failed"
+NOTIFICATION_EVENT_SBOM_INGESTED = "sbom_ingested"
+NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED = "crypto_asset_ingested"
 NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED = "crypto_policy_changed"
 NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED = "license_policy_changed"
+NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report_generated"
+NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan_generated"
 
 NOTIFICATION_EVENTS = {
     NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
     NOTIFICATION_EVENT_VULNERABILITY_FOUND,
+    NOTIFICATION_EVENT_ANALYSIS_FAILED,
+    NOTIFICATION_EVENT_SBOM_INGESTED,
+    NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
     NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED,
     NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED,
+    NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED,
+    NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED,
 }
 
 # SMTP timeout in seconds

@@ -27,6 +27,7 @@ from app.models.project import Project
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.ingest import BaseIngest
 from app.services.cbom_parser import ParsedCBOM, parse_cbom
+from app.services.notifications.service import safe_notify_project_event
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
 
@@ -234,6 +235,15 @@ async def _persist_crypto_assets(
                 "by_type": summary["by_type"],
             },
             project_id,
+            context="cbom_ingest",
+        )
+
+        await safe_notify_project_event(
+            db,
+            project_id=project_id,
+            event_type="crypto_asset_ingested",
+            subject=f"Crypto assets ingested: {summary['total']} entries",
+            message=f"{summary['total']} crypto asset(s) ingested for scan {scan_id}.",
             context="cbom_ingest",
         )
 

@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.db.mongodb import get_database
 from app.services.analysis import run_analysis
+from app.services.notifications.service import safe_notify_project_event
 from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
@@ -313,12 +314,22 @@ class AnalysisWorkerManager:
                     try:
                         project = await db.projects.find_one({"_id": scan.get("project_id")})
                         if project:
+                            project_id_str = str(project["_id"])
+                            project_name = project.get("name", "Unknown")
                             await webhook_service.trigger_analysis_failed(
                                 db=db,
                                 scan_id=scan_id,
-                                project_id=str(project["_id"]),
-                                project_name=project.get("name", "Unknown"),
+                                project_id=project_id_str,
+                                project_name=project_name,
                                 error_message=str(e),
+                            )
+                            await safe_notify_project_event(
+                                db,
+                                project_id=project_id_str,
+                                event_type="analysis_failed",
+                                subject=f"Scan failed: {project_name}",
+                                message=f"Scan {scan_id} for project {project_name} failed: {e}",
+                                context="worker.analysis_failed",
                             )
                     except Exception as webhook_err:
                         logger.error(f"Failed to trigger analysis_failed webhook: {webhook_err}")

@@ -94,3 +94,15 @@ async def _fire_pqc_webhook(
         project_id=resolved.scope_id if resolved.scope == "project" else None,
         context="pqc_migration",
     )
+
+    if resolved.scope == "project" and resolved.scope_id:
+        from app.services.notifications.service import safe_notify_project_event
+
+        await safe_notify_project_event(
+            db,
+            project_id=resolved.scope_id,
+            event_type="pqc_migration_plan_generated",
+            subject="PQC migration plan ready",
+            message=f"A new post-quantum migration plan with {resp.summary.total_items} item(s) is available for this project.",
+            context="pqc_migration",
+        )
