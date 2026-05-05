@@ -1,16 +1,71 @@
 # CNSA Suite 2.0 — NSA's Commercial National Security Algorithm Suite
 # https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF
+#
+# All CNSA 2.0 rules are disabled by default. Enable them explicitly in
+# environments that must comply with NSA/US national security requirements.
 
 rules:
   - rule_id: cnsa20-rsa-min-3072
     name: CNSA 2.0 requires RSA ≥ 3072 bits for classical use
     description: >
       CNSA 2.0 mandates 3072-bit RSA during the transition period to
-      post-quantum algorithms.
+      post-quantum algorithms. This is stricter than the NIST baseline of 2048 bits.
     finding_type: crypto_weak_key
     default_severity: MEDIUM
     match_name_patterns: ["RSA"]
     match_primitive: pke
     match_min_key_size_bits: 3072
-    enabled: false  # opt-in — strictly CNSA-compliant environments only
+    enabled: false
     source: cnsa-2.0
+    references:
+      - https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF
+
+  - rule_id: cnsa20-aes-min-256
+    name: CNSA 2.0 requires AES-256
+    description: >
+      CNSA 2.0 mandates AES-256 for all symmetric encryption. AES-128 and AES-192
+      do not meet CNSA 2.0 requirements even though they satisfy NIST SP 800-131A.
+    finding_type: crypto_weak_key
+    default_severity: MEDIUM
+    match_name_patterns: ["AES"]
+    match_primitive: block-cipher
+    match_min_key_size_bits: 256
+    enabled: false
+    source: cnsa-2.0
+    references:
+      - https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF
+
+  - rule_id: cnsa20-ecdh-p384
+    name: CNSA 2.0 requires P-384 or larger for ECDH/ECDSA
+    description: >
+      CNSA 2.0 requires P-384 as the minimum curve for elliptic-curve key agreement
+      and signatures. P-256 and smaller curves do not meet CNSA 2.0 requirements.
+    finding_type: crypto_weak_key
+    default_severity: MEDIUM
+    match_name_patterns: ["ECDH", "ECDSA", "ECDHE", "EC-DSA"]
+    match_curves:
+      - "P-256"
+      - "secp256r1"
+      - "prime256v1"
+      - "P-224"
+      - "secp224r1"
+      - "P-192"
+      - "secp192r1"
+    enabled: false
+    source: cnsa-2.0
+    references:
+      - https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF
+
+  - rule_id: cnsa20-sha384-min
+    name: CNSA 2.0 requires SHA-384 or stronger
+    description: >
+      CNSA 2.0 specifies SHA-384 as the minimum hash function. SHA-256 and weaker
+      hashes do not meet CNSA 2.0 requirements.
+    finding_type: crypto_weak_algorithm
+    default_severity: LOW
+    match_name_patterns: ["SHA-256", "SHA256", "SHA-224", "SHA224", "SHA-1", "SHA1", "MD5"]
+    match_primitive: hash
+    enabled: false
+    source: cnsa-2.0
+    references:
+      - https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF

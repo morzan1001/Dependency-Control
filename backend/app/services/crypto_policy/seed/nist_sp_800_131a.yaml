@@ -1,5 +1,8 @@
-# NIST SP 800-131A Rev. 3 (Transitioning the Use of Cryptographic Algorithms and Key Lengths)
+# NIST SP 800-131A Rev. 3 — Transitioning the Use of Cryptographic Algorithms and Key Lengths
 # https://csrc.nist.gov/pubs/sp/800/131/a/r3/final
+#
+# These rules form the default enabled baseline. BSI and CNSA rules that cover
+# the same weakness are disabled to avoid duplicate findings.
 
 rules:
   - rule_id: nist-131a-md5
@@ -28,13 +31,39 @@ rules:
     source: nist-sp-800-131a
 
   - rule_id: nist-131a-des
-    name: DES and 2-key 3DES are disallowed
-    description: DES (56-bit) and 2-key Triple-DES are disallowed.
+    name: DES is disallowed
+    description: DES (56-bit) and 2-key Triple-DES are disallowed per NIST SP 800-131A.
     finding_type: crypto_weak_algorithm
     default_severity: HIGH
-    match_name_patterns: ["DES", "3DES", "TripleDES"]
+    match_name_patterns: ["DES"]
     match_primitive: block-cipher
     source: nist-sp-800-131a
+
+  - rule_id: nist-131a-3des-disallowed
+    name: 3DES (TDEA) is disallowed
+    description: >
+      NIST withdrew TDEA (Triple DES) in 2023. 3DES is disallowed for all new
+      applications and should be replaced by AES.
+    finding_type: crypto_weak_algorithm
+    default_severity: HIGH
+    match_name_patterns: ["3DES", "TripleDES", "TDEA", "3-DES"]
+    match_primitive: block-cipher
+    source: nist-sp-800-131a
+    references:
+      - https://csrc.nist.gov/pubs/nistir/8408/final
+
+  - rule_id: nist-131a-dsa-deprecated
+    name: DSA is disallowed for new use
+    description: >
+      NIST SP 800-131A Rev. 3 disallows DSA for new digital signature generation.
+      Existing deployments should migrate to ECDSA or RSA.
+    finding_type: crypto_weak_algorithm
+    default_severity: MEDIUM
+    match_name_patterns: ["DSA"]
+    match_primitive: signature
+    source: nist-sp-800-131a
+    references:
+      - https://csrc.nist.gov/pubs/sp/800/131/a/r3/final
 
   - rule_id: nist-131a-rsa-min-2048
     name: RSA keys shorter than 2048 bits are disallowed
@@ -48,9 +77,20 @@ rules:
     match_min_key_size_bits: 2048
     source: nist-sp-800-131a
 
+  - rule_id: nist-131a-dh-min-2048
+    name: DH group size must be at least 2048 bits
+    description: >
+      NIST SP 800-131A requires finite-field Diffie-Hellman (and DHE) groups of
+      at least 2048 bits. Groups below this size are disallowed for key agreement.
+    finding_type: crypto_weak_key
+    default_severity: HIGH
+    match_name_patterns: ["DH", "DHE", "FFDH", "Diffie-Hellman"]
+    match_min_key_size_bits: 2048
+    source: nist-sp-800-131a
+
   - rule_id: nist-131a-aes-min-128
     name: AES keys below 128 bits are not compliant
-    description: AES keys must be 128, 192, or 256 bits.
+    description: AES keys must be 128, 192, or 256 bits per NIST SP 800-131A.
     finding_type: crypto_weak_key
     default_severity: HIGH
     match_name_patterns: ["AES"]

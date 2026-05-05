@@ -1,29 +1,163 @@
 # BSI TR-02102-1 Cryptographic Mechanisms: Recommendations and Key Lengths
 # https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html
+#
+# Overlap policy: rules covering the same weakness as an enabled NIST rule are
+# disabled by default to avoid duplicate findings. Enable them explicitly when
+# targeting BSI compliance.
 
 rules:
+  # ── Already covered by NIST (disabled to avoid duplicate findings) ─────────
+
   - rule_id: bsi-02102-sha1-deprecated
     name: BSI deprecates SHA-1 for all uses
-    description: BSI TR-02102-1 considers SHA-1 non-recommended as of 2024.
+    description: BSI TR-02102-1 considers SHA-1 non-recommended as of 2024. Also covered by NIST SP 800-131A.
     finding_type: crypto_weak_algorithm
     default_severity: MEDIUM
     match_name_patterns: ["SHA-1", "SHA1"]
     match_primitive: hash
+    enabled: false
     source: bsi-tr-02102
+
+  - rule_id: bsi-02102-md5
+    name: MD5 is disallowed
+    description: MD5 is cryptographically broken. BSI TR-02102-1 disallows MD5 for any security purpose. Also covered by NIST SP 800-131A.
+    finding_type: crypto_weak_algorithm
+    default_severity: HIGH
+    match_name_patterns: ["MD5", "MD-5"]
+    match_primitive: hash
+    enabled: false
+    source: bsi-tr-02102
+
+  - rule_id: bsi-02102-des
+    name: DES is disallowed
+    description: DES (56-bit) provides no meaningful security. Also covered by NIST SP 800-131A.
+    finding_type: crypto_weak_algorithm
+    default_severity: HIGH
+    match_name_patterns: ["DES"]
+    match_primitive: block-cipher
+    enabled: false
+    source: bsi-tr-02102
+
+  - rule_id: bsi-02102-3des
+    name: 3DES (Triple-DES) is deprecated
+    description: BSI TR-02102-1 no longer recommends 3DES. NIST withdrew TDEA in 2023.
+    finding_type: crypto_weak_algorithm
+    default_severity: HIGH
+    match_name_patterns: ["3DES", "TripleDES", "TDEA", "3-DES"]
+    match_primitive: block-cipher
+    enabled: false
+    source: bsi-tr-02102
+
+  - rule_id: bsi-02102-dsa-deprecated
+    name: DSA is deprecated
+    description: DSA provides no advantage over ECDSA and is considered legacy. Also covered by NIST SP 800-131A.
+    finding_type: crypto_weak_algorithm
+    default_severity: MEDIUM
+    match_name_patterns: ["DSA"]
+    match_primitive: signature
+    enabled: false
+    source: bsi-tr-02102
+
+  - rule_id: bsi-02102-dh-min-2000
+    name: DH group size must be at least 2000 bits
+    description: >
+      BSI TR-02102-1 requires finite-field Diffie-Hellman groups of at least 2000 bits.
+      NIST SP 800-131A requires 2048 bits, which is stricter — enable the NIST rule instead.
+    finding_type: crypto_weak_key
+    default_severity: HIGH
+    match_name_patterns: ["DH", "DHE", "FFDH", "Diffie-Hellman"]
+    match_min_key_size_bits: 2000
+    enabled: false
+    source: bsi-tr-02102
+
+  # ── BSI-specific rules (no direct NIST equivalent in the seed) ────────────
 
   - rule_id: bsi-02102-rc4
     name: RC4 is disallowed
-    description: RC4 has known biases and is not recommended.
+    description: RC4 has known statistical biases and key-scheduling weaknesses. BSI TR-02102-1 explicitly prohibits RC4.
     finding_type: crypto_weak_algorithm
     default_severity: HIGH
     match_name_patterns: ["RC4", "ARCFOUR"]
     match_primitive: stream-cipher
+    enabled: true
     source: bsi-tr-02102
 
   - rule_id: bsi-02102-tls-min-12
     name: TLS versions below 1.2 are disallowed
-    description: TLS 1.0 and 1.1 are non-compliant.
+    description: TLS 1.0 and 1.1 are non-compliant per BSI TR-02102-2. Known attacks include POODLE, BEAST, and CRIME.
     finding_type: crypto_weak_algorithm
     default_severity: HIGH
     match_protocol_versions: ["TLS 1.0", "TLS 1.1", "tls 1.0", "tls 1.1", "tls/1.0", "tls/1.1"]
+    enabled: true
+    source: bsi-tr-02102
+
+  # ── BSI-strict opt-in rules (disabled; enable for full BSI compliance) ─────
+
+  - rule_id: bsi-02102-rsa-min-3000
+    name: BSI requires RSA keys of at least 3000 bits from 2024 onwards
+    description: >
+      BSI TR-02102-1 (2024 edition) recommends RSA key sizes of at least 3000 bits
+      for new applications. This is stricter than the NIST baseline of 2048 bits.
+      Enable this rule to enforce BSI's long-term security requirement.
+    finding_type: crypto_weak_key
+    default_severity: MEDIUM
+    match_name_patterns: ["RSA"]
+    match_primitive: pke
+    match_min_key_size_bits: 3000
+    enabled: false
+    source: bsi-tr-02102
+    references:
+      - https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html
+
+  - rule_id: bsi-02102-ecdh-min-250
+    name: ECDH/ECDSA key size must be at least 250 bits
+    description: >
+      BSI TR-02102-1 requires ECC key sizes equivalent to at least 250-bit security.
+      P-224 and smaller curves do not meet this requirement.
+    finding_type: crypto_weak_key
+    default_severity: HIGH
+    match_name_patterns: ["ECDH", "ECDSA", "EC-DSA", "ECDHE"]
+    match_min_key_size_bits: 250
+    enabled: false
+    source: bsi-tr-02102
+    references:
+      - https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html
+
+  - rule_id: bsi-02102-ecc-weak-curves
+    name: ECC curve is too short for BSI compliance
+    description: >
+      BSI TR-02102-1 only allows curves with at least 250-bit security.
+      Curves such as P-192, secp192k1, P-224, secp224k1, brainpoolP192r1, and
+      brainpoolP224r1 do not meet this threshold.
+    finding_type: crypto_weak_key
+    default_severity: HIGH
+    match_curves:
+      - "P-192"
+      - "secp192r1"
+      - "secp192k1"
+      - "prime192v1"
+      - "P-224"
+      - "secp224r1"
+      - "secp224k1"
+      - "brainpoolP160r1"
+      - "brainpoolP160t1"
+      - "brainpoolP192r1"
+      - "brainpoolP192t1"
+      - "brainpoolP224r1"
+      - "brainpoolP224t1"
+    enabled: false
+    source: bsi-tr-02102
+    references:
+      - https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html
+
+  - rule_id: bsi-02102-sha224-not-recommended
+    name: SHA-224 is not recommended by BSI
+    description: >
+      BSI TR-02102-1 recommends SHA-256 as the minimum hash function for new applications.
+      SHA-224 is no longer recommended despite having no known practical weakness.
+    finding_type: crypto_weak_algorithm
+    default_severity: LOW
+    match_name_patterns: ["SHA-224", "SHA224"]
+    match_primitive: hash
+    enabled: false
     source: bsi-tr-02102
