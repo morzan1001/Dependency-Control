@@ -66,6 +66,11 @@ class SystemSettingsBase(BaseModel):
     global_rescan_enabled: bool = False
     global_rescan_interval: int = 24  # Hours
 
+    # Crypto policy enforcement: "project" (allow project overrides) or "global"
+    # (enforce system policy for every project, ignoring overrides at scan time
+    # and rejecting writes).
+    crypto_policy_mode: str = "project"
+
     # Chat / AI Assistant — feature flag is deployment-time (settings.CHAT_ENABLED)
     chat_rate_limit_per_minute: int = 10
     chat_rate_limit_per_hour: int = 60
