@@ -59,16 +59,19 @@ def create_mock_db(collection_map=None):
         collection_map: Dict mapping collection names to mock collections.
     """
     db = MagicMock()
-    col_map = collection_map or {}
+    col_map = dict(collection_map or {})
     for name, coll in col_map.items():
         setattr(db, name, coll)
 
     # BaseRepository uses db[collection_name] (dict-style), not db.collection_name.
-    # Make both access patterns return the same mock collection.
+    # Cache fallbacks so repeat lookups for the same key return the same mock —
+    # otherwise assertions made on the first access can't see calls made on later
+    # accesses for the same collection.
     def _getitem(key):
-        if key in col_map:
-            return col_map[key]
-        return create_mock_collection()
+        if key not in col_map:
+            col_map[key] = create_mock_collection()
+            setattr(db, key, col_map[key])
+        return col_map[key]
 
     db.__getitem__ = MagicMock(side_effect=_getitem)
     return db

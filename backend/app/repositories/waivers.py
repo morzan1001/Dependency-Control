@@ -11,10 +11,10 @@ from app.models.waiver import Waiver
 _COL = "waivers"
 
 
-def _non_expired_filter(field: str = "expiration_date", now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Return a MongoDB $or clause matching documents where `field` is absent, null, or in the future."""
+def _non_expired_filter(now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Return a MongoDB $or clause matching waivers whose expiration_date is absent, null, or in the future."""
     ts = now or datetime.now(timezone.utc)
-    return {"$or": [{field: {"$exists": False}}, {field: None}, {field: {"$gt": ts}}]}
+    return {"$or": [{"expiration_date": {"$exists": False}}, {"expiration_date": None}, {"expiration_date": {"$gt": ts}}]}
 
 
 class WaiverRepository:
@@ -136,7 +136,7 @@ class WaiverRepository:
 
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find(query)
-            docs = await cursor.to_list(length=10000)
+            docs = await cursor.to_list(None)
         return [Waiver(**doc) for doc in docs]
 
     async def find_by_finding(self, project_id: str, finding_id: str) -> Optional[Waiver]:

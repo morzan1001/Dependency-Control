@@ -34,20 +34,6 @@ class UserRepository(BaseRepository[User]):
         with track_db_operation(self.collection_name, "find_one"):
             return await self.collection.find_one({"permissions": "system:manage"})
 
-    async def find_many(
-        self,
-        query: Dict[str, Any],
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "username",
-        sort_order: int = 1,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[User]:
-        with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
-            docs = await cursor.to_list(limit)
-        return self._to_model_list(docs)
-
     async def find_by_ids(self, user_ids: List[str]) -> List[Dict[str, Any]]:
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find({"_id": {"$in": user_ids}})

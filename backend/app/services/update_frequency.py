@@ -17,8 +17,18 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 # Limit concurrent per-project computations in the comparison endpoint to
-# avoid firing many large MongoDB queries simultaneously.
-_COMPARISON_SEMAPHORE = asyncio.Semaphore(3)
+# avoid firing many large MongoDB queries simultaneously. Lazy-init so the
+# semaphore binds to whichever event loop is actually running (matters for
+# pytest-asyncio tests that create a fresh loop per test).
+_COMPARISON_CONCURRENCY = 3
+_comparison_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_comparison_semaphore() -> asyncio.Semaphore:
+    global _comparison_semaphore
+    if _comparison_semaphore is None:
+        _comparison_semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
+    return _comparison_semaphore
 
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -401,8 +411,22 @@ async def compute_update_frequency(
     ever_outdated: set = set()
     ever_resolved: set = set()
 
-    # First scan: no events yet, just bootstrap outdated tracking
+    async def _load_scan_deps(scan_id: str) -> Dict[str, Dict[str, str]]:
+        docs = await dep_repo.find_all({"scan_id": scan_id}, projection=_DEP_PROJECTION)
+        return _pregroup_deps_by_scan(docs).get(scan_id, {})
+
+    def _accumulate_types(deps: Dict[str, Dict[str, str]]) -> None:
+        for name, info in deps.items():
+            if name not in dep_type_map:
+                dep_type_map[name] = info.get("type", "unknown")
+
+    # Bootstrap with the first scan: no pair to compare yet, but we still need
+    # its deps so the next iteration can use them as `prev_deps` without
+    # reloading. Each scan is fetched exactly once across the whole loop.
     first_scan = completed_scans[0]
+    prev_deps = await _load_scan_deps(first_scan["_id"])
+    _accumulate_types(prev_deps)
+
     first_outdated = outdated_by_scan.get(first_scan["_id"], set())
     for pkg in first_outdated:
         package_outdated_counts[pkg] += 1
@@ -411,22 +435,12 @@ async def compute_update_frequency(
         _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(first_outdated))
     )
 
-    # Process each consecutive pair — load only 2 scans' deps at a time
     for i in range(1, len(completed_scans)):
         prev_scan = completed_scans[i - 1]
         curr_scan = completed_scans[i]
 
-        pair_deps = await dep_repo.find_all(
-            {"scan_id": {"$in": [prev_scan["_id"], curr_scan["_id"]]}},
-            projection=_DEP_PROJECTION,
-        )
-        deps_by_scan = _pregroup_deps_by_scan(pair_deps)
-
-        # Accumulate type info (used later for slowest-packages lookup)
-        for scan_deps in deps_by_scan.values():
-            for name, info in scan_deps.items():
-                if name not in dep_type_map:
-                    dep_type_map[name] = info.get("type", "unknown")
+        curr_deps = await _load_scan_deps(curr_scan["_id"])
+        _accumulate_types(curr_deps)
 
         curr_outdated = outdated_by_scan.get(curr_scan["_id"], set())
         prev_outdated = outdated_by_scan.get(prev_scan["_id"], set())
@@ -436,7 +450,7 @@ async def compute_update_frequency(
             ever_outdated.add(pkg)
 
         events = _compare_scan_pair(
-            deps_by_scan,
+            {prev_scan["_id"]: prev_deps, curr_scan["_id"]: curr_deps},
             prev_scan["_id"],
             prev_scan["created_at"],
             curr_scan["_id"],
@@ -452,6 +466,9 @@ async def compute_update_frequency(
         scan_timeline.append(
             _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], events, len(curr_outdated))
         )
+
+        # Roll forward: this iteration's curr is the next iteration's prev.
+        prev_deps = curr_deps
 
     return _aggregate_metrics(
         all_update_events,
@@ -477,16 +494,17 @@ async def compute_update_frequency_comparison(
     """
     Compute update frequency comparison across multiple projects.
 
-    At most _COMPARISON_SEMAPHORE concurrent per-project computations run at
+    At most _COMPARISON_CONCURRENCY concurrent per-project computations run at
     once to avoid saturating MongoDB with simultaneous large queries.
     """
+    semaphore = _get_comparison_semaphore()
 
     async def _compute_single(project: Dict[str, Any]) -> Optional[ProjectUpdateSummary]:
         project_id = project.get("_id") or project.get("id", "")
         project_name = project.get("name", "")
         team_name = project.get("team_name")
 
-        async with _COMPARISON_SEMAPHORE:
+        async with semaphore:
             try:
                 metrics = await compute_update_frequency(
                     project_id=project_id,
