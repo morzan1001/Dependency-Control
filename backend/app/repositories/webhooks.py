@@ -83,7 +83,7 @@ class WebhookRepository(BaseRepository[Webhook]):
         if team_id:
             or_conditions.append({"team_id": team_id, "is_active": True})
         cursor = self.collection.find({"$or": or_conditions})
-        docs = await cursor.to_list(None)
+        docs = await cursor.to_list(200)
         return self._to_model_list(docs)
 
     async def find_by_event(
@@ -104,5 +104,5 @@ class WebhookRepository(BaseRepository[Webhook]):
             query["team_id"] = None
 
         cursor = self.collection.find(query)
-        docs = await cursor.to_list(None)
+        docs = await cursor.to_list(200)
         return self._to_model_list(docs)

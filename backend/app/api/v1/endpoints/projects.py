@@ -1499,13 +1499,13 @@ async def delete_project(
     invitation_repo = InvitationRepository(db)
     callgraph_repo = CallgraphRepository(db)
 
-    # 1. Find all scans and collect GridFS file IDs
-    scans = await scan_repo.find_by_project(project_id, limit=10000)
-    scan_ids = [doc["_id"] for doc in scans]
+    # 1. Collect all scan IDs and GridFS file IDs by streaming (avoids loading all scans at once)
+    scan_ids = []
     gridfs_ids = []
-
-    for scan in scans:
-        # Collect GridFS file IDs from sbom_refs
+    async for scan in scan_repo.iterate(
+        {"project_id": project_id}, {"_id": 1, "sbom_refs": 1}
+    ):
+        scan_ids.append(scan["_id"])
         for ref in scan.get("sbom_refs", []):
             file_id = ref.get("file_id") or ref.get("gridfs_id")
             if file_id:

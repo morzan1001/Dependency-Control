@@ -81,7 +81,7 @@ class TeamRepository:
     async def find_by_member(self, user_id: str) -> List[Team]:
         """Find teams where user is a member. Returns Pydantic models."""
         cursor = self.collection.find({_MEMBERS_USER_ID: user_id})
-        docs = await cursor.to_list(None)
+        docs = await cursor.to_list(500)
         return [Team(**doc) for doc in docs]
 
     async def add_member(self, team_id: str, member_data: Dict[str, Any]) -> None:

@@ -151,7 +151,7 @@ async def _handle_global_broadcast(
     forced_channels: Any,
 ) -> tuple[int, int]:
     """Handle global broadcast. Returns (unique_user_count, project_count)."""
-    users = await user_repo.find_many({"is_active": True}, limit=10000)
+    users = await user_repo.find_many({"is_active": True}, limit=2000)
     if users and not payload.dry_run:
         _queue_announcement(
             background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels
@@ -182,7 +182,7 @@ async def _handle_teams_broadcast(
     if not user_ids:
         return 0, 0
 
-    users = await user_repo.find_many({"_id": {"$in": list(user_ids)}, "is_active": True}, limit=10000)
+    users = await user_repo.find_many({"_id": {"$in": list(user_ids)}, "is_active": True}, limit=2000)
     if users and not payload.dry_run:
         _queue_announcement(
             background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels
@@ -337,7 +337,7 @@ async def _notify_advisory_admins(
             if member.role == "admin":
                 all_admin_ids.add(member.user_id)
 
-    admin_users = await user_repo.find_many({"_id": {"$in": list(all_admin_ids)}, "is_active": True}, limit=10000)
+    admin_users = await user_repo.find_many({"_id": {"$in": list(all_admin_ids)}, "is_active": True}, limit=2000)
     users_dict = {str(u.id): u for u in admin_users}
 
     # Group projects by admin members

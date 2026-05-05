@@ -231,14 +231,11 @@ class ProjectRepository:
         self,
         query: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, int]] = None,
+        limit: int = 5000,
     ) -> List[Dict[str, Any]]:
-        """Find all projects matching query. Returns raw dicts (for projections).
-
-        Consider using iterate() or iterate_all() for large result sets
-        to avoid loading all documents into memory at once.
-        """
+        """Find projects matching query. Returns raw dicts (for projections)."""
         cursor = self.collection.find(query or {}, projection)
-        return await cursor.to_list(None)
+        return await cursor.to_list(limit)
 
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
         with track_db_operation(_COL, "count"):

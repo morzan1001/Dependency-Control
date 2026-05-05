@@ -53,7 +53,7 @@ class UserRepository(BaseRepository[User]):
     async def find_by_ids(self, user_ids: List[str]) -> List[Dict[str, Any]]:
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find({"_id": {"$in": user_ids}})
-            return await cursor.to_list(None)
+            return await cursor.to_list(2000)
 
     async def exists_by_username(self, username: str) -> bool:
         with track_db_operation(self.collection_name, "find_one"):
