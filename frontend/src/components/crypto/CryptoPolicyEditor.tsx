@@ -14,13 +14,27 @@ import type {
 import type { CryptoPrimitive } from "@/types/crypto";
 
 interface Props {
+  /**
+   * Rules to display. In merged mode this is the *effective* list (system
+   * rules with overrides applied); the editor diffs against `systemRules`
+   * on save to emit only the override delta.
+   */
   initialRules: CryptoRule[];
+  /**
+   * When provided, the editor renders a Status column (System / Overridden
+   * / Custom), exposes a "Revert" action per overridden row, and `onSave`
+   * receives only the rules that differ from the system baseline.
+   */
+  systemRules?: CryptoRule[];
   onSave: (rules: CryptoRule[]) => Promise<void>;
   onResetOverride?: () => Promise<void>;
   readOnly?: boolean;
   title?: string;
   subtitle?: string;
 }
+
+type RuleStatus = "system" | "overridden" | "custom";
+type StatusFilter = "all" | RuleStatus;
 
 const SEVERITIES: Severity[] = [
   "CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO", "UNKNOWN",
@@ -69,18 +83,77 @@ function emptyRule(): CryptoRule {
   };
 }
 
+function arraysEqual<T>(a: T[], b: T[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
+function rulesEqual(a: CryptoRule, b: CryptoRule): boolean {
+  return (
+    a.name === b.name
+    && a.description === b.description
+    && a.finding_type === b.finding_type
+    && a.default_severity === b.default_severity
+    && a.match_primitive === b.match_primitive
+    && a.match_min_key_size_bits === b.match_min_key_size_bits
+    && a.quantum_vulnerable === b.quantum_vulnerable
+    && a.enabled === b.enabled
+    && a.source === b.source
+    && arraysEqual(a.match_name_patterns, b.match_name_patterns)
+    && arraysEqual(a.match_curves, b.match_curves)
+    && arraysEqual(a.match_protocol_versions, b.match_protocol_versions)
+    && arraysEqual(a.references, b.references)
+  );
+}
+
+function getRuleStatus(rule: CryptoRule, systemMap: Map<string, CryptoRule>): RuleStatus {
+  const sys = systemMap.get(rule.rule_id);
+  if (!sys) return "custom";
+  return rulesEqual(rule, sys) ? "system" : "overridden";
+}
+
+function StatusBadge({ status }: { status: RuleStatus }) {
+  const styles: Record<RuleStatus, string> = {
+    system: "bg-muted text-muted-foreground",
+    overridden: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
+    custom: "bg-blue-100 text-blue-900 dark:bg-blue-900/40 dark:text-blue-200",
+  };
+  const labels: Record<RuleStatus, string> = {
+    system: "System default",
+    overridden: "Overridden",
+    custom: "Custom",
+  };
+  return (
+    <span className={`inline-block text-xs px-2 py-0.5 rounded-full ${styles[status]}`}>
+      {labels[status]}
+    </span>
+  );
+}
+
 export function CryptoPolicyEditor({
-  initialRules, onSave, onResetOverride, readOnly, title, subtitle,
+  initialRules, systemRules, onSave, onResetOverride, readOnly, title, subtitle,
 }: Props) {
   const [rules, setRules] = useState<CryptoRule[]>(initialRules);
   const [addOpen, setAddOpen] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<CryptoPolicySource | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [saving, setSaving] = useState(false);
 
-  const visibleRules = useMemo(
-    () => rules.filter(r => sourceFilter === "all" || r.source === sourceFilter),
-    [rules, sourceFilter]
+  const mergedMode = systemRules !== undefined;
+  const systemMap = useMemo(
+    () => new Map((systemRules ?? []).map(r => [r.rule_id, r])),
+    [systemRules],
   );
+
+  const visibleRules = useMemo(() => {
+    return rules.filter(r => {
+      if (sourceFilter !== "all" && r.source !== sourceFilter) return false;
+      if (mergedMode && statusFilter !== "all" && getRuleStatus(r, systemMap) !== statusFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [rules, sourceFilter, statusFilter, mergedMode, systemMap]);
 
   const updateRule = (idx: number, patch: Partial<CryptoRule>) => {
     setRules(rs => rs.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
@@ -90,9 +163,25 @@ export function CryptoPolicyEditor({
     setRules(rs => rs.filter(r => r.rule_id !== rule_id));
   };
 
+  const revertRule = (rule_id: string) => {
+    const sys = systemMap.get(rule_id);
+    if (!sys) return;
+    setRules(rs => rs.map(r => (r.rule_id === rule_id ? { ...sys } : r)));
+  };
+
   const handleSave = async () => {
     setSaving(true);
-    try { await onSave(rules); } finally { setSaving(false); }
+    try {
+      // In merged mode emit only the override delta (rules that differ from
+      // the system baseline). In standalone mode emit the rules as-is — the
+      // system-policy admin page uses that.
+      const toEmit = mergedMode
+        ? rules.filter(r => getRuleStatus(r, systemMap) !== "system")
+        : rules;
+      await onSave(toEmit);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -104,7 +193,7 @@ export function CryptoPolicyEditor({
         </div>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <Select
           value={sourceFilter}
           onValueChange={(v) => setSourceFilter(v as typeof sourceFilter)}
@@ -115,18 +204,32 @@ export function CryptoPolicyEditor({
             {SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
+        {mergedMode && (
+          <Select
+            value={statusFilter}
+            onValueChange={(v) => setStatusFilter(v as StatusFilter)}
+          >
+            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="system">System default</SelectItem>
+              <SelectItem value="overridden">Overridden</SelectItem>
+              <SelectItem value="custom">Custom</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
         {!readOnly && (
           <Button size="sm" onClick={() => setAddOpen(true)}>Add custom rule</Button>
         )}
         <div className="flex-1" />
         {!readOnly && onResetOverride && (
           <Button variant="outline" size="sm" onClick={onResetOverride}>
-            Reset override
+            Reset all overrides
           </Button>
         )}
         {!readOnly && (
           <Button onClick={handleSave} disabled={saving}>
-            {saving ? "Saving\u2026" : "Save"}
+            {saving ? "Saving…" : "Save"}
           </Button>
         )}
       </div>
@@ -142,12 +245,14 @@ export function CryptoPolicyEditor({
               <th className="p-2 w-32">Min key size</th>
               <th className="p-2">Name patterns</th>
               <th className="p-2 w-32">Source</th>
+              {mergedMode && <th className="p-2 w-32">Status</th>}
               {!readOnly && <th className="p-2 w-24" />}
             </tr>
           </thead>
           <tbody>
             {visibleRules.map((r) => {
               const idx = rules.findIndex(x => x.rule_id === r.rule_id);
+              const status = mergedMode ? getRuleStatus(r, systemMap) : "system";
               return (
                 <tr key={r.rule_id} className="border-t">
                   <td className="p-2">
@@ -199,7 +304,7 @@ export function CryptoPolicyEditor({
                       onChange={(e) => updateRule(idx, {
                         match_min_key_size_bits: e.target.value === "" ? null : Number(e.target.value),
                       })}
-                      placeholder="\u2014"
+                      placeholder="—"
                       className="w-24"
                     />
                   </td>
@@ -214,9 +319,18 @@ export function CryptoPolicyEditor({
                     />
                   </td>
                   <td className="p-2 font-mono text-xs">{r.source}</td>
+                  {mergedMode && (
+                    <td className="p-2"><StatusBadge status={status} /></td>
+                  )}
                   {!readOnly && (
                     <td className="p-2 text-right">
-                      {r.source === "custom" && (
+                      {mergedMode && status === "overridden" && (
+                        <Button variant="outline" size="sm"
+                          onClick={() => revertRule(r.rule_id)}>
+                          Revert
+                        </Button>
+                      )}
+                      {(!mergedMode || status === "custom") && r.source === "custom" && (
                         <Button variant="outline" size="sm"
                           onClick={() => removeRule(r.rule_id)}>
                           Remove

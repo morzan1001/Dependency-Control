@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Info, Lock } from "lucide-react";
 import {
-  getProjectPolicy, putProjectPolicy, deleteProjectPolicy, getEffectivePolicy,
+  putProjectPolicy, deleteProjectPolicy, getEffectivePolicy,
 } from "@/api/cryptoPolicy";
 import { CryptoPolicyEditor } from "@/components/crypto/CryptoPolicyEditor";
 import { PolicyAuditTimeline } from "@/components/audit/PolicyAuditTimeline";
@@ -19,10 +19,6 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
   const effective = useQuery({
     queryKey: ["crypto-policy-effective", projectId],
     queryFn: () => getEffectivePolicy(projectId),
-  });
-  const override = useQuery({
-    queryKey: ["crypto-policy-override", projectId],
-    queryFn: () => getProjectPolicy(projectId),
   });
 
   const save = useMutation({
@@ -44,21 +40,22 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
     },
   });
 
-  if (effective.isLoading || override.isLoading) return <div>Loading…</div>;
-  if (effective.isError || override.isError || !effective.data || !override.data) {
+  if (effective.isLoading) return <div>Loading…</div>;
+  if (effective.isError || !effective.data) {
     return <div className="p-6 text-destructive">Failed to load crypto policy.</div>;
   }
 
   const lockedByAdmin = effective.data.override_locked;
-  const overrideEditable = canEdit && !lockedByAdmin;
+  const editable = canEdit && !lockedByAdmin;
+  const hasOverride = (effective.data.override_version ?? 0) > 0;
 
   let overrideStatus: string;
   if (!effective.data.override_version) {
-    overrideStatus = " (no override active)";
+    overrideStatus = "no override active";
   } else if (lockedByAdmin) {
-    overrideStatus = ` (override version ${effective.data.override_version} stored but ignored)`;
+    overrideStatus = `override version ${effective.data.override_version} stored but ignored`;
   } else {
-    overrideStatus = ` + override version ${effective.data.override_version}`;
+    overrideStatus = `override version ${effective.data.override_version}`;
   }
 
   return (
@@ -66,10 +63,8 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
       <CardHeader>
         <CardTitle>Cryptographic Policy</CardTitle>
         <CardDescription>
-          Effective policy: system version {effective.data.system_version}
-          {overrideStatus}
-          {" — "}
-          {effective.data.rules.length} rule{effective.data.rules.length === 1 ? "" : "s"} applied
+          System version {effective.data.system_version} · {overrideStatus} · {effective.data.rules.length}{" "}
+          rule{effective.data.rules.length === 1 ? "" : "s"} applied
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -78,32 +73,20 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
             <Lock className="h-4 w-4 mt-0.5 shrink-0" />
             <p>
               An administrator has enforced the system crypto policy globally.
-              Project overrides are read-only here and not applied during scans.
+              Project overrides are read-only and not applied during scans.
               Saved override rules are kept on disk and re-apply automatically if the global enforcement is later disabled.
             </p>
           </div>
         )}
 
         <CryptoPolicyEditor
-          title="Currently in effect"
-          subtitle="Read-only view of every rule used when scanning this project. Combines the system policy with the project override (unless globally enforced)."
+          subtitle="Every rule that applies when scanning this project. Edit a system rule to override it; revert or remove to drop the override."
           initialRules={effective.data.rules}
-          readOnly
-          onSave={async () => { /* read-only */ }}
-        />
-
-        <CryptoPolicyEditor
-          title="Project override"
-          subtitle={
-            lockedByAdmin
-              ? "Stored override rules. These do not apply while global enforcement is active."
-              : "Rules added or edited here apply on top of the system policy for this project only."
-          }
-          initialRules={override.data.rules}
-          readOnly={!overrideEditable}
+          systemRules={effective.data.system_rules}
+          readOnly={!editable}
           onSave={async (rules) => { await save.mutateAsync(rules); }}
           onResetOverride={
-            overrideEditable && override.data.rules.length > 0
+            editable && hasOverride
               ? async () => { await reset.mutateAsync(); }
               : undefined
           }
@@ -119,7 +102,7 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
         <PolicyAuditTimeline
           policyScope="project"
           projectId={projectId}
-          canRevert={overrideEditable}
+          canRevert={editable}
         />
       </CardContent>
     </Card>

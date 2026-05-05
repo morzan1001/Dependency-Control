@@ -183,4 +183,5 @@ async def get_effective_policy(
         "override_version": effective.override_version,
         "override_locked": effective.override_locked,
         "rules": [r.model_dump() for r in effective.rules],
+        "system_rules": [r.model_dump() for r in effective.system_rules],
     }
