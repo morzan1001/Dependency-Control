@@ -227,16 +227,6 @@ class ProjectRepository:
         docs = await cursor.to_list(limit)
         return [ProjectMinimal(**doc) for doc in docs]
 
-    async def find_all(
-        self,
-        query: Optional[Dict[str, Any]] = None,
-        projection: Optional[Dict[str, int]] = None,
-        limit: int = 5000,
-    ) -> List[Dict[str, Any]]:
-        """Find projects matching query. Returns raw dicts (for projections)."""
-        cursor = self.collection.find(query or {}, projection)
-        return await cursor.to_list(limit)
-
     async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})

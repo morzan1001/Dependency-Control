@@ -73,36 +73,3 @@ class WebhookRepository(BaseRepository[Webhook]):
     async def count_global(self) -> int:
         """Count global webhooks (both project_id and team_id are None)."""
         return await self.collection.count_documents({"project_id": None, "team_id": None})
-
-    async def find_active_for_project(self, project_id: str, team_id: Optional[str] = None) -> List[Webhook]:
-        """Find all active webhooks for a project (including team and global ones)."""
-        or_conditions: List[Dict[str, Any]] = [
-            {"project_id": project_id, "is_active": True},
-            {"project_id": None, "team_id": None, "is_active": True},
-        ]
-        if team_id:
-            or_conditions.append({"team_id": team_id, "is_active": True})
-        cursor = self.collection.find({"$or": or_conditions})
-        docs = await cursor.to_list(200)
-        return self._to_model_list(docs)
-
-    async def find_by_event(
-        self, project_id: Optional[str], event_type: str, team_id: Optional[str] = None
-    ) -> List[Webhook]:
-        query: Dict[str, Any] = {"events": event_type, "is_active": True}
-
-        if project_id:
-            or_conditions: List[Dict[str, Any]] = [
-                {"project_id": project_id},
-                {"project_id": None, "team_id": None},
-            ]
-            if team_id:
-                or_conditions.append({"team_id": team_id})
-            query["$or"] = or_conditions
-        else:
-            query["project_id"] = None
-            query["team_id"] = None
-
-        cursor = self.collection.find(query)
-        docs = await cursor.to_list(200)
-        return self._to_model_list(docs)
