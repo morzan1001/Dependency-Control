@@ -6,11 +6,11 @@ whether vulnerable code paths are actually reachable in the project.
 """
 
 import uuid
-from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.base import TimestampedModel
 from app.models.types import PyObjectId
 
 
@@ -45,7 +45,7 @@ class ModuleUsage(BaseModel):
     is_direct_dependency: bool = True  # vs transitive
 
 
-class Callgraph(BaseModel):
+class Callgraph(TimestampedModel):
     """Complete call graph data for a project."""
 
     id: PyObjectId = Field(
@@ -81,10 +81,6 @@ class Callgraph(BaseModel):
     total_imports: int = 0
     total_calls: int = 0
     analysis_duration_ms: Optional[int] = None
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(populate_by_name=True)
 

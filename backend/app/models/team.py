@@ -1,10 +1,10 @@
 import uuid
-from datetime import datetime, timezone
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES
+from app.models.base import TimestampedModel
 from app.models.types import PyObjectId
 
 
@@ -20,7 +20,7 @@ class TeamMember(BaseModel):
         return v
 
 
-class Team(BaseModel):
+class Team(TimestampedModel):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -31,7 +31,5 @@ class Team(BaseModel):
     gitlab_instance_id: Optional[str] = None
     gitlab_group_id: Optional[int] = None
     members: List[TeamMember] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

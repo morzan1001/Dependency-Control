@@ -2,14 +2,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
+from app.models.base import CreatedAtModel
 from app.models.finding import FindingType
 from app.models.types import PyObjectId
 
 
-class Waiver(BaseModel):
+class Waiver(CreatedAtModel):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -30,6 +31,5 @@ class Waiver(BaseModel):
     status: str = WAIVER_STATUS_ACCEPTED_RISK
     expiration_date: Optional[datetime] = None
     created_by: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

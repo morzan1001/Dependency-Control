@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.models.base import CreatedAtModel
 from app.models.finding import Finding
 from app.models.stats import Stats
 from app.models.types import PyObjectId
@@ -25,7 +26,7 @@ class ProjectMember(BaseModel):
         return v
 
 
-class Project(BaseModel):
+class Project(CreatedAtModel):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -36,7 +37,6 @@ class Project(BaseModel):
     team_id: Optional[str] = None
     members: List[ProjectMember] = Field(default_factory=list)
     api_key_hash: Optional[str] = Field(None, exclude=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     active_analyzers: List[str] = Field(default_factory=lambda: ["trivy", "osv", "license_compliance", "end_of_life"])
     stats: Optional[Stats] = None
     last_scan_at: Optional[datetime] = None
@@ -92,7 +92,7 @@ class Project(BaseModel):
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 
-class Scan(BaseModel):
+class Scan(CreatedAtModel):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -123,7 +123,6 @@ class Scan(BaseModel):
     # forces crypto analyzers for these even when no SBOM was attached.
     scan_type: Optional[str] = None
 
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = "pending"
     retry_count: int = 0
     worker_id: Optional[str] = None
@@ -153,7 +152,7 @@ class Scan(BaseModel):
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 
-class AnalysisResult(BaseModel):
+class AnalysisResult(CreatedAtModel):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -162,6 +161,5 @@ class AnalysisResult(BaseModel):
     scan_id: str
     analyzer_name: str
     result: Dict[str, Any]
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

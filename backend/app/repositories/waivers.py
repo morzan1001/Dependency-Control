@@ -1,5 +1,6 @@
 """Repository for waivers."""
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -8,6 +9,12 @@ from app.core.metrics import track_db_operation
 from app.models.waiver import Waiver
 
 _COL = "waivers"
+
+
+def _non_expired_filter(field: str = "expiration_date", now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Return a MongoDB $or clause matching documents where `field` is absent, null, or in the future."""
+    ts = now or datetime.now(timezone.utc)
+    return {"$or": [{field: {"$exists": False}}, {field: None}, {field: {"$gt": ts}}]}
 
 
 class WaiverRepository:
@@ -118,43 +125,14 @@ class WaiverRepository:
         Returns:
             List of validated Waiver model instances.
         """
-        from datetime import datetime, timezone
-
         now = datetime.now(timezone.utc)
 
-        if include_global:
-            # Include both project-specific and global waivers
-            query: Dict[str, Any] = {
-                "$and": [
-                    {
-                        "$or": [
-                            {"project_id": project_id},
-                            {"project_id": None},  # Global waivers
-                        ]
-                    },
-                    {
-                        "$or": [
-                            {"expiration_date": {"$exists": False}},
-                            {"expiration_date": None},
-                            {"expiration_date": {"$gt": now}},
-                        ]
-                    },
-                ]
-            }
-        else:
-            # Only project-specific waivers
-            query = {
-                "$and": [
-                    {"project_id": project_id},
-                    {
-                        "$or": [
-                            {"expiration_date": {"$exists": False}},
-                            {"expiration_date": None},
-                            {"expiration_date": {"$gt": now}},
-                        ]
-                    },
-                ]
-            }
+        project_filter = (
+            {"$or": [{"project_id": project_id}, {"project_id": None}]}
+            if include_global
+            else {"project_id": project_id}
+        )
+        query: Dict[str, Any] = {"$and": [project_filter, _non_expired_filter(now=now)]}
 
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find(query)

@@ -12,15 +12,16 @@ default 90).
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.models.base import CreatedAtModel
 from app.models.types import PyObjectId
 
 
-class MCPApiKey(BaseModel):
+class MCPApiKey(CreatedAtModel):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -30,7 +31,6 @@ class MCPApiKey(BaseModel):
     name: str  # user-supplied label, e.g. "Claude Desktop"
     prefix: str  # first 12 chars of the plaintext token, for UI identification
     token_hash: str  # sha256 of the full plaintext token
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime
     last_used_at: Optional[datetime] = None
     revoked_at: Optional[datetime] = None

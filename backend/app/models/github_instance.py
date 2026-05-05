@@ -1,13 +1,14 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.models.base import CreatedAtModel
 from app.models.types import PyObjectId
 
 
-class GitHubInstance(BaseModel):
+class GitHubInstance(CreatedAtModel):
     """
     Represents a configured GitHub instance (github.com or GitHub Enterprise Server).
 
@@ -47,7 +48,6 @@ class GitHubInstance(BaseModel):
     )
 
     # Metadata
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: Optional[datetime] = None
 

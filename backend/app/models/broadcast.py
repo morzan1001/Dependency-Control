@@ -1,13 +1,13 @@
 import uuid
-from datetime import datetime, timezone
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.models.base import CreatedAtModel
 from app.models.types import PyObjectId
 
 
-class Broadcast(BaseModel):
+class Broadcast(CreatedAtModel):
     id: PyObjectId = Field(
         default_factory=lambda: str(uuid.uuid4()),
         validation_alias="_id",
@@ -17,7 +17,6 @@ class Broadcast(BaseModel):
     target_type: str  # 'global', 'teams', 'advisory'
     subject: str
     message: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str  # user_id
 
     # Stats

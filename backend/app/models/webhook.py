@@ -3,11 +3,12 @@ Webhook model for MongoDB storage.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
 
+from app.models.base import CreatedAtModel
 from app.models.types import PyObjectId
 from app.services.webhooks.validation import (
     validate_webhook_events,
@@ -15,7 +16,7 @@ from app.services.webhooks.validation import (
 )
 
 
-class Webhook(BaseModel):
+class Webhook(CreatedAtModel):
     """
     Webhook configuration for event notifications.
 
@@ -52,7 +53,6 @@ class Webhook(BaseModel):
     headers: Optional[Dict[str, str]] = None
     is_active: bool = True
     webhook_type: Literal["generic", "teams"] = "generic"
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_triggered_at: Optional[datetime] = None
     last_failure_at: Optional[datetime] = None
 
