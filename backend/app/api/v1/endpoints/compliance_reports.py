@@ -16,12 +16,12 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 
 from bson import ObjectId
-from fastapi import BackgroundTasks, Depends, HTTPException, Query
+from fastapi import BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pydantic import BaseModel, Field
 
-from app.api.deps import get_current_active_user, get_database
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.core.constants import MAX_CONCURRENT_COMPLIANCE_REPORTS, WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED
 from app.models.compliance_report import ComplianceReport
@@ -60,8 +60,8 @@ def _status_str(value: Any) -> str:
 async def create_report(
     req: ReportRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> ReportAck:
     try:
         await ScopeResolver(db, current_user).resolve(
@@ -169,14 +169,14 @@ async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> Dict
 
 @router.get("/reports")
 async def list_reports(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     scope: Optional[str] = Query(None, pattern=_SCOPE_PATTERN),
     scope_id: Optional[str] = None,
     framework: Optional[ReportFramework] = None,
     status: Optional[ReportStatus] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     repo = ComplianceReportRepository(db)
     visibility = await _build_visibility_filter(db, current_user)
@@ -195,8 +195,8 @@ async def list_reports(
 @router.get("/reports/{report_id}")
 async def get_report(
     report_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> dict[str, Any]:
     r = await ComplianceReportRepository(db).get(report_id)
     if r is None:
@@ -210,8 +210,8 @@ async def get_report(
 @router.get("/reports/{report_id}/download")
 async def download_report(
     report_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> StreamingResponse:
     r = await ComplianceReportRepository(db).get(report_id)
     if r is None:
@@ -261,8 +261,8 @@ async def download_report(
 @router.delete("/reports/{report_id}", status_code=204)
 async def delete_report(
     report_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> None:
     repo = ComplianceReportRepository(db)
     r = await repo.get(report_id)

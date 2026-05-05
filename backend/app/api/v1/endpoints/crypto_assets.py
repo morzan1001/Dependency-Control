@@ -12,6 +12,8 @@ from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
 router = CustomAPIRouter(tags=["crypto-assets"])
 
+_ASSET_NOT_FOUND = "CryptoAsset not found"
+
 
 @router.get("/projects/{project_id}/crypto-assets")
 async def list_crypto_assets(
@@ -61,7 +63,7 @@ async def get_crypto_asset(
 
     asset = await CryptoAssetRepository(db).get(project_id, asset_id)
     if asset is None:
-        raise HTTPException(status_code=404, detail="CryptoAsset not found")
+        raise HTTPException(status_code=404, detail=_ASSET_NOT_FOUND)
     return asset.model_dump(by_alias=True)
 
 

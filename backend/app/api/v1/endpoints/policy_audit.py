@@ -9,10 +9,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
-from fastapi import Body, Depends, HTTPException, Query
+from fastapi import Body, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import get_current_active_user, get_database
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.core.config import settings
@@ -34,10 +34,10 @@ router = CustomAPIRouter(tags=["policy-audit"])
 
 @router.get("/crypto-policies/system/audit")
 async def list_system_audit(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     _require_admin(current_user)
     entries = await PolicyAuditRepository(db).list(
@@ -51,8 +51,8 @@ async def list_system_audit(
 @router.get("/crypto-policies/system/audit/{version}")
 async def get_system_audit_entry(
     version: int,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> dict[str, Any]:
     _require_admin(current_user)
     entry = await PolicyAuditRepository(db).get_by_version(
@@ -67,9 +67,9 @@ async def get_system_audit_entry(
 
 @router.post("/crypto-policies/system/revert")
 async def revert_system_policy(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     body: dict = Body(...),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     _require_admin(current_user)
     target_raw = body.get("target_version")
@@ -93,9 +93,9 @@ async def revert_system_policy(
 
 @router.delete("/crypto-policies/system/audit")
 async def prune_system_audit(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     before: str = Query(..., description="Delete entries older than this ISO date"),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     _require_admin(current_user)
     cutoff = _parse_datetime(before)
@@ -114,10 +114,10 @@ async def prune_system_audit(
 @router.get("/projects/{project_id}/crypto-policy/audit")
 async def list_project_audit(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role="viewer")
     entries = await PolicyAuditRepository(db).list(
@@ -133,8 +133,8 @@ async def list_project_audit(
 async def get_project_audit_entry(
     project_id: str,
     version: int,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role="viewer")
     entry = await PolicyAuditRepository(db).get_by_version(
@@ -150,9 +150,9 @@ async def get_project_audit_entry(
 @router.post("/projects/{project_id}/crypto-policy/revert")
 async def revert_project_policy(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     body: dict = Body(...),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     # Note: "owner" isn't a project role — PROJECT_ROLES = viewer|editor|admin.
     # The previous string crashed check_project_access with ValueError.
@@ -177,9 +177,9 @@ async def revert_project_policy(
 @router.delete("/projects/{project_id}/crypto-policy/audit")
 async def prune_project_audit(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     before: str = Query(...),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     # Same "owner" -> "admin" normalisation as revert_project_policy above.
     await check_project_access(project_id, current_user, db, required_role="admin")
@@ -199,10 +199,10 @@ async def prune_project_audit(
 @router.get("/projects/{project_id}/license-policy/audit")
 async def list_project_license_audit(
     project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> dict[str, Any]:
     """List license-policy audit entries for a project (viewer+ role)."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
@@ -220,8 +220,8 @@ async def list_project_license_audit(
 async def get_project_license_audit_entry(
     project_id: str,
     version: int,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncIOMotorDatabase = Depends(get_database),
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
 ) -> dict[str, Any]:
     """Fetch a single license-policy audit entry by version."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
