@@ -16,21 +16,6 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-# Limit concurrent per-project computations in the comparison endpoint to
-# avoid firing many large MongoDB queries simultaneously. Lazy-init so the
-# semaphore binds to whichever event loop is actually running (matters for
-# pytest-asyncio tests that create a fresh loop per test).
-_COMPARISON_CONCURRENCY = 3
-_comparison_semaphore: Optional[asyncio.Semaphore] = None
-
-
-def _get_comparison_semaphore() -> asyncio.Semaphore:
-    global _comparison_semaphore
-    if _comparison_semaphore is None:
-        _comparison_semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
-    return _comparison_semaphore
-
-
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -44,6 +29,20 @@ from app.schemas.analytics import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Limit concurrent per-project computations in the comparison endpoint to
+# avoid firing many large MongoDB queries simultaneously. Lazy-init so the
+# semaphore binds to whichever event loop is actually running (matters for
+# pytest-asyncio tests that create a fresh loop per test).
+_COMPARISON_CONCURRENCY = 3
+_comparison_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_comparison_semaphore() -> asyncio.Semaphore:
+    global _comparison_semaphore
+    if _comparison_semaphore is None:
+        _comparison_semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
+    return _comparison_semaphore
 
 # Regex for semver-like versions: X.Y.Z with optional pre-release
 _SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)(?:\.(\d+))?")

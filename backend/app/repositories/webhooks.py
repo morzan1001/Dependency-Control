@@ -60,7 +60,10 @@ class WebhookRepository(BaseRepository[Webhook]):
         sort_order: int = -1,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Webhook]:
-        cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
+        cursor = self.collection.find(query, projection)
+        if sort_by:
+            cursor = cursor.sort(sort_by, sort_order)
+        cursor = cursor.skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return self._to_model_list(docs)
 
