@@ -13,6 +13,7 @@ from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.crypto_policy import CryptoRule
 from app.schemas.policy_audit import PolicyAuditAction
 from app.services.audit.history import record_policy_change
@@ -100,6 +101,12 @@ async def put_project_policy(
 ) -> dict[str, Any]:
     """Create or replace the project override policy. Project owner or admin only."""
     await check_project_access(project_id, current_user, db, required_role="admin")
+    settings = await SystemSettingsRepository(db).get()
+    if settings.crypto_policy_mode == "global":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System enforces a global crypto policy; project overrides are disabled.",
+        )
     rules = [CryptoRule.model_validate(r) for r in body.get("rules") or []]
     comment = body.get("comment")
     repo = CryptoPolicyRepository(db)
@@ -174,5 +181,6 @@ async def get_effective_policy(
     return {
         "system_version": effective.system_version,
         "override_version": effective.override_version,
+        "override_locked": effective.override_locked,
         "rules": [r.model_dump() for r in effective.rules],
     }

@@ -209,6 +209,40 @@ export function GeneralSettingsTab({
 
       <Card>
         <CardHeader>
+          <CardTitle>Crypto Policy</CardTitle>
+          <CardDescription>
+            Control whether project admins may override the system-level cryptography rules.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2">
+            <Label>Crypto Policy Mode</Label>
+            <Select
+              value={formData.crypto_policy_mode || 'project'}
+              onValueChange={(value) => handleInputChange('crypto_policy_mode', value)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select mode" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="project">Per Project (Default)</SelectItem>
+                <SelectItem value="global">Global Enforcement</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-sm text-muted-foreground">
+              "Per Project" lets project admins override individual rules.
+              "Global Enforcement" applies the system policy to every project — existing project overrides are kept on disk but ignored at scan time and writes are rejected.
+            </p>
+          </div>
+
+          <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>
+            {isPending ? "Saving..." : "Save Crypto Policy Settings"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Default Analyzers for Auto-Created Projects</CardTitle>
           <CardDescription>
             Select which analyzers are enabled by default when projects are automatically created via CI/CD pipeline (OIDC).

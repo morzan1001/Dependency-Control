@@ -52,5 +52,7 @@ export interface CryptoPolicyDoc {
 export interface EffectivePolicy {
   system_version: number;
   override_version: number | null;
+  /** True when the system is in global mode and project overrides are ignored. */
+  override_locked: boolean;
   rules: CryptoRule[];
 }

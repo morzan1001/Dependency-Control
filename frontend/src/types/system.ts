@@ -26,6 +26,7 @@ export interface SystemSettings {
   rescan_mode: 'global' | 'project';
   global_rescan_enabled: boolean;
   global_rescan_interval: number;
+  crypto_policy_mode: 'global' | 'project';
   slack_bot_token?: string;
   slack_client_id?: string;
   slack_client_secret?: string;

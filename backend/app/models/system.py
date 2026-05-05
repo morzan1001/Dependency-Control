@@ -84,6 +84,13 @@ class SystemSettings(BaseModel):
     global_retention_days: int = 90  # 0 means keep forever
     global_retention_action: str = "delete"  # "delete", "archive", or "none"
 
+    # Crypto policy enforcement
+    # "project": each project may override the system rules.
+    # "global": the system policy is enforced and project overrides are ignored
+    # at resolve-time and rejected on write. Existing override docs are preserved
+    # so they re-apply if the mode is switched back to "project".
+    crypto_policy_mode: str = "project"
+
     # Chat / AI Assistant — feature flag is deployment-time (settings.CHAT_ENABLED)
     chat_rate_limit_per_minute: int = 10
     chat_rate_limit_per_hour: int = 60
