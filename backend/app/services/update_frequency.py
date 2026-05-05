@@ -3,6 +3,10 @@ Update Frequency Analysis Service
 
 Computes metrics about how regularly and incrementally teams update their
 dependencies, by comparing dependency versions across consecutive scans.
+
+Memory strategy: instead of loading all dependencies for all scans at once
+(which can exceed hundreds of thousands of documents for large projects), we
+load and compare one scan pair at a time, keeping peak memory to 2×deps/scan.
 """
 
 import asyncio
@@ -11,6 +15,10 @@ import re
 from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+
+# Limit concurrent per-project computations in the comparison endpoint to
+# avoid firing many large MongoDB queries simultaneously.
+_COMPARISON_SEMAPHORE = asyncio.Semaphore(3)
 
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -28,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 # Regex for semver-like versions: X.Y.Z with optional pre-release
 _SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)(?:\.(\d+))?")
+
+_DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1}
 
 
 def classify_version_change(old_version: str, new_version: str) -> str:
@@ -60,7 +70,6 @@ def classify_version_change(old_version: str, new_version: str) -> str:
         return "minor"
     if new_patch != old_patch:
         return "patch"
-    # Versions differ only in pre-release/build metadata
     return "patch"
 
 
@@ -68,9 +77,7 @@ def _pregroup_deps_by_scan(
     all_deps: List[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Dict[str, str]]]:
     """
-    Pre-group all dependencies by scan_id into {scan_id: {pkg_name: {version, type, purl}}}.
-
-    This is O(n) over all deps, replacing per-pair O(n) scans with O(1) lookups.
+    Pre-group dependencies by scan_id into {scan_id: {pkg_name: {version, type, purl}}}.
     """
     grouped: Dict[str, Dict[str, Dict[str, str]]] = defaultdict(dict)
     for dep in all_deps:
@@ -234,7 +241,7 @@ def _aggregate_metrics(
     ever_outdated: set,
     ever_resolved: set,
     scan_timeline: List[ScanTimelineEntry],
-    deps_by_scan: Dict[str, Dict[str, Dict[str, str]]],
+    dep_type_map: Dict[str, str],
     package_outdated_counts: Dict[str, int],
     package_latest_info: Dict[str, Dict[str, str]],
     project_id: str,
@@ -272,7 +279,7 @@ def _aggregate_metrics(
 
     trend_direction, trend_detail = _compute_trend(scan_timeline)
 
-    slowest_packages = _build_slowest_packages(package_outdated_counts, package_latest_info, deps_by_scan)
+    slowest_packages = _build_slowest_packages(package_outdated_counts, package_latest_info, dep_type_map)
     recent_updates = sorted(all_events, key=lambda e: e.scan_date, reverse=True)[:30]
 
     return UpdateFrequencyMetrics(
@@ -305,16 +312,9 @@ def _aggregate_metrics(
 def _build_slowest_packages(
     package_outdated_counts: Dict[str, int],
     package_latest_info: Dict[str, Dict[str, str]],
-    deps_by_scan: Dict[str, Dict[str, Dict[str, str]]],
+    dep_type_map: Dict[str, str],
 ) -> List[SlowPackage]:
     """Build the list of slowest-to-update packages (most scans outdated)."""
-    # Build name->type map from pre-grouped data
-    dep_type_map: Dict[str, str] = {}
-    for scan_deps in deps_by_scan.values():
-        for name, info in scan_deps.items():
-            if name not in dep_type_map:
-                dep_type_map[name] = info.get("type", "unknown")
-
     slowest = sorted(package_outdated_counts.items(), key=lambda x: x[1], reverse=True)[:15]
     return [
         SlowPackage(
@@ -357,14 +357,20 @@ def _empty_metrics(project_id: str, project_name: str, scan_count: int, scan_dat
     )
 
 
-async def _fetch_scan_data(
+async def compute_update_frequency(
     project_id: str,
+    project_name: str,
     scan_repo: ScanRepository,
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
-    max_scans: int,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], list]:
-    """Fetch completed scans, their dependencies, and outdated analysis results."""
+    max_scans: int = 20,
+) -> UpdateFrequencyMetrics:
+    """
+    Compute update frequency metrics for a project.
+
+    Dependencies are loaded one scan pair at a time to keep peak memory
+    bounded to 2×deps_per_scan regardless of how many scans are analysed.
+    """
     scans_raw = await scan_repo.find_by_project(
         project_id,
         limit=max_scans,
@@ -375,89 +381,77 @@ async def _fetch_scan_data(
     completed_scans = [s for s in scans_raw if s.get("status") == "completed"]
 
     if len(completed_scans) < 2:
-        return completed_scans, [], []
+        first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
+        return _empty_metrics(project_id, project_name, len(completed_scans), first_date_str)
 
     scan_ids = [s["_id"] for s in completed_scans]
 
-    all_deps = await dep_repo.find_all(
-        {"scan_id": {"$in": scan_ids}},
-        projection={"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1},
-    )
-
+    # Fetch lightweight outdated analysis results upfront (one doc per scan)
     outdated_results = await analysis_repo.find_many(
         {"scan_id": {"$in": scan_ids}, "analyzer_name": "outdated_packages"},
         limit=max_scans,
     )
-
-    return completed_scans, all_deps, outdated_results
-
-
-async def compute_update_frequency(
-    project_id: str,
-    project_name: str,
-    scan_repo: ScanRepository,
-    dep_repo: DependencyRepository,
-    analysis_repo: AnalysisResultRepository,
-    max_scans: int = 20,
-) -> UpdateFrequencyMetrics:
-    """
-    Compute update frequency metrics for a project by comparing
-    dependencies across consecutive scans.
-    """
-    completed_scans, all_deps, outdated_results = await _fetch_scan_data(
-        project_id, scan_repo, dep_repo, analysis_repo, max_scans
-    )
-
-    if len(completed_scans) < 2:
-        first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
-        return _empty_metrics(project_id, project_name, len(completed_scans), first_date_str)
-
     outdated_by_scan, package_latest_info = _build_outdated_maps(outdated_results)
 
-    # Pre-group deps by scan_id once — O(n) total instead of O(n) per scan pair
-    deps_by_scan = _pregroup_deps_by_scan(all_deps)
-
-    # Walk through scans and compare consecutive pairs
+    # Accumulators
     all_update_events: List[DependencyUpdateEvent] = []
     scan_timeline: List[ScanTimelineEntry] = []
     package_outdated_counts: Dict[str, int] = defaultdict(int)
+    dep_type_map: Dict[str, str] = {}
     ever_outdated: set = set()
     ever_resolved: set = set()
 
-    for i, scan in enumerate(completed_scans):
-        scan_id: str = scan["_id"]
-        scan_dt: datetime = scan["created_at"]
-        scan_outdated = outdated_by_scan.get(scan_id, set())
+    # First scan: no events yet, just bootstrap outdated tracking
+    first_scan = completed_scans[0]
+    first_outdated = outdated_by_scan.get(first_scan["_id"], set())
+    for pkg in first_outdated:
+        package_outdated_counts[pkg] += 1
+        ever_outdated.add(pkg)
+    scan_timeline.append(
+        _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(first_outdated))
+    )
 
-        # Track outdated counts
-        for pkg_name in scan_outdated:
-            package_outdated_counts[pkg_name] += 1
-            ever_outdated.add(pkg_name)
-
-        if i == 0:
-            scan_timeline.append(_build_timeline_entry(scan_id, scan_dt, [], len(scan_outdated)))
-            continue
-
+    # Process each consecutive pair — load only 2 scans' deps at a time
+    for i in range(1, len(completed_scans)):
         prev_scan = completed_scans[i - 1]
-        prev_dt: datetime = prev_scan["created_at"]
+        curr_scan = completed_scans[i]
+
+        pair_deps = await dep_repo.find_all(
+            {"scan_id": {"$in": [prev_scan["_id"], curr_scan["_id"]]}},
+            projection=_DEP_PROJECTION,
+        )
+        deps_by_scan = _pregroup_deps_by_scan(pair_deps)
+
+        # Accumulate type info (used later for slowest-packages lookup)
+        for scan_deps in deps_by_scan.values():
+            for name, info in scan_deps.items():
+                if name not in dep_type_map:
+                    dep_type_map[name] = info.get("type", "unknown")
+
+        curr_outdated = outdated_by_scan.get(curr_scan["_id"], set())
         prev_outdated = outdated_by_scan.get(prev_scan["_id"], set())
+
+        for pkg in curr_outdated:
+            package_outdated_counts[pkg] += 1
+            ever_outdated.add(pkg)
 
         events = _compare_scan_pair(
             deps_by_scan,
             prev_scan["_id"],
-            prev_dt,
-            scan_id,
-            scan_dt,
+            prev_scan["created_at"],
+            curr_scan["_id"],
+            curr_scan["created_at"],
             prev_outdated,
         )
 
-        # Track resolved outdated packages
         for e in events:
             if e.was_outdated:
                 ever_resolved.add(e.package_name)
 
         all_update_events.extend(events)
-        scan_timeline.append(_build_timeline_entry(scan_id, scan_dt, events, len(scan_outdated)))
+        scan_timeline.append(
+            _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], events, len(curr_outdated))
+        )
 
     return _aggregate_metrics(
         all_update_events,
@@ -465,7 +459,7 @@ async def compute_update_frequency(
         ever_outdated,
         ever_resolved,
         scan_timeline,
-        deps_by_scan,
+        dep_type_map,
         package_outdated_counts,
         package_latest_info,
         project_id,
@@ -483,52 +477,50 @@ async def compute_update_frequency_comparison(
     """
     Compute update frequency comparison across multiple projects.
 
-    Args:
-        projects: List of dicts with at least {_id, name} and optionally {team_name}.
+    At most _COMPARISON_SEMAPHORE concurrent per-project computations run at
+    once to avoid saturating MongoDB with simultaneous large queries.
     """
 
-    # Compute all projects in parallel with asyncio.gather
     async def _compute_single(project: Dict[str, Any]) -> Optional[ProjectUpdateSummary]:
         project_id = project.get("_id") or project.get("id", "")
         project_name = project.get("name", "")
         team_name = project.get("team_name")
 
-        try:
-            metrics = await compute_update_frequency(
-                project_id=project_id,
-                project_name=project_name,
-                scan_repo=scan_repo,
-                dep_repo=dep_repo,
-                analysis_repo=analysis_repo,
-                max_scans=max_scans,
+        async with _COMPARISON_SEMAPHORE:
+            try:
+                metrics = await compute_update_frequency(
+                    project_id=project_id,
+                    project_name=project_name,
+                    scan_repo=scan_repo,
+                    dep_repo=dep_repo,
+                    analysis_repo=analysis_repo,
+                    max_scans=max_scans,
+                )
+            except Exception:
+                logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
+                return None
+
+            if metrics.scan_count < 2:
+                return None
+
+            return ProjectUpdateSummary(
+                project_id=metrics.project_id,
+                project_name=metrics.project_name,
+                team_name=team_name,
+                scan_count=metrics.scan_count,
+                updates_per_month=metrics.updates_per_month,
+                update_coverage_pct=metrics.update_coverage_pct,
+                patch_ratio=metrics.granularity_ratio.get("patch", 0),
+                trend_direction=metrics.trend_direction,
+                total_outdated=metrics.total_outdated_detected,
+                last_scan_date=metrics.last_scan_date,
             )
-        except Exception:
-            logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
-            return None
-
-        if metrics.scan_count < 2:
-            return None
-
-        return ProjectUpdateSummary(
-            project_id=metrics.project_id,
-            project_name=metrics.project_name,
-            team_name=team_name,
-            scan_count=metrics.scan_count,
-            updates_per_month=metrics.updates_per_month,
-            update_coverage_pct=metrics.update_coverage_pct,
-            patch_ratio=metrics.granularity_ratio.get("patch", 0),
-            trend_direction=metrics.trend_direction,
-            total_outdated=metrics.total_outdated_detected,
-            last_scan_date=metrics.last_scan_date,
-        )
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
     summaries: List[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
 
-    # Sort by coverage descending, then by updates_per_month descending
     summaries.sort(key=lambda s: (s.update_coverage_pct, s.updates_per_month), reverse=True)
 
-    # Compute team averages
     if summaries:
         avg_updates = sum(s.updates_per_month for s in summaries) / len(summaries)
         avg_coverage = sum(s.update_coverage_pct for s in summaries) / len(summaries)
