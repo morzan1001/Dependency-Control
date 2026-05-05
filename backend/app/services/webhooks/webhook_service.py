@@ -255,7 +255,25 @@ class WebhookService:
         event_type: str,
         raw_payload: "Mapping[str, Any]",
     ) -> "Mapping[str, Any]":
-        if webhook.webhook_type != "teams":
+        # Self-heal legacy/misconfigured webhooks: a webhook stored as "generic"
+        # but pointing at a Teams URL (e.g. created before webhook_type existed
+        # on the model, or before we ran auto-detection on save) would otherwise
+        # send raw event JSON to Power Automate, which then fails with
+        # `attachments is null`. Detect at format-time and fall back to Teams.
+        effective_type = webhook.webhook_type
+        if effective_type != "teams":
+            from app.services.webhooks.validation import detect_webhook_type
+
+            if detect_webhook_type(webhook.url) == "teams":
+                logger.warning(
+                    "Webhook %s is stored as %s but URL matches a Teams workflow; "
+                    "formatting as Teams. Set webhook_type=teams to silence this warning.",
+                    webhook.id,
+                    effective_type,
+                )
+                effective_type = "teams"
+
+        if effective_type != "teams":
             return raw_payload
 
         normalized = _normalize_event_name(event_type)

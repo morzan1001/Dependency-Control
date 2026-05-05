@@ -15,6 +15,26 @@ import { useAuth } from "@/context/useAuth"
 import { useDialogState } from "@/hooks/use-dialog-state"
 import { formatDate } from "@/lib/utils"
 
+/**
+ * Mirror of `detect_webhook_type` in backend/app/services/webhooks/validation.py
+ * — purely a UX hint; the server re-evaluates and is the source of truth.
+ */
+function detectWebhookType(url: string): "generic" | "teams" {
+  let host: string;
+  let path: string;
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname.toLowerCase();
+    path = parsed.pathname;
+  } catch {
+    return "generic";
+  }
+  if (host === "webhook.office.com" || host.endsWith(".webhook.office.com")) return "teams";
+  if ((host === "logic.azure.com" || host.endsWith(".logic.azure.com")) && path.includes("/workflows/")) return "teams";
+  if ((host === "api.powerplatform.com" || host.endsWith(".api.powerplatform.com")) && path.includes("/workflows/")) return "teams";
+  return "generic";
+}
+
 interface WebhookManagerProps {
   readonly webhooks: Webhook[]
   readonly isLoading: boolean
@@ -178,11 +198,16 @@ export function WebhookManager({
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
                   <Label>URL</Label>
-                  <Input 
-                    value={newWebhook.url} 
+                  <Input
+                    value={newWebhook.url}
                     onChange={e => setNewWebhook(prev => ({ ...prev, url: e.target.value }))}
                     placeholder="https://example.com/webhook"
                   />
+                  {detectWebhookType(newWebhook.url) === "teams" && (
+                    <p className="text-xs text-muted-foreground">
+                      Detected as a Microsoft Teams workflow URL — payloads will be sent as Adaptive Cards.
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Secret (Optional)</Label>
@@ -226,6 +251,7 @@ export function WebhookManager({
           <TableHeader>
             <TableRow>
               <TableHead className="w-auto">URL</TableHead>
+              <TableHead className="w-[90px]">Type</TableHead>
               <TableHead className="w-[200px]">Events</TableHead>
               <TableHead className="w-[150px]">Created At</TableHead>
               <TableHead className="w-[50px]"></TableHead>
@@ -234,7 +260,7 @@ export function WebhookManager({
           <TableBody>
             {webhooks.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-muted-foreground">
+                <TableCell colSpan={5} className="text-center text-muted-foreground">
                   No webhooks configured
                 </TableCell>
               </TableRow>
@@ -242,6 +268,11 @@ export function WebhookManager({
               webhooks.map(webhook => (
                 <TableRow key={webhook.id}>
                   <TableCell className="font-mono text-xs truncate max-w-0" title={webhook.url}>{webhook.url}</TableCell>
+                  <TableCell>
+                    <Badge variant={webhook.webhook_type === "teams" ? "default" : "outline"}>
+                      {webhook.webhook_type === "teams" ? "Teams" : "Generic"}
+                    </Badge>
+                  </TableCell>
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {(webhook.events || []).map(e => (

@@ -8,6 +8,7 @@ export interface Webhook {
   is_active: boolean;
   created_at: string;
   last_triggered_at?: string;
+  webhook_type?: "generic" | "teams";
 }
 
 export interface WebhookCreate {
