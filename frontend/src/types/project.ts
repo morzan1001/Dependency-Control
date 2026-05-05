@@ -39,6 +39,9 @@ export interface Project {
   gitlab_instance_id?: string;
   gitlab_project_id?: number;
   gitlab_project_path?: string;
+  github_instance_id?: string;
+  github_repository_id?: string;
+  github_repository_path?: string;
   owner_notification_preferences?: {
     [key: string]: string[];
   };

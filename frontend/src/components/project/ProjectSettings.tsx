@@ -5,7 +5,7 @@ import { useAppConfig } from '@/hooks/queries/use-system'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
-import { useGitLabInstances } from '@/hooks/queries/use-instances'
+import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
 import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-schemas'
@@ -147,6 +147,18 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
 
   const { data: gitlabInstances } = useGitLabInstances({ active_only: true });
+  const { data: githubInstances } = useGitHubInstances({ active_only: true });
+
+  // A project sourced from one CI/CD platform shouldn't show the other's
+  // configuration. We treat the presence of an *_instance_id as the source.
+  const projectSource: "gitlab" | "github" | "none" = project.github_instance_id
+    ? "github"
+    : project.gitlab_instance_id
+      ? "gitlab"
+      : "none";
+  const linkedGithubInstance = project.github_instance_id
+    ? githubInstances?.items.find((i) => i.id === project.github_instance_id)
+    : undefined;
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),
@@ -387,7 +399,38 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     )}
                 </div>
 
-                {(gitlabInstances?.items?.length ?? 0) > 0 && (
+                {projectSource === "github" && (
+                    <div className="grid gap-2">
+                        <Label>GitHub Integration</Label>
+                        <div className="border rounded-md p-4 space-y-2 text-sm">
+                            <div className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-1">
+                                <span className="text-muted-foreground">Instance</span>
+                                <span className="font-mono">
+                                    {linkedGithubInstance
+                                        ? `${linkedGithubInstance.name} (${linkedGithubInstance.url})`
+                                        : project.github_instance_id}
+                                </span>
+                                {project.github_repository_path && (
+                                    <>
+                                        <span className="text-muted-foreground">Repository</span>
+                                        <span className="font-mono">{project.github_repository_path}</span>
+                                    </>
+                                )}
+                                {project.github_repository_id && (
+                                    <>
+                                        <span className="text-muted-foreground">Repository ID</span>
+                                        <span className="font-mono">{project.github_repository_id}</span>
+                                    </>
+                                )}
+                            </div>
+                            <p className="text-xs text-muted-foreground pt-2">
+                                This project was created from a GitHub instance. The link is managed by the GitHub Actions OIDC trust and isn't editable here.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {projectSource !== "github" && (gitlabInstances?.items?.length ?? 0) > 0 && (
                     <div className="grid gap-2">
                         <Label>GitLab Integration</Label>
                         <div className="border rounded-md p-4 space-y-4">
