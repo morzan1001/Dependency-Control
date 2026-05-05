@@ -10,6 +10,7 @@ from app.core.security import get_password_hash
 from app.core.metrics import update_db_stats
 from app.db.mongodb import get_database
 from app.models.user import User
+from app.services.crypto_policy.seeder import seed_crypto_policies
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +294,56 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         expireAfterSeconds=0,
     )
 
+    # Crypto Assets (CBOM)
+    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
+    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("asset_type", pymongo.ASCENDING)])
+    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
+    await database["crypto_assets"].create_index([("project_id", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)])
+    await database["crypto_assets"].create_index(
+        [("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING), ("bom_ref", pymongo.ASCENDING)],
+        unique=True,
+    )
+    await database["crypto_assets"].create_index(
+        [("project_id", pymongo.ASCENDING), ("asset_type", pymongo.ASCENDING), ("primitive", pymongo.ASCENDING)]
+    )
+
+    # Crypto Policies
+    await database["crypto_policies"].create_index(
+        [("scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)], unique=True
+    )
+
+    # Policy Audit Entries
+    await database["policy_audit_entries"].create_index(
+        [("policy_type", pymongo.ASCENDING), ("policy_scope", pymongo.ASCENDING),
+         ("project_id", pymongo.ASCENDING), ("version", pymongo.DESCENDING)]
+    )
+    await database["policy_audit_entries"].create_index(
+        [("policy_scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING), ("version", pymongo.DESCENDING)]
+    )
+    await database["policy_audit_entries"].create_index([("timestamp", pymongo.DESCENDING)])
+    await database["policy_audit_entries"].create_index(
+        [("actor_user_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)]
+    )
+
+    # Compliance Reports
+    await database["compliance_reports"].create_index(
+        [("scope", pymongo.ASCENDING), ("scope_id", pymongo.ASCENDING),
+         ("framework", pymongo.ASCENDING), ("requested_at", pymongo.DESCENDING)]
+    )
+    await database["compliance_reports"].create_index([("status", pymongo.ASCENDING)])
+    await database["compliance_reports"].create_index([("expires_at", pymongo.ASCENDING)])
+    await database["compliance_reports"].create_index(
+        [("requested_by", pymongo.ASCENDING), ("status", pymongo.ASCENDING)]
+    )
+
+    # Findings: scan_created_at analytics indexes
+    await database["findings"].create_index(
+        [("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)]
+    )
+    await database["findings"].create_index(
+        [("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)]
+    )
+
     logger.info("Database indexes created successfully.")
 
 
@@ -334,6 +385,8 @@ async def init_db() -> None:
         logger.info("Initial admin user created. Credentials displayed on stdout.")
     else:
         logger.info("Users already exist. Skipping initial user creation.")
+
+    await seed_crypto_policies(database)
 
     await update_db_stats(database)
     logger.info("Database statistics metrics initialized.")

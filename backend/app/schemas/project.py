@@ -229,6 +229,7 @@ class ScanFindingItem(BaseModel):
     locations: Optional[List[str]] = Field(None, description="File locations")
     purl: Optional[str] = Field(None, description="Package URL")
     direct: Optional[bool] = Field(None, description="Whether this is a direct dependency")
+    direct_inferred: Optional[bool] = Field(None, description="Whether the direct flag was inferred")
 
     # Computed fields
     severity_rank: int = Field(default=0, description="Numeric severity rank for sorting")

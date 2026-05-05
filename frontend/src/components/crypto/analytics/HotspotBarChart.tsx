@@ -15,11 +15,12 @@ interface Props {
 }
 
 export function HotspotBarChart({ scope, scopeId, groupBy, scanId, topN = 20 }: Props) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId, topN],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId, limit: topN }),
   });
-  if (isLoading || !data) return <div className="p-4 text-sm">Loading…</div>;
+  if (isLoading) return <div className="p-4 text-sm">Loading…</div>;
+  if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load hotspot data.</div>;
 
   const chartData = data.items.map((e) => ({
     name: e.key,

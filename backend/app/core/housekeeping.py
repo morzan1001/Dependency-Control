@@ -30,6 +30,8 @@ from app.core.metrics import (
     update_db_stats,
 )
 from app.core.cache import update_cache_stats
+from app.services.audit.retention import prune_old_audit_entries
+from app.services.compliance.retention import sweep_expired_compliance_reports
 
 if TYPE_CHECKING:
     from app.core.worker import WorkerManager
@@ -432,6 +434,16 @@ async def run_housekeeping() -> None:
 
                 label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
                 await _process_scans_in_batches(db, cursor, action, label)
+
+        try:
+            await prune_old_audit_entries(db)
+        except Exception as e:
+            logger.error(f"Housekeeping: policy audit retention failed: {e}")
+
+        try:
+            await sweep_expired_compliance_reports(db)
+        except Exception as e:
+            logger.error(f"Housekeeping: compliance report sweep failed: {e}")
 
     except Exception as e:
         logger.error(f"Housekeeping task failed: {e}")

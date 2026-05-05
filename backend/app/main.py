@@ -8,7 +8,7 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.core.config import settings
 from app.core.metrics import PrometheusMiddleware, metrics_endpoint
-from app.db.mongodb import close_mongo_connection, connect_to_mongo, get_database
+from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.api import health
 from app.api.v1.endpoints import (
     analytics,
@@ -41,14 +41,6 @@ from app.api.v1.endpoints import (
 )
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
-from app.repositories.compliance_report import ComplianceReportRepository
-from app.repositories.crypto_asset import CryptoAssetRepository
-from app.repositories.crypto_policy import CryptoPolicyRepository
-from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.services.audit.retention import prune_old_audit_entries
-from app.services.compliance.retention import sweep_expired_compliance_reports
-from app.services.crypto_policy.seeder import seed_crypto_policies
-from app.services.analytics.migrations import backfill_scan_created_at
 
 # Configure logging
 logging.basicConfig(
@@ -107,21 +99,7 @@ async def startup_event() -> None:
     for i in range(max_retries):
         try:
             await connect_to_mongo()
-            await init_db()  # Creates indexes + initial admin user
-
-            # CBOM: ensure crypto collection indexes and seed built-in policies
-            db = await get_database()
-            await CryptoAssetRepository(db).ensure_indexes()
-            await CryptoPolicyRepository(db).ensure_indexes()
-            await PolicyAuditRepository(db).ensure_indexes()
-            await ComplianceReportRepository(db).ensure_indexes()
-            await seed_crypto_policies(db)
-            from app.services.crypto_policy.validation import validate_persisted_policies
-
-            await validate_persisted_policies(db)
-            await backfill_scan_created_at(db)
-            await prune_old_audit_entries(db)
-            await sweep_expired_compliance_reports(db)
+            await init_db()  # Creates indexes, seeds data, initial admin user
 
             # WeasyPrint health-check: non-fatal, PDF reports depend on it
             try:

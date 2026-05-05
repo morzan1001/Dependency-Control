@@ -1173,6 +1173,7 @@ async def read_scan_findings(
                             "locations": 1,
                             "purl": 1,
                             "direct": 1,
+                            "direct_inferred": 1,
                         }
                     },
                 ],
@@ -1203,6 +1204,7 @@ async def read_scan_findings(
                 "locations": {"$arrayElemAt": ["$dependency_info.locations", 0]},
                 "purl": {"$arrayElemAt": ["$dependency_info.purl", 0]},
                 "direct": {"$arrayElemAt": ["$dependency_info.direct", 0]},
+                "direct_inferred": {"$arrayElemAt": ["$dependency_info.direct_inferred", 0]},
             }
         },
         # Remove the temporary lookup array and exclude MongoDB _id

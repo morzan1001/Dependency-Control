@@ -10,12 +10,13 @@ import type { MigrationItem } from "@/types/pqcMigration";
 
 export function PQCMigrationPanel() {
   const [selected, setSelected] = useState<MigrationItem | null>(null);
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["pqc-migration", "user"],
     queryFn: () => getPQCMigrationPlan({ scope: "user" }),
   });
 
-  if (isLoading || !data) return <div className="p-4 text-sm">Loading PQC migration plan…</div>;
+  if (isLoading) return <div className="p-4 text-sm">Loading PQC migration plan…</div>;
+  if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load PQC migration plan.</div>;
 
   const s = data.summary;
   return (

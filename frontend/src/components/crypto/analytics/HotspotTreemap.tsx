@@ -27,11 +27,12 @@ function topSeverity(mix: Record<string, number>): string {
 }
 
 export function HotspotTreemap({ scope, scopeId, groupBy, scanId }: Props) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),
   });
-  if (isLoading || !data) return <div className="p-4 text-sm">Loading treemap…</div>;
+  if (isLoading) return <div className="p-4 text-sm">Loading treemap…</div>;
+  if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load treemap data.</div>;
 
   const chartData = data.items.map((e) => ({
     name: e.key,

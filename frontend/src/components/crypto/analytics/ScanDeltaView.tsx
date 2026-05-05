@@ -13,7 +13,7 @@ interface Props {
 
 export function ScanDeltaView({ projectId, fromScanId, toScanId, onClose }: Props) {
   const open = !!(fromScanId && toScanId);
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["scan-delta", projectId, fromScanId, toScanId],
     enabled: open,
     queryFn: () => getScanDelta(projectId, fromScanId!, toScanId!),
@@ -25,9 +25,11 @@ export function ScanDeltaView({ projectId, fromScanId, toScanId, onClose }: Prop
         <DialogHeader>
           <DialogTitle>Crypto changes between scans</DialogTitle>
         </DialogHeader>
-        {isLoading || !data ? (
-          <div className="p-4 text-sm">Loading…</div>
-        ) : (
+        {isLoading && <div className="p-4 text-sm">Loading…</div>}
+        {!isLoading && (isError || !data) && (
+          <div className="p-4 text-sm text-destructive">Failed to load scan delta.</div>
+        )}
+        {!isLoading && !isError && data && (
           <div className="space-y-4 text-sm">
             <div className="rounded border bg-muted/20 p-3">
               From scan <span className="font-mono">{data.from_scan_id}</span> to{" "}

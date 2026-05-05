@@ -19,14 +19,13 @@ function bgClass(count: number, max: number): string {
 }
 
 export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),
   });
 
-  if (isLoading || !data) {
-    return <div className="p-4 text-sm text-muted-foreground">Loading heatmap…</div>;
-  }
+  if (isLoading) return <div className="p-4 text-sm text-muted-foreground">Loading heatmap…</div>;
+  if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load heatmap data.</div>;
 
   const columns =
     scope === "project"

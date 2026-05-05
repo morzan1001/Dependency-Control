@@ -30,7 +30,7 @@ interface Props {
 }
 
 export function TrendsTimeSeriesChart(p: Props) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: [
       "crypto-trends",
       p.scope, p.scopeId, p.metric, p.bucket,
@@ -43,9 +43,8 @@ export function TrendsTimeSeriesChart(p: Props) {
     }),
   });
 
-  if (isLoading || !data) {
-    return <div className="p-4 text-sm text-muted-foreground">Loading trend…</div>;
-  }
+  if (isLoading) return <div className="p-4 text-sm text-muted-foreground">Loading trend…</div>;
+  if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load trend data.</div>;
 
   const chartData = data.points.map((pt) => ({
     date: formatDate(pt.timestamp),

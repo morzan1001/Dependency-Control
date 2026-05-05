@@ -14,7 +14,7 @@ export function ComplianceReportsPanel() {
   const [selected, setSelected] = useState<ComplianceReportMeta | null>(null);
   const [prefillFramework, setPrefillFramework] = useState<ReportFramework | undefined>();
 
-  const { data } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["compliance-reports"],
     queryFn: () => listReports({ scope: "user", limit: 50 }),
     refetchInterval: (q) => {
@@ -62,9 +62,16 @@ export function ComplianceReportsPanel() {
             </tr>
           </thead>
           <tbody>
-            {reports.length === 0 ? (
+            {isLoading && (
+              <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">Loading reports…</td></tr>
+            )}
+            {!isLoading && isError && (
+              <tr><td colSpan={5} className="p-4 text-center text-destructive">Failed to load reports.</td></tr>
+            )}
+            {!isLoading && !isError && reports.length === 0 && (
               <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">No reports yet</td></tr>
-            ) : reports.map((r) => (
+            )}
+            {!isLoading && !isError && reports.map((r) => (
               <tr
                 key={r._id}
                 role="button"
