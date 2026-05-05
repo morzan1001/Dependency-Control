@@ -1,4 +1,13 @@
-# Release 1.6.3
+# Release 1.6.4
+
+## 🐛 Fixes
+
+- fix: bump CURRENT_SEED_VERSION to 2 to force re-seed with expanded BSI rules (#0)
+- fix: revert CURRENT_SEED_VERSION back to 1 (clean start) (#0)
+
+
+
+# Release 1.6.4
 
 
 
