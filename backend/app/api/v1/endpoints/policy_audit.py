@@ -6,7 +6,6 @@ Project scope: member for reads, owner/admin for writes.
 """
 
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 
@@ -16,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import get_current_active_user, get_database
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
+from app.core.config import settings
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -25,11 +25,6 @@ from app.schemas.policy_audit import PolicyAuditAction
 from app.services.audit.history import record_policy_change
 
 logger = logging.getLogger(__name__)
-
-# Minimum age (in days) an audit entry must have before it can be pruned.
-# Admins can configure via POLICY_AUDIT_MIN_PRUNE_DAYS — defaults to 90
-# days of forensic history that must always be preserved.
-DEFAULT_MIN_PRUNE_DAYS = 90
 
 router = CustomAPIRouter(tags=["policy-audit"])
 
@@ -261,24 +256,8 @@ def _parse_datetime(value: str) -> datetime:
 
 
 def _min_prune_days() -> int:
-    """Return the configured minimum prune age in days.
-
-    ``POLICY_AUDIT_MIN_PRUNE_DAYS`` overrides the default when set.
-    Invalid / non-positive values fall back to the default so a bad env
-    var can never relax this safety check.
-    """
-    raw = os.environ.get("POLICY_AUDIT_MIN_PRUNE_DAYS")
-    if not raw:
-        return DEFAULT_MIN_PRUNE_DAYS
-    try:
-        days = int(raw)
-    except ValueError:
-        logger.warning("Invalid POLICY_AUDIT_MIN_PRUNE_DAYS: %r — using default", raw)
-        return DEFAULT_MIN_PRUNE_DAYS
-    if days <= 0:
-        logger.warning("Non-positive POLICY_AUDIT_MIN_PRUNE_DAYS: %d — using default", days)
-        return DEFAULT_MIN_PRUNE_DAYS
-    return days
+    """Return the configured minimum prune age in days from settings."""
+    return settings.POLICY_AUDIT_MIN_PRUNE_DAYS
 
 
 def _enforce_min_prune_cutoff(cutoff: datetime) -> None:

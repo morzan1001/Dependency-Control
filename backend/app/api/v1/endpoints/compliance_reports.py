@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_active_user, get_database
 from app.api.router import CustomAPIRouter
-from app.core.constants import WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED
+from app.core.constants import MAX_CONCURRENT_COMPLIANCE_REPORTS, WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(prefix="/compliance", tags=["compliance-reports"])
 
-_MAX_CONCURRENT_PENDING = 10
 _SCOPE_PATTERN = "^(project|team|global|user)$"
 _REPORT_NOT_FOUND = "Report not found"
 
@@ -76,7 +75,7 @@ async def create_report(
 
     repo = ComplianceReportRepository(db)
     pending_count = await repo.count_pending_for_user(current_user.id)
-    if pending_count >= _MAX_CONCURRENT_PENDING:
+    if pending_count >= MAX_CONCURRENT_COMPLIANCE_REPORTS:
         raise HTTPException(
             status_code=429,
             detail=f"Too many pending reports ({pending_count}). Wait for some to complete.",

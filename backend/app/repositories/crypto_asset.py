@@ -4,36 +4,25 @@ CryptoAssetRepository — MongoDB access for the `crypto_assets` collection.
 
 from typing import Any, Dict, List, Optional
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import UpdateOne
 
+from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, CRYPTO_ASSET_MAX_LIST_LIMIT
+from app.core.metrics import track_db_operation
 from app.models.crypto_asset import CryptoAsset
+from app.repositories.base import BaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
-_DEFAULT_CHUNK_SIZE = 500
-_MAX_LIST_LIMIT = 10000
 
-
-class CryptoAssetRepository:
-    COLLECTION = "crypto_assets"
-
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self._col = db[self.COLLECTION]
-
-    async def ensure_indexes(self) -> None:
-        await self._col.create_index([("project_id", 1), ("scan_id", 1)])
-        await self._col.create_index([("project_id", 1), ("asset_type", 1)])
-        await self._col.create_index([("project_id", 1), ("name", 1)])
-        await self._col.create_index([("project_id", 1), ("primitive", 1)])
-        await self._col.create_index([("project_id", 1), ("scan_id", 1), ("bom_ref", 1)], unique=True)
-        await self._col.create_index([("project_id", 1), ("asset_type", 1), ("primitive", 1)])
+class CryptoAssetRepository(BaseRepository[CryptoAsset]):
+    collection_name = "crypto_assets"
+    model_class = CryptoAsset
 
     async def bulk_upsert(
         self,
         project_id: str,
         scan_id: str,
         assets: List[CryptoAsset],
-        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        chunk_size: int = CRYPTO_ASSET_BULK_CHUNK_SIZE,
     ) -> int:
         if not assets:
             return 0
@@ -52,7 +41,8 @@ class CryptoAssetRepository:
                 )
                 for a in chunk
             ]
-            await self._col.bulk_write(ops, ordered=False)
+            with track_db_operation(self.collection_name, "bulk_write"):
+                await self.collection.bulk_write(ops, ordered=False)
             total += len(ops)
         return total
 
@@ -66,7 +56,7 @@ class CryptoAssetRepository:
         primitive: Optional[CryptoPrimitive] = None,
         name_search: Optional[str] = None,
     ) -> List[CryptoAsset]:
-        limit = min(limit, _MAX_LIST_LIMIT)
+        limit = min(limit, CRYPTO_ASSET_MAX_LIST_LIMIT)
         query: Dict[str, Any] = {"project_id": project_id, "scan_id": scan_id}
         if asset_type is not None:
             query["asset_type"] = asset_type.value if hasattr(asset_type, "value") else asset_type
@@ -74,16 +64,19 @@ class CryptoAssetRepository:
             query["primitive"] = primitive.value if hasattr(primitive, "value") else primitive
         if name_search:
             query["name"] = {"$regex": name_search, "$options": "i"}
-        cursor = self._col.find(query).skip(skip).limit(limit)
-        docs = await cursor.to_list(length=limit)
+        with track_db_operation(self.collection_name, "find"):
+            cursor = self.collection.find(query).skip(skip).limit(limit)
+            docs = await cursor.to_list(length=limit)
         return [CryptoAsset.model_validate(d) for d in docs]
 
     async def get(self, project_id: str, asset_id: str) -> Optional[CryptoAsset]:
-        doc = await self._col.find_one({"project_id": project_id, "_id": asset_id})
+        with track_db_operation(self.collection_name, "find_one"):
+            doc = await self.collection.find_one({"project_id": project_id, "_id": asset_id})
         return CryptoAsset.model_validate(doc) if doc else None
 
     async def count_by_scan(self, project_id: str, scan_id: str) -> int:
-        return await self._col.count_documents({"project_id": project_id, "scan_id": scan_id})
+        with track_db_operation(self.collection_name, "count"):
+            return await self.collection.count_documents({"project_id": project_id, "scan_id": scan_id})
 
     async def summary_for_scan(self, project_id: str, scan_id: str) -> Dict[str, Any]:
         pipeline: List[Dict[str, Any]] = [
@@ -92,7 +85,8 @@ class CryptoAssetRepository:
         ]
         by_type: Dict[str, int] = {}
         total = 0
-        async for row in self._col.aggregate(pipeline):
-            by_type[row["_id"]] = row["count"]
-            total += row["count"]
+        with track_db_operation(self.collection_name, "aggregate"):
+            async for row in self.collection.aggregate(pipeline):
+                by_type[row["_id"]] = row["count"]
+                total += row["count"]
         return {"total": total, "by_type": by_type}

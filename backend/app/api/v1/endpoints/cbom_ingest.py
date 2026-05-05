@@ -20,7 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.api.deps import DatabaseDep
 from app.api import deps
 from app.api.router import CustomAPIRouter
-from app.core.constants import WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED
+from app.core.constants import MAX_CBOM_BODY_BYTES, MAX_CRYPTO_ASSETS_PER_SCAN, WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED
+from app.core.metrics import cbom_ingests_total
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -32,14 +33,6 @@ from app.services.webhooks import webhook_service
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
-
-MAX_CRYPTO_ASSETS_PER_SCAN = 50_000
-# 25 MiB. The 50_000-asset cap takes effect only after parsing; this guards
-# the deserializer itself against oversized payloads. A typical
-# pipeline-emitted CBOM is well under 1 MiB; large monorepos may approach
-# a few MiB. Chunked uploads bypass the header check and fall back to
-# whatever the ASGI server allows.
-MAX_CBOM_BODY_BYTES = 25 * 1024 * 1024
 
 ProjectIngestDep = deps.get_project_for_ingest
 
@@ -249,9 +242,11 @@ async def _persist_crypto_assets(
         # trigger_analysis=True).  The analysis engine marks the scan
         # completed/failed when the crypto analyzers finish.
         await manager.register_result(scan_id, "cbom", trigger_analysis=True)
+        cbom_ingests_total.labels(status="success").inc()
 
     except Exception as exc:
         logger.exception("cbom_ingest background task failed for scan %s: %s", scan_id, exc)
+        cbom_ingests_total.labels(status="error").inc()
         from app.repositories.scans import ScanRepository
 
         scan_repo = ScanRepository(db)

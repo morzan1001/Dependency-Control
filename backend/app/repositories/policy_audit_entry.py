@@ -9,10 +9,11 @@ the discriminator existed still match.
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import DESCENDING
 
+from app.core.metrics import track_db_operation
 from app.models.policy_audit_entry import PolicyAuditEntry
+from app.repositories.base import BaseRepository
 
 PolicyType = Literal["crypto", "license"]
 
@@ -25,23 +26,13 @@ def _policy_type_filter(policy_type: PolicyType) -> Dict[str, Any]:
     return {"policy_type": policy_type}
 
 
-class PolicyAuditRepository:
-    COLLECTION = "crypto_policy_history"
-
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self._col = db[self.COLLECTION]
-
-    async def ensure_indexes(self) -> None:
-        # (policy_type, policy_scope, project_id, version) — uniqueness so
-        # crypto and license policies may both have version 1 for one project.
-        await self._col.create_index([("policy_type", 1), ("policy_scope", 1), ("project_id", 1), ("version", -1)])
-        # Index without policy_type for queries that don't filter on it.
-        await self._col.create_index([("policy_scope", 1), ("project_id", 1), ("version", -1)])
-        await self._col.create_index([("timestamp", -1)])
-        await self._col.create_index([("actor_user_id", 1), ("timestamp", -1)])
+class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
+    collection_name = "crypto_policy_history"
+    model_class = PolicyAuditEntry
 
     async def insert(self, entry: PolicyAuditEntry) -> None:
-        await self._col.insert_one(entry.model_dump(by_alias=True))
+        with track_db_operation(self.collection_name, "insert_one"):
+            await self.collection.insert_one(entry.model_dump(by_alias=True))
 
     async def list(
         self,
@@ -57,8 +48,9 @@ class PolicyAuditRepository:
             "project_id": project_id,
             **_policy_type_filter(policy_type),
         }
-        cursor = self._col.find(query).sort("timestamp", DESCENDING).skip(skip).limit(limit)
-        docs = await cursor.to_list(length=limit)
+        with track_db_operation(self.collection_name, "find"):
+            cursor = self.collection.find(query).sort("timestamp", DESCENDING).skip(skip).limit(limit)
+            docs = await cursor.to_list(length=limit)
         return [PolicyAuditEntry.model_validate(d) for d in docs]
 
     async def get_by_version(
@@ -75,10 +67,11 @@ class PolicyAuditRepository:
             "version": version,
             **_policy_type_filter(policy_type),
         }
-        doc = await self._col.find_one(query)
+        with track_db_operation(self.collection_name, "find_one"):
+            doc = await self.collection.find_one(query)
         return PolicyAuditEntry.model_validate(doc) if doc else None
 
-    async def count(
+    async def count_entries(
         self,
         *,
         policy_scope: Literal["system", "project"],
@@ -90,7 +83,8 @@ class PolicyAuditRepository:
             "project_id": project_id,
             **_policy_type_filter(policy_type),
         }
-        return await self._col.count_documents(query)
+        with track_db_operation(self.collection_name, "count"):
+            return await self.collection.count_documents(query)
 
     async def delete_older_than(
         self,
@@ -106,5 +100,6 @@ class PolicyAuditRepository:
             "timestamp": {"$lt": cutoff},
             **_policy_type_filter(policy_type),
         }
-        result = await self._col.delete_many(query)
+        with track_db_operation(self.collection_name, "delete_many"):
+            result = await self.collection.delete_many(query)
         return result.deleted_count

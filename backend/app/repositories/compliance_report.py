@@ -6,30 +6,25 @@ Artifact bytes live in GridFS; this repo stores the job-document only.
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import DESCENDING
 
+from app.core.metrics import track_db_operation
 from app.models.compliance_report import ComplianceReport
+from app.repositories.base import BaseRepository
 from app.schemas.compliance import ReportFramework, ReportStatus
 
 
-class ComplianceReportRepository:
-    COLLECTION = "compliance_reports"
-
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self._col = db[self.COLLECTION]
-
-    async def ensure_indexes(self) -> None:
-        await self._col.create_index([("scope", 1), ("scope_id", 1), ("framework", 1), ("requested_at", -1)])
-        await self._col.create_index([("status", 1)])
-        await self._col.create_index([("expires_at", 1)])
-        await self._col.create_index([("requested_by", 1), ("status", 1)])
+class ComplianceReportRepository(BaseRepository[ComplianceReport]):
+    collection_name = "compliance_reports"
+    model_class = ComplianceReport
 
     async def insert(self, report: ComplianceReport) -> None:
-        await self._col.insert_one(report.model_dump(by_alias=True))
+        with track_db_operation(self.collection_name, "insert_one"):
+            await self.collection.insert_one(report.model_dump(by_alias=True))
 
     async def get(self, report_id: str) -> Optional[ComplianceReport]:
-        doc = await self._col.find_one({"_id": report_id})
+        with track_db_operation(self.collection_name, "find_one"):
+            doc = await self.collection.find_one({"_id": report_id})
         return ComplianceReport.model_validate(doc) if doc else None
 
     async def list(
@@ -56,8 +51,9 @@ class ComplianceReportRepository:
             # Combine via $and so callers can pass an $or visibility clause
             # without colliding with the field-level filters above.
             query = {"$and": [query, extra_filter]} if query else extra_filter
-        cursor = self._col.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)
-        docs = await cursor.to_list(length=limit)
+        with track_db_operation(self.collection_name, "find"):
+            cursor = self.collection.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)
+            docs = await cursor.to_list(length=limit)
         return [ComplianceReport.model_validate(d) for d in docs]
 
     async def update_status(
@@ -91,20 +87,24 @@ class ComplianceReportRepository:
         ]:
             if val is not None:
                 update[key] = val
-        await self._col.update_one({"_id": report_id}, {"$set": update})
+        with track_db_operation(self.collection_name, "update_one"):
+            await self.collection.update_one({"_id": report_id}, {"$set": update})
 
     async def count_pending_for_user(self, user_id: str) -> int:
-        return await self._col.count_documents(
-            {
-                "requested_by": user_id,
-                "status": {
-                    "$in": [
-                        ReportStatus.PENDING.value,
-                        ReportStatus.GENERATING.value,
-                    ]
-                },
-            }
-        )
+        with track_db_operation(self.collection_name, "count"):
+            return await self.collection.count_documents(
+                {
+                    "requested_by": user_id,
+                    "status": {
+                        "$in": [
+                            ReportStatus.PENDING.value,
+                            ReportStatus.GENERATING.value,
+                        ]
+                    },
+                }
+            )
 
-    async def delete(self, report_id: str) -> None:
-        await self._col.delete_one({"_id": report_id})
+    async def delete(self, report_id: str) -> bool:
+        with track_db_operation(self.collection_name, "delete_one"):
+            result = await self.collection.delete_one({"_id": report_id})
+        return result.deleted_count > 0

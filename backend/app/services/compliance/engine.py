@@ -14,6 +14,8 @@ from typing import Any, List, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
+from app.core.config import settings
+from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
@@ -32,7 +34,6 @@ from app.services.compliance.renderers import RENDERER_REGISTRY
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_RETENTION_DAYS = 90
 _FINDINGS_LIMIT = 20000
 
 
@@ -80,6 +81,7 @@ class ComplianceReportEngine:
                 filename,
                 mime,
             )
+            framework_label = str(report.framework.value) if hasattr(report.framework, "value") else str(report.framework)
             await repo.update_status(
                 report.id,
                 status=ReportStatus.COMPLETED,
@@ -91,11 +93,14 @@ class ComplianceReportEngine:
                 policy_version_snapshot=inputs.policy_version,
                 iana_catalog_version_snapshot=inputs.iana_catalog_version,
                 completed_at=datetime.now(timezone.utc),
-                expires_at=datetime.now(timezone.utc) + timedelta(days=_DEFAULT_RETENTION_DAYS),
+                expires_at=datetime.now(timezone.utc) + timedelta(days=settings.COMPLIANCE_REPORT_RETENTION_DAYS),
             )
+            compliance_reports_total.labels(framework=framework_label, status="success").inc()
             logger.info("Compliance report %s completed (%s bytes)", report.id, len(artifact_bytes))
         except Exception as exc:
             logger.exception("Compliance report %s failed: %s", report.id, exc)
+            framework_label = str(report.framework.value) if hasattr(report.framework, "value") else str(report.framework)
+            compliance_reports_total.labels(framework=framework_label, status="error").inc()
             await repo.update_status(
                 report.id,
                 status=ReportStatus.FAILED,

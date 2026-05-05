@@ -335,7 +335,7 @@ async def record_license_policy_change(
         return None
 
     repo = PolicyAuditRepository(db)
-    existing = await repo.count(
+    existing = await repo.count_entries(
         policy_scope="project",
         project_id=project_id,
         policy_type="license",

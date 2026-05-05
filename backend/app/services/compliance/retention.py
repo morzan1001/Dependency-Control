@@ -1,28 +1,20 @@
 """
 Periodic retention sweep for compliance report jobs.
 
-The engine sets ``expires_at`` on completed reports (default: 90 days from
-completion) but nothing was reading it — GridFS and the metadata collection
-grew unbounded. This module deletes any expired reports and their GridFS
-artifacts on startup. Mirrors the policy-audit retention pattern.
-
-Override the retention period via the COMPLIANCE_REPORT_RETENTION_DAYS
-env-var; the value is informational (the engine already applies it when
-setting ``expires_at``). The sweep itself always trusts ``expires_at``.
+The engine sets ``expires_at`` on completed reports; the sweep deletes
+reports whose ``expires_at`` is in the past. Retention period is
+configured via settings.COMPLIANCE_REPORT_RETENTION_DAYS (default 90 days).
 """
 
 import logging
-import os
 from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
+from app.core.config import settings
 from app.repositories.compliance_report import ComplianceReportRepository
 
 logger = logging.getLogger(__name__)
-
-COMPLIANCE_REPORT_RETENTION_ENV = "COMPLIANCE_REPORT_RETENTION_DAYS"
-DEFAULT_COMPLIANCE_REPORT_RETENTION_DAYS = 90
 
 
 async def sweep_expired_compliance_reports(db: AsyncIOMotorDatabase) -> int:
@@ -32,7 +24,7 @@ async def sweep_expired_compliance_reports(db: AsyncIOMotorDatabase) -> int:
     never orphan a blob. Returns the count of metadata documents deleted.
     """
     now = datetime.now(timezone.utc)
-    col = db[ComplianceReportRepository.COLLECTION]
+    col = db[ComplianceReportRepository.collection_name]
     try:
         bucket = AsyncIOMotorGridFSBucket(db)
     except Exception:  # pragma: no cover — unreachable in real Motor
@@ -67,19 +59,5 @@ async def sweep_expired_compliance_reports(db: AsyncIOMotorDatabase) -> int:
 
 
 def _configured_retention_days() -> int:
-    """Return the configured retention window in days. Informational only —
-    the engine uses this when stamping ``expires_at``; the sweeper just
-    honours the already-stored expiry."""
-    raw = os.environ.get(COMPLIANCE_REPORT_RETENTION_ENV)
-    if not raw:
-        return DEFAULT_COMPLIANCE_REPORT_RETENTION_DAYS
-    try:
-        value = int(raw)
-    except ValueError:
-        logger.warning(
-            "Invalid %s: %r — falling back to default",
-            COMPLIANCE_REPORT_RETENTION_ENV,
-            raw,
-        )
-        return DEFAULT_COMPLIANCE_REPORT_RETENTION_DAYS
-    return value if value > 0 else DEFAULT_COMPLIANCE_REPORT_RETENTION_DAYS
+    """Return the configured retention window in days from settings."""
+    return settings.COMPLIANCE_REPORT_RETENTION_DAYS

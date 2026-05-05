@@ -96,6 +96,15 @@ class Settings(BaseSettings):
     # at the cost of worst-case latency per message.
     CHAT_MAX_TOOL_ROUNDS: int = 20
 
+    # Policy audit settings
+    # Minimum age (days) an entry must have before it can be manually pruned via API.
+    POLICY_AUDIT_MIN_PRUNE_DAYS: int = 90
+    # Automatic retention window (days). 0 = keep forever (housekeeping no-op).
+    POLICY_AUDIT_RETENTION_DAYS: int = 0
+
+    # Compliance report retention (days from completion until sweep deletes report + artifact).
+    COMPLIANCE_REPORT_RETENTION_DAYS: int = 90
+
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
 
 
