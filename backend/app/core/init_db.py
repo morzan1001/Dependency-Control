@@ -314,8 +314,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     # Policy Audit Entries
     await database["policy_audit_entries"].create_index(
-        [("policy_type", pymongo.ASCENDING), ("policy_scope", pymongo.ASCENDING),
-         ("project_id", pymongo.ASCENDING), ("version", pymongo.DESCENDING)]
+        [
+            ("policy_type", pymongo.ASCENDING),
+            ("policy_scope", pymongo.ASCENDING),
+            ("project_id", pymongo.ASCENDING),
+            ("version", pymongo.DESCENDING),
+        ]
     )
     await database["policy_audit_entries"].create_index(
         [("policy_scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING), ("version", pymongo.DESCENDING)]
@@ -327,8 +331,12 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     # Compliance Reports
     await database["compliance_reports"].create_index(
-        [("scope", pymongo.ASCENDING), ("scope_id", pymongo.ASCENDING),
-         ("framework", pymongo.ASCENDING), ("requested_at", pymongo.DESCENDING)]
+        [
+            ("scope", pymongo.ASCENDING),
+            ("scope_id", pymongo.ASCENDING),
+            ("framework", pymongo.ASCENDING),
+            ("requested_at", pymongo.DESCENDING),
+        ]
     )
     await database["compliance_reports"].create_index([("status", pymongo.ASCENDING)])
     await database["compliance_reports"].create_index([("expires_at", pymongo.ASCENDING)])
@@ -337,12 +345,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
 
     # Findings: scan_created_at analytics indexes
-    await database["findings"].create_index(
-        [("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)]
-    )
-    await database["findings"].create_index(
-        [("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)]
-    )
+    await database["findings"].create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
+    await database["findings"].create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
 
     logger.info("Database indexes created successfully.")
 

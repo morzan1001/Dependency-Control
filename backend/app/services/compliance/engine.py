@@ -81,7 +81,9 @@ class ComplianceReportEngine:
                 filename,
                 mime,
             )
-            framework_label = str(report.framework.value) if hasattr(report.framework, "value") else str(report.framework)
+            framework_label = (
+                str(report.framework.value) if hasattr(report.framework, "value") else str(report.framework)
+            )
             await repo.update_status(
                 report.id,
                 status=ReportStatus.COMPLETED,
@@ -99,7 +101,9 @@ class ComplianceReportEngine:
             logger.info("Compliance report %s completed (%s bytes)", report.id, len(artifact_bytes))
         except Exception as exc:
             logger.exception("Compliance report %s failed: %s", report.id, exc)
-            framework_label = str(report.framework.value) if hasattr(report.framework, "value") else str(report.framework)
+            framework_label = (
+                str(report.framework.value) if hasattr(report.framework, "value") else str(report.framework)
+            )
             compliance_reports_total.labels(framework=framework_label, status="error").inc()
             await repo.update_status(
                 report.id,
