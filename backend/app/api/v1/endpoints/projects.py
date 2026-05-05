@@ -1502,9 +1502,7 @@ async def delete_project(
     # 1. Collect all scan IDs and GridFS file IDs by streaming (avoids loading all scans at once)
     scan_ids = []
     gridfs_ids = []
-    async for scan in scan_repo.iterate(
-        {"project_id": project_id}, {"_id": 1, "sbom_refs": 1}
-    ):
+    async for scan in scan_repo.iterate({"project_id": project_id}, {"_id": 1, "sbom_refs": 1}):
         scan_ids.append(scan["_id"])
         for ref in scan.get("sbom_refs", []):
             file_id = ref.get("file_id") or ref.get("gridfs_id")

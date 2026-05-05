@@ -14,7 +14,9 @@ _COL = "waivers"
 def _non_expired_filter(now: Optional[datetime] = None) -> Dict[str, Any]:
     """Return a MongoDB $or clause matching waivers whose expiration_date is absent, null, or in the future."""
     ts = now or datetime.now(timezone.utc)
-    return {"$or": [{"expiration_date": {"$exists": False}}, {"expiration_date": None}, {"expiration_date": {"$gt": ts}}]}
+    return {
+        "$or": [{"expiration_date": {"$exists": False}}, {"expiration_date": None}, {"expiration_date": {"$gt": ts}}]
+    }
 
 
 class WaiverRepository:

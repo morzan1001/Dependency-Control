@@ -30,6 +30,7 @@ def _get_comparison_semaphore() -> asyncio.Semaphore:
         _comparison_semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
     return _comparison_semaphore
 
+
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -431,9 +432,7 @@ async def compute_update_frequency(
     for pkg in first_outdated:
         package_outdated_counts[pkg] += 1
         ever_outdated.add(pkg)
-    scan_timeline.append(
-        _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(first_outdated))
-    )
+    scan_timeline.append(_build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(first_outdated)))
 
     for i in range(1, len(completed_scans)):
         prev_scan = completed_scans[i - 1]
