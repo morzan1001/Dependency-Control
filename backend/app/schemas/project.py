@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import PROJECT_ROLES, PROJECT_ROLE_VIEWER
+from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.finding import FindingType, Severity
 from app.models.project import Project, Scan
 
@@ -161,6 +162,11 @@ class ProjectNotificationSettings(BaseModel):
     enforce_notification_settings: Optional[bool] = Field(
         None, description="Enforce these settings for all members (Owner only)"
     )
+
+    @field_validator("notification_preferences")
+    @classmethod
+    def _sanitize_prefs(cls, v: Any) -> Dict[str, List[str]]:
+        return sanitize_notification_preferences(v)
 
 
 class ProjectApiKeyResponse(BaseModel):

@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.types import PyObjectId
 
 logger = logging.getLogger(__name__)
@@ -37,43 +38,6 @@ class User(BaseModel):
     @field_validator("notification_preferences")
     @classmethod
     def validate_notification_preferences(cls, v: Any) -> dict[str, list[str]]:
-        """
-        Validate notification preferences to prevent typos and invalid configurations.
-        """
-        if v is None:
-            return {}
-
-        # Valid event types
-        valid_events = {"analysis_completed", "vulnerability_found"}
-
-        # Valid channels
-        valid_channels = {"email", "slack", "mattermost"}
-
-        # Validate structure
-        if not isinstance(v, dict):
-            logger.warning(f"Invalid notification_preferences type: {type(v)}. Using empty dict.")
-            return {}
-
-        validated = {}
-        for event, channels in v.items():
-            # Check if event is valid
-            if event not in valid_events:
-                logger.warning(f"Unknown notification event type '{event}' (valid: {valid_events}). Skipping.")
-                continue
-
-            # Validate channels
-            if not isinstance(channels, list):
-                logger.warning(f"Invalid channels for event '{event}': expected list, got {type(channels)}")
-                continue
-
-            valid_event_channels = [c for c in channels if c in valid_channels]
-            if len(valid_event_channels) != len(channels):
-                invalid = set(channels) - valid_channels
-                logger.warning(f"Invalid channels for event '{event}': {invalid} (valid: {valid_channels})")
-
-            if valid_event_channels:
-                validated[event] = valid_event_channels
-
-        return validated
+        return sanitize_notification_preferences(v)
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)

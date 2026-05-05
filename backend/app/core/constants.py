@@ -646,6 +646,21 @@ NOTIFICATION_CHANNELS = [
     NOTIFICATION_CHANNEL_MATTERMOST,
 ]
 
+# Per-user notification event types — events that flow through individual user
+# preferences (channel-toggleable in UI). Webhook-only events are tracked
+# separately in WEBHOOK_EVENT_* below and don't appear here.
+NOTIFICATION_EVENT_ANALYSIS_COMPLETED = "analysis_completed"
+NOTIFICATION_EVENT_VULNERABILITY_FOUND = "vulnerability_found"
+NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED = "crypto_policy_changed"
+NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED = "license_policy_changed"
+
+NOTIFICATION_EVENTS = {
+    NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
+    NOTIFICATION_EVENT_VULNERABILITY_FOUND,
+    NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED,
+    NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED,
+}
+
 # SMTP timeout in seconds
 SMTP_TIMEOUT_SECONDS: int = 60
 

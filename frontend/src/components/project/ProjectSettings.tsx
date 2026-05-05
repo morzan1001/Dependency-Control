@@ -33,7 +33,7 @@ import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePa
 import { AlertTriangle, RefreshCw, Copy, Trash2, Info, Settings } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
-import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from '@/lib/constants'
+import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES, NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
 import {
   Select,
   SelectContent,
@@ -627,43 +627,30 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     <TableHeader>
                         <TableRow>
                             <TableHead className="w-[300px]">Event</TableHead>
-                            {['email', 'slack', 'mattermost'].map(channel => {
-                                if (channel === 'email' && !appConfig?.notifications.email) return null;
-                                if (channel === 'slack' && !appConfig?.notifications.slack) return null;
-                                if (channel === 'mattermost' && !appConfig?.notifications.mattermost) return null;
-                                return (
-                                    <TableHead key={channel} className="capitalize text-center">{channel}</TableHead>
-                                );
-                            })}
+                            {NOTIFICATION_CHANNELS.filter(c => appConfig?.notifications[c.id]).map(channel => (
+                                <TableHead key={channel.id} className="capitalize text-center">{channel.label}</TableHead>
+                            ))}
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {['analysis_completed', 'vulnerability_found'].map(event => (
-                            <TableRow key={event} className={enforceNotificationSettings && !canEnforce ? 'opacity-60' : ''}>
+                        {NOTIFICATION_EVENTS.map(event => (
+                            <TableRow key={event.id} className={enforceNotificationSettings && !canEnforce ? 'opacity-60' : ''}>
                                 <TableCell>
-                                    <div className="font-medium capitalize">{event.replace('_', ' ')}</div>
-                                    <div className="text-xs text-muted-foreground">
-                                        Receive notifications when {event.replace('_', ' ')} occurs.
-                                    </div>
+                                    <div className="font-medium">{event.label}</div>
+                                    <div className="text-xs text-muted-foreground">{event.description}</div>
                                 </TableCell>
-                                {['email', 'slack', 'mattermost'].map(channel => {
-                                    if (channel === 'email' && !appConfig?.notifications.email) return null;
-                                    if (channel === 'slack' && !appConfig?.notifications.slack) return null;
-                                    if (channel === 'mattermost' && !appConfig?.notifications.mattermost) return null;
-                                    
-                                    return (
-                                        <TableCell key={channel} className="text-center">
-                                            <div className="flex justify-center">
-                                                <Checkbox 
-                                                    id={`${event}-${channel}`}
-                                                    checked={(notificationPrefs[event] || []).includes(channel)}
-                                                    onCheckedChange={() => toggleNotification(event, channel)}
-                                                    disabled={enforceNotificationSettings && !canEnforce}
-                                                />
-                                            </div>
-                                        </TableCell>
-                                    );
-                                })}
+                                {NOTIFICATION_CHANNELS.filter(c => appConfig?.notifications[c.id]).map(channel => (
+                                    <TableCell key={channel.id} className="text-center">
+                                        <div className="flex justify-center">
+                                            <Checkbox
+                                                id={`${event.id}-${channel.id}`}
+                                                checked={(notificationPrefs[event.id] || []).includes(channel.id)}
+                                                onCheckedChange={() => toggleNotification(event.id, channel.id)}
+                                                disabled={enforceNotificationSettings && !canEnforce}
+                                            />
+                                        </div>
+                                    </TableCell>
+                                ))}
                             </TableRow>
                         ))}
                     </TableBody>

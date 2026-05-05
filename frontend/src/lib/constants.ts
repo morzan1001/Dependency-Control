@@ -75,3 +75,34 @@ export const ANALYTICS_PERMISSIONS = [
 ] as const;
 
 export const POST_PROCESSOR_ANALYZERS = ['epss_kev', 'reachability'] as const;
+
+// Per-user notification events. Must match `NOTIFICATION_EVENTS` in
+// backend/app/core/constants.py. Webhook-only events are tracked separately.
+export const NOTIFICATION_EVENTS = [
+  {
+    id: 'analysis_completed',
+    label: 'Analysis Completed',
+    description: 'When a dependency scan finishes.',
+  },
+  {
+    id: 'vulnerability_found',
+    label: 'Vulnerability Found',
+    description: 'When critical/high vulnerabilities or KEV entries are detected.',
+  },
+  {
+    id: 'crypto_policy_changed',
+    label: 'Crypto Policy Changed',
+    description: 'When the project\'s cryptography policy is updated.',
+  },
+  {
+    id: 'license_policy_changed',
+    label: 'License Policy Changed',
+    description: 'When the project\'s license policy is updated.',
+  },
+] as const;
+
+export const NOTIFICATION_CHANNELS = [
+  { id: 'email', label: 'Email' },
+  { id: 'slack', label: 'Slack' },
+  { id: 'mattermost', label: 'Mattermost' },
+] as const;

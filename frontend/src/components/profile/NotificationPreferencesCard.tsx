@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
+import { NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants';
 import {
   Table,
   TableBody,
@@ -14,17 +15,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-
-const NOTIFICATION_EVENTS = [
-  { id: 'analysis_completed', label: 'Analysis Completed', description: 'When a dependency scan finishes.' },
-  { id: 'vulnerability_found', label: 'Vulnerability Found', description: 'When critical/high vulnerabilities are detected.' },
-] as const;
-
-const NOTIFICATION_CHANNELS = [
-  { id: 'email', label: 'Email' },
-  { id: 'slack', label: 'Slack' },
-  { id: 'mattermost', label: 'Mattermost' },
-] as const;
 
 interface NotificationPreferencesCardProps {
   readonly user: User | undefined;
