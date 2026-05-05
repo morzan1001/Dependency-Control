@@ -41,7 +41,6 @@ export function IntegrationsSettingsTab({
                 <span className="font-medium text-foreground">Required Scopes:</span>
                 <ul className="list-disc list-inside ml-2">
                   <li><code>public_repo</code> (for public repository health checks)</li>
-                  <li>No additional scopes needed for Security Advisory access</li>
                 </ul>
               </div>
             </div>

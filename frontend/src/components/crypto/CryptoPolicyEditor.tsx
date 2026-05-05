@@ -158,7 +158,6 @@ export function CryptoPolicyEditor({
                     />
                   </td>
                   <td className="p-2">
-                    <div className="font-mono text-xs text-muted-foreground">{r.rule_id}</div>
                     <Input
                       disabled={readOnly}
                       value={r.name}
