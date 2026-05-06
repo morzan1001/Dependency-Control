@@ -98,11 +98,6 @@ Output formats: JSON, CSV, SARIF, PDF (PDF requires WeasyPrint / Pango / Cairo s
 *   `GET /api/v1/analytics/crypto/scan-delta` — added / removed / unchanged crypto assets between two scans.
 *   `GET /api/v1/analytics/crypto/pqc-migration` — generated PQC migration plan for the current scope.
 
-**Pipeline templates**
-
-*   **GitLab CI** — [`cbom-scan.gitlab-ci.yml`](https://github.com/zakmccracken/dependency-control-pipeline-templates/blob/main/cbom-scan.gitlab-ci.yml)
-*   **GitHub Actions** — [`cbom-scan.github-actions.yml`](https://github.com/zakmccracken/dependency-control-pipeline-templates/blob/main/cbom-scan.github-actions.yml)
-
 ## 🛠️ Quick Start (Docker Compose)
 
 The easiest way to run Dependency Control locally.
