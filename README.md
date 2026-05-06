@@ -100,8 +100,6 @@ Output formats: JSON, CSV, SARIF, PDF (PDF requires WeasyPrint / Pango / Cairo s
 
 **Pipeline templates**
 
-Ready-to-use pipeline templates are available in the [dependency-control-pipeline-templates](https://github.com/zakmccracken/dependency-control-pipeline-templates) repository:
-
 *   **GitLab CI** — [`cbom-scan.gitlab-ci.yml`](https://github.com/zakmccracken/dependency-control-pipeline-templates/blob/main/cbom-scan.gitlab-ci.yml)
 *   **GitHub Actions** — [`cbom-scan.github-actions.yml`](https://github.com/zakmccracken/dependency-control-pipeline-templates/blob/main/cbom-scan.github-actions.yml)
 
