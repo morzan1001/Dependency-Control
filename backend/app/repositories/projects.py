@@ -3,7 +3,7 @@
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReturnDocument
+from pymongo import ReadPreference, ReturnDocument
 
 from app.core.metrics import track_db_operation
 from app.models.project import Project
@@ -19,9 +19,22 @@ class ProjectRepository:
         self.db = db
         self.collection = db.projects
 
+    def _primary_collection(self):
+        # Pin to Primary to avoid stale reads on replica sets when the global
+        # readPreference is secondaryPreferred. Used by analysis engine paths
+        # that load fresh project config right after a worker scan claim.
+        return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
+
     async def get_by_id(self, project_id: str) -> Optional[Project]:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": project_id})
+        if data:
+            return Project(**data)
+        return None
+
+    async def get_by_id_strong(self, project_id: str) -> Optional[Project]:
+        with track_db_operation(_COL, "find_one"):
+            data = await self._primary_collection().find_one({"_id": project_id})
         if data:
             return Project(**data)
         return None

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReadPreference
 
 from app.core.metrics import track_db_operation
 from app.models.project import Scan
@@ -11,11 +12,28 @@ from app.schemas.projections import ScanMinimal, ScanWithStats
 
 _COL = "scans"
 
+# Projection used by both get_minimal_by_id and get_minimal_by_id_strong.
+_MINIMAL_PROJECTION = {
+    "_id": 1,
+    "pipeline_id": 1,
+    "is_rescan": 1,
+    "original_scan_id": 1,
+    "status": 1,
+    "reachability_pending": 1,
+    "project_id": 1,
+}
+
 
 class ScanRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db.scans
+
+    def _primary_collection(self):
+        # Pin to Primary to avoid stale reads on replica sets when the global
+        # readPreference is secondaryPreferred. Used by worker/engine/housekeeping
+        # paths that read scan state immediately after a write.
+        return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def get_by_id(self, scan_id: str) -> Optional[Scan]:
         with track_db_operation(_COL, "find_one"):
@@ -24,19 +42,19 @@ class ScanRepository:
             return Scan(**data)
         return None
 
+    async def get_by_id_strong(self, scan_id: str) -> Optional[Scan]:
+        with track_db_operation(_COL, "find_one"):
+            data = await self._primary_collection().find_one({"_id": scan_id})
+        if data:
+            return Scan(**data)
+        return None
+
     async def get_minimal_by_id(self, scan_id: str) -> Optional[ScanMinimal]:
-        data = await self.collection.find_one(
-            {"_id": scan_id},
-            {
-                "_id": 1,
-                "pipeline_id": 1,
-                "is_rescan": 1,
-                "original_scan_id": 1,
-                "status": 1,
-                "reachability_pending": 1,
-                "project_id": 1,
-            },
-        )
+        data = await self.collection.find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
+        return ScanMinimal(**data) if data else None
+
+    async def get_minimal_by_id_strong(self, scan_id: str) -> Optional[ScanMinimal]:
+        data = await self._primary_collection().find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
         return ScanMinimal(**data) if data else None
 
     async def create(self, scan: Scan) -> Scan:

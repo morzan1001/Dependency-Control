@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReadPreference
 
 
 class TokenBlacklistRepository:
@@ -47,7 +48,10 @@ class TokenBlacklistRepository:
         Returns:
             True if token is blacklisted, False otherwise
         """
-        result = await self.collection.find_one({"_id": jti})
+        # Security: read from Primary so a token revoked moments ago can't slip
+        # through on a Secondary that hasn't replicated the blacklist insert yet.
+        primary = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
+        result = await primary.find_one({"_id": jti})
         return result is not None
 
     async def remove_from_blacklist(self, jti: str) -> bool:

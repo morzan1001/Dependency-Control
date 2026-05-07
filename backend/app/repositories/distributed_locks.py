@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReadPreference
 
 
 class DistributedLocksRepository:
@@ -17,6 +18,9 @@ class DistributedLocksRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db.distributed_locks
+        # Locking semantics: a stale Secondary read could miss a freshly-acquired
+        # lock and let two pods believe they hold it. Pin all reads to Primary.
+        self._reads = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def acquire_lock(self, lock_name: str, holder_id: str, ttl_seconds: int = 30) -> bool:
         """
@@ -81,7 +85,7 @@ class DistributedLocksRepository:
         Returns:
             Lock document or None if not found
         """
-        return await self.collection.find_one({"_id": lock_name})
+        return await self._reads.find_one({"_id": lock_name})
 
     async def is_locked(self, lock_name: str) -> bool:
         """
@@ -94,7 +98,7 @@ class DistributedLocksRepository:
             True if lock is held and not expired, False otherwise
         """
         now = datetime.now(timezone.utc)
-        lock = await self.collection.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
+        lock = await self._reads.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
         return lock is not None
 
     async def cleanup_expired_locks(self) -> int:

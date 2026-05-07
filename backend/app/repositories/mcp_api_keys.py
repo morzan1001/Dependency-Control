@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReadPreference
 
 from app.core.metrics import track_db_operation
 
@@ -72,8 +73,11 @@ class MCPApiKeyRepository:
         if not plaintext.startswith(_TOKEN_PREFIX):
             return None
         now = datetime.now(timezone.utc)
+        # Read from Primary: a freshly-created key must be usable immediately,
+        # and a freshly-revoked key must stop authenticating immediately.
+        primary = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         with track_db_operation(_COL, "find_one"):
-            doc = await self.collection.find_one(
+            doc = await primary.find_one(
                 {
                     "token_hash": hash_token(plaintext),
                     "revoked_at": None,

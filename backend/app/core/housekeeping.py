@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+from pymongo import ReadPreference
 
 from app.core import ensure_utc
 from app.core.config import settings
@@ -211,8 +212,11 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                     continue
 
                 try:
-                    # Re-check for active scans inside lock (TOCTOU prevention)
-                    active_scan = await db.scans.find_one(
+                    # Re-check for active scans inside lock (TOCTOU prevention).
+                    # Pin to Primary so a Secondary that hasn't replicated the
+                    # latest scan insert/status flip can't make us miss an active scan.
+                    scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
+                    active_scan = await scans_primary.find_one(
                         {
                             "project_id": project.id,
                             "status": {"$in": ["pending", "processing"]},
@@ -520,8 +524,12 @@ async def recover_stuck_scans(
         )
         max_retries = HOUSEKEEPING_MAX_SCAN_RETRIES
 
-        # Find stuck scans
-        cursor = db.scans.find(
+        # Find stuck scans. Pin to Primary so we don't reset scans whose
+        # "processing" → "completed" transition just hasn't replicated to a
+        # Secondary yet (which would either falsely re-queue a finished scan
+        # or, conversely, miss a genuinely stuck one we wrote moments ago).
+        scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
+        cursor = scans_primary.find(
             {
                 "status": "processing",
                 "$or": [

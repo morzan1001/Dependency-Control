@@ -5,6 +5,8 @@ import time
 from datetime import datetime, timezone
 from typing import List, Optional, Set
 
+from pymongo import ReadPreference
+
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.db.mongodb import get_database
@@ -65,7 +67,10 @@ class AnalysisWorkerManager:
             db = await get_database()
             # Cap recovery so a backlog of stale pending scans doesn't flood the queue.
             recovery_limit = 1000
-            cursor = db.scans.find({"status": "pending"}, {"_id": 1}).sort("created_at", 1).limit(recovery_limit)
+            # Pin to Primary on startup recovery: after a pod crash we need the
+            # authoritative state, not whatever a Secondary happened to have.
+            scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
+            cursor = scans_primary.find({"status": "pending"}, {"_id": 1}).sort("created_at", 1).limit(recovery_limit)
 
             count = 0
             async for scan in cursor:

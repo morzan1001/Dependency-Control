@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReadPreference
 
 from app.models.invitation import ProjectInvitation, SystemInvitation
 
@@ -15,6 +16,15 @@ class InvitationRepository:
         self.db = db
         self.project_invitations = db.invitations
         self.system_invitations = db.system_invitations
+        # Token-by-lookup paths must hit Primary: a freshly-issued invitation
+        # link must work immediately, and a freshly-marked-used invitation must
+        # stop accepting on the very next click.
+        self._project_primary = self.project_invitations.with_options(  # type: ignore[arg-type]
+            read_preference=ReadPreference.PRIMARY,
+        )
+        self._system_primary = self.system_invitations.with_options(  # type: ignore[arg-type]
+            read_preference=ReadPreference.PRIMARY,
+        )
 
     # Project Invitations
     async def get_project_invitation(self, invitation_id: str) -> Optional[Dict[str, Any]]:
@@ -22,7 +32,7 @@ class InvitationRepository:
         return await self.project_invitations.find_one({"_id": invitation_id})
 
     async def get_project_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
-        return await self.project_invitations.find_one({"token": token})
+        return await self._project_primary.find_one({"token": token})
 
     async def create_project_invitation(self, invitation: ProjectInvitation) -> ProjectInvitation:
         await self.project_invitations.insert_one(invitation.model_dump(by_alias=True))
@@ -53,7 +63,7 @@ class InvitationRepository:
 
     async def get_system_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Get active system invitation by token (non-used, non-expired)."""
-        return await self.system_invitations.find_one(
+        return await self._system_primary.find_one(
             {
                 "token": token,
                 "is_used": False,
@@ -63,7 +73,7 @@ class InvitationRepository:
 
     async def get_system_invitation_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """Get active system invitation by email (non-used, non-expired)."""
-        return await self.system_invitations.find_one(
+        return await self._system_primary.find_one(
             {
                 "email": email,
                 "is_used": False,
