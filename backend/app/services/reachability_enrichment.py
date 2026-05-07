@@ -24,6 +24,7 @@ from app.core.constants import (
     REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO,
     REACHABILITY_CONFIDENCE_NOT_USED,
     REACHABILITY_EXTRACTION_CONFIDENCE,
+    REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
@@ -32,6 +33,24 @@ from app.core.constants import (
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
+
+
+def is_high_confidence_reachable(reachability_data: Optional[Dict[str, Any]]) -> bool:
+    """True only when ``is_reachable=True`` *and* confidence clears the threshold.
+
+    Use this for any user-facing count that drives prioritisation. The
+    raw boolean alone collapses two very different signals (matched
+    symbol vs. "package was imported, rest is heuristic") into one bit;
+    this gate keeps the noisy lower tier out of headline metrics.
+    """
+    if not reachability_data:
+        return False
+    if reachability_data.get("is_reachable") is not True:
+        return False
+    confidence = reachability_data.get("confidence_score")
+    if confidence is None:
+        return False
+    return confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
 
 
 class ReachabilityResult(TypedDict, total=False):

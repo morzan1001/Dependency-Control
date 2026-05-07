@@ -27,6 +27,20 @@ class ReachabilityStats(BaseModel):
     reachable_critical: int = Field(0, description="Critical vulns that are reachable")
     reachable_high: int = Field(0, description="High vulns that are reachable")
 
+    # High-confidence variants — gate the boolean by confidence_score >=
+    # REACHABILITY_HIGH_CONFIDENCE_THRESHOLD so prioritisation isn't driven
+    # by import-only matches without symbol-level corroboration. UIs should
+    # prefer these for headline numbers and use the raw counts for transparency.
+    reachable_count_high_confidence: int = Field(
+        0, description="Reachable vulns whose evidence cleared the high-confidence threshold"
+    )
+    reachable_critical_high_confidence: int = Field(
+        0, description="Critical vulns reachable with high confidence"
+    )
+    reachable_high_high_confidence: int = Field(
+        0, description="High-severity vulns reachable with high confidence"
+    )
+
 
 class PrioritizedCounts(BaseModel):
     """Vulnerability counts with intelligent prioritization."""

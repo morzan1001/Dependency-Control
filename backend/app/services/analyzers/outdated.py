@@ -44,6 +44,25 @@ def _is_ahead_of(current: str, latest: str) -> bool:
         return False
 
 
+def is_version_withdrawn(versions_info: List[Any], target_version: str) -> bool:
+    """Look up ``target_version`` in a deps.dev ``versions[]`` payload and
+    return True iff that exact version is marked ``isWithdrawn``.
+
+    A withdrawn version is one the upstream maintainers retracted from
+    the registry — usually for a defect or security issue. Treating it
+    as a normal install hides a real risk. Comparison strips a leading
+    ``v`` to match how PyPI / npm versions are normalised in deps.dev.
+    """
+    target = target_version.lstrip("v") if target_version else ""
+    if not target:
+        return False
+    for entry in versions_info or []:
+        version_key = entry.get("versionKey") or {}
+        if version_key.get("version") == target:
+            return bool(entry.get("isWithdrawn"))
+    return False
+
+
 class OutdatedAnalyzer(Analyzer):
     """
     Analyzer that checks for outdated packages via deps.dev API.
@@ -79,7 +98,105 @@ class OutdatedAnalyzer(Analyzer):
         if uncached_components:
             await self._fetch_and_classify(uncached_components, outdated, ahead)
 
-        return {"outdated_dependencies": outdated, "ahead_of_default": ahead}
+        # Yanked detection runs in parallel — same upstream endpoint, but
+        # we cache the withdrawn-version list separately so the outdated
+        # cache schema stays untouched.
+        yanked = await self._check_yanked(components)
+
+        return {
+            "outdated_dependencies": outdated,
+            "ahead_of_default": ahead,
+            "yanked_versions": yanked,
+        }
+
+    async def _check_yanked(
+        self, components: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Flag components whose installed version was withdrawn upstream.
+
+        Withdrawn (a.k.a. yanked) versions are strictly more dangerous
+        than merely outdated ones — the maintainers actively retracted
+        them, usually for a security or correctness defect. Treating
+        them as legitimate installs hides a real risk.
+        """
+        findings: List[Dict[str, Any]] = []
+        timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
+
+        async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
+            for component in components:
+                purl_str = component.get("purl", "")
+                version = component.get("version", "")
+                name = component.get("name", "")
+                if not version or not purl_str:
+                    continue
+
+                parsed = parse_purl(purl_str)
+                if not parsed or not parsed.registry_system:
+                    continue
+
+                withdrawn_versions = await self._get_withdrawn_versions(
+                    client, parsed.registry_system, parsed.deps_dev_name
+                )
+                if withdrawn_versions is None:
+                    continue
+
+                normalized = version.lstrip("v")
+                if normalized in withdrawn_versions:
+                    findings.append(
+                        {
+                            "component": name,
+                            "current_version": version,
+                            "purl": purl_str,
+                            "severity": Severity.HIGH.value,
+                            "message": (
+                                f"Version {version} was withdrawn from the registry. "
+                                "Installations should be replaced with a non-yanked release."
+                            ),
+                        }
+                    )
+        return findings
+
+    async def _get_withdrawn_versions(
+        self,
+        client: InstrumentedAsyncClient,
+        system: str,
+        package_name: str,
+    ) -> Optional[List[str]]:
+        """Return the list of withdrawn versions for a package, with caching.
+
+        ``None`` means the lookup failed (timeout / connection error /
+        upstream non-200) — callers should skip yanked detection for
+        that component rather than treating it as "not yanked".
+        """
+        cache_key = f"yanked:{system}:{package_name}"
+        cached = await cache_service.get(cache_key)
+        if cached is not None:
+            return list(cached) if isinstance(cached, list) else []
+
+        encoded_name = quote(package_name, safe="")
+        url = f"{self.base_url}/{system}/packages/{encoded_name}"
+        try:
+            response = await client.get(url, follow_redirects=True)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+        except (httpx.TimeoutException, httpx.ConnectError):
+            return None
+        except Exception:  # noqa: BLE001 — defensive; log and bail
+            logger.debug(f"Yanked check failed for {system}:{package_name}", exc_info=True)
+            return None
+
+        withdrawn = [
+            (v.get("versionKey") or {}).get("version", "")
+            for v in data.get("versions", [])
+            if v.get("isWithdrawn")
+        ]
+        withdrawn = [v for v in withdrawn if v]
+        try:
+            await cache_service.set(cache_key, withdrawn, ttl_seconds=CacheTTL.LATEST_VERSION)
+        except Exception:
+            logger.debug("Cache set failed for yanked versions", exc_info=True)
+        return withdrawn
 
     def _classify_version(
         self,

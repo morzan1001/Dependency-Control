@@ -881,6 +881,12 @@ REACHABILITY_EXTRACTION_CONFIDENCE = {
     "low": 0.5,
 }
 
+# Threshold above which a "reachable" verdict is considered high-confidence
+# enough to drive prioritisation/headline counts. Values below this still
+# count as reachable but may surface as "needs verification" — they're
+# typically import-only matches without symbol-level corroboration.
+REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
+
 GITLAB_ACCESS_GUEST = 10
 GITLAB_ACCESS_REPORTER = 20
 GITLAB_ACCESS_DEVELOPER = 30

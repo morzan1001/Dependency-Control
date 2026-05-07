@@ -49,6 +49,7 @@ _BUS_FACTOR_TYPE = "single_maintainer"
 def correlate_maintainer_risks(
     risks: List[Dict[str, Any]],
     github_active: Optional[bool],
+    maintainer_count: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Filter raw maintainer signals against their corroborating evidence.
 
@@ -61,26 +62,44 @@ def correlate_maintainer_risks(
         unavailable (``github_active=None``) the registry signal stands.
 
       * ``free_email_maintainer`` — a personal email address is not a
-        risk on its own. We only keep it when the package also has a
-        single maintainer (real bus-factor concern).
+        risk on its own. We keep it as a signal *unless* we have positive
+        evidence that the package has multiple maintainers (which removes
+        the bus-factor concern). The tri-state on ``maintainer_count`` is
+        important: ``None`` means "we didn't / couldn't check", and in
+        that case the precautionary signal stays. We also keep it when an
+        explicit ``single_maintainer`` finding is in the list (e.g. when
+        npm gave us the count and it was 1).
 
     ``github_active`` should be:
       * ``True``  if the source repo had a recent push (and is not archived)
       * ``False`` if the repo is inactive or archived
       * ``None``  if we couldn't check (no repo URL, GitHub API failure, …)
+
+    ``maintainer_count`` should be:
+      * an int >= 1 if the registry returned a maintainer list
+      * ``None``    if we didn't query or the registry didn't give a count
     """
     if not risks:
         return []
 
     types_present = {r.get("type") for r in risks}
     has_single_maintainer = _BUS_FACTOR_TYPE in types_present
+    multiple_maintainers_confirmed = (
+        maintainer_count is not None and maintainer_count > 1
+    )
 
     out: List[Dict[str, Any]] = []
     for r in risks:
         rtype = r.get("type")
         if rtype in _STALENESS_TYPES and github_active is True:
             continue
-        if rtype == _FREE_EMAIL_TYPE and not has_single_maintainer:
+        # Keep free_email by default. Only drop when we have positive
+        # evidence that the bus-factor concern doesn't apply.
+        if (
+            rtype == _FREE_EMAIL_TYPE
+            and not has_single_maintainer
+            and multiple_maintainers_confirmed
+        ):
             continue
         out.append(r)
     return out
@@ -234,7 +253,12 @@ class MaintainerRiskAnalyzer(Analyzer):
         # Filter out signals whose corroborating evidence is missing
         # (free-email without single-maintainer; staleness with an active repo).
         github_active = self._infer_github_active(github_info)
-        risks = correlate_maintainer_risks(risks, github_active=github_active)
+        # PyPI returns no maintainer_count; npm sometimes does. Pass through
+        # whatever we got so the correlation can use it as positive evidence.
+        maintainer_count = maintainer_info.get("maintainer_count") if maintainer_info else None
+        risks = correlate_maintainer_risks(
+            risks, github_active=github_active, maintainer_count=maintainer_count
+        )
 
         if not risks:
             return None

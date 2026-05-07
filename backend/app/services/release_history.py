@@ -20,7 +20,29 @@ from statistics import median
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 from urllib.parse import quote
 
+from packaging.version import InvalidVersion, Version
+
 logger = logging.getLogger(__name__)
+
+
+def _is_stable_release(version: str) -> bool:
+    """True for normal X.Y.Z releases. Excludes alpha/beta/rc/dev pre-releases.
+
+    Cadence metrics need this filter — a project that ships an alpha every
+    week looks "active" by raw count but isn't actually shipping stable
+    versions any faster than its peers. ``packaging.Version`` already knows
+    PEP 440 prerelease semantics; we just trust that.
+    """
+    try:
+        return not Version(version).is_prerelease
+    except InvalidVersion:
+        # Non-PEP-440 versions (calver, hashes) — keep them, no way to
+        # tell whether they're "stable" without ecosystem-specific rules.
+        return True
+
+
+def _stable_only(releases: Sequence[ReleaseInfo]) -> List[ReleaseInfo]:
+    return [r for r in releases if _is_stable_release(r.version)]
 
 
 @dataclass(frozen=True)
@@ -74,16 +96,25 @@ def releases_in_last_n_days(
     window_days: int,
     ref: datetime,
 ) -> int:
-    """Count releases whose ``published_at`` falls within ``window_days`` of ``ref``."""
+    """Count *stable* releases whose ``published_at`` falls within ``window_days`` of ``ref``.
+
+    Pre-releases (alpha/beta/rc) are excluded so that an alpha-heavy
+    package doesn't look more active than it actually is.
+    """
     cutoff = ref - timedelta(days=window_days)
-    return sum(1 for r in releases if r.published_at >= cutoff)
+    return sum(1 for r in _stable_only(releases) if r.published_at >= cutoff)
 
 
 def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> Optional[float]:
-    """Median gap (in days) between consecutive releases. None if fewer than 2."""
-    if len(releases) < 2:
+    """Median gap (in days) between consecutive *stable* releases.
+
+    Pre-releases are filtered out — a 1.0.0-rc1 the day before 1.0.0 is
+    not a meaningful "release gap" for cadence purposes.
+    """
+    stable = _stable_only(releases)
+    if len(stable) < 2:
         return None
-    sorted_dates = sorted(r.published_at for r in releases)
+    sorted_dates = sorted(r.published_at for r in stable)
     gaps = [
         (sorted_dates[i] - sorted_dates[i - 1]).total_seconds() / 86400.0
         for i in range(1, len(sorted_dates))
@@ -95,10 +126,15 @@ def days_since_latest_release(
     releases: Sequence[ReleaseInfo],
     ref: datetime,
 ) -> Optional[int]:
-    """Days between ``ref`` and the most recent release. None if no releases."""
-    if not releases:
+    """Days between ``ref`` and the most recent *stable* release.
+
+    Excludes pre-releases so a beta published yesterday doesn't pretend
+    a long-stagnant project is "actively maintained".
+    """
+    stable = _stable_only(releases)
+    if not stable:
         return None
-    latest = max(r.published_at for r in releases)
+    latest = max(r.published_at for r in stable)
     return (ref - latest).days
 
 

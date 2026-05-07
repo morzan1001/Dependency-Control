@@ -12,6 +12,7 @@ load and compare one scan pair at a time, keeping peak memory to 2×deps/scan.
 import asyncio
 import logging
 from collections import Counter, defaultdict, deque
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
@@ -418,6 +419,12 @@ def _empty_metrics(project_id: str, project_name: str, scan_count: int, scan_dat
 
 _RECENT_EVENTS_BUFFER_SIZE = 30
 
+# Defensive cap on the (package, version) -> first_scan_date map used for
+# adoption-latency. The map only grows with *new* (pkg, version) pairs, so
+# 10k entries is far above realistic project sizes; the bound guards against
+# pathological histories with extreme version churn.
+_MAX_OBSERVATIONS = 10_000
+
 # Share of classified deps a single ecosystem must hold to "win" the project.
 # Below the threshold the project is labelled "mixed" instead.
 _ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
@@ -442,6 +449,84 @@ def _dominant_ecosystem(dep_type_map: Dict[str, str]) -> Optional[str]:
     return "mixed"
 
 
+_DEFAULT_HARD_LIMIT = 1000
+
+
+@dataclass
+class _AccumulatorState:
+    """All state the streaming loop accumulates as it walks scan pairs.
+
+    Bundling these into one object keeps the orchestrator function from
+    juggling ten loose locals and lets each helper take a single argument.
+    """
+
+    type_counter: Counter = field(default_factory=Counter)
+    recent_events_buffer: Deque[DependencyUpdateEvent] = field(
+        default_factory=lambda: deque(maxlen=_RECENT_EVENTS_BUFFER_SIZE)
+    )
+    scan_timeline: List[ScanTimelineEntry] = field(default_factory=list)
+    package_outdated_counts: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    package_latest_info: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    dep_type_map: Dict[str, str] = field(default_factory=dict)
+    ever_outdated: set = field(default_factory=set)
+    ever_resolved: set = field(default_factory=set)
+    first_seen_versions: Dict[Tuple[str, str], datetime] = field(default_factory=dict)
+    package_purls: Dict[str, str] = field(default_factory=dict)
+
+    def accumulate_types(self, deps: Dict[str, Dict[str, str]]) -> None:
+        for name, info in deps.items():
+            if name not in self.dep_type_map:
+                self.dep_type_map[name] = info.get("type", "unknown")
+            purl = info.get("purl") or ""
+            if purl and name not in self.package_purls:
+                self.package_purls[name] = purl
+
+    def record_outdated(self, outdated: set) -> None:
+        for pkg in outdated:
+            self.package_outdated_counts[pkg] += 1
+            self.ever_outdated.add(pkg)
+
+    def absorb_events(
+        self, events: List[DependencyUpdateEvent], curr_scan_date: datetime
+    ) -> None:
+        for e in events:
+            if e.was_outdated:
+                self.ever_resolved.add(e.package_name)
+            self.type_counter[e.update_type] += 1
+            self.recent_events_buffer.append(e)
+            if len(self.first_seen_versions) < _MAX_OBSERVATIONS:
+                key = (e.package_name, e.new_version)
+                if key not in self.first_seen_versions:
+                    self.first_seen_versions[key] = curr_scan_date
+
+
+async def _load_completed_scans(
+    scan_repo: ScanRepository,
+    project_id: str,
+    max_scans: int,
+    since: Optional[datetime],
+    hard_limit: int,
+) -> List[Dict[str, Any]]:
+    """Resolve the scan window into a chronologically ordered list of completed scans.
+
+    When ``since`` is set the calendar window dominates and ``max_scans`` is
+    ignored; ``hard_limit`` is the safety cap. When ``since`` is None the
+    newest ``max_scans`` are taken.
+    """
+    fetch_limit = hard_limit if since is not None else max_scans
+    scans_raw = await scan_repo.find_by_project(
+        project_id,
+        limit=fetch_limit,
+        sort_by="created_at",
+        sort_order=-1,
+        projection={"_id": 1, "created_at": 1, "status": 1},
+    )
+    if since is not None:
+        scans_raw = [s for s in scans_raw if s["created_at"] >= since]
+    scans_raw.reverse()  # oldest -> newest for the streaming loop
+    return [s for s in scans_raw if s.get("status") == "completed"]
+
+
 async def compute_update_frequency(
     project_id: str,
     project_name: str,
@@ -451,6 +536,7 @@ async def compute_update_frequency(
     max_scans: int = 20,
     since: Optional[datetime] = None,
     release_fetcher: Optional[ReleaseHistoryFetcher] = None,
+    hard_limit: int = _DEFAULT_HARD_LIMIT,
 ) -> UpdateFrequencyMetrics:
     """
     Compute update frequency metrics for a project.
@@ -462,67 +548,36 @@ async def compute_update_frequency(
 
     Selection:
         - When ``since`` is set, every completed scan with ``created_at >= since``
-          is analysed (capped by ``max_scans`` as a safety bound).
+          is analysed, bounded only by ``hard_limit`` (default 1000) as a
+          safety cap. ``max_scans`` is *ignored* in this mode — the calendar
+          window is the user's stated intent.
         - When ``since`` is None, the most recent ``max_scans`` completed scans
-          are analysed. (Previously this loaded the *oldest* scans, which
-          made the metric useless on long-lived projects.)
+          are analysed.
     """
-    scans_raw = await scan_repo.find_by_project(
-        project_id,
-        limit=max_scans,
-        sort_by="created_at",
-        sort_order=-1,  # newest first; reversed below for chronological iteration
-        projection={"_id": 1, "created_at": 1, "status": 1},
+    completed_scans = await _load_completed_scans(
+        scan_repo, project_id, max_scans, since, hard_limit
     )
-    if since is not None:
-        scans_raw = [s for s in scans_raw if s["created_at"] >= since]
-    # Iterate oldest -> newest so prev/curr pair semantics work and recent
-    # events end up at the tail of the ring buffer.
-    scans_raw.reverse()
-    completed_scans = [s for s in scans_raw if s.get("status") == "completed"]
 
     if len(completed_scans) < 2:
         first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
         return _empty_metrics(project_id, project_name, len(completed_scans), first_date_str)
 
-    # Streaming accumulators — bounded in size by unique-packages, not by scan-count.
-    type_counter: Counter = Counter()
-    recent_events_buffer: Deque[DependencyUpdateEvent] = deque(maxlen=_RECENT_EVENTS_BUFFER_SIZE)
-    scan_timeline: List[ScanTimelineEntry] = []
-    package_outdated_counts: Dict[str, int] = defaultdict(int)
-    package_latest_info: Dict[str, Dict[str, str]] = {}
-    dep_type_map: Dict[str, str] = {}
-    ever_outdated: set = set()
-    ever_resolved: set = set()
-    # Earliest scan_date a (package, version) pair was observed as a transition.
-    # Powers adoption-latency calculation when a release fetcher is provided.
-    first_seen_versions: Dict[Tuple[str, str], datetime] = {}
-    # PURL string per package, used to derive registry_system for the fetcher.
-    package_purls: Dict[str, str] = {}
+    state = _AccumulatorState()
 
     async def _load_scan_deps(scan_id: str) -> Dict[str, Dict[str, str]]:
         docs = await dep_repo.find_all({"scan_id": scan_id}, projection=_DEP_PROJECTION)
         return _pregroup_deps_by_scan(docs).get(scan_id, {})
 
-    def _accumulate_types(deps: Dict[str, Dict[str, str]]) -> None:
-        for name, info in deps.items():
-            if name not in dep_type_map:
-                dep_type_map[name] = info.get("type", "unknown")
-            purl = info.get("purl") or ""
-            if purl and name not in package_purls:
-                package_purls[name] = purl
-
-    # Bootstrap with the first scan: load its deps and outdated set so the
-    # next iteration can roll forward without reloading.
+    # Bootstrap: load first scan's deps + outdated. Subsequent iterations
+    # roll the previous scan's data forward instead of reloading.
     first_scan = completed_scans[0]
     prev_deps = await _load_scan_deps(first_scan["_id"])
-    _accumulate_types(prev_deps)
-
-    prev_outdated = await _load_outdated_for_scan(analysis_repo, first_scan["_id"], package_latest_info)
-    for pkg in prev_outdated:
-        package_outdated_counts[pkg] += 1
-        ever_outdated.add(pkg)
-    scan_timeline.append(
+    state.accumulate_types(prev_deps)
+    prev_outdated = await _load_outdated_for_scan(
+        analysis_repo, first_scan["_id"], state.package_latest_info
+    )
+    state.record_outdated(prev_outdated)
+    state.scan_timeline.append(
         _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(prev_outdated))
     )
 
@@ -531,12 +586,12 @@ async def compute_update_frequency(
         curr_scan = completed_scans[i]
 
         curr_deps = await _load_scan_deps(curr_scan["_id"])
-        _accumulate_types(curr_deps)
+        state.accumulate_types(curr_deps)
 
-        curr_outdated = await _load_outdated_for_scan(analysis_repo, curr_scan["_id"], package_latest_info)
-        for pkg in curr_outdated:
-            package_outdated_counts[pkg] += 1
-            ever_outdated.add(pkg)
+        curr_outdated = await _load_outdated_for_scan(
+            analysis_repo, curr_scan["_id"], state.package_latest_info
+        )
+        state.record_outdated(curr_outdated)
 
         events = _compare_scan_pair(
             {prev_scan["_id"]: prev_deps, curr_scan["_id"]: curr_deps},
@@ -546,43 +601,31 @@ async def compute_update_frequency(
             curr_scan["created_at"],
             prev_outdated,
         )
-
-        # Stream into accumulators — never keep the full event list in memory.
-        for e in events:
-            if e.was_outdated:
-                ever_resolved.add(e.package_name)
-            type_counter[e.update_type] += 1
-            recent_events_buffer.append(e)
-            # Earliest scan_date for each (package, version) — used for adoption-latency.
-            key = (e.package_name, e.new_version)
-            if key not in first_seen_versions:
-                first_seen_versions[key] = curr_scan["created_at"]
-
-        scan_timeline.append(
+        state.absorb_events(events, curr_scan["created_at"])
+        state.scan_timeline.append(
             _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], events, len(curr_outdated))
         )
 
-        # Roll forward: this iteration's curr is the next iteration's prev.
         prev_deps = curr_deps
         prev_outdated = curr_outdated
 
     upstream = await _maybe_fetch_upstream_cadence(
-        release_fetcher, package_purls, first_seen_versions
+        release_fetcher, state.package_purls, state.first_seen_versions
     )
 
     return _aggregate_metrics(
         completed_scans,
-        ever_outdated,
-        ever_resolved,
-        scan_timeline,
-        dep_type_map,
-        package_outdated_counts,
-        package_latest_info,
+        state.ever_outdated,
+        state.ever_resolved,
+        state.scan_timeline,
+        state.dep_type_map,
+        state.package_outdated_counts,
+        state.package_latest_info,
         project_id,
         project_name,
-        type_counter=type_counter,
+        type_counter=state.type_counter,
         # Buffer holds events oldest -> newest (insertion order); reverse for newest-first.
-        recent_events=list(recent_events_buffer)[::-1],
+        recent_events=list(state.recent_events_buffer)[::-1],
         upstream=upstream,
     )
 

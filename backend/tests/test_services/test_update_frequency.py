@@ -436,6 +436,35 @@ class TestStreamingOrchestrator:
         assert m.total_updates == 5
 
     @pytest.mark.asyncio
+    async def test_observations_bounded_for_high_churn_history(self):
+        # 200 scans, every scan introduces a new unique version per package,
+        # 5 packages -> 1000 (pkg, version) pairs. Without a bound this lives
+        # forever in memory; with a bound the orchestrator must complete and
+        # produce metrics rather than retaining every pair.
+        scans = [_make_scan(f"s{i}", i) for i in range(200)]
+        deps: Dict[str, List[Dict[str, Any]]] = {}
+        for i in range(200):
+            deps[f"s{i}"] = [
+                _make_dep(f"s{i}", f"pkg-{p}", f"1.{i}.{p}") for p in range(5)
+            ]
+        scan_repo = FakeScanRepo(scans)
+        dep_repo = FakeDepRepo(deps)
+        analysis_repo = FakeAnalysisRepo([])
+
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=scan_repo,
+            dep_repo=dep_repo,
+            analysis_repo=analysis_repo,
+            max_scans=200,
+        )
+        # Headline: it returns at all and reports 200 scans plus the
+        # right number of update events (199 transitions x 5 packages).
+        assert m.scan_count == 200
+        assert m.total_updates == 199 * 5
+
+    @pytest.mark.asyncio
     async def test_no_release_fetcher_yields_none_upstream_metrics(self):
         scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
         deps = {
@@ -507,6 +536,56 @@ class TestStreamingOrchestrator:
         # Fetcher must have been called once with the unique packages from the scans.
         assert len(fetcher.calls) == 1
         assert ("pypi", "pkg-a") in fetcher.calls[0]
+
+    @pytest.mark.asyncio
+    async def test_since_overrides_max_scans_when_window_holds_more(self):
+        # 30 daily scans, max_scans=5 (default-ish), since=very-old.
+        # Old code: loaded only 5 newest scans, ignored everything older
+        # in the requested window. New code: hard_limit-bounded load so
+        # the entire `since` window is honored.
+        scans = [_make_scan(f"s{i}", i) for i in range(30)]
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
+        scan_repo = FakeScanRepo(scans)
+        dep_repo = FakeDepRepo(deps)
+        analysis_repo = FakeAnalysisRepo([])
+
+        cutoff = _BASE_SCAN_DATE - timedelta(days=1)  # before everything
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=scan_repo,
+            dep_repo=dep_repo,
+            analysis_repo=analysis_repo,
+            max_scans=5,
+            since=cutoff,
+        )
+        assert m.scan_count == 30, (
+            "since cutoff should trump max_scans when the window contains more scans"
+        )
+
+    @pytest.mark.asyncio
+    async def test_hard_limit_caps_runaway_queries(self):
+        # 5000 scans + since=epoch -> the hard_limit safety cap must keep
+        # us from loading the whole collection.
+        scans = [_make_scan(f"s{i}", i) for i in range(2500)]
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(2500)}
+        scan_repo = FakeScanRepo(scans)
+        dep_repo = FakeDepRepo(deps)
+        analysis_repo = FakeAnalysisRepo([])
+
+        cutoff = _BASE_SCAN_DATE - timedelta(days=1)
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=scan_repo,
+            dep_repo=dep_repo,
+            analysis_repo=analysis_repo,
+            max_scans=5,
+            since=cutoff,
+            hard_limit=100,
+        )
+        # Only the newest 100 scans should be analysed under the safety cap.
+        assert m.scan_count == 100
 
     @pytest.mark.asyncio
     async def test_summary_carries_dominant_ecosystem(self):

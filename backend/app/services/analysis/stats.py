@@ -8,7 +8,11 @@ EPSS/KEV enrichment and reachability analysis data.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, cast
 
-from app.core.constants import HIGH_RISK_SCORE_THRESHOLD, sort_by_severity
+from app.core.constants import (
+    HIGH_RISK_SCORE_THRESHOLD,
+    REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
+    sort_by_severity,
+)
 from app.core.epss import bucket_epss
 from app.models.stats import (
     PrioritizedCounts,
@@ -16,6 +20,7 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
+from app.services.reachability_enrichment import is_high_confidence_reachable
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,
@@ -223,6 +228,7 @@ def build_reachability_summary(
             "severity": finding.get("severity", "unknown"),
             "reachability_level": reachability_level,
             "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
+            "is_high_confidence": is_high_confidence_reachable(reachability_data),
         }
 
         reachability_counts = cast(Dict[str, int], summary["reachability_levels"])
@@ -272,6 +278,11 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "kev_ransomware": {"$ifNull": ["$details.kev_ransomware", False]},
                 "reachable": {"$ifNull": ["$reachable", None]},
                 "reachability_level": {"$ifNull": ["$reachability_level", "unknown"]},
+                # Confidence is nested under details.reachability — pulled
+                # up here so the group stage can gate counts on it (B9).
+                "reachability_confidence": {
+                    "$ifNull": ["$details.reachability.confidence_score", None]
+                },
                 "risk_score": {"$ifNull": ["$details.risk_score", None]},
                 # Calculate default CVSS-based score if none provided
                 "calculated_score": {
@@ -360,6 +371,67 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                                 "$and": [
                                     {"$eq": ["$reachable", True]},
                                     {"$eq": ["$severity", "HIGH"]},
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                # B9: counts gated by confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD.
+                # Drives prioritisation; raw `reachable_*` fields above are kept for transparency.
+                "reachable_count_high_confidence": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$and": [
+                                    {"$eq": ["$reachable", True]},
+                                    {
+                                        "$gte": [
+                                            "$reachability_confidence",
+                                            REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
+                                        ]
+                                    },
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "reachable_critical_high_confidence": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$and": [
+                                    {"$eq": ["$reachable", True]},
+                                    {"$eq": ["$severity", "CRITICAL"]},
+                                    {
+                                        "$gte": [
+                                            "$reachability_confidence",
+                                            REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
+                                        ]
+                                    },
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "reachable_high_high_confidence": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$and": [
+                                    {"$eq": ["$reachable", True]},
+                                    {"$eq": ["$severity", "HIGH"]},
+                                    {
+                                        "$gte": [
+                                            "$reachability_confidence",
+                                            REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
+                                        ]
+                                    },
                                 ]
                             },
                             1,
@@ -558,6 +630,9 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             unknown_count=res.get("total", 0) - res.get("reachability_analyzed", 0),
             reachable_critical=res.get("reachable_critical", 0),
             reachable_high=res.get("reachable_high", 0),
+            reachable_count_high_confidence=res.get("reachable_count_high_confidence", 0),
+            reachable_critical_high_confidence=res.get("reachable_critical_high_confidence", 0),
+            reachable_high_high_confidence=res.get("reachable_high_high_confidence", 0),
         )
 
         # Prioritized Counts

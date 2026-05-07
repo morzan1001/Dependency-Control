@@ -145,6 +145,60 @@ class TestAggregateUpstreamMetrics:
         assert result.upstream_days_since_latest_release_median is not None
         assert abs(result.upstream_days_since_latest_release_median - 60.0) < 0.01
 
+    def test_releases_count_excludes_prereleases(self):
+        # 2 stable + 3 betas in last 12m -> stable-only count is 2.
+        history = {
+            "pkg": [
+                ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=300)),
+                ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=280)),
+                ReleaseInfo(version="1.0.0-rc1", published_at=_REF - timedelta(days=200)),
+                ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=100)),
+                ReleaseInfo(version="2.0.0a1", published_at=_REF - timedelta(days=30)),
+            ],
+        }
+        result = aggregate_upstream_metrics(history, observations=[], ref=_REF)
+        # Median across one package = 2 stable releases.
+        assert result.upstream_releases_last_12m_median == 2.0
+
+    def test_days_between_excludes_prereleases(self):
+        # Stable releases 100 days apart; betas would shrink the gap if counted.
+        history = {
+            "pkg": [
+                ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=200)),
+                ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=150)),
+                ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=100)),
+            ],
+        }
+        result = aggregate_upstream_metrics(history, observations=[], ref=_REF)
+        # Stable-only gap 200 -> 100 = 100 days. With prereleases it'd be 50.
+        assert result.upstream_days_between_releases_median is not None
+        assert abs(result.upstream_days_between_releases_median - 100.0) < 1.0
+
+    def test_days_since_latest_excludes_prerelease(self):
+        # Latest stable is 200 days old; a beta released yesterday must
+        # not pretend the package is "actively maintained".
+        history = {
+            "pkg": [
+                ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=200)),
+                ReleaseInfo(version="2.0.0-beta1", published_at=_REF - timedelta(days=1)),
+            ],
+        }
+        result = aggregate_upstream_metrics(history, observations=[], ref=_REF)
+        assert result.upstream_days_since_latest_release_median == 200
+
+    def test_adoption_latency_includes_prereleases(self):
+        # If the team adopted a beta, the adoption_latency must measure
+        # the right thing — the upstream publish date of *that* beta,
+        # not a hypothetical filtered-out release.
+        history = {
+            "pkg": [
+                ReleaseInfo(version="1.0.0-beta1", published_at=_REF - timedelta(days=20)),
+            ],
+        }
+        observations = [("pkg", "1.0.0-beta1", _REF - timedelta(days=5))]
+        result = aggregate_upstream_metrics(history, observations=observations, ref=_REF)
+        assert result.adoption_latency_days_median == 15
+
     def test_parse_deps_dev_skips_versions_without_published_at(self):
         # Real-world deps.dev responses occasionally omit publishedAt.
         # Those entries must be dropped; valid ones kept.

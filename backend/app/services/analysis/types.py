@@ -89,7 +89,7 @@ class CallgraphInfo(TypedDict):
     generated_at: Optional[str]
 
 
-class VulnerabilityInfo(TypedDict):
+class VulnerabilityInfo(TypedDict, total=False):
     """Basic info about a vulnerability for reachability analysis."""
 
     cve: str
@@ -98,6 +98,10 @@ class VulnerabilityInfo(TypedDict):
     severity: str
     reachability_level: str
     reachable_functions: List[str]
+    # B9: True only when the underlying confidence_score cleared the
+    # REACHABILITY_HIGH_CONFIDENCE_THRESHOLD. UIs can use this to mark
+    # findings that are reachable on solid evidence vs. heuristic ones.
+    is_high_confidence: bool
 
 
 class ReachabilitySummary(TypedDict):
