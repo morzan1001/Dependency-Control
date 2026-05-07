@@ -220,14 +220,13 @@ def detect_critical_hotspots(
                 )
             )
 
-    # Sort hotspots by severity (malware > KEV > risk_score)
+    # Sort hotspots lexicographically: malware first, then KEV count, then high-EPSS,
+    # then aggregated risk_score. Python compares tuples element-by-element, so the
+    # earlier components dominate; the previous *10000/*1000/*100 multipliers were
+    # visual noise that hinted at a weighted-sum but actually behaved identically
+    # to this tuple sort.
     hotspots.sort(
-        key=lambda h: (
-            h.has_malware * 10000,
-            h.kev_count * 1000,
-            h.high_epss_count * 100,
-            h.risk_score,
-        ),
+        key=lambda h: (h.has_malware, h.kev_count, h.high_epss_count, h.risk_score),
         reverse=True,
     )
 

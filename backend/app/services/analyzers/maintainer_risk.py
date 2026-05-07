@@ -39,6 +39,53 @@ from .purl_utils import is_npm, is_pypi, parse_purl
 logger = logging.getLogger(__name__)
 
 
+# Risk types whose registry-side signal alone is too noisy to surface.
+# Each gets suppressed unless its corroborating evidence is also present.
+_STALENESS_TYPES = ("stale_package", "infrequent_updates")
+_FREE_EMAIL_TYPE = "free_email_maintainer"
+_BUS_FACTOR_TYPE = "single_maintainer"
+
+
+def correlate_maintainer_risks(
+    risks: List[Dict[str, Any]],
+    github_active: Optional[bool],
+) -> List[Dict[str, Any]]:
+    """Filter raw maintainer signals against their corroborating evidence.
+
+    The two registry-side signals that historically produced noise:
+
+      * ``stale_package`` / ``infrequent_updates`` — a package without
+        recent releases looks the same whether it's abandoned or simply
+        finished. We suppress them when the source repository is still
+        receiving commits (``github_active=True``). When GitHub data is
+        unavailable (``github_active=None``) the registry signal stands.
+
+      * ``free_email_maintainer`` — a personal email address is not a
+        risk on its own. We only keep it when the package also has a
+        single maintainer (real bus-factor concern).
+
+    ``github_active`` should be:
+      * ``True``  if the source repo had a recent push (and is not archived)
+      * ``False`` if the repo is inactive or archived
+      * ``None``  if we couldn't check (no repo URL, GitHub API failure, …)
+    """
+    if not risks:
+        return []
+
+    types_present = {r.get("type") for r in risks}
+    has_single_maintainer = _BUS_FACTOR_TYPE in types_present
+
+    out: List[Dict[str, Any]] = []
+    for r in risks:
+        rtype = r.get("type")
+        if rtype in _STALENESS_TYPES and github_active is True:
+            continue
+        if rtype == _FREE_EMAIL_TYPE and not has_single_maintainer:
+            continue
+        out.append(r)
+    return out
+
+
 class MaintainerRiskAnalyzer(Analyzer):
     name = "maintainer_risk"
 
@@ -183,6 +230,11 @@ class MaintainerRiskAnalyzer(Analyzer):
         if github_info:
             maintainer_info["github"] = github_info
             risks.extend(self._assess_github_risks(github_info))
+
+        # Filter out signals whose corroborating evidence is missing
+        # (free-email without single-maintainer; staleness with an active repo).
+        github_active = self._infer_github_active(github_info)
+        risks = correlate_maintainer_risks(risks, github_active=github_active)
 
         if not risks:
             return None
@@ -414,6 +466,19 @@ class MaintainerRiskAnalyzer(Analyzer):
             )
 
         return risks
+
+    def _infer_github_active(self, gh_info: Optional[Dict[str, Any]]) -> Optional[bool]:
+        """True if the GitHub repo shows recent activity, False if archived
+        or stale, None when GitHub data is unavailable."""
+        if not gh_info:
+            return None
+        if gh_info.get("archived"):
+            return False
+        days_since_push = gh_info.get("days_since_push")
+        if days_since_push is None:
+            return None
+        warn_after = getattr(self, "_warn_after_days", STALE_PACKAGE_WARNING_DAYS)
+        return days_since_push <= warn_after
 
     def _assess_github_risks(self, gh_info: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Assess risks from GitHub repository info."""

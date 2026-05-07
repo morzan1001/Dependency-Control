@@ -89,6 +89,30 @@ class TestClassifyVersionChange:
         # A bare "1" -> "2" is a major change
         assert classify_version_change("1", "2") == "major"
 
+    def test_hash_based_versions_unknown(self):
+        # Git SHA / build hash version strings cannot be ordered semantically.
+        assert classify_version_change("abc1234", "def5678") == "unknown"
+
+    def test_calver_classified_by_release_tuple(self):
+        # CalVer (year.month.day) maps cleanly onto the release tuple. We
+        # don't try to detect "this is a calendar version" heuristically;
+        # we just trust packaging.Version's parse. Pin the expected behavior
+        # so future regex tweaks can't silently change it.
+        assert classify_version_change("2024.01.15", "2024.02.01") == "minor"
+        assert classify_version_change("2024.01.15", "2025.01.15") == "major"
+        assert classify_version_change("2024.01.15", "2024.01.16") == "patch"
+
+    def test_post_release_kept_as_change(self):
+        # PEP 440 post-releases are "after the release" — different identity,
+        # so 1.0.0 -> 1.0.0.post1 must register as some kind of change, not "none".
+        result = classify_version_change("1.0.0", "1.0.0.post1")
+        assert result != "none"
+
+    def test_local_version_segment_kept_as_change(self):
+        # Local versions (1.0.0+build123) are common in private registries.
+        result = classify_version_change("1.0.0", "1.0.0+build123")
+        assert result != "none"
+
 
 class TestComputeTrend:
     # A4: trend is "unknown" when there isn't enough data, not "stable"
