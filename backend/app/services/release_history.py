@@ -6,6 +6,7 @@ Pure analysis lives here. HTTP fetching from deps.dev plugs in via the
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,11 @@ from urllib.parse import quote
 from packaging.version import InvalidVersion, Version
 
 logger = logging.getLogger(__name__)
+
+# Bounded concurrency for per-package release-history fetches: high enough
+# that the Redis cache hot-path is effectively a single round-trip across
+# all packages, low enough that a cold cache doesn't blast deps.dev.
+_FETCH_CONCURRENCY = 16
 
 
 def _is_stable_release(version: str) -> bool:
@@ -191,12 +197,17 @@ class DepsDevReleaseHistoryFetcher:
         self._cache_ttl = cache_ttl_seconds
 
     async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory:
-        result: ReleaseHistory = {}
-        for system, name in packages:
-            releases = await self._load_one(system, name)
-            if releases is not None:
-                result[name] = releases
-        return result
+        if not packages:
+            return {}
+
+        semaphore = asyncio.Semaphore(_FETCH_CONCURRENCY)
+
+        async def _bounded(system: str, name: str) -> Tuple[str, Optional[List[ReleaseInfo]]]:
+            async with semaphore:
+                return name, await self._load_one(system, name)
+
+        pairs = await asyncio.gather(*(_bounded(s, n) for s, n in packages))
+        return {name: releases for name, releases in pairs if releases is not None}
 
     async def _load_one(self, system: str, name: str) -> Optional[List[ReleaseInfo]]:
         key = self._cache_key_builder(system, name)
