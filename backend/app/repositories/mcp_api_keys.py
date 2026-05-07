@@ -73,8 +73,7 @@ class MCPApiKeyRepository:
         if not plaintext.startswith(_TOKEN_PREFIX):
             return None
         now = datetime.now(timezone.utc)
-        # Read from Primary: a freshly-created key must be usable immediately,
-        # and a freshly-revoked key must stop authenticating immediately.
+        # Strong read: fresh keys must auth immediately, revoked keys must stop immediately.
         primary = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         with track_db_operation(_COL, "find_one"):
             doc = await primary.find_one(

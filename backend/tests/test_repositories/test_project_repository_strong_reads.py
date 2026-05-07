@@ -1,9 +1,4 @@
-"""Tests for read-after-write safe reads on ProjectRepository.
-
-Used by the analysis engine to load fresh project config immediately after
-a worker pickup, where stale Secondary reads would race the just-applied
-status flip on the corresponding scan.
-"""
+"""Strong-read variant on ProjectRepository must hit Primary."""
 
 import asyncio
 from unittest.mock import MagicMock
@@ -28,8 +23,7 @@ class TestGetByIdStrong:
     def test_uses_primary_read_preference(self):
         primary = create_mock_collection(find_one=_project_doc())
         base = _wrap_with_primary(primary)
-        db = create_mock_db({"projects": base})
-        repo = ProjectRepository(db)
+        repo = ProjectRepository(create_mock_db({"projects": base}))
 
         asyncio.run(repo.get_by_id_strong("p1"))
 
@@ -38,9 +32,7 @@ class TestGetByIdStrong:
 
     def test_returns_project_when_found(self):
         primary = create_mock_collection(find_one=_project_doc("p-42"))
-        base = _wrap_with_primary(primary)
-        db = create_mock_db({"projects": base})
-        repo = ProjectRepository(db)
+        repo = ProjectRepository(create_mock_db({"projects": _wrap_with_primary(primary)}))
 
         result = asyncio.run(repo.get_by_id_strong("p-42"))
 
@@ -49,19 +41,14 @@ class TestGetByIdStrong:
 
     def test_returns_none_when_not_found(self):
         primary = create_mock_collection(find_one=None)
-        base = _wrap_with_primary(primary)
-        db = create_mock_db({"projects": base})
-        repo = ProjectRepository(db)
+        repo = ProjectRepository(create_mock_db({"projects": _wrap_with_primary(primary)}))
 
-        result = asyncio.run(repo.get_by_id_strong("missing"))
-
-        assert result is None
+        assert asyncio.run(repo.get_by_id_strong("missing")) is None
 
     def test_default_get_by_id_does_not_force_primary(self):
         base = create_mock_collection(find_one=_project_doc())
         base.with_options = MagicMock(side_effect=AssertionError("default get_by_id must not pin Primary"))
-        db = create_mock_db({"projects": base})
-        repo = ProjectRepository(db)
+        repo = ProjectRepository(create_mock_db({"projects": base}))
 
         asyncio.run(repo.get_by_id("p1"))
 

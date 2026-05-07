@@ -1,6 +1,5 @@
 """Repository for scans."""
 
-from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -12,7 +11,6 @@ from app.schemas.projections import ScanMinimal, ScanWithStats
 
 _COL = "scans"
 
-# Projection used by both get_minimal_by_id and get_minimal_by_id_strong.
 _MINIMAL_PROJECTION = {
     "_id": 1,
     "pipeline_id": 1,
@@ -29,32 +27,26 @@ class ScanRepository:
         self.db = db
         self.collection = db.scans
 
-    def _primary_collection(self):
-        # Pin to Primary to avoid stale reads on replica sets when the global
-        # readPreference is secondaryPreferred. Used by worker/engine/housekeeping
-        # paths that read scan state immediately after a write.
+    def _primary(self):
+        # Strong reads for read-after-write paths (worker/engine/housekeeping).
         return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def get_by_id(self, scan_id: str) -> Optional[Scan]:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": scan_id})
-        if data:
-            return Scan(**data)
-        return None
+        return Scan(**data) if data else None
 
     async def get_by_id_strong(self, scan_id: str) -> Optional[Scan]:
         with track_db_operation(_COL, "find_one"):
-            data = await self._primary_collection().find_one({"_id": scan_id})
-        if data:
-            return Scan(**data)
-        return None
+            data = await self._primary().find_one({"_id": scan_id})
+        return Scan(**data) if data else None
 
     async def get_minimal_by_id(self, scan_id: str) -> Optional[ScanMinimal]:
         data = await self.collection.find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
         return ScanMinimal(**data) if data else None
 
     async def get_minimal_by_id_strong(self, scan_id: str) -> Optional[ScanMinimal]:
-        data = await self._primary_collection().find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
+        data = await self._primary().find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
         return ScanMinimal(**data) if data else None
 
     async def create(self, scan: Scan) -> Scan:
@@ -151,21 +143,6 @@ class ScanRepository:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         async for doc in self.collection.find(query, projection):
             yield doc
-
-    async def claim_pending_scan(self, scan_id: str, worker_id: str) -> Optional[Dict[str, Any]]:
-        """Atomically flip a scan from 'pending' → 'in_progress'."""
-        result: Optional[Dict[str, Any]] = await self.collection.find_one_and_update(
-            {"_id": scan_id, "status": "pending"},
-            {
-                "$set": {
-                    "status": "in_progress",
-                    "worker_id": worker_id,
-                    "started_at": datetime.now(timezone.utc),
-                }
-            },
-            return_document=True,
-        )
-        return result
 
     async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
         with track_db_operation(_COL, "aggregate"):

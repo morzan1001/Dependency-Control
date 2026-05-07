@@ -19,25 +19,19 @@ class ProjectRepository:
         self.db = db
         self.collection = db.projects
 
-    def _primary_collection(self):
-        # Pin to Primary to avoid stale reads on replica sets when the global
-        # readPreference is secondaryPreferred. Used by analysis engine paths
-        # that load fresh project config right after a worker scan claim.
+    def _primary(self):
+        # Strong reads for read-after-write paths (analysis engine post-claim).
         return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def get_by_id(self, project_id: str) -> Optional[Project]:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": project_id})
-        if data:
-            return Project(**data)
-        return None
+        return Project(**data) if data else None
 
     async def get_by_id_strong(self, project_id: str) -> Optional[Project]:
         with track_db_operation(_COL, "find_one"):
-            data = await self._primary_collection().find_one({"_id": project_id})
-        if data:
-            return Project(**data)
-        return None
+            data = await self._primary().find_one({"_id": project_id})
+        return Project(**data) if data else None
 
     async def get_raw_by_id(self, project_id: str) -> Optional[Dict[str, Any]]:
         """Get raw project document by ID."""

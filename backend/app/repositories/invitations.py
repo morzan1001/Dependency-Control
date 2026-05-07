@@ -16,9 +16,7 @@ class InvitationRepository:
         self.db = db
         self.project_invitations = db.invitations
         self.system_invitations = db.system_invitations
-        # Token-by-lookup paths must hit Primary: a freshly-issued invitation
-        # link must work immediately, and a freshly-marked-used invitation must
-        # stop accepting on the very next click.
+        # Strong reads on token/email lookups: fresh links work immediately, used ones stop immediately.
         self._project_primary = self.project_invitations.with_options(  # type: ignore[arg-type]
             read_preference=ReadPreference.PRIMARY,
         )

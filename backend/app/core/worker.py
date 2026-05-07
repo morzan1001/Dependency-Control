@@ -67,8 +67,7 @@ class AnalysisWorkerManager:
             db = await get_database()
             # Cap recovery so a backlog of stale pending scans doesn't flood the queue.
             recovery_limit = 1000
-            # Pin to Primary on startup recovery: after a pod crash we need the
-            # authoritative state, not whatever a Secondary happened to have.
+            # Strong read: after a pod crash we need the authoritative state.
             scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
             cursor = scans_primary.find({"status": "pending"}, {"_id": 1}).sort("created_at", 1).limit(recovery_limit)
 
@@ -190,6 +189,37 @@ class AnalysisWorkerManager:
 
         return True
 
+    async def _handle_failed_analysis(self, scan: dict, scan_id: str, db) -> bool:
+        """Decide whether to retry or mark a failed scan terminal. Returns True if terminal.
+
+        Engine owns status and retry_count writes; this only enforces the retry ceiling.
+        """
+        max_retries = 5
+        retry_count = scan.get("retry_count", 0) + 1
+        self._active_scans.discard(scan_id)
+
+        if retry_count >= max_retries:
+            logger.error(
+                f"Scan {scan_id} failed after {retry_count} retries due to persistent race conditions. Marking as failed."
+            )
+            await db.scans.update_one(
+                {"_id": scan_id},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "error": f"Analysis failed after {retry_count} retry attempts due to race conditions.",
+                    }
+                },
+            )
+            return True
+
+        logger.info(
+            f"Scan {scan_id} requires re-processing (race condition). "
+            f"Re-queueing (attempt {retry_count}/{max_retries})."
+        )
+        await self.queue.put(scan_id)
+        return False
+
     async def worker(self, name: str) -> None:
         hostname = os.getenv("HOSTNAME", "unknown")
         worker_id = f"{hostname}/{name}"
@@ -270,33 +300,7 @@ class AnalysisWorkerManager:
                     )
 
                     if not success:
-                        # Race condition — re-queue up to max_retries.
-                        retry_count = scan.get("retry_count", 0)
-                        max_retries = 5
-
-                        if retry_count >= max_retries:
-                            logger.error(
-                                f"Scan {scan_id} failed after {retry_count} retries due to persistent race conditions. Marking as failed."
-                            )
-                            await db.scans.update_one(
-                                {"_id": scan_id},
-                                {
-                                    "$set": {
-                                        "status": "failed",
-                                        "error": f"Analysis failed after {retry_count} retry attempts due to race conditions.",
-                                    }
-                                },
-                            )
-                            self.queue.task_done()
-                            continue
-
-                        logger.info(
-                            f"Scan {scan_id} requires re-processing (race condition). "
-                            f"Re-queueing (attempt {retry_count + 1}/{max_retries})."
-                        )
-                        await db.scans.update_one({"_id": scan_id}, {"$inc": {"retry_count": 1}})
-                        self._active_scans.discard(scan_id)
-                        await self.queue.put(scan_id)
+                        await self._handle_failed_analysis(scan, scan_id, db)
                         self.queue.task_done()
                         continue
 

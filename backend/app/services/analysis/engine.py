@@ -579,8 +579,6 @@ def _track_waiver_metrics(active_waivers: List[Waiver]) -> None:
 
 async def _check_race_condition(scan_id: str, external_load_start: datetime, scan_repo: ScanRepository) -> bool:
     """Check if new results arrived during processing. Returns True if race detected."""
-    # Read-after-write: pin to Primary so a stale Secondary read can't miss
-    # a freshly-written last_result_at and falsely declare "no race".
     race_check = await scan_repo.get_by_id_strong(scan_id)
     last_result_at = race_check.last_result_at if race_check else None
 
@@ -630,14 +628,15 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     callgraph_repo = CallgraphRepository(db)
     project_repo = ProjectRepository(db)
 
-    # Fetch scan document ONCE at the beginning - reuse throughout the function.
-    # Read-after-write: the worker just flipped this scan to "processing" via
-    # find_one_and_update on Primary; reading from a Secondary can lag and
-    # report "not found", which historically triggered a 30-min stuck-scan
-    # cycle until housekeeping reset the status.
     scan_doc = await scan_repo.get_by_id_strong(scan_id)
     if not scan_doc:
-        logger.error(f"Scan {scan_id} not found")
+        # Terminal: don't leave the scan stuck in "processing" — the worker's
+        # retry path only re-claims scans that are still "pending".
+        logger.error(f"Scan {scan_id} not found, marking as failed")
+        await scan_repo.update_raw(
+            scan_id,
+            {"$set": {"status": "failed", "error": "scan not found"}},
+        )
         return False
 
     project_id: Optional[str] = scan_doc.project_id
@@ -669,8 +668,6 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     project_license_policy = None
     project_analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = None
     if project_id:
-        # Strong read: same justification as the scan_doc fetch above —
-        # we're inside the worker's post-claim path on this project's scan.
         project_doc = await project_repo.get_by_id_strong(project_id)
         if project_doc:
             if getattr(project_doc, "license_policy", None):

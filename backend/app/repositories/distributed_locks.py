@@ -18,8 +18,7 @@ class DistributedLocksRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db.distributed_locks
-        # Locking semantics: a stale Secondary read could miss a freshly-acquired
-        # lock and let two pods believe they hold it. Pin all reads to Primary.
+        # Lock-state reads must be coherent — two pods must never both see "free".
         self._reads = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def acquire_lock(self, lock_name: str, holder_id: str, ttl_seconds: int = 30) -> bool:
