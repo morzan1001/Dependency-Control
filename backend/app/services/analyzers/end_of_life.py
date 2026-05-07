@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from urllib.parse import quote
 
 import httpx
@@ -14,6 +14,54 @@ from app.models.finding import Severity
 from .base import Analyzer
 
 logger = logging.getLogger(__name__)
+
+
+# Forward declarations of helpers used by the analyzer's analyze() loop.
+def _resolve_eol_products(name: str, cpes: List[str]) -> Set[str]:
+    """Translate an SBOM component into the set of endoflife.date product IDs to query.
+
+    Tries CPE entries first (most precise) and falls back to NAME_TO_EOL_MAPPING
+    or the component name as-is. Same logic the analyzer used inline; pulled
+    out so the (product, version) collector below stays focused.
+    """
+    products = _extract_products_from_cpes_static(cpes)
+    if products:
+        return products
+    mapped = NAME_TO_EOL_MAPPING.get(name)
+    return {mapped} if mapped else {name}
+
+
+def _extract_products_from_cpes_static(cpes: List[str]) -> Set[str]:
+    """Stateless mirror of EndOfLifeAnalyzer._extract_products_from_cpes.
+
+    Used by ``collect_products_to_check`` so the collector doesn't need an
+    analyzer instance. Kept in sync with the method below by delegation.
+    """
+    return EndOfLifeAnalyzer._extract_products_from_cpes_impl(cpes)
+
+
+def collect_products_to_check(
+    components: List[Dict[str, Any]],
+) -> Dict[str, List[Tuple[str, str]]]:
+    """Build product -> [(component_name, version), ...] from raw SBOM components.
+
+    Earlier the analyzer kept only one (name, version) per product, so a
+    second component using the *same* product but a *different* version was
+    silently skipped. The list-valued mapping ensures every (product,
+    version) pair gets checked against the EOL dataset for that product.
+    """
+    out: Dict[str, List[Tuple[str, str]]] = {}
+    for component in components:
+        name = component.get("name", "").lower()
+        version = component.get("version", "")
+        cpes = component.get("cpes") or component.get("_cpes") or []
+
+        for product in _resolve_eol_products(name, cpes):
+            entry = (component.get("name") or "", version)
+            bucket = out.setdefault(product, [])
+            if entry not in bucket:
+                bucket.append(entry)
+    return out
 
 
 class EndOfLifeAnalyzer(Analyzer):
@@ -34,41 +82,34 @@ class EndOfLifeAnalyzer(Analyzer):
         self._high_after_days = int(settings.get("eol_high_after_days", 365))
         self._medium_after_days = int(settings.get("eol_medium_after_days", 180))
 
-        # Collect all unique products to check
-        products_to_check: Dict[str, tuple] = {}  # product -> (component_name, version)
+        # Collect all (product, component_name, version) triples. Multiple
+        # components of the same product appear together so we can check each
+        # version against the same EOL dataset (one HTTP call per product).
+        products_to_check: Dict[str, List[Tuple[str, str]]] = collect_products_to_check(components)
 
-        for component in components:
-            name = component.get("name", "").lower()
-            version = component.get("version", "")
-            cpes = component.get("cpes") or component.get("_cpes") or []
-
-            eol_products = self._extract_products_from_cpes(cpes)
-            if not eol_products:
-                mapped = NAME_TO_EOL_MAPPING.get(name)
-                if mapped:
-                    eol_products.add(mapped)
-                else:
-                    eol_products.add(name)
-
-            for product in eol_products:
-                if product not in products_to_check:
-                    products_to_check[product] = (component.get("name"), version)
+        def _emit_for_versions(
+            product: str, occurrences: List[Tuple[str, str]], cycles: List[Dict[str, Any]]
+        ) -> None:
+            """Apply ``cycles`` against every (component, version) we observed
+            for ``product``, appending an EOL issue for each EOL match."""
+            for comp_name, version in occurrences:
+                eol_info = self._check_version(version, cycles)
+                if eol_info:
+                    results.append(self._create_eol_issue(comp_name, version, product, eol_info))
 
         # Check cache for all products first
         cache_keys = [CacheKeys.eol(product) for product in products_to_check.keys()]
         cached_data = await cache_service.mget(cache_keys) if cache_keys else {}
 
-        products_to_fetch = []
-        for product, (comp_name, version) in products_to_check.items():
+        products_to_fetch: List[str] = []
+        for product, occurrences in products_to_check.items():
             cache_key = CacheKeys.eol(product)
             if cache_key in cached_data and cached_data[cache_key] is not None:
                 cycles = cached_data[cache_key]
                 if cycles:  # Not a negative cache entry
-                    eol_info = self._check_version(version, cycles)
-                    if eol_info:
-                        results.append(self._create_eol_issue(comp_name, version, product, eol_info))
+                    _emit_for_versions(product, occurrences, cycles)
             else:
-                products_to_fetch.append((product, comp_name, version))
+                products_to_fetch.append(product)
 
         logger.debug(
             f"EOL: {len(products_to_check) - len(products_to_fetch)} from cache, {len(products_to_fetch)} to fetch"
@@ -78,7 +119,7 @@ class EndOfLifeAnalyzer(Analyzer):
         if products_to_fetch:
             timeout = ANALYZER_TIMEOUTS.get("end_of_life", ANALYZER_TIMEOUTS["default"])
             async with InstrumentedAsyncClient("endoflife.date API", timeout=timeout) as client:
-                for product, comp_name, version in products_to_fetch:
+                for product in products_to_fetch:
                     cache_key = CacheKeys.eol(product)
 
                     async def fetch_eol_data(
@@ -108,9 +149,7 @@ class EndOfLifeAnalyzer(Analyzer):
                     )
 
                     if cycles:  # Non-empty list means we have EOL data
-                        eol_info = self._check_version(version, cycles)
-                        if eol_info:
-                            results.append(self._create_eol_issue(comp_name, version, product, eol_info))
+                        _emit_for_versions(product, products_to_check[product], cycles)
 
         return {"eol_issues": results}
 
@@ -133,9 +172,13 @@ class EndOfLifeAnalyzer(Analyzer):
                 days_past_eol = (datetime.now(timezone.utc) - eol_dt).days
                 high_after = getattr(self, "_high_after_days", 365)
                 medium_after = getattr(self, "_medium_after_days", 180)
-                if days_past_eol > high_after:
+                # Inclusive boundaries: a package exactly `high_after` days past
+                # EOL should be HIGH, not one tier below. The previous strictly-
+                # greater-than comparison made the threshold name lie about its
+                # behaviour (`eol_high_after_days=365` actually meant 366+).
+                if days_past_eol >= high_after:
                     severity = Severity.HIGH.value
-                elif days_past_eol > medium_after:
+                elif days_past_eol >= medium_after:
                     severity = Severity.MEDIUM.value
                 else:
                     severity = Severity.LOW.value
@@ -154,13 +197,19 @@ class EndOfLifeAnalyzer(Analyzer):
         }
 
     def _extract_products_from_cpes(self, cpes: List[str]) -> Set[str]:
+        """Instance wrapper around the stateless implementation."""
+        return self._extract_products_from_cpes_impl(cpes)
+
+    @staticmethod
+    def _extract_products_from_cpes_impl(cpes: List[str]) -> Set[str]:
         """Extract product names from CPE strings and map to endoflife.date IDs."""
-        products = set()
+        products: Set[str] = set()
 
         for cpe in cpes:
-            # CPE format: cpe:2.3:a:vendor:product:version:...
-            # or cpe:/a:vendor:product:version:...
-            match = re.match(r"cpe:[:/]2\.3:a:([^:]+):([^:]+)", cpe)
+            # Standard CPE 2.3 (NIST):     cpe:2.3:a:vendor:product:...
+            # Less common with leading /:  cpe:/2.3:a:vendor:product:...
+            # Legacy CPE 2.2:              cpe:/a:vendor:product:...
+            match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe)
             if not match:
                 match = re.match(r"cpe:/a:([^:]+):([^:]+)", cpe)
 

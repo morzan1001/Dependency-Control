@@ -185,9 +185,20 @@ class OSVAnalyzer(Analyzer):
         return cached_results, uncached_components
 
     def _normalize_vulnerabilities(self, vulns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Normalize OSV vulnerabilities with severity and message."""
+        """Normalize OSV vulnerabilities with severity and message.
+
+        Drops entries with a non-empty ``withdrawn`` timestamp — those are
+        retracted by upstream (often false positives or misidentifications)
+        and surfacing them as live findings inflates the report.
+        """
         normalized = []
         for vuln in vulns:
+            # Skip retracted vulnerabilities. An empty/missing withdrawn
+            # field means the entry is still live; only a non-empty
+            # value indicates the vuln was withdrawn.
+            if vuln.get("withdrawn"):
+                continue
+
             vuln_id = vuln.get("id", "")
             summary = vuln.get("summary", "")
             details = vuln.get("details", "")

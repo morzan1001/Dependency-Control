@@ -1,5 +1,6 @@
 import difflib
 import logging
+import re
 from typing import Any, Dict, List, Optional, Set
 
 import httpx
@@ -18,6 +19,44 @@ from .base import Analyzer
 from .purl_utils import is_npm, is_pypi
 
 logger = logging.getLogger(__name__)
+
+
+_SEPARATOR_RUN = re.compile(r"[-_.]+")
+_SEPARATORS = {"-", "_", "."}
+
+
+def _normalize_pkg_name(name: Optional[str]) -> str:
+    """Normalize a package name for typosquat comparison.
+
+    - Strips an npm scope (``@scope/pkg`` → ``pkg``); typosquatting
+      targets the unscoped name.
+    - Collapses runs of ``- _ .`` to a single ``-`` (PEP 503 for PyPI;
+      a reasonable approximation for npm) so ``python_dateutil`` and
+      ``python.dateutil`` compare equal to ``python-dateutil``.
+    - Lowercases.
+    """
+    if not name:
+        return ""
+    if name.startswith("@") and "/" in name:
+        name = name.split("/", 1)[1]
+    name = _SEPARATOR_RUN.sub("-", name)
+    return name.lower()
+
+
+def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
+    """True if ``longer`` extends ``shorter`` with a real separator afterwards.
+
+    Catches the suffix-bypass: ``expresss`` starts with ``express`` but the
+    next char (``s``) is not a separator, so we should *not* treat the pair
+    as legitimate (it's the typosquat we want to flag). ``react-dom`` is
+    fine because it adds ``-dom``.
+    """
+    if not longer or not shorter or longer == shorter:
+        return False
+    if not longer.startswith(shorter):
+        return False
+    next_char = longer[len(shorter)]
+    return next_char in _SEPARATORS
 
 
 class TyposquattingAnalyzer(Analyzer):
@@ -187,7 +226,8 @@ class TyposquattingAnalyzer(Analyzer):
         high_at = float(settings.get("high_similarity", 0.90))
 
         for component in components:
-            name = component.get("name", "").lower()
+            raw_name = component.get("name", "")
+            name = _normalize_pkg_name(raw_name)
             purl = component.get("purl", "")
 
             # Determine ecosystem using centralized utils
@@ -200,10 +240,13 @@ class TyposquattingAnalyzer(Analyzer):
             if ecosystem not in popular_packages:
                 continue
 
-            popular_list = popular_packages[ecosystem]
+            # Normalise the popular list once per ecosystem so PEP 503 / npm
+            # scope variants of the same name fall together. Skipping when
+            # the normalised name already matches a popular package keeps the
+            # legitimate variants out of the typosquat list.
+            popular_list = {_normalize_pkg_name(p) for p in popular_packages[ecosystem]}
 
-            # If the package itself is in the popular list, it's likely fine
-            if name in popular_list:
+            if not name or name in popular_list:
                 continue
 
             # Check against popular packages
@@ -246,9 +289,15 @@ class TyposquattingAnalyzer(Analyzer):
         """Check if a package name is suspiciously similar to a popular package.
 
         Note: Length difference check is already done in analyze() before calling this.
-        """
-        # Not a prefix/suffix (e.g. "react-dom" vs "react" is fine)
-        if name.startswith(popular) or popular.startswith(name):
-            return False
 
+        Prefix relationships are only considered legitimate when the prefix
+        is followed by a separator (``-``/``_``/``.``). Otherwise an
+        attacker could bypass the check by appending letters — ``expresss``
+        starts with ``express`` but is exactly the typosquat we want to
+        flag, while ``react-dom`` is a real sub-package.
+        """
+        if name == popular:
+            return False
+        if _has_legitimate_prefix(name, popular) or _has_legitimate_prefix(popular, name):
+            return False
         return True

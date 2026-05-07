@@ -37,10 +37,15 @@ class TestIsSuspicious:
         """'djagno' is a typo of 'django' (no prefix relationship)."""
         assert self.analyzer._is_suspicious("djagno", "django") is True
 
-    def test_hyphen_vs_underscore_suspicious(self):
-        """Names differing by separator are suspicious if no prefix match."""
-        # "python_dateutil" does not start with "python-dateutil" nor vice versa
-        assert self.analyzer._is_suspicious("python_dateutil", "python-dateutil") is True
+    def test_hyphen_vs_underscore_normalized_away(self):
+        """PEP 503 treats hyphens, underscores and dots as equivalent — so
+        ``python_dateutil`` is the same package as ``python-dateutil`` and
+        must not be flagged as a typosquat. Earlier we filed a finding here
+        which produced false positives across many real PyPI installs."""
+        from app.services.analyzers.typosquatting import _normalize_pkg_name
+
+        assert _normalize_pkg_name("python_dateutil") == _normalize_pkg_name("python-dateutil")
+        assert _normalize_pkg_name("Python.DateUtil") == _normalize_pkg_name("python-dateutil")
 
     def test_completely_different_names(self):
         """Completely unrelated names with no prefix relationship."""
@@ -49,6 +54,58 @@ class TestIsSuspicious:
     def test_name_starts_with_popular(self):
         """If name starts with popular, it's not suspicious (legitimate extension)."""
         assert self.analyzer._is_suspicious("express-validator", "express") is False
+
+    def test_suffix_addition_without_separator_is_suspicious(self):
+        """Audit P6.3: ``expresss`` (extra trailing s) starts with ``express``
+        but is not a legitimate sub-package — the prefix-bypass used to
+        treat it as benign. We now only treat prefix matches as legitimate
+        when followed by a separator (-, _, .)."""
+        assert self.analyzer._is_suspicious("expresss", "express") is True
+        assert self.analyzer._is_suspicious("requestss", "requests") is True
+        assert self.analyzer._is_suspicious("lodashh", "lodash") is True
+
+    def test_legitimate_subpackage_with_separator_still_safe(self):
+        # Make sure the fix above doesn't over-correct: real sub-packages
+        # like react-dom, flask-cors, requests-oauthlib must still be allowed.
+        assert self.analyzer._is_suspicious("react-dom", "react") is False
+        assert self.analyzer._is_suspicious("flask-cors", "flask") is False
+        assert self.analyzer._is_suspicious("requests-oauthlib", "requests") is False
+        assert self.analyzer._is_suspicious("typing.extensions", "typing") is False
+        assert self.analyzer._is_suspicious("django_extensions", "django") is False
+
+
+class TestNormalizePkgName:
+    """Audit P6.3: separators in PyPI / npm names are interchangeable per
+    PEP 503 (and similar for npm scoped packages). Without normalisation the
+    typosquat check fired false positives on every legitimate variant."""
+
+    def test_collapses_separators(self):
+        from app.services.analyzers.typosquatting import _normalize_pkg_name
+
+        assert _normalize_pkg_name("python_dateutil") == "python-dateutil"
+        assert _normalize_pkg_name("python.dateutil") == "python-dateutil"
+        assert _normalize_pkg_name("python--dateutil") == "python-dateutil"
+        assert _normalize_pkg_name("python__dateutil") == "python-dateutil"
+
+    def test_lowercases(self):
+        from app.services.analyzers.typosquatting import _normalize_pkg_name
+
+        assert _normalize_pkg_name("Requests") == "requests"
+        assert _normalize_pkg_name("PYTHON-DATEUTIL") == "python-dateutil"
+
+    def test_npm_scope_stripped(self):
+        # @scope/name -> name. The scope itself is not what gets typosquatted;
+        # what gets imitated are the unscoped popular package names.
+        from app.services.analyzers.typosquatting import _normalize_pkg_name
+
+        assert _normalize_pkg_name("@babel/core") == "core"
+        assert _normalize_pkg_name("@types/node") == "node"
+
+    def test_empty_input(self):
+        from app.services.analyzers.typosquatting import _normalize_pkg_name
+
+        assert _normalize_pkg_name("") == ""
+        assert _normalize_pkg_name(None) == ""
 
 
 class TestGetStaticPypi:

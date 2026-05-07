@@ -66,11 +66,14 @@ class TestExtractProductsFromCpes:
         result = self.analyzer._extract_products_from_cpes(cpes)
         assert len(result) >= 1
 
-    def test_standard_cpe23_format_no_match(self):
-        """Standard cpe:2.3:a: format (without slash) does not match the regex."""
+    def test_standard_cpe23_format_matches(self):
+        """Standard cpe:2.3:a:vendor:product:... is the canonical NIST format
+        and the most common form in real SBOMs. Earlier versions of the
+        regex required an extra `:` or `/` after `cpe:`, silently missing
+        every standard CPE 2.3 entry; the fix lets the slash be optional."""
         cpes = ["cpe:2.3:a:python:python:3.8.5:*:*:*:*:*:*:*"]
         result = self.analyzer._extract_products_from_cpes(cpes)
-        assert result == set()
+        assert "python" in result
 
 
 class TestVersionMatchesCycle:
@@ -259,3 +262,71 @@ class TestCheckVersion:
         cycles = [self._make_cycle("3", True)]
         result = self.analyzer._check_version(3, cycles)
         assert result is not None
+
+
+class TestSeverityBoundary:
+    """Audit P6.2: the severity escalation thresholds were strictly-greater-
+    than. A package exactly N days past EOL fell one tier below where it
+    belonged. We use inclusive comparison so the threshold names match the
+    behaviour ("HIGH after 365 days" really means at 365 days)."""
+
+    def setup_method(self):
+        self.analyzer = EndOfLifeAnalyzer()
+        # Skip __init__-time settings; just call _create_eol_issue directly.
+        self.analyzer._high_after_days = 365
+        self.analyzer._medium_after_days = 180
+
+    def _issue_for_eol_days_ago(self, days_ago: int) -> str:
+        eol_date = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+        issue = self.analyzer._create_eol_issue(
+            "pkg", "1.0", "pkg", {"eol": eol_date, "cycle": "1.0"}
+        )
+        return issue["severity"]
+
+    def test_exactly_high_threshold_returns_high(self):
+        # 365 days past EOL is at the HIGH threshold — must be HIGH, not MEDIUM.
+        assert self._issue_for_eol_days_ago(365) == Severity.HIGH.value
+
+    def test_exactly_medium_threshold_returns_medium(self):
+        assert self._issue_for_eol_days_ago(180) == Severity.MEDIUM.value
+
+    def test_just_below_medium_returns_low(self):
+        assert self._issue_for_eol_days_ago(179) == Severity.LOW.value
+
+    def test_just_below_high_returns_medium(self):
+        assert self._issue_for_eol_days_ago(364) == Severity.MEDIUM.value
+
+
+class TestCollectProductsToCheck:
+    """Audit P6.2: the analyzer used to keep only the *first* (name, version)
+    pair per product, silently dropping every later occurrence — so the same
+    runtime present at two versions in the SBOM had only one EOL check."""
+
+    def test_distinct_versions_of_same_product_kept(self):
+        from app.services.analyzers.end_of_life import collect_products_to_check
+
+        components = [
+            {"name": "python", "version": "3.8.0"},
+            {"name": "python", "version": "3.11.0"},
+        ]
+        out = collect_products_to_check(components)
+        # Both versions must appear so each gets independently checked
+        # against the cycles returned for "python".
+        versions = {v for _, v in out["python"]}
+        assert versions == {"3.8.0", "3.11.0"}
+
+    def test_identical_components_deduplicated(self):
+        from app.services.analyzers.end_of_life import collect_products_to_check
+
+        # The same (name, version) repeated should not produce duplicate work.
+        components = [
+            {"name": "python", "version": "3.11.0"},
+            {"name": "python", "version": "3.11.0"},
+        ]
+        out = collect_products_to_check(components)
+        assert len(out["python"]) == 1
+
+    def test_empty_components_returns_empty_dict(self):
+        from app.services.analyzers.end_of_life import collect_products_to_check
+
+        assert collect_products_to_check([]) == {}
