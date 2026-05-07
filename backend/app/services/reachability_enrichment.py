@@ -50,7 +50,7 @@ def is_high_confidence_reachable(reachability_data: Optional[Dict[str, Any]]) ->
     confidence = reachability_data.get("confidence_score")
     if confidence is None:
         return False
-    return confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
+    return bool(confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD)
 
 
 class ReachabilityResult(TypedDict, total=False):

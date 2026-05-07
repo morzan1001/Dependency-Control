@@ -2,7 +2,7 @@
 
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
 from app.core.metrics import track_db_operation
@@ -27,7 +27,7 @@ class ScanRepository:
         self.db = db
         self.collection = db.scans
 
-    def _primary(self):
+    def _primary(self) -> AsyncIOMotorCollection:
         return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def get_by_id(self, scan_id: str) -> Optional[Scan]:

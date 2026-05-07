@@ -2,7 +2,7 @@
 
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference, ReturnDocument
 
 from app.core.metrics import track_db_operation
@@ -19,7 +19,7 @@ class ProjectRepository:
         self.db = db
         self.collection = db.projects
 
-    def _primary(self):
+    def _primary(self) -> AsyncIOMotorCollection:
         return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def get_by_id(self, project_id: str) -> Optional[Project]:

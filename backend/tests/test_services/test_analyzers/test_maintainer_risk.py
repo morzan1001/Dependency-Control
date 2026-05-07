@@ -8,7 +8,7 @@ own). These tests pin the rules that combine those signals with
 their corroborating evidence before they become user-facing risks.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.services.analyzers.maintainer_risk import correlate_maintainer_risks
 

@@ -64,7 +64,8 @@ def _build_release_fetcher() -> ReleaseHistoryFetcher:
             async with InstrumentedAsyncClient("deps.dev API", timeout=10.0) as client:
                 response = await client.get(url, follow_redirects=True)
                 if response.status_code == 200:
-                    return response.json()
+                    payload: Dict[str, Any] = response.json()
+                    return payload
                 return None
         except (httpx.TimeoutException, httpx.ConnectError):
             return None

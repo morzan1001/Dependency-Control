@@ -17,11 +17,11 @@ class InvitationRepository:
         self.project_invitations = db.invitations
         self.system_invitations = db.system_invitations
         # Strong reads on token/email lookups: fresh links work immediately, used ones stop immediately.
-        self._project_primary = self.project_invitations.with_options(  # type: ignore[arg-type]
-            read_preference=ReadPreference.PRIMARY,
+        self._project_primary = self.project_invitations.with_options(
+            read_preference=ReadPreference.PRIMARY,  # type: ignore[arg-type]
         )
-        self._system_primary = self.system_invitations.with_options(  # type: ignore[arg-type]
-            read_preference=ReadPreference.PRIMARY,
+        self._system_primary = self.system_invitations.with_options(
+            read_preference=ReadPreference.PRIMARY,  # type: ignore[arg-type]
         )
 
     # Project Invitations

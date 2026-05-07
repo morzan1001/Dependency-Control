@@ -4,10 +4,6 @@ build the "release cadence" metrics that complement team update-velocity."""
 from datetime import datetime, timedelta, timezone
 from typing import List
 
-
-async def _async_noop(*_args, **_kwargs):  # noqa: ANN001
-    return None
-
 from app.services.release_history import (
     DepsDevReleaseHistoryFetcher,
     ReleaseInfo,
@@ -18,6 +14,10 @@ from app.services.release_history import (
     parse_deps_dev_response,
     releases_in_last_n_days,
 )
+
+
+async def _async_noop(*_args, **_kwargs):  # noqa: ANN001
+    return None
 
 
 _REF = datetime(2026, 6, 1, tzinfo=timezone.utc)

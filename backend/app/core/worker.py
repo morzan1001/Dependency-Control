@@ -3,8 +3,9 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
 from app.core.config import settings
@@ -189,7 +190,9 @@ class AnalysisWorkerManager:
 
         return True
 
-    async def _handle_failed_analysis(self, scan: dict, scan_id: str, db) -> bool:
+    async def _handle_failed_analysis(
+        self, scan: Dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase
+    ) -> bool:
         """Apply the retry ceiling. Engine owns status and retry_count writes."""
         max_retries = 5
         retry_count = scan.get("retry_count", 0) + 1

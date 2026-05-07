@@ -474,7 +474,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         if days_since_push is None:
             return None
         warn_after = getattr(self, "_warn_after_days", STALE_PACKAGE_WARNING_DAYS)
-        return days_since_push <= warn_after
+        return bool(days_since_push <= warn_after)
 
     def _assess_github_risks(self, gh_info: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Assess risks from GitHub repository info."""
