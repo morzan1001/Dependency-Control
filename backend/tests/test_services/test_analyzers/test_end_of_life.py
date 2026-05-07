@@ -330,3 +330,50 @@ class TestCollectProductsToCheck:
         from app.services.analyzers.end_of_life import collect_products_to_check
 
         assert collect_products_to_check([]) == {}
+
+
+class TestCheckVersionPreference:
+    """Audit P7.1: when more than one cycle matches a version, the analyzer
+    used to return whichever appeared first in endoflife.date's response.
+    That gave inconsistent answers depending on API order. We now prefer
+    the most-specific matching cycle, then prefer LTS within that bucket."""
+
+    def setup_method(self):
+        self.analyzer = EndOfLifeAnalyzer()
+
+    def _eol_cycle(self, cycle: str, lts: bool = False) -> dict:
+        # Always EOL — we test the *selection*, not the EOL detection itself.
+        return {"cycle": cycle, "eol": "2020-01-01", "lts": lts, "latest": f"{cycle}.99"}
+
+    def test_picks_more_specific_cycle_over_major(self):
+        # 3.8.0 matches both "3" and "3.8". Most-specific wins.
+        cycles = [self._eol_cycle("3"), self._eol_cycle("3.8")]
+        result = self.analyzer._check_version("3.8.0", cycles)
+        assert result is not None
+        assert result["cycle"] == "3.8"
+
+    def test_picks_lts_when_specificity_ties(self):
+        # If two equally-specific cycles match (rare in practice — Java's
+        # `8` and `8-LTS` for example), prefer the LTS one.
+        cycles = [
+            {"cycle": "8", "eol": "2020-01-01", "lts": False, "latest": "8.99"},
+            {"cycle": "8", "eol": "2030-01-01", "lts": True, "latest": "8.LTS"},
+        ]
+        result = self.analyzer._check_version("8.0.342", cycles)
+        # The LTS one isn't EOL (2030 in future) so this should return None,
+        # not the non-LTS EOL one — LTS preference must win selection.
+        assert result is None
+
+    def test_more_specific_non_eol_overrides_less_specific_eol(self):
+        # 3.8.0 matches both "3" (EOL) and "3.8" (active). The specific
+        # cycle is the truth — the version is NOT EOL.
+        cycles = [
+            {"cycle": "3", "eol": "2015-01-01", "lts": False, "latest": "3.99"},
+            {"cycle": "3.8", "eol": "2030-01-01", "lts": True, "latest": "3.8.99"},
+        ]
+        result = self.analyzer._check_version("3.8.0", cycles)
+        assert result is None
+
+    def test_returns_none_when_no_cycle_matches(self):
+        cycles = [self._eol_cycle("4"), self._eol_cycle("5")]
+        assert self.analyzer._check_version("3.8.0", cycles) is None

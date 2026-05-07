@@ -75,83 +75,111 @@ class EndOfLifeAnalyzer(Analyzer):
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
-        results = []
-
-        # Configurable thresholds (defaults preserve existing behavior)
-        settings = settings or {}
-        self._high_after_days = int(settings.get("eol_high_after_days", 365))
-        self._medium_after_days = int(settings.get("eol_medium_after_days", 180))
+        self._apply_settings(settings)
 
         # Collect all (product, component_name, version) triples. Multiple
-        # components of the same product appear together so we can check each
-        # version against the same EOL dataset (one HTTP call per product).
+        # components of the same product appear together so we can check
+        # each version against the same EOL dataset (one HTTP call per product).
         products_to_check: Dict[str, List[Tuple[str, str]]] = collect_products_to_check(components)
+        if not products_to_check:
+            return {"eol_issues": []}
 
-        def _emit_for_versions(
-            product: str, occurrences: List[Tuple[str, str]], cycles: List[Dict[str, Any]]
-        ) -> None:
-            """Apply ``cycles`` against every (component, version) we observed
-            for ``product``, appending an EOL issue for each EOL match."""
-            for comp_name, version in occurrences:
-                eol_info = self._check_version(version, cycles)
-                if eol_info:
-                    results.append(self._create_eol_issue(comp_name, version, product, eol_info))
+        results: List[Dict[str, Any]] = []
+        cached_cycles, products_to_fetch = await self._partition_by_cache(products_to_check)
 
-        # Check cache for all products first
+        for product, cycles in cached_cycles.items():
+            self._emit_for_versions(product, products_to_check[product], cycles, results)
+
+        if products_to_fetch:
+            await self._fetch_and_emit(products_to_fetch, products_to_check, results)
+
+        return {"eol_issues": results}
+
+    def _apply_settings(self, settings: Optional[Dict[str, Any]]) -> None:
+        """Stash configurable thresholds on the instance (defaults preserve behaviour)."""
+        s = settings or {}
+        self._high_after_days = int(s.get("eol_high_after_days", 365))
+        self._medium_after_days = int(s.get("eol_medium_after_days", 180))
+
+    def _emit_for_versions(
+        self,
+        product: str,
+        occurrences: List[Tuple[str, str]],
+        cycles: List[Dict[str, Any]],
+        results: List[Dict[str, Any]],
+    ) -> None:
+        """Apply ``cycles`` against every (component, version) for ``product``,
+        appending an EOL issue for each EOL match."""
+        for comp_name, version in occurrences:
+            eol_info = self._check_version(version, cycles)
+            if eol_info:
+                results.append(self._create_eol_issue(comp_name, version, product, eol_info))
+
+    async def _partition_by_cache(
+        self,
+        products_to_check: Dict[str, List[Tuple[str, str]]],
+    ) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str]]:
+        """Split products into already-cached cycles and ones we still have to fetch."""
         cache_keys = [CacheKeys.eol(product) for product in products_to_check.keys()]
         cached_data = await cache_service.mget(cache_keys) if cache_keys else {}
 
-        products_to_fetch: List[str] = []
-        for product, occurrences in products_to_check.items():
+        cached_cycles: Dict[str, List[Dict[str, Any]]] = {}
+        to_fetch: List[str] = []
+        for product in products_to_check:
             cache_key = CacheKeys.eol(product)
-            if cache_key in cached_data and cached_data[cache_key] is not None:
-                cycles = cached_data[cache_key]
-                if cycles:  # Not a negative cache entry
-                    _emit_for_versions(product, occurrences, cycles)
-            else:
-                products_to_fetch.append(product)
-
+            value = cached_data.get(cache_key)
+            if value is None:
+                to_fetch.append(product)
+                continue
+            if value:  # Non-empty list = real EOL data; empty list = negative cache.
+                cached_cycles[product] = value
         logger.debug(
-            f"EOL: {len(products_to_check) - len(products_to_fetch)} from cache, {len(products_to_fetch)} to fetch"
+            f"EOL: {len(cached_cycles)} from cache, {len(to_fetch)} to fetch"
         )
+        return cached_cycles, to_fetch
 
-        # Fetch uncached products with distributed locking to prevent stampede
-        if products_to_fetch:
-            timeout = ANALYZER_TIMEOUTS.get("end_of_life", ANALYZER_TIMEOUTS["default"])
-            async with InstrumentedAsyncClient("endoflife.date API", timeout=timeout) as client:
-                for product in products_to_fetch:
-                    cache_key = CacheKeys.eol(product)
+    async def _fetch_and_emit(
+        self,
+        products_to_fetch: List[str],
+        products_to_check: Dict[str, List[Tuple[str, str]]],
+        results: List[Dict[str, Any]],
+    ) -> None:
+        """Fetch missing products from endoflife.date and emit issues for each."""
+        timeout = ANALYZER_TIMEOUTS.get("end_of_life", ANALYZER_TIMEOUTS["default"])
+        async with InstrumentedAsyncClient("endoflife.date API", timeout=timeout) as client:
+            for product in products_to_fetch:
+                cycles = await cache_service.get_or_fetch_with_lock(
+                    key=CacheKeys.eol(product),
+                    fetch_fn=self._make_fetch_fn(product, client),
+                    ttl_seconds=CacheTTL.EOL_STATUS,
+                )
+                if cycles:
+                    self._emit_for_versions(product, products_to_check[product], cycles, results)
 
-                    async def fetch_eol_data(
-                        prod: str = product, cli: InstrumentedAsyncClient = client
-                    ) -> Optional[List[Dict[str, Any]]]:
-                        """Fetch EOL data for a product."""
-                        try:
-                            safe_product = quote(prod, safe="")
-                            response = await cli.get(f"{self.api_url}/{safe_product}.json")
-                            if response.status_code == 200:
-                                return cast(List[Dict[str, Any]], response.json())
-                            elif response.status_code == 404:
-                                return []  # Empty list = negative cache
-                        except httpx.TimeoutException:
-                            logger.debug(f"EOL API timeout for {prod}")
-                        except httpx.ConnectError:
-                            logger.debug(f"EOL API connection error for {prod}")
-                        except Exception as e:
-                            logger.debug(f"EOL check failed for {prod}: {e}")
-                        return None
+    def _make_fetch_fn(
+        self,
+        product: str,
+        client: InstrumentedAsyncClient,
+    ) -> Any:
+        """Bind ``product`` and ``client`` into the closure that ``cache_service``
+        will call on a miss."""
+        async def fetch_eol_data() -> Optional[List[Dict[str, Any]]]:
+            try:
+                safe_product = quote(product, safe="")
+                response = await client.get(f"{self.api_url}/{safe_product}.json")
+                if response.status_code == 200:
+                    return cast(List[Dict[str, Any]], response.json())
+                if response.status_code == 404:
+                    return []  # negative cache
+            except httpx.TimeoutException:
+                logger.debug(f"EOL API timeout for {product}")
+            except httpx.ConnectError:
+                logger.debug(f"EOL API connection error for {product}")
+            except Exception as e:
+                logger.debug(f"EOL check failed for {product}: {e}")
+            return None
 
-                    # Use locked fetch to prevent multiple pods fetching same product
-                    cycles = await cache_service.get_or_fetch_with_lock(
-                        key=cache_key,
-                        fetch_fn=fetch_eol_data,
-                        ttl_seconds=CacheTTL.EOL_STATUS,
-                    )
-
-                    if cycles:  # Non-empty list means we have EOL data
-                        _emit_for_versions(product, products_to_check[product], cycles)
-
-        return {"eol_issues": results}
+        return fetch_eol_data
 
     def _create_eol_issue(
         self,
@@ -245,6 +273,12 @@ class EndOfLifeAnalyzer(Analyzer):
     def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Check if a version matches an EOL cycle.
 
+        When more than one cycle matches the version (e.g. ``3.8.0`` matches
+        both ``3`` and ``3.8``), the most-specific cycle wins; LTS variants
+        win ties within the same specificity. The EOL verdict comes from
+        whichever cycle actually describes the install — answering "is 3.8.0
+        EOL?" with the lifecycle of `3` instead of `3.8` was a real bug.
+
         If EOL, enriches the result with the latest active (non-EOL) version
         as a recommended upgrade target.
         """
@@ -256,21 +290,32 @@ class EndOfLifeAnalyzer(Analyzer):
 
         clean_version = version.lstrip("v").lower()
 
-        for cycle in cycles:
+        # Collect every matching cycle, ranked by:
+        #   1. specificity — longer cycle string wins (3.8 > 3)
+        #   2. LTS — true beats false/missing within the same specificity
+        # Ties broken by original order so behaviour is deterministic.
+        matches: List[Tuple[int, int, int, Dict[str, Any]]] = []
+        for idx, cycle in enumerate(cycles):
             cycle_version = str(cycle.get("cycle", ""))
-
             if not self._version_matches_cycle(clean_version, cycle_version):
                 continue
+            specificity = len(cycle_version)
+            lts_score = 1 if cycle.get("lts") else 0
+            matches.append((-specificity, -lts_score, idx, cycle))
 
-            if self._is_eol(cycle.get("eol")):
-                # Find the newest active (non-EOL) cycle as upgrade recommendation
-                recommended = self._find_active_cycle(cycles)
-                if recommended and recommended.get("latest") != cycle.get("latest"):
-                    cycle["recommended_version"] = recommended.get("latest")
-                    cycle["recommended_cycle"] = recommended.get("cycle")
-                return cycle
+        if not matches:
+            return None
+        matches.sort()
+        best_cycle = matches[0][3]
 
-        return None
+        if not self._is_eol(best_cycle.get("eol")):
+            return None
+
+        recommended = self._find_active_cycle(cycles)
+        if recommended and recommended.get("latest") != best_cycle.get("latest"):
+            best_cycle["recommended_version"] = recommended.get("latest")
+            best_cycle["recommended_cycle"] = recommended.get("cycle")
+        return best_cycle
 
     @staticmethod
     def _find_active_cycle(cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

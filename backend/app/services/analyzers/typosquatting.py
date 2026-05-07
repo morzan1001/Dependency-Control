@@ -59,6 +59,46 @@ def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
     return next_char in _SEPARATORS
 
 
+def _resolve_ecosystem(component: Dict[str, Any], purl: str) -> str:
+    """Map a component to ``pypi`` / ``npm`` / ``unknown`` from PURL or type."""
+    if is_pypi(purl) or component.get("type") == "python":
+        return "pypi"
+    if is_npm(purl) or component.get("type") == "npm":
+        return "npm"
+    return "unknown"
+
+
+def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str:
+    """Map a similarity ratio onto a typosquat severity tier."""
+    if ratio > critical_at:
+        return Severity.CRITICAL.value
+    if ratio > high_at:
+        return Severity.HIGH.value
+    return Severity.MEDIUM.value
+
+
+def _build_typosquat_issue(
+    component: Dict[str, Any],
+    popular: str,
+    ratio: float,
+    severity: str,
+) -> Dict[str, Any]:
+    """Construct the user-facing finding dict for a flagged typosquat."""
+    name = component.get("name")
+    return {
+        "component": name,
+        "version": component.get("version"),
+        "purl": component.get("purl", ""),
+        "imitated_package": popular,
+        "similarity": round(ratio, 2),
+        "severity": severity,
+        "message": (
+            f"Potential typosquatting: '{name}' "
+            f"is similar to popular package '{popular}'"
+        ),
+    }
+
+
 class TyposquattingAnalyzer(Analyzer):
     """
     Analyzer that detects potential typosquatting attacks by comparing
@@ -225,65 +265,63 @@ class TyposquattingAnalyzer(Analyzer):
         critical_at = float(settings.get("critical_similarity", 0.95))
         high_at = float(settings.get("high_similarity", 0.90))
 
+        # Per-ecosystem normalised popular set, computed lazily so we only
+        # pay the cost when at least one component actually maps to it.
+        normalized_popular: Dict[str, Set[str]] = {}
+
         for component in components:
-            raw_name = component.get("name", "")
-            name = _normalize_pkg_name(raw_name)
-            purl = component.get("purl", "")
-
-            # Determine ecosystem using centralized utils
-            ecosystem = "unknown"
-            if is_pypi(purl) or component.get("type") == "python":
-                ecosystem = "pypi"
-            elif is_npm(purl) or component.get("type") == "npm":
-                ecosystem = "npm"
-
-            if ecosystem not in popular_packages:
-                continue
-
-            # Normalise the popular list once per ecosystem so PEP 503 / npm
-            # scope variants of the same name fall together. Skipping when
-            # the normalised name already matches a popular package keeps the
-            # legitimate variants out of the typosquat list.
-            popular_list = {_normalize_pkg_name(p) for p in popular_packages[ecosystem]}
-
-            if not name or name in popular_list:
-                continue
-
-            # Check against popular packages
-            for popular in popular_list:
-                # Optimization: Skip if length difference is too big
-                if abs(len(name) - len(popular)) > 2:
-                    continue
-
-                # Calculate similarity
-                ratio = difflib.SequenceMatcher(None, name, popular).ratio()
-
-                if ratio > similarity_threshold:
-                    if self._is_suspicious(name, popular):
-                        # Higher similarity = more suspicious
-                        if ratio > critical_at:
-                            severity = Severity.CRITICAL.value
-                        elif ratio > high_at:
-                            severity = Severity.HIGH.value
-                        else:
-                            severity = Severity.MEDIUM.value
-
-                        issues.append(
-                            {
-                                "component": component.get("name"),
-                                "version": component.get("version"),
-                                "purl": purl,
-                                "imitated_package": popular,
-                                "similarity": round(ratio, 2),
-                                "severity": severity,
-                                "message": (
-                                    f"Potential typosquatting: '{component.get('name')}' "
-                                    f"is similar to popular package '{popular}'"
-                                ),
-                            }
-                        )
+            issue = self._scan_component(
+                component,
+                popular_packages,
+                normalized_popular,
+                similarity_threshold,
+                critical_at,
+                high_at,
+            )
+            if issue is not None:
+                issues.append(issue)
 
         return {"typosquatting_issues": issues}
+
+    def _scan_component(
+        self,
+        component: Dict[str, Any],
+        popular_packages: Dict[str, Set[str]],
+        normalized_popular: Dict[str, Set[str]],
+        similarity_threshold: float,
+        critical_at: float,
+        high_at: float,
+    ) -> Optional[Dict[str, Any]]:
+        """Return a typosquat finding for ``component``, or ``None`` if clean."""
+        purl = component.get("purl", "")
+        ecosystem = _resolve_ecosystem(component, purl)
+        if ecosystem not in popular_packages:
+            return None
+
+        name = _normalize_pkg_name(component.get("name", ""))
+        if not name:
+            return None
+
+        if ecosystem not in normalized_popular:
+            normalized_popular[ecosystem] = {
+                _normalize_pkg_name(p) for p in popular_packages[ecosystem]
+            }
+        popular_list = normalized_popular[ecosystem]
+
+        if name in popular_list:
+            return None
+
+        for popular in popular_list:
+            if abs(len(name) - len(popular)) > 2:
+                continue
+            ratio = difflib.SequenceMatcher(None, name, popular).ratio()
+            if ratio <= similarity_threshold:
+                continue
+            if not self._is_suspicious(name, popular):
+                continue
+            severity = _severity_for_ratio(ratio, critical_at, high_at)
+            return _build_typosquat_issue(component, popular, ratio, severity)
+        return None
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
         """Check if a package name is suspiciously similar to a popular package.

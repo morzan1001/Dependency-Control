@@ -221,27 +221,60 @@ class OSVAnalyzer(Analyzer):
             )
         return normalized
 
+    # OSV ``severity[].type`` values, ranked newest-first. We pick the
+    # highest-ranked entry the record actually contains, so a v4 score
+    # is preferred over v3 over v2.
+    _CVSS_TYPE_PREFERENCE = ("CVSS_V4", "CVSS_V3", "CVSS_V3.1", "CVSS_V3.0", "CVSS_V2")
+
     @staticmethod
-    def _cvss_to_severity(cvss_score: float) -> str:
-        """Convert a CVSS score to a severity string."""
-        if cvss_score >= 9.0:
+    def _cvss_to_severity(cvss_score: float, cvss_type: str = "CVSS_V3") -> str:
+        """Convert a CVSS score to a severity string using version-specific buckets.
+
+        CVSS v2 has no CRITICAL bucket — its top tier is HIGH. v3 and v4
+        share the standard 9 / 7 / 4 / 0 cutoffs. Scores outside [0, 10]
+        are clamped so a malformed entry can't silently land in CRITICAL.
+        """
+        score = max(0.0, min(10.0, cvss_score))
+        if cvss_type == "CVSS_V2":
+            # v2: HIGH 7.0-10.0, MEDIUM 4.0-6.9, LOW 0.0-3.9.
+            if score >= 7.0:
+                return Severity.HIGH.value
+            if score >= 4.0:
+                return Severity.MEDIUM.value
+            return Severity.LOW.value
+        # v3 / v3.x / v4 — same boundaries.
+        if score >= 9.0:
             return Severity.CRITICAL.value
-        if cvss_score >= 7.0:
+        if score >= 7.0:
             return Severity.HIGH.value
-        if cvss_score >= 4.0:
+        if score >= 4.0:
             return Severity.MEDIUM.value
         return Severity.LOW.value
 
     def _severity_from_cvss_array(self, severity_array: List[Dict[str, Any]]) -> Optional[str]:
-        """Try to extract severity from CVSS scores in the severity array."""
+        """Pick the best (newest-standard) CVSS entry and map it to a severity."""
+        # Group entries by type so we can prefer v4 > v3 > v2 deterministically.
+        entries_by_type: Dict[str, List[Dict[str, Any]]] = {}
         for sev_info in severity_array:
             sev_type = sev_info.get("type", "")
-            score = sev_info.get("score", "")
-            if "CVSS" not in sev_type or not score:
+            if "CVSS" in sev_type and sev_info.get("score"):
+                entries_by_type.setdefault(sev_type, []).append(sev_info)
+
+        for preferred_type in self._CVSS_TYPE_PREFERENCE:
+            for sev_info in entries_by_type.get(preferred_type, []):
+                cvss_score = self._parse_cvss_score(str(sev_info["score"]))
+                if cvss_score is not None:
+                    return self._cvss_to_severity(cvss_score, preferred_type)
+
+        # Fall through for unknown CVSS subtypes (e.g. a future "CVSS_V5"
+        # we haven't enumerated yet) — better than dropping the signal.
+        for sev_info in severity_array:
+            sev_type = sev_info.get("type", "")
+            if "CVSS" not in sev_type or not sev_info.get("score"):
                 continue
-            cvss_score = self._parse_cvss_score(str(score))
+            cvss_score = self._parse_cvss_score(str(sev_info["score"]))
             if cvss_score is not None:
-                return self._cvss_to_severity(cvss_score)
+                return self._cvss_to_severity(cvss_score, sev_type)
         return None
 
     @staticmethod

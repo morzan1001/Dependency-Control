@@ -269,3 +269,126 @@ class TestAggregateUpstreamMetrics:
         result = aggregate_upstream_metrics(history, observations=observations, ref=_REF)
         assert result.adoption_latency_days_median is not None
         assert abs(result.adoption_latency_days_median - 17.5) < 0.01
+
+
+class TestDepsDevFetcherIntegration:
+    """The fetcher's pure helpers (parse, serialize) are well-covered. These
+    drive the cache-miss and cache-hit branches end-to-end so a regression
+    in the fetcher's orchestration would surface at the unit level rather
+    than waiting for a full deps.dev integration test."""
+
+    def test_cache_miss_fetches_parses_and_caches(self):
+        import asyncio
+        from app.services.release_history import DepsDevReleaseHistoryFetcher
+
+        fetched_urls: List[str] = []
+        cache_writes: dict = {}
+
+        async def cache_get(_key):  # noqa: ANN001
+            return None  # always cold
+
+        async def cache_set(key, value, ttl_seconds):  # noqa: ANN001
+            cache_writes[key] = (value, ttl_seconds)
+
+        async def http_fetch(url):  # noqa: ANN001
+            fetched_urls.append(url)
+            return {
+                "versions": [
+                    {"versionKey": {"version": "1.0.0"}, "publishedAt": "2024-06-01T00:00:00Z"},
+                    {"versionKey": {"version": "1.1.0"}, "publishedAt": "2024-09-01T00:00:00Z"},
+                ]
+            }
+
+        fetcher = DepsDevReleaseHistoryFetcher(
+            cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch
+        )
+        result = asyncio.run(fetcher.fetch([("pypi", "pkg-a")]))
+
+        assert len(result["pkg-a"]) == 2
+        assert {r.version for r in result["pkg-a"]} == {"1.0.0", "1.1.0"}
+        assert len(fetched_urls) == 1
+        assert "pkg-a" in fetched_urls[0]
+        assert "releases:pypi:pkg-a" in cache_writes
+        # Cached payload must round-trip through the JSON-serializable shape.
+        cached_payload, _ = cache_writes["releases:pypi:pkg-a"]
+        assert isinstance(cached_payload, list)
+        assert all("version" in entry and "published_at" in entry for entry in cached_payload)
+
+    def test_http_failure_returns_empty_for_that_package(self):
+        import asyncio
+        from app.services.release_history import DepsDevReleaseHistoryFetcher
+
+        async def cache_get(_key):  # noqa: ANN001
+            return None
+
+        async def cache_set(*_a, **_k):  # noqa: ANN001
+            return None
+
+        async def http_fetch(_url):  # noqa: ANN001
+            return None  # simulates timeout / 5xx
+
+        fetcher = DepsDevReleaseHistoryFetcher(
+            cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch
+        )
+        result = asyncio.run(fetcher.fetch([("pypi", "pkg-broken")]))
+        # No history surfaces for the failed package; the orchestrator will
+        # treat it as "no upstream data" rather than crash.
+        assert "pkg-broken" not in result
+
+    def test_multi_package_fetch_keys_results_by_package_name(self):
+        import asyncio
+        from app.services.release_history import DepsDevReleaseHistoryFetcher
+
+        cache: dict = {}
+
+        async def cache_get(key):  # noqa: ANN001
+            return cache.get(key)
+
+        async def cache_set(key, value, ttl_seconds):  # noqa: ANN001
+            cache[key] = value
+
+        responses_by_url: dict = {
+            "first": {
+                "versions": [{"versionKey": {"version": "1.0"}, "publishedAt": "2024-01-01T00:00:00Z"}]
+            },
+            "second": {
+                "versions": [{"versionKey": {"version": "2.0"}, "publishedAt": "2024-02-01T00:00:00Z"}]
+            },
+        }
+        urls_seen: List[str] = []
+
+        async def http_fetch(url):  # noqa: ANN001
+            urls_seen.append(url)
+            # Pick payload by ordinal so the assertion is unambiguous.
+            return responses_by_url["first" if "first" in url else "second"]
+
+        fetcher = DepsDevReleaseHistoryFetcher(
+            cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch
+        )
+        result = asyncio.run(fetcher.fetch([("pypi", "first"), ("pypi", "second")]))
+        assert "first" in result and "second" in result
+        assert {r.version for r in result["first"]} == {"1.0"}
+        assert {r.version for r in result["second"]} == {"2.0"}
+        assert len(urls_seen) == 2
+
+    def test_cache_hit_skips_http(self):
+        import asyncio
+        from app.services.release_history import DepsDevReleaseHistoryFetcher
+
+        async def cache_get(_key):  # noqa: ANN001
+            return [
+                {"version": "5.0.0", "published_at": "2025-01-01T00:00:00+00:00"},
+            ]
+
+        async def cache_set(*_a, **_k):  # noqa: ANN001
+            raise AssertionError("cache_set must not be called on a cache hit")
+
+        async def http_fetch(_url):  # noqa: ANN001
+            raise AssertionError("http_fetch must not be called on a cache hit")
+
+        fetcher = DepsDevReleaseHistoryFetcher(
+            cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch
+        )
+        result = asyncio.run(fetcher.fetch([("pypi", "warm")]))
+        assert len(result["warm"]) == 1
+        assert result["warm"][0].version == "5.0.0"

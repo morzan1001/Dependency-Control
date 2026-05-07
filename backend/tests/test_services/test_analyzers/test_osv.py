@@ -72,3 +72,62 @@ class TestWithdrawnVulnerabilities:
         vulns = [{"id": "GHSA-x", "summary": "active", "withdrawn": ""}]
         normalized = self.analyzer._normalize_vulnerabilities(vulns)
         assert len(normalized) == 1
+
+
+class TestCvssVersionAwareSeverity:
+    """Audit P7.2: CVSS v2 has no CRITICAL bucket — its top tier is HIGH.
+    The mapper used to apply v3 thresholds to every CVSS score regardless of
+    the source version, so a v2 score of 9.5 was upgraded to CRITICAL when
+    it should remain HIGH."""
+
+    def setup_method(self):
+        self.analyzer = OSVAnalyzer()
+
+    def test_cvss_v2_top_score_is_high_not_critical(self):
+        # v2 spec: 7.0-10.0 = HIGH. There is no CRITICAL bucket.
+        result = self.analyzer._severity_from_cvss_array(
+            [{"type": "CVSS_V2", "score": "9.5"}]
+        )
+        assert result == "HIGH"
+
+    def test_cvss_v3_critical_score_is_critical(self):
+        result = self.analyzer._severity_from_cvss_array(
+            [{"type": "CVSS_V3", "score": "9.5"}]
+        )
+        assert result == "CRITICAL"
+
+    def test_v3_preferred_over_v2_when_both_present(self):
+        # An OSV record with both v2 and v3 scores: prefer the newer standard.
+        result = self.analyzer._severity_from_cvss_array(
+            [
+                {"type": "CVSS_V2", "score": "9.5"},
+                {"type": "CVSS_V3", "score": "5.0"},
+            ]
+        )
+        # v3 wins -> 5.0 -> MEDIUM
+        assert result == "MEDIUM"
+
+    def test_v4_preferred_over_v3(self):
+        # CVSS v4 supersedes v3 — pick the newest available standard.
+        result = self.analyzer._severity_from_cvss_array(
+            [
+                {"type": "CVSS_V3", "score": "9.5"},
+                {"type": "CVSS_V4", "score": "5.0"},
+            ]
+        )
+        assert result == "MEDIUM"
+
+    def test_score_above_10_is_clamped(self):
+        # Defensive: CVSS scores are bounded at 10.0. A bogus 15.0 must
+        # not silently round-trip to CRITICAL — clamp into the valid range
+        # so the resulting severity stays meaningful.
+        result = self.analyzer._severity_from_cvss_array(
+            [{"type": "CVSS_V3", "score": "15.0"}]
+        )
+        assert result == "CRITICAL"  # clamped to 10.0, still in CRITICAL bucket
+
+    def test_score_below_zero_is_clamped(self):
+        result = self.analyzer._severity_from_cvss_array(
+            [{"type": "CVSS_V3", "score": "-1.0"}]
+        )
+        assert result == "LOW"
