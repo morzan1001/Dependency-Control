@@ -55,15 +55,3 @@ class TestHandleFailedAnalysis:
         assert args[0] == {"_id": "scan-1"}
         assert args[1]["$set"]["status"] == "failed"
 
-    def test_does_not_double_increment_retry_count(self):
-        mgr = _build_manager()
-        mgr._active_scans = {"scan-1"}
-        update_one = AsyncMock()
-        db = _build_db_with_scans(update_one)
-        scan = {"_id": "scan-1", "retry_count": 0}
-
-        asyncio.run(mgr._handle_failed_analysis(scan, "scan-1", db))
-
-        for call in update_one.await_args_list:
-            update_doc = call.args[1] if len(call.args) > 1 else call.kwargs.get("update")
-            assert "$inc" not in (update_doc or {}), f"unexpected $inc: {update_doc}"

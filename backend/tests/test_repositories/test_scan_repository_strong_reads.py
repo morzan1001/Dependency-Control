@@ -20,24 +20,16 @@ def _wrap_with_primary(primary_coll):
 
 
 class TestGetByIdStrong:
-    def test_uses_primary_read_preference(self):
-        primary = create_mock_collection(find_one=_scan_doc())
+    def test_reads_from_primary_and_returns_scan(self):
+        primary = create_mock_collection(find_one=_scan_doc("scan-42"))
         base = _wrap_with_primary(primary)
         repo = ScanRepository(create_mock_db({"scans": base}))
 
-        asyncio.run(repo.get_by_id_strong("scan-1"))
-
-        base.with_options.assert_called_once_with(read_preference=ReadPreference.PRIMARY)
-        primary.find_one.assert_called_once_with({"_id": "scan-1"})
-
-    def test_returns_scan_when_found(self):
-        primary = create_mock_collection(find_one=_scan_doc("scan-42"))
-        repo = ScanRepository(create_mock_db({"scans": _wrap_with_primary(primary)}))
-
         result = asyncio.run(repo.get_by_id_strong("scan-42"))
 
-        assert result is not None
-        assert result.id == "scan-42"
+        base.with_options.assert_called_once_with(read_preference=ReadPreference.PRIMARY)
+        primary.find_one.assert_called_once_with({"_id": "scan-42"})
+        assert result is not None and result.id == "scan-42"
 
     def test_returns_none_when_not_found(self):
         primary = create_mock_collection(find_one=None)
@@ -56,7 +48,7 @@ class TestGetByIdStrong:
 
 
 class TestGetMinimalByIdStrong:
-    def test_uses_primary_read_preference(self):
+    def test_reads_from_primary_with_minimal_projection(self):
         primary = create_mock_collection(
             find_one={"_id": "scan-1", "project_id": "p1", "status": "processing"},
         )
@@ -66,4 +58,6 @@ class TestGetMinimalByIdStrong:
         asyncio.run(repo.get_minimal_by_id_strong("scan-1"))
 
         base.with_options.assert_called_once_with(read_preference=ReadPreference.PRIMARY)
-        assert primary.find_one.call_args.args[0] == {"_id": "scan-1"}
+        call = primary.find_one.call_args
+        assert call.args[0] == {"_id": "scan-1"}
+        assert "project_id" in call.args[1]

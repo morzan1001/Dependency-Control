@@ -20,24 +20,16 @@ def _wrap_with_primary(primary_coll):
 
 
 class TestGetByIdStrong:
-    def test_uses_primary_read_preference(self):
-        primary = create_mock_collection(find_one=_project_doc())
+    def test_reads_from_primary_and_returns_project(self):
+        primary = create_mock_collection(find_one=_project_doc("p-42"))
         base = _wrap_with_primary(primary)
         repo = ProjectRepository(create_mock_db({"projects": base}))
 
-        asyncio.run(repo.get_by_id_strong("p1"))
-
-        base.with_options.assert_called_once_with(read_preference=ReadPreference.PRIMARY)
-        primary.find_one.assert_called_once_with({"_id": "p1"})
-
-    def test_returns_project_when_found(self):
-        primary = create_mock_collection(find_one=_project_doc("p-42"))
-        repo = ProjectRepository(create_mock_db({"projects": _wrap_with_primary(primary)}))
-
         result = asyncio.run(repo.get_by_id_strong("p-42"))
 
-        assert result is not None
-        assert result.id == "p-42"
+        base.with_options.assert_called_once_with(read_preference=ReadPreference.PRIMARY)
+        primary.find_one.assert_called_once_with({"_id": "p-42"})
+        assert result is not None and result.id == "p-42"
 
     def test_returns_none_when_not_found(self):
         primary = create_mock_collection(find_one=None)
