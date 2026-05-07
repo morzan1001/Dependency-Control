@@ -15,6 +15,25 @@ KEY_WEAKNESS_WEIGHT = 0.30
 DEADLINE_WEIGHT = 0.25
 COUNT_WEIGHT = 0.10
 
+# --- Exposure calibration ---
+# These map the "where is this asset deployed?" signal onto a 0..100 scale
+# that feeds into the priority_score weighted sum. Higher number = more
+# exposed = migrate sooner. Calibrated so that a public-facing X.509
+# certificate (the worst case) saturates at 100 while a well-isolated
+# binary embedding lands well below the default.
+EXPOSURE_CERTIFICATE = 100.0       # public-facing X.509 / TLS material
+EXPOSURE_RELATED_MATERIAL = 60.0   # certificate-adjacent material (e.g. CSR, chain)
+EXPOSURE_SOURCE = 50.0             # crypto referenced from source code
+EXPOSURE_DEFAULT = 45.0            # unclassified asset — assume moderate exposure
+EXPOSURE_BINARY = 30.0             # crypto embedded in compiled binary (harder to reach)
+
+# --- Count calibration ---
+# A single instance of a vulnerable asset is already meaningful (one weak
+# cert in production matters). We give it a non-zero baseline and scale
+# logarithmically from there, capping at 100 for very large clusters.
+_COUNT_BASELINE = 50.0
+_COUNT_LOG_MULTIPLIER = 25.0
+
 _MIN_KEY_SIZE = {
     "RSA": 2048,
     "DSA": 2048,
@@ -66,14 +85,14 @@ def _score_exposure(asset: Any) -> float:
     cert_format = _attr(asset, "certificate_format") or ""
     detection_context = (_attr(asset, "detection_context") or "").lower()
     if asset_type == "certificate" and cert_format:
-        return 100.0
+        return EXPOSURE_CERTIFICATE
     if asset_type == "related-crypto-material":
-        return 60.0
+        return EXPOSURE_RELATED_MATERIAL
     if detection_context == "binary":
-        return 30.0
+        return EXPOSURE_BINARY
     if detection_context == "source":
-        return 50.0
-    return 45.0  # default moderate exposure
+        return EXPOSURE_SOURCE
+    return EXPOSURE_DEFAULT
 
 
 def _score_key_weakness(asset: Any, source_family: str) -> float:
@@ -110,9 +129,17 @@ def _score_deadline(source_family: str, timelines: List[Timeline], now: datetime
 
 
 def _score_count(count: int) -> float:
-    if count <= 1:
+    """Translate an asset's occurrence count into a 0..100 contribution.
+
+    Single-instance findings are not zeroed out — one production-exposed
+    weak certificate is still a real risk. The score scales logarithmically
+    from a baseline so clusters of 100+ identical assets cap at 100 instead
+    of running away.
+    """
+    if count <= 0:
         return 0.0
-    return min(100.0, math.log10(count) * 50.0)
+    raw = _COUNT_BASELINE + math.log10(count) * _COUNT_LOG_MULTIPLIER
+    return min(100.0, raw)
 
 
 def _attr(obj: Any, name: str) -> Any:

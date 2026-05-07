@@ -383,6 +383,12 @@ class UpdateFrequencyMetrics(BaseModel):
     # Pairs naturally with team-update-velocity to expose adoption lag.
     adoption_latency_days_median: Optional[float] = None
 
+    # Dominant dependency ecosystem (e.g. "pypi", "npm", "maven"); "mixed"
+    # when no single ecosystem owns >=70% of classified deps; None when
+    # there are no classified deps. Cross-project comparisons should group
+    # by this rather than ranking globally.
+    dominant_ecosystem: Optional[str] = None
+
     # Chart data
     scan_timeline: List[ScanTimelineEntry]
 
@@ -404,6 +410,11 @@ class ProjectUpdateSummary(BaseModel):
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     total_outdated: int
     last_scan_date: str
+    # Most common dependency type across the project's history. "mixed" when
+    # no single ecosystem hits the dominance threshold; None when the
+    # project has no classified dependencies. Used for fair cross-project
+    # comparisons (npm and Maven projects don't share a release cadence).
+    dominant_ecosystem: Optional[str] = None
 
 
 class UpdateFrequencyComparison(BaseModel):
@@ -414,6 +425,12 @@ class UpdateFrequencyComparison(BaseModel):
     team_avg_coverage_pct: float
     best_project: Optional[str] = None
     worst_project: Optional[str] = None
+    # Per-ecosystem winners — the fair comparison when projects span
+    # multiple registries. Keyed by dominant_ecosystem (e.g. "pypi", "npm").
+    # The global best_project / worst_project remain for backward compat
+    # but are misleading when the project mix is heterogeneous.
+    best_per_ecosystem: Dict[str, str] = {}
+    worst_per_ecosystem: Dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------

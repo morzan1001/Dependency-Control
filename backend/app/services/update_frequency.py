@@ -364,6 +364,7 @@ def _aggregate_metrics(
         adoption_latency_days_median=(
             upstream.adoption_latency_days_median if upstream else None
         ),
+        dominant_ecosystem=_dominant_ecosystem(dep_type_map),
     )
 
 
@@ -416,6 +417,29 @@ def _empty_metrics(project_id: str, project_name: str, scan_count: int, scan_dat
 
 
 _RECENT_EVENTS_BUFFER_SIZE = 30
+
+# Share of classified deps a single ecosystem must hold to "win" the project.
+# Below the threshold the project is labelled "mixed" instead.
+_ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
+
+
+def _dominant_ecosystem(dep_type_map: Dict[str, str]) -> Optional[str]:
+    """Pick the registry/ecosystem that owns >=70% of the project's classified deps.
+
+    Returns ``None`` when there are no classified deps at all, ``"mixed"``
+    when no single ecosystem clears the threshold, otherwise the winning
+    ecosystem name (e.g. "pypi", "npm", "maven"). The "unknown" type is
+    excluded from the count so that missing-PURL noise doesn't tilt the
+    classification.
+    """
+    classified = [t for t in dep_type_map.values() if t and t != "unknown"]
+    if not classified:
+        return None
+    counts = Counter(classified)
+    top_type, top_count = counts.most_common(1)[0]
+    if top_count / len(classified) >= _ECOSYSTEM_DOMINANCE_THRESHOLD:
+        return top_type
+    return "mixed"
 
 
 async def compute_update_frequency(
@@ -659,6 +683,7 @@ async def compute_update_frequency_comparison(
                 trend_direction=metrics.trend_direction,
                 total_outdated=metrics.total_outdated_detected,
                 last_scan_date=metrics.last_scan_date,
+                dominant_ecosystem=metrics.dominant_ecosystem,
             )
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
@@ -683,10 +708,36 @@ async def compute_update_frequency_comparison(
         best = None
         worst = None
 
+    best_per_ecosystem, worst_per_ecosystem = _per_ecosystem_winners(summaries)
+
     return UpdateFrequencyComparison(
         projects=summaries,
         team_avg_updates_per_month=round(avg_updates, 2),
         team_avg_coverage_pct=round(avg_coverage, 1),
         best_project=best,
         worst_project=worst,
+        best_per_ecosystem=best_per_ecosystem,
+        worst_per_ecosystem=worst_per_ecosystem,
     )
+
+
+def _per_ecosystem_winners(
+    summaries: List[ProjectUpdateSummary],
+) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Group summaries by dominant_ecosystem and return per-ecosystem
+    best/worst project names. The "mixed" bucket and unclassified projects
+    are skipped — for those the global ranking is the only fair option.
+
+    The summaries list is already sorted globally; per-ecosystem ordering
+    falls out by walking the list once.
+    """
+    best: Dict[str, str] = {}
+    worst: Dict[str, str] = {}
+    for s in summaries:
+        eco = s.dominant_ecosystem
+        if not eco or eco == "mixed":
+            continue
+        if eco not in best:
+            best[eco] = s.project_name
+        worst[eco] = s.project_name  # last wins -> worst (summaries sorted desc)
+    return best, worst

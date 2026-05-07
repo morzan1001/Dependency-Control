@@ -11,9 +11,11 @@ from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _aggregate_metrics,
     _compute_trend,
+    _dominant_ecosystem,
     _empty_metrics,
     classify_version_change,
     compute_update_frequency,
+    compute_update_frequency_comparison,
 )
 
 
@@ -112,6 +114,37 @@ class TestClassifyVersionChange:
         # Local versions (1.0.0+build123) are common in private registries.
         result = classify_version_change("1.0.0", "1.0.0+build123")
         assert result != "none"
+
+
+class TestDominantEcosystem:
+    """Pin the >=70% threshold for assigning a single ecosystem label."""
+
+    def test_pure_single_type(self):
+        assert _dominant_ecosystem({"a": "pypi", "b": "pypi", "c": "pypi"}) == "pypi"
+
+    def test_clear_majority_returns_majority(self):
+        # 8 pypi + 1 npm + 1 maven = 80% pypi, above the threshold.
+        deps = {f"py{i}": "pypi" for i in range(8)}
+        deps["js"] = "npm"
+        deps["mv"] = "maven"
+        assert _dominant_ecosystem(deps) == "pypi"
+
+    def test_balanced_mix_returns_mixed(self):
+        # 5 pypi + 5 npm = 50/50, below the 70% bar.
+        deps = {f"p{i}": "pypi" for i in range(5)}
+        deps.update({f"n{i}": "npm" for i in range(5)})
+        assert _dominant_ecosystem(deps) == "mixed"
+
+    def test_empty_returns_none(self):
+        # Nothing to classify — surface as None rather than inventing a default.
+        assert _dominant_ecosystem({}) is None
+
+    def test_unknown_types_excluded_from_majority(self):
+        # "unknown" never wins a majority; it's noise from missing PURL data.
+        deps = {f"p{i}": "pypi" for i in range(3)}
+        deps.update({f"u{i}": "unknown" for i in range(7)})
+        # 3 known (all pypi) -> pypi is 100% of *classified* deps.
+        assert _dominant_ecosystem(deps) == "pypi"
 
 
 class TestComputeTrend:
@@ -474,6 +507,67 @@ class TestStreamingOrchestrator:
         # Fetcher must have been called once with the unique packages from the scans.
         assert len(fetcher.calls) == 1
         assert ("pypi", "pkg-a") in fetcher.calls[0]
+
+    @pytest.mark.asyncio
+    async def test_summary_carries_dominant_ecosystem(self):
+        # All deps are pypi -> dominant_ecosystem on the comparison summary
+        # must reflect that, so the UI/caller can group fairly.
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0", "pypi")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1", "pypi")],
+        }
+        scan_repo = FakeScanRepo(scans)
+        dep_repo = FakeDepRepo(deps)
+        analysis_repo = FakeAnalysisRepo([])
+
+        result = await compute_update_frequency_comparison(
+            projects=[{"_id": "proj-1", "name": "Project One"}],
+            scan_repo=scan_repo,
+            dep_repo=dep_repo,
+            analysis_repo=analysis_repo,
+        )
+
+        assert len(result.projects) == 1
+        assert result.projects[0].dominant_ecosystem == "pypi"
+
+    @pytest.mark.asyncio
+    async def test_comparison_emits_per_ecosystem_winners(self):
+        # Two projects in different ecosystems; the global best_project
+        # is still set, but the per-ecosystem maps let UIs avoid claiming
+        # an npm project "beat" a maven project on raw updates_per_month.
+        scans_a = [
+            {**_make_scan("a1", 0, project_id="proj-py"), "project_id": "proj-py"},
+            {**_make_scan("a2", 30, project_id="proj-py"), "project_id": "proj-py"},
+        ]
+        scans_b = [
+            {**_make_scan("b1", 0, project_id="proj-js"), "project_id": "proj-js"},
+            {**_make_scan("b2", 30, project_id="proj-js"), "project_id": "proj-js"},
+        ]
+        deps = {
+            "a1": [_make_dep("a1", "pkg-py", "1.0.0", "pypi")],
+            "a2": [_make_dep("a2", "pkg-py", "1.0.1", "pypi")],
+            "b1": [_make_dep("b1", "pkg-js", "1.0.0", "npm")],
+            "b2": [_make_dep("b2", "pkg-js", "1.0.1", "npm")],
+        }
+        scan_repo = FakeScanRepo(scans_a + scans_b)
+        dep_repo = FakeDepRepo(deps)
+        analysis_repo = FakeAnalysisRepo([])
+
+        result = await compute_update_frequency_comparison(
+            projects=[
+                {"_id": "proj-py", "name": "Python Project"},
+                {"_id": "proj-js", "name": "JS Project"},
+            ],
+            scan_repo=scan_repo,
+            dep_repo=dep_repo,
+            analysis_repo=analysis_repo,
+        )
+
+        assert "pypi" in result.best_per_ecosystem
+        assert "npm" in result.best_per_ecosystem
+        assert result.best_per_ecosystem["pypi"] == "Python Project"
+        assert result.best_per_ecosystem["npm"] == "JS Project"
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
