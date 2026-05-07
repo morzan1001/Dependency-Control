@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, Optional
 
 import httpx
 from fastapi import HTTPException, Query
@@ -170,17 +170,15 @@ async def get_update_frequency_comparison(
     )
 
     if projects_raw:
-        team_ids: List[str] = [str(p["team_id"]) for p in projects_raw if p.get("team_id")]
-        unique_team_ids = list(set(team_ids))
+        unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})
         team_names: Dict[str, str] = {}
         if unique_team_ids:
-            from app.repositories import TeamRepository
-
-            team_repo = TeamRepository(db)
-            for tid in unique_team_ids:
-                team = await team_repo.get_raw_by_id(tid)
-                if team:
-                    team_names[tid] = team.get("name", "")
+            cursor = db.teams.find(
+                {"_id": {"$in": unique_team_ids}},
+                {"_id": 1, "name": 1},
+            )
+            async for t in cursor:
+                team_names[str(t["_id"])] = t.get("name", "")
 
         for p in projects_raw:
             p["team_name"] = team_names.get(p.get("team_id", ""))
@@ -189,6 +187,9 @@ async def get_update_frequency_comparison(
     dep_repo = DependencyRepository(db)
     analysis_repo = AnalysisResultRepository(db)
 
+    # Comparison only consumes the team-velocity fields — skip the deps.dev
+    # release-history fetcher, which would otherwise issue a per-package
+    # round-trip for every project and dominate the total latency.
     comparison = await compute_update_frequency_comparison(
         projects=projects_raw,
         scan_repo=scan_repo,
@@ -196,7 +197,6 @@ async def get_update_frequency_comparison(
         analysis_repo=analysis_repo,
         max_scans=max_scans,
         since=_resolve_since(window_days),
-        release_fetcher=_build_release_fetcher(),
     )
 
     await cache_service.set(cache_key, comparison.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
