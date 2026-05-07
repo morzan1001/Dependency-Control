@@ -244,18 +244,6 @@ def _granularity_ratio(type_counter: Counter, total_updates: int) -> Dict[str, f
     }
 
 
-def _coverage_pct(ever_outdated: set, ever_resolved: set) -> Optional[float]:
-    """Resolved share of ever-outdated packages.
-
-    Returns ``None`` when nothing was ever outdated — distinct from 0.0
-    which means "outdated detected, nothing resolved".
-    """
-    total = len(ever_outdated)
-    if not total:
-        return None
-    return round(len(ever_outdated & ever_resolved) / total * 100, 1)
-
-
 def _aggregate_metrics(
     completed_scans: List[Dict[str, Any]],
     ever_outdated: set,
@@ -290,7 +278,12 @@ def _aggregate_metrics(
 
     total_outdated_detected = len(ever_outdated)
     outdated_resolved_count = len(ever_outdated & ever_resolved)
-    update_coverage_pct = _coverage_pct(ever_outdated, ever_resolved)
+    # None means "nothing was ever outdated" — distinct from 0.0 ("nothing resolved").
+    update_coverage_pct: Optional[float] = (
+        round(outdated_resolved_count / total_outdated_detected * 100, 1)
+        if total_outdated_detected
+        else None
+    )
 
     trend_direction, trend_detail = _compute_trend(scan_timeline)
 

@@ -16,9 +16,33 @@ from .base import Analyzer
 logger = logging.getLogger(__name__)
 
 
+def _extract_products_from_cpes(cpes: List[str]) -> Set[str]:
+    """Map CPE strings to endoflife.date product IDs.
+
+    Accepts the standard ``cpe:2.3:a:`` form, the rarely-seen
+    ``cpe:/2.3:a:`` variant, and legacy ``cpe:/a:`` (CPE 2.2).
+    """
+    products: Set[str] = set()
+    for cpe in cpes:
+        match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(
+            r"cpe:/a:([^:]+):([^:]+)", cpe
+        )
+        if not match:
+            continue
+        vendor = match.group(1).lower()
+        product = match.group(2).lower()
+        if product in NAME_TO_EOL_MAPPING:
+            products.add(NAME_TO_EOL_MAPPING[product])
+        elif f"{vendor}_{product}" in NAME_TO_EOL_MAPPING:
+            products.add(NAME_TO_EOL_MAPPING[f"{vendor}_{product}"])
+        else:
+            products.add(product)
+    return products
+
+
 def _resolve_eol_products(name: str, cpes: List[str]) -> Set[str]:
     """Map a component to endoflife.date product IDs (CPEs first, then name)."""
-    products = EndOfLifeAnalyzer._extract_products_from_cpes(cpes)
+    products = _extract_products_from_cpes(cpes)
     if products:
         return products
     mapped = NAME_TO_EOL_MAPPING.get(name)
@@ -30,8 +54,8 @@ def collect_products_to_check(
 ) -> Dict[str, List[Tuple[str, str]]]:
     """Build ``product -> [(component_name, version), ...]`` from SBOM components.
 
-    Each (product, version) pair is checked independently so that the same
-    runtime appearing at multiple versions doesn't mask the older one.
+    Each (product, version) pair is checked independently so the same
+    runtime at multiple versions doesn't mask the older one.
     """
     out: Dict[str, List[Tuple[str, str]]] = {}
     for component in components:
@@ -201,29 +225,7 @@ class EndOfLifeAnalyzer(Analyzer):
             "message": f"Component {product} version {version} has reached end-of-life",
         }
 
-    @staticmethod
-    def _extract_products_from_cpes(cpes: List[str]) -> Set[str]:
-        """Map CPE strings to endoflife.date product IDs.
-
-        Accepts the standard ``cpe:2.3:a:`` form, the rarely-seen
-        ``cpe:/2.3:a:`` variant, and legacy ``cpe:/a:`` (CPE 2.2).
-        """
-        products: Set[str] = set()
-        for cpe in cpes:
-            match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(
-                r"cpe:/a:([^:]+):([^:]+)", cpe
-            )
-            if not match:
-                continue
-            vendor = match.group(1).lower()
-            product = match.group(2).lower()
-            if product in NAME_TO_EOL_MAPPING:
-                products.add(NAME_TO_EOL_MAPPING[product])
-            elif f"{vendor}_{product}" in NAME_TO_EOL_MAPPING:
-                products.add(NAME_TO_EOL_MAPPING[f"{vendor}_{product}"])
-            else:
-                products.add(product)
-        return products
+    _extract_products_from_cpes = staticmethod(_extract_products_from_cpes)
 
     @staticmethod
     def _is_eol(eol: Any) -> bool:
