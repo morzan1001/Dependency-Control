@@ -11,9 +11,9 @@ load and compare one scan pair at a time, keeping peak memory to 2×deps/scan.
 
 import asyncio
 import logging
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from packaging.version import InvalidVersion, Version
 
@@ -109,47 +109,39 @@ def _pregroup_deps_by_scan(
     return dict(grouped)
 
 
-def _extract_outdated_set(analysis_result: Any) -> set:
-    """Extract set of outdated package names from an outdated_packages analysis result."""
+async def _load_outdated_for_scan(
+    analysis_repo: AnalysisResultRepository,
+    scan_id: str,
+    package_latest_info: Dict[str, Dict[str, str]],
+) -> set:
+    """Load the outdated_packages analysis result for one scan, updating
+    `package_latest_info` in-place with the latest version info encountered,
+    and returning the set of outdated component names.
+
+    Streaming variant of the previous bulk loader: keeps memory bounded to
+    one scan's worth of outdated entries instead of all scans simultaneously.
+    """
+    results = await analysis_repo.find_many(
+        {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
+        limit=1,
+    )
     outdated_names: set = set()
-    if not analysis_result:
+    if not results:
         return outdated_names
 
-    result_data = getattr(analysis_result, "result", None)
-    if isinstance(result_data, dict):
-        for entry in result_data.get("outdated_dependencies", []):
-            component = entry.get("component", "")
-            if component:
-                outdated_names.add(component)
+    result_data = getattr(results[0], "result", {}) or {}
+    for entry in result_data.get("outdated_dependencies", []):
+        comp = entry.get("component", "")
+        if not comp:
+            continue
+        outdated_names.add(comp)
+        # Last-write-wins is fine: we only need one consistent
+        # current/latest pair per package for the slowest_packages list.
+        package_latest_info[comp] = {
+            "current_version": entry.get("current_version", ""),
+            "latest_version": entry.get("latest_version", ""),
+        }
     return outdated_names
-
-
-def _build_outdated_maps(
-    outdated_results: list,
-) -> Tuple[Dict[str, set], Dict[str, Dict[str, str]]]:
-    """
-    Build per-scan outdated sets and a package->latest version info map
-    from outdated_packages analysis results.
-
-    Returns:
-        (outdated_by_scan, package_latest_info)
-    """
-    outdated_by_scan: Dict[str, set] = {}
-    package_latest_info: Dict[str, Dict[str, str]] = {}
-
-    for ar in outdated_results:
-        outdated_by_scan[ar.scan_id] = _extract_outdated_set(ar)
-
-        result_data = getattr(ar, "result", {}) or {}
-        for entry in result_data.get("outdated_dependencies", []):
-            comp = entry.get("component", "")
-            if comp:
-                package_latest_info[comp] = {
-                    "current_version": entry.get("current_version", ""),
-                    "latest_version": entry.get("latest_version", ""),
-                }
-
-    return outdated_by_scan, package_latest_info
 
 
 def _compare_scan_pair(
@@ -223,7 +215,7 @@ def _compute_trend(
     Returns (direction, detail) tuple.
     """
     if len(scan_timeline) < 4:
-        return "stable", "Not enough scans to determine trend (need at least 4)"
+        return "unknown", "Not enough scans to determine trend (need at least 4)"
 
     mid = len(scan_timeline) // 2
     older = scan_timeline[:mid]
@@ -259,7 +251,6 @@ def _compute_trend(
 
 
 def _aggregate_metrics(
-    all_events: List[DependencyUpdateEvent],
     completed_scans: List[Dict[str, Any]],
     ever_outdated: set,
     ever_resolved: set,
@@ -269,9 +260,31 @@ def _aggregate_metrics(
     package_latest_info: Dict[str, Dict[str, str]],
     project_id: str,
     project_name: str,
+    *,
+    type_counter: Optional[Counter] = None,
+    recent_events: Optional[List[DependencyUpdateEvent]] = None,
+    all_events: Optional[List[DependencyUpdateEvent]] = None,
 ) -> UpdateFrequencyMetrics:
-    """Aggregate all collected data into the final metrics response."""
-    total_updates = len(all_events)
+    """Aggregate streamed counters into the final metrics response.
+
+    The orchestrator accumulates ``type_counter`` and a bounded ring buffer
+    of recent events while iterating scans, so peak memory does not depend
+    on the number of update events. The legacy ``all_events`` argument is
+    accepted for tests that still construct the metrics directly from a
+    list — when supplied it overrides the streamed values.
+    """
+    if all_events is not None:
+        type_counter = Counter(e.update_type for e in all_events)
+        recent_events = sorted(all_events, key=lambda e: e.scan_date, reverse=True)[:30]
+        total_updates = len(all_events)
+    else:
+        if type_counter is None or recent_events is None:
+            raise TypeError(
+                "_aggregate_metrics requires either `all_events` or both "
+                "`type_counter` and `recent_events`"
+            )
+        total_updates = sum(type_counter.values())
+
     num_intervals = len(completed_scans) - 1
 
     first_date: datetime = completed_scans[0]["created_at"]
@@ -279,11 +292,10 @@ def _aggregate_metrics(
     time_range_days = max(1, (last_date - first_date).days)
     time_range_months = time_range_days / 30.44
 
-    type_counts = Counter(e.update_type for e in all_events)
-    patch_total = type_counts.get("patch", 0)
-    minor_total = type_counts.get("minor", 0)
-    major_total = type_counts.get("major", 0)
-    unknown_total = type_counts.get("unknown", 0)
+    patch_total = type_counter.get("patch", 0)
+    minor_total = type_counter.get("minor", 0)
+    major_total = type_counter.get("major", 0)
+    unknown_total = type_counter.get("unknown", 0)
 
     granularity_ratio = {
         "patch": round(patch_total / total_updates, 2) if total_updates else 0.0,
@@ -296,14 +308,17 @@ def _aggregate_metrics(
 
     total_outdated_detected = len(ever_outdated)
     outdated_resolved_count = len(ever_outdated & ever_resolved)
-    update_coverage_pct = (
-        round(outdated_resolved_count / total_outdated_detected * 100, 1) if total_outdated_detected else 0.0
+    # None means "no outdated packages were ever detected" — semantic N/A.
+    # Distinct from 0.0 ("outdated detected but nothing resolved").
+    update_coverage_pct: Optional[float] = (
+        round(outdated_resolved_count / total_outdated_detected * 100, 1)
+        if total_outdated_detected
+        else None
     )
 
     trend_direction, trend_detail = _compute_trend(scan_timeline)
 
     slowest_packages = _build_slowest_packages(package_outdated_counts, package_latest_info, dep_type_map)
-    recent_updates = sorted(all_events, key=lambda e: e.scan_date, reverse=True)[:30]
 
     return UpdateFrequencyMetrics(
         project_id=project_id,
@@ -328,7 +343,7 @@ def _aggregate_metrics(
         trend_detail=trend_detail,
         scan_timeline=scan_timeline,
         slowest_packages=slowest_packages,
-        recent_updates=recent_updates,
+        recent_updates=recent_events,
     )
 
 
@@ -371,13 +386,16 @@ def _empty_metrics(project_id: str, project_name: str, scan_count: int, scan_dat
         avg_days_between_scans=0.0,
         total_outdated_detected=0,
         outdated_resolved=0,
-        update_coverage_pct=0.0,
-        trend_direction="stable",
+        update_coverage_pct=None,
+        trend_direction="unknown",
         trend_detail="Not enough scans to analyze (need at least 2)",
         scan_timeline=[],
         slowest_packages=[],
         recent_updates=[],
     )
+
+
+_RECENT_EVENTS_BUFFER_SIZE = 30
 
 
 async def compute_update_frequency(
@@ -387,39 +405,47 @@ async def compute_update_frequency(
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 20,
+    since: Optional[datetime] = None,
 ) -> UpdateFrequencyMetrics:
     """
     Compute update frequency metrics for a project.
 
-    Dependencies are loaded one scan pair at a time to keep peak memory
-    bounded to 2×deps_per_scan regardless of how many scans are analysed.
+    Streaming model: dependencies and outdated-results are loaded one scan
+    (or scan pair) at a time. Update events are accumulated as a Counter
+    plus a bounded deque, so peak memory does not grow with the number of
+    update events or scans analysed.
+
+    Selection:
+        - When ``since`` is set, every completed scan with ``created_at >= since``
+          is analysed (capped by ``max_scans`` as a safety bound).
+        - When ``since`` is None, the most recent ``max_scans`` completed scans
+          are analysed. (Previously this loaded the *oldest* scans, which
+          made the metric useless on long-lived projects.)
     """
     scans_raw = await scan_repo.find_by_project(
         project_id,
         limit=max_scans,
         sort_by="created_at",
-        sort_order=1,
+        sort_order=-1,  # newest first; reversed below for chronological iteration
         projection={"_id": 1, "created_at": 1, "status": 1},
     )
+    if since is not None:
+        scans_raw = [s for s in scans_raw if s["created_at"] >= since]
+    # Iterate oldest -> newest so prev/curr pair semantics work and recent
+    # events end up at the tail of the ring buffer.
+    scans_raw.reverse()
     completed_scans = [s for s in scans_raw if s.get("status") == "completed"]
 
     if len(completed_scans) < 2:
         first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
         return _empty_metrics(project_id, project_name, len(completed_scans), first_date_str)
 
-    scan_ids = [s["_id"] for s in completed_scans]
-
-    # Fetch lightweight outdated analysis results upfront (one doc per scan)
-    outdated_results = await analysis_repo.find_many(
-        {"scan_id": {"$in": scan_ids}, "analyzer_name": "outdated_packages"},
-        limit=max_scans,
-    )
-    outdated_by_scan, package_latest_info = _build_outdated_maps(outdated_results)
-
-    # Accumulators
-    all_update_events: List[DependencyUpdateEvent] = []
+    # Streaming accumulators — bounded in size by unique-packages, not by scan-count.
+    type_counter: Counter = Counter()
+    recent_events_buffer: Deque[DependencyUpdateEvent] = deque(maxlen=_RECENT_EVENTS_BUFFER_SIZE)
     scan_timeline: List[ScanTimelineEntry] = []
     package_outdated_counts: Dict[str, int] = defaultdict(int)
+    package_latest_info: Dict[str, Dict[str, str]] = {}
     dep_type_map: Dict[str, str] = {}
     ever_outdated: set = set()
     ever_resolved: set = set()
@@ -433,18 +459,19 @@ async def compute_update_frequency(
             if name not in dep_type_map:
                 dep_type_map[name] = info.get("type", "unknown")
 
-    # Bootstrap with the first scan: no pair to compare yet, but we still need
-    # its deps so the next iteration can use them as `prev_deps` without
-    # reloading. Each scan is fetched exactly once across the whole loop.
+    # Bootstrap with the first scan: load its deps and outdated set so the
+    # next iteration can roll forward without reloading.
     first_scan = completed_scans[0]
     prev_deps = await _load_scan_deps(first_scan["_id"])
     _accumulate_types(prev_deps)
 
-    first_outdated = outdated_by_scan.get(first_scan["_id"], set())
-    for pkg in first_outdated:
+    prev_outdated = await _load_outdated_for_scan(analysis_repo, first_scan["_id"], package_latest_info)
+    for pkg in prev_outdated:
         package_outdated_counts[pkg] += 1
         ever_outdated.add(pkg)
-    scan_timeline.append(_build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(first_outdated)))
+    scan_timeline.append(
+        _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(prev_outdated))
+    )
 
     for i in range(1, len(completed_scans)):
         prev_scan = completed_scans[i - 1]
@@ -453,9 +480,7 @@ async def compute_update_frequency(
         curr_deps = await _load_scan_deps(curr_scan["_id"])
         _accumulate_types(curr_deps)
 
-        curr_outdated = outdated_by_scan.get(curr_scan["_id"], set())
-        prev_outdated = outdated_by_scan.get(prev_scan["_id"], set())
-
+        curr_outdated = await _load_outdated_for_scan(analysis_repo, curr_scan["_id"], package_latest_info)
         for pkg in curr_outdated:
             package_outdated_counts[pkg] += 1
             ever_outdated.add(pkg)
@@ -469,20 +494,22 @@ async def compute_update_frequency(
             prev_outdated,
         )
 
+        # Stream into accumulators — never keep the full event list in memory.
         for e in events:
             if e.was_outdated:
                 ever_resolved.add(e.package_name)
+            type_counter[e.update_type] += 1
+            recent_events_buffer.append(e)
 
-        all_update_events.extend(events)
         scan_timeline.append(
             _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], events, len(curr_outdated))
         )
 
         # Roll forward: this iteration's curr is the next iteration's prev.
         prev_deps = curr_deps
+        prev_outdated = curr_outdated
 
     return _aggregate_metrics(
-        all_update_events,
         completed_scans,
         ever_outdated,
         ever_resolved,
@@ -492,6 +519,9 @@ async def compute_update_frequency(
         package_latest_info,
         project_id,
         project_name,
+        type_counter=type_counter,
+        # Buffer holds events oldest -> newest (insertion order); reverse for newest-first.
+        recent_events=list(recent_events_buffer)[::-1],
     )
 
 
@@ -501,12 +531,16 @@ async def compute_update_frequency_comparison(
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 10,
+    since: Optional[datetime] = None,
 ) -> UpdateFrequencyComparison:
     """
     Compute update frequency comparison across multiple projects.
 
     At most _COMPARISON_CONCURRENCY concurrent per-project computations run at
-    once to avoid saturating MongoDB with simultaneous large queries.
+    once to avoid saturating MongoDB with simultaneous large queries. Pass
+    ``since`` to align all projects on the same calendar window — without it,
+    different projects may end up analysed over different time spans
+    depending on their scan cadence.
     """
     semaphore = _get_comparison_semaphore()
 
@@ -524,6 +558,7 @@ async def compute_update_frequency_comparison(
                     dep_repo=dep_repo,
                     analysis_repo=analysis_repo,
                     max_scans=max_scans,
+                    since=since,
                 )
             except Exception:
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
@@ -548,11 +583,17 @@ async def compute_update_frequency_comparison(
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
     summaries: List[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
 
-    summaries.sort(key=lambda s: (s.update_coverage_pct, s.updates_per_month), reverse=True)
+    # Sort by coverage desc (None == "perfect / nothing to resolve" → top), then by updates_per_month desc.
+    # Treat None as +inf so projects with no outdated history rank above ones with measured coverage.
+    def _coverage_key(s: ProjectUpdateSummary) -> float:
+        return float("inf") if s.update_coverage_pct is None else s.update_coverage_pct
+
+    summaries.sort(key=lambda s: (_coverage_key(s), s.updates_per_month), reverse=True)
 
     if summaries:
         avg_updates = sum(s.updates_per_month for s in summaries) / len(summaries)
-        avg_coverage = sum(s.update_coverage_pct for s in summaries) / len(summaries)
+        coverage_values = [s.update_coverage_pct for s in summaries if s.update_coverage_pct is not None]
+        avg_coverage = sum(coverage_values) / len(coverage_values) if coverage_values else 0.0
         best = summaries[0].project_name
         worst = summaries[-1].project_name
     else:

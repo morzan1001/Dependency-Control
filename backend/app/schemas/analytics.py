@@ -361,13 +361,15 @@ class UpdateFrequencyMetrics(BaseModel):
     # Scan cadence
     avg_days_between_scans: float
 
-    # Coverage — how many outdated packages actually got updated
+    # Coverage — how many outdated packages actually got updated.
+    # None when nothing has ever been outdated (semantic N/A, not 0%).
     total_outdated_detected: int
     outdated_resolved: int
-    update_coverage_pct: float
+    update_coverage_pct: Optional[float] = None
 
-    # Trend — comparing recent vs older scan history
-    trend_direction: str  # "improving" | "stable" | "deteriorating"
+    # Trend — comparing recent vs older scan history.
+    # "unknown" is returned when there isn't enough data (fewer than 4 scans).
+    trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     trend_detail: str
 
     # Chart data
@@ -386,9 +388,9 @@ class ProjectUpdateSummary(BaseModel):
     team_name: Optional[str] = None
     scan_count: int
     updates_per_month: float
-    update_coverage_pct: float
+    update_coverage_pct: Optional[float] = None
     patch_ratio: float  # proportion of patch updates (0-1)
-    trend_direction: str  # "improving" | "stable" | "deteriorating"
+    trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     total_outdated: int
     last_scan_date: str
 

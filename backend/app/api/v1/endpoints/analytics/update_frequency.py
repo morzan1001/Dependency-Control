@@ -1,5 +1,6 @@
 """Analytics update-frequency endpoints."""
 
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import HTTPException, Query
@@ -33,14 +34,27 @@ from ._shared import _MSG_ACCESS_DENIED
 router = CustomAPIRouter()
 
 
+def _resolve_since(window_days: Optional[int]) -> Optional[datetime]:
+    """Translate the user-facing window_days param into a `since` cutoff."""
+    if window_days is None:
+        return None
+    return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
+
+
 @router.get("/projects/{project_id}/update-frequency", responses=RESP_AUTH_404)
 async def get_project_update_frequency(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    max_scans: Annotated[int, Query(ge=2, le=50)] = 20,
+    max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
+    window_days: Annotated[Optional[int], Query(ge=1, le=3650)] = None,
 ) -> UpdateFrequencyMetrics:
-    """Update frequency metrics from comparing dependency versions across consecutive scans."""
+    """Update frequency metrics from comparing dependency versions across consecutive scans.
+
+    Pass `window_days` (e.g. 365) to analyse all completed scans within that
+    calendar window — recommended for cross-project comparability. Without it,
+    the most recent `max_scans` completed scans are used.
+    """
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     project_repo = ProjectRepository(db)
@@ -52,7 +66,7 @@ async def get_project_update_frequency(
     if project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
-    cache_key = CacheKeys.update_frequency(project_id)
+    cache_key = f"{CacheKeys.update_frequency(project_id)}:m{max_scans}:w{window_days or 0}"
     cached = await cache_service.get(cache_key)
     if cached:
         return UpdateFrequencyMetrics(**cached)
@@ -68,6 +82,7 @@ async def get_project_update_frequency(
         dep_repo=dep_repo,
         analysis_repo=analysis_repo,
         max_scans=max_scans,
+        since=_resolve_since(window_days),
     )
 
     await cache_service.set(cache_key, metrics.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
@@ -79,12 +94,20 @@ async def get_update_frequency_comparison(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     team_id: Optional[str] = None,
-    max_scans: Annotated[int, Query(ge=2, le=20)] = 10,
+    max_scans: Annotated[int, Query(ge=2, le=200)] = 10,
+    window_days: Annotated[Optional[int], Query(ge=1, le=3650)] = None,
 ) -> UpdateFrequencyComparison:
-    """Ranking of projects by update behavior, optionally filtered by team."""
+    """Ranking of projects by update behavior, optionally filtered by team.
+
+    Pass `window_days` to align all projects on the same calendar window —
+    recommended whenever scan cadences differ across projects.
+    """
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
-    cache_key = CacheKeys.update_frequency_comparison(current_user.id, team_id or "all")
+    cache_key = (
+        f"{CacheKeys.update_frequency_comparison(current_user.id, team_id or 'all')}"
+        f":m{max_scans}:w{window_days or 0}"
+    )
     cached = await cache_service.get(cache_key)
     if cached:
         return UpdateFrequencyComparison(**cached)
@@ -135,6 +158,7 @@ async def get_update_frequency_comparison(
         dep_repo=dep_repo,
         analysis_repo=analysis_repo,
         max_scans=max_scans,
+        since=_resolve_since(window_days),
     )
 
     await cache_service.set(cache_key, comparison.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
