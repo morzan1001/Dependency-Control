@@ -1,18 +1,4 @@
-"""
-CVE Remediation SLA — SBOM-side compliance "framework".
-
-Checks that open vulnerabilities are remediated within their severity
-SLA window. Default windows (configurable via env in future):
-  - CRITICAL: 7 days
-  - HIGH: 30 days
-  - MEDIUM: 90 days
-
-Each severity bucket becomes one control. Findings older than the SLA
-window whose status is not ``fixed`` / ``waived`` trigger FAILED.
-
-Async-only — pulls findings from EvaluationInput (already loaded by
-engine). Callers dispatch via ``evaluate_async``.
-"""
+"""CVE Remediation SLA: one control per severity bucket; FAILED when overdue."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -33,14 +19,12 @@ from app.services.compliance.frameworks.base import (
 )
 
 
-# Severity -> default sla_days. Overridable per instance via constructor.
 DEFAULT_SLA_DAYS: Dict[Severity, int] = {
     Severity.CRITICAL: 7,
     Severity.HIGH: 30,
     Severity.MEDIUM: 90,
 }
 
-# Order of evaluation for the controls (kept fixed so output ordering is stable).
 _SLA_SEVERITY_ORDER: List[Severity] = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM]
 
 
@@ -64,13 +48,10 @@ class CveRemediationSlaFramework:
         self,
         sla_days_by_severity: Optional[Dict[Severity, int]] = None,
     ) -> None:
-        """Build a framework instance.
+        """``sla_days_by_severity`` overrides any subset of ``DEFAULT_SLA_DAYS``.
 
-        ``sla_days_by_severity`` overrides any subset of the defaults. Any
-        severity not provided keeps its DEFAULT_SLA_DAYS value. Values must
-        be strictly positive — a zero-or-negative window would mark every
-        new finding as overdue immediately, which is almost always a
-        misconfiguration rather than an intentional policy.
+        Values must be strictly positive; a zero/negative window would
+        instantly mark every finding as overdue.
         """
         merged: Dict[Severity, int] = dict(DEFAULT_SLA_DAYS)
         if sla_days_by_severity:

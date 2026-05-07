@@ -39,8 +39,7 @@ from .purl_utils import is_npm, is_pypi, parse_purl
 logger = logging.getLogger(__name__)
 
 
-# Risk types whose registry-side signal alone is too noisy to surface.
-# Each gets suppressed unless its corroborating evidence is also present.
+# Risk types suppressed unless corroborating evidence is also present.
 _STALENESS_TYPES = ("stale_package", "infrequent_updates")
 _FREE_EMAIL_TYPE = "free_email_maintainer"
 _BUS_FACTOR_TYPE = "single_maintainer"
@@ -51,33 +50,13 @@ def correlate_maintainer_risks(
     github_active: Optional[bool],
     maintainer_count: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Filter raw maintainer signals against their corroborating evidence.
+    """Filter raw maintainer signals against corroborating evidence.
 
-    The two registry-side signals that historically produced noise:
-
-      * ``stale_package`` / ``infrequent_updates`` — a package without
-        recent releases looks the same whether it's abandoned or simply
-        finished. We suppress them when the source repository is still
-        receiving commits (``github_active=True``). When GitHub data is
-        unavailable (``github_active=None``) the registry signal stands.
-
-      * ``free_email_maintainer`` — a personal email address is not a
-        risk on its own. We keep it as a signal *unless* we have positive
-        evidence that the package has multiple maintainers (which removes
-        the bus-factor concern). The tri-state on ``maintainer_count`` is
-        important: ``None`` means "we didn't / couldn't check", and in
-        that case the precautionary signal stays. We also keep it when an
-        explicit ``single_maintainer`` finding is in the list (e.g. when
-        npm gave us the count and it was 1).
-
-    ``github_active`` should be:
-      * ``True``  if the source repo had a recent push (and is not archived)
-      * ``False`` if the repo is inactive or archived
-      * ``None``  if we couldn't check (no repo URL, GitHub API failure, …)
-
-    ``maintainer_count`` should be:
-      * an int >= 1 if the registry returned a maintainer list
-      * ``None``    if we didn't query or the registry didn't give a count
+    Drops staleness when the source repo is still active. Drops the
+    free-email signal only when we have positive evidence of multiple
+    maintainers — ``None`` for ``maintainer_count`` means "couldn't check"
+    and keeps the precautionary signal. ``github_active`` is tri-state
+    (True/False/None) for the same reason.
     """
     if not risks:
         return []
@@ -93,8 +72,6 @@ def correlate_maintainer_risks(
         rtype = r.get("type")
         if rtype in _STALENESS_TYPES and github_active is True:
             continue
-        # Keep free_email by default. Only drop when we have positive
-        # evidence that the bus-factor concern doesn't apply.
         if (
             rtype == _FREE_EMAIL_TYPE
             and not has_single_maintainer
@@ -185,19 +162,15 @@ class MaintainerRiskAnalyzer(Analyzer):
         name = component.get("name", "")
         version = component.get("version", "")
         purl = component.get("purl", "")
-
-        # Extract repository URL from SBOM if available
         repo_url = component.get("_repository_url") or component.get("repository_url")
 
-        # Determine registry and get cache key
         parsed = parse_purl(purl)
         registry = parsed.registry_system if parsed else None
         cache_key = CacheKeys.maintainer(registry, name) if registry else None
-
         if not cache_key:
             return None
 
-        # Use distributed lock to prevent multiple pods fetching same package
+        # Distributed lock prevents cache stampede across pods.
         cached_info = await cache_service.get_or_fetch_with_lock(
             key=cache_key,
             fetch_fn=lambda: self._fetch_maintainer_data(client, purl, name, repo_url, github_token),
@@ -229,8 +202,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         repo_url: Optional[str],
         github_token: Optional[str],
     ) -> Optional[Dict[str, Any]]:
-        """Pull maintainer + GitHub data for one component, or return ``{}`` for
-        negative cache when neither registry nor GitHub had anything to say."""
+        """Pull registry + GitHub data; ``{}`` is the negative-cache marker."""
         cache_data: Dict[str, Any] = {"maintainer_info": {}, "github_info": None}
 
         if is_pypi(purl):
@@ -249,7 +221,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                 cache_data["github_info"] = gh_info
 
         if not cache_data["maintainer_info"] and not cache_data["github_info"]:
-            return {}  # negative cache marker
+            return {}
         return cache_data
 
     def _assess_all_risks(
@@ -257,12 +229,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         cached_info: Dict[str, Any],
         registry: Optional[str],
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        """Combine registry + GitHub risk assessment, then correlate signals.
-
-        Returns ``(risks, maintainer_info)``. ``risks`` is empty when no
-        signal corroborates after correlation — callers should drop the
-        component in that case rather than emit an empty finding.
-        """
+        """Combine registry + GitHub risk assessment, then correlate signals."""
         risks: List[Dict[str, Any]] = []
         maintainer_info: Dict[str, Any] = cached_info.get("maintainer_info", {}) or {}
 
@@ -274,10 +241,6 @@ class MaintainerRiskAnalyzer(Analyzer):
             maintainer_info["github"] = github_info
             risks.extend(self._assess_github_risks(github_info))
 
-        # Filter signals whose corroborating evidence is missing
-        # (free-email without single-maintainer; staleness with an active repo).
-        # PyPI returns no maintainer_count; npm sometimes does — pass through
-        # whatever we got so the correlation can use it as positive evidence.
         risks = correlate_maintainer_risks(
             risks,
             github_active=self._infer_github_active(github_info),

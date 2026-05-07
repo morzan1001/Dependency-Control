@@ -16,39 +16,22 @@ from .base import Analyzer
 logger = logging.getLogger(__name__)
 
 
-# Forward declarations of helpers used by the analyzer's analyze() loop.
 def _resolve_eol_products(name: str, cpes: List[str]) -> Set[str]:
-    """Translate an SBOM component into the set of endoflife.date product IDs to query.
-
-    Tries CPE entries first (most precise) and falls back to NAME_TO_EOL_MAPPING
-    or the component name as-is. Same logic the analyzer used inline; pulled
-    out so the (product, version) collector below stays focused.
-    """
-    products = _extract_products_from_cpes_static(cpes)
+    """Map a component to endoflife.date product IDs (CPEs first, then name)."""
+    products = EndOfLifeAnalyzer._extract_products_from_cpes(cpes)
     if products:
         return products
     mapped = NAME_TO_EOL_MAPPING.get(name)
     return {mapped} if mapped else {name}
 
 
-def _extract_products_from_cpes_static(cpes: List[str]) -> Set[str]:
-    """Stateless mirror of EndOfLifeAnalyzer._extract_products_from_cpes.
-
-    Used by ``collect_products_to_check`` so the collector doesn't need an
-    analyzer instance. Kept in sync with the method below by delegation.
-    """
-    return EndOfLifeAnalyzer._extract_products_from_cpes_impl(cpes)
-
-
 def collect_products_to_check(
     components: List[Dict[str, Any]],
 ) -> Dict[str, List[Tuple[str, str]]]:
-    """Build product -> [(component_name, version), ...] from raw SBOM components.
+    """Build ``product -> [(component_name, version), ...]`` from SBOM components.
 
-    Earlier the analyzer kept only one (name, version) per product, so a
-    second component using the *same* product but a *different* version was
-    silently skipped. The list-valued mapping ensures every (product,
-    version) pair gets checked against the EOL dataset for that product.
+    Each (product, version) pair is checked independently so that the same
+    runtime appearing at multiple versions doesn't mask the older one.
     """
     out: Dict[str, List[Tuple[str, str]]] = {}
     for component in components:
@@ -188,11 +171,9 @@ class EndOfLifeAnalyzer(Analyzer):
         product: str,
         eol_info: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Create an EOL issue with proper severity."""
-        # Determine severity based on EOL status
+        """Build an EOL finding with severity scaled by days past the EOL date."""
         eol_date = eol_info.get("eol")
         if eol_date is True:
-            # Already marked as EOL without specific date
             severity = Severity.HIGH.value
         elif isinstance(eol_date, str):
             try:
@@ -200,10 +181,6 @@ class EndOfLifeAnalyzer(Analyzer):
                 days_past_eol = (datetime.now(timezone.utc) - eol_dt).days
                 high_after = getattr(self, "_high_after_days", 365)
                 medium_after = getattr(self, "_medium_after_days", 180)
-                # Inclusive boundaries: a package exactly `high_after` days past
-                # EOL should be HIGH, not one tier below. The previous strictly-
-                # greater-than comparison made the threshold name lie about its
-                # behaviour (`eol_high_after_days=365` actually meant 366+).
                 if days_past_eol >= high_after:
                     severity = Severity.HIGH.value
                 elif days_past_eol >= medium_after:
@@ -224,37 +201,28 @@ class EndOfLifeAnalyzer(Analyzer):
             "message": f"Component {product} version {version} has reached end-of-life",
         }
 
-    def _extract_products_from_cpes(self, cpes: List[str]) -> Set[str]:
-        """Instance wrapper around the stateless implementation."""
-        return self._extract_products_from_cpes_impl(cpes)
-
     @staticmethod
-    def _extract_products_from_cpes_impl(cpes: List[str]) -> Set[str]:
-        """Extract product names from CPE strings and map to endoflife.date IDs."""
+    def _extract_products_from_cpes(cpes: List[str]) -> Set[str]:
+        """Map CPE strings to endoflife.date product IDs.
+
+        Accepts the standard ``cpe:2.3:a:`` form, the rarely-seen
+        ``cpe:/2.3:a:`` variant, and legacy ``cpe:/a:`` (CPE 2.2).
+        """
         products: Set[str] = set()
-
         for cpe in cpes:
-            # Standard CPE 2.3 (NIST):     cpe:2.3:a:vendor:product:...
-            # Less common with leading /:  cpe:/2.3:a:vendor:product:...
-            # Legacy CPE 2.2:              cpe:/a:vendor:product:...
-            match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe)
+            match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(
+                r"cpe:/a:([^:]+):([^:]+)", cpe
+            )
             if not match:
-                match = re.match(r"cpe:/a:([^:]+):([^:]+)", cpe)
-
-            if match:
-                vendor = match.group(1).lower()
-                product = match.group(2).lower()
-
-                # Try product directly
-                if product in NAME_TO_EOL_MAPPING:
-                    products.add(NAME_TO_EOL_MAPPING[product])
-                # Try vendor:product combo
-                elif f"{vendor}_{product}" in NAME_TO_EOL_MAPPING:
-                    products.add(NAME_TO_EOL_MAPPING[f"{vendor}_{product}"])
-                # Try just product name
-                else:
-                    products.add(product)
-
+                continue
+            vendor = match.group(1).lower()
+            product = match.group(2).lower()
+            if product in NAME_TO_EOL_MAPPING:
+                products.add(NAME_TO_EOL_MAPPING[product])
+            elif f"{vendor}_{product}" in NAME_TO_EOL_MAPPING:
+                products.add(NAME_TO_EOL_MAPPING[f"{vendor}_{product}"])
+            else:
+                products.add(product)
         return products
 
     @staticmethod
@@ -271,16 +239,10 @@ class EndOfLifeAnalyzer(Analyzer):
             return False
 
     def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Check if a version matches an EOL cycle.
+        """Match a version to its most-specific EOL cycle, with LTS preferred on ties.
 
-        When more than one cycle matches the version (e.g. ``3.8.0`` matches
-        both ``3`` and ``3.8``), the most-specific cycle wins; LTS variants
-        win ties within the same specificity. The EOL verdict comes from
-        whichever cycle actually describes the install — answering "is 3.8.0
-        EOL?" with the lifecycle of `3` instead of `3.8` was a real bug.
-
-        If EOL, enriches the result with the latest active (non-EOL) version
-        as a recommended upgrade target.
+        When EOL, enriches the result with the newest active cycle as the
+        recommended upgrade target.
         """
         if not version:
             return None
@@ -290,18 +252,14 @@ class EndOfLifeAnalyzer(Analyzer):
 
         clean_version = version.lstrip("v").lower()
 
-        # Collect every matching cycle, ranked by:
-        #   1. specificity — longer cycle string wins (3.8 > 3)
-        #   2. LTS — true beats false/missing within the same specificity
-        # Ties broken by original order so behaviour is deterministic.
+        # Rank by (specificity desc, LTS desc, original-order asc); deterministic.
         matches: List[Tuple[int, int, int, Dict[str, Any]]] = []
         for idx, cycle in enumerate(cycles):
             cycle_version = str(cycle.get("cycle", ""))
             if not self._version_matches_cycle(clean_version, cycle_version):
                 continue
-            specificity = len(cycle_version)
             lts_score = 1 if cycle.get("lts") else 0
-            matches.append((-specificity, -lts_score, idx, cycle))
+            matches.append((-len(cycle_version), -lts_score, idx, cycle))
 
         if not matches:
             return None

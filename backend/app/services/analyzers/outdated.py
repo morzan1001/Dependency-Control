@@ -18,13 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_older_than(current: str, latest: str) -> bool:
-    """Return True if current version is strictly older than latest.
-
-    Uses semantic version comparison via ``packaging.version.Version``.
-    Falls back to string inequality when either version string cannot be
-    parsed (e.g. non-PEP-440 / non-semver), preserving the previous
-    behaviour for exotic version schemes.
-    """
+    """Strict ``<`` via ``packaging.Version``; falls back to string inequality on InvalidVersion."""
     try:
         return Version(current) < Version(latest)
     except InvalidVersion:
@@ -32,12 +26,7 @@ def _is_older_than(current: str, latest: str) -> bool:
 
 
 def _is_ahead_of(current: str, latest: str) -> bool:
-    """Return True if current version is strictly newer than latest.
-
-    This detects cases where the installed version is ahead of the version
-    that deps.dev reports as the default (e.g. 1.26.0 installed but
-    deps.dev still flags 1.25.5 as default).
-    """
+    """Strict ``>``; covers cases where the install is newer than deps.dev's default."""
     try:
         return Version(current) > Version(latest)
     except InvalidVersion:
@@ -45,13 +34,9 @@ def _is_ahead_of(current: str, latest: str) -> bool:
 
 
 def is_version_withdrawn(versions_info: List[Any], target_version: str) -> bool:
-    """Look up ``target_version`` in a deps.dev ``versions[]`` payload and
-    return True iff that exact version is marked ``isWithdrawn``.
+    """True iff ``target_version`` is present and marked ``isWithdrawn`` in the deps.dev payload.
 
-    A withdrawn version is one the upstream maintainers retracted from
-    the registry — usually for a defect or security issue. Treating it
-    as a normal install hides a real risk. Comparison strips a leading
-    ``v`` to match how PyPI / npm versions are normalised in deps.dev.
+    Strips a leading ``v`` so ``v1.0.0`` matches ``1.0.0`` in the response.
     """
     target = target_version.lstrip("v") if target_version else ""
     if not target:
@@ -64,11 +49,7 @@ def is_version_withdrawn(versions_info: List[Any], target_version: str) -> bool:
 
 
 class OutdatedAnalyzer(Analyzer):
-    """
-    Analyzer that checks for outdated packages via deps.dev API.
-
-    Uses Redis cache for latest version info to reduce API calls.
-    """
+    """Outdated / ahead-of-default / yanked detection via deps.dev (cached)."""
 
     name = "outdated_packages"
     base_url = f"{DEPS_DEV_API_URL}/systems"
@@ -83,24 +64,16 @@ class OutdatedAnalyzer(Analyzer):
         outdated: List[Dict[str, Any]] = []
         ahead: List[Dict[str, Any]] = []
 
-        # Check cache for latest versions first
         cached_versions, uncached_components = await self._get_cached_latest_versions(components)
-
-        # Process cached versions
         for component, latest_version in cached_versions:
-            if not latest_version:
-                continue
-            self._classify_version(component, latest_version, outdated, ahead)
+            if latest_version:
+                self._classify_version(component, latest_version, outdated, ahead)
 
         logger.debug(f"Outdated: {len(cached_versions)} from cache, {len(uncached_components)} to fetch")
 
-        # Process uncached components with distributed locking to prevent cache stampede
         if uncached_components:
             await self._fetch_and_classify(uncached_components, outdated, ahead)
 
-        # Yanked detection runs in parallel — same upstream endpoint, but
-        # we cache the withdrawn-version list separately so the outdated
-        # cache schema stays untouched.
         yanked = await self._check_yanked(components)
 
         return {
@@ -112,13 +85,7 @@ class OutdatedAnalyzer(Analyzer):
     async def _check_yanked(
         self, components: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Flag components whose installed version was withdrawn upstream.
-
-        Withdrawn (a.k.a. yanked) versions are strictly more dangerous
-        than merely outdated ones — the maintainers actively retracted
-        them, usually for a security or correctness defect. Treating
-        them as legitimate installs hides a real risk.
-        """
+        """Flag components whose installed version was withdrawn upstream."""
         findings: List[Dict[str, Any]] = []
         timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
 
@@ -162,19 +129,17 @@ class OutdatedAnalyzer(Analyzer):
         system: str,
         package_name: str,
     ) -> Optional[List[str]]:
-        """Return the list of withdrawn versions for a package, with caching.
+        """Cached list of withdrawn versions for a package.
 
-        ``None`` means the lookup failed (timeout / connection error /
-        upstream non-200) — callers should skip yanked detection for
-        that component rather than treating it as "not yanked".
+        Returns ``None`` on lookup failure so callers skip yanked detection
+        for that component rather than treating it as "not yanked".
         """
         cache_key = f"yanked:{system}:{package_name}"
         cached = await cache_service.get(cache_key)
         if cached is not None:
             return list(cached) if isinstance(cached, list) else []
 
-        encoded_name = quote(package_name, safe="")
-        url = f"{self.base_url}/{system}/packages/{encoded_name}"
+        url = f"{self.base_url}/{system}/packages/{quote(package_name, safe='')}"
         try:
             response = await client.get(url, follow_redirects=True)
             if response.status_code != 200:
@@ -182,16 +147,16 @@ class OutdatedAnalyzer(Analyzer):
             data = response.json()
         except (httpx.TimeoutException, httpx.ConnectError):
             return None
-        except Exception:  # noqa: BLE001 — defensive; log and bail
+        except Exception:
             logger.debug(f"Yanked check failed for {system}:{package_name}", exc_info=True)
             return None
 
         withdrawn = [
-            (v.get("versionKey") or {}).get("version", "")
-            for v in data.get("versions", [])
-            if v.get("isWithdrawn")
+            v
+            for entry in data.get("versions", [])
+            if entry.get("isWithdrawn")
+            and (v := (entry.get("versionKey") or {}).get("version", ""))
         ]
-        withdrawn = [v for v in withdrawn if v]
         try:
             await cache_service.set(cache_key, withdrawn, ttl_seconds=CacheTTL.LATEST_VERSION)
         except Exception:

@@ -1,12 +1,7 @@
-"""
-Update Frequency Analysis Service
+"""Update-frequency analytics: compare dependency versions across scans.
 
-Computes metrics about how regularly and incrementally teams update their
-dependencies, by comparing dependency versions across consecutive scans.
-
-Memory strategy: instead of loading all dependencies for all scans at once
-(which can exceed hundreds of thousands of documents for large projects), we
-load and compare one scan pair at a time, keeping peak memory to 2×deps/scan.
+Streaming model — one scan pair at a time so peak memory stays at
+~2×deps/scan regardless of project size.
 """
 
 import asyncio
@@ -39,10 +34,8 @@ from app.services.release_history import (
 
 logger = logging.getLogger(__name__)
 
-# Limit concurrent per-project computations in the comparison endpoint to
-# avoid firing many large MongoDB queries simultaneously. Lazy-init so the
-# semaphore binds to whichever event loop is actually running (matters for
-# pytest-asyncio tests that create a fresh loop per test).
+# Lazy-init: pytest-asyncio creates a fresh loop per test, so binding the
+# semaphore to whichever loop is currently running matters.
 _COMPARISON_CONCURRENCY = 3
 _comparison_semaphore: Optional[asyncio.Semaphore] = None
 
@@ -57,7 +50,7 @@ _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1}
 
 
 def _release_tuple(version: Version) -> Tuple[int, int, int]:
-    """Return the (major, minor, patch) tuple, padding shorter releases with 0."""
+    """``(major, minor, patch)`` padded with zeros for shorter release tuples."""
     release = version.release
     return (
         release[0] if len(release) > 0 else 0,
@@ -67,15 +60,11 @@ def _release_tuple(version: Version) -> Tuple[int, int, int]:
 
 
 def classify_version_change(old_version: str, new_version: str) -> str:
-    """
-    Classify a version change as none, patch, minor, major, or unknown.
+    """Classify a version change via PEP 440 parsing.
 
-    Uses PEP 440 parsing so pre-release identifiers (1.0.0-beta1, 1.0.0rc2)
-    are not collapsed into their underlying release tuple. Returns:
-      - "none"    if the parsed versions are equal
-      - "major" / "minor" / "patch"  by which release component changed
-      - "patch"   if only pre-release / post-release / local segments differ
-      - "unknown" if either version is not PEP 440 parseable
+    Returns ``"major" | "minor" | "patch" | "none" | "unknown"``. Same
+    release tuple with differing pre/post/local segments collapses to
+    ``"patch"`` since the smallest meaningful tier still applies.
     """
     try:
         old_v = Version(old_version)
@@ -93,17 +82,13 @@ def classify_version_change(old_version: str, new_version: str) -> str:
         return "major"
     if new_minor != old_minor:
         return "minor"
-    if new_patch != old_patch:
-        return "patch"
     return "patch"
 
 
 def _pregroup_deps_by_scan(
     all_deps: List[Dict[str, Any]],
 ) -> Dict[str, Dict[str, Dict[str, str]]]:
-    """
-    Pre-group dependencies by scan_id into {scan_id: {pkg_name: {version, type, purl}}}.
-    """
+    """Group dependencies by ``scan_id`` into ``{scan_id: {pkg_name: {version, type, purl}}}``."""
     grouped: Dict[str, Dict[str, Dict[str, str]]] = defaultdict(dict)
     for dep in all_deps:
         scan_id = dep.get("scan_id", "")
@@ -122,12 +107,11 @@ async def _load_outdated_for_scan(
     scan_id: str,
     package_latest_info: Dict[str, Dict[str, str]],
 ) -> set:
-    """Load the outdated_packages analysis result for one scan, updating
-    `package_latest_info` in-place with the latest version info encountered,
-    and returning the set of outdated component names.
+    """Load one scan's outdated_packages result, returning component names.
 
-    Streaming variant of the previous bulk loader: keeps memory bounded to
-    one scan's worth of outdated entries instead of all scans simultaneously.
+    Updates ``package_latest_info`` in-place; later writes for the same
+    package overwrite earlier ones, which is fine since ``slowest_packages``
+    only needs one consistent current/latest pair per name.
     """
     results = await analysis_repo.find_many(
         {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
@@ -143,8 +127,6 @@ async def _load_outdated_for_scan(
         if not comp:
             continue
         outdated_names.add(comp)
-        # Last-write-wins is fine: we only need one consistent
-        # current/latest pair per package for the slowest_packages list.
         package_latest_info[comp] = {
             "current_version": entry.get("current_version", ""),
             "latest_version": entry.get("latest_version", ""),
@@ -173,9 +155,7 @@ def _compare_scan_pair(
             continue
 
         update_type = classify_version_change(prev_info["version"], curr_info["version"])
-        # "none" means the versions parse to the same PEP 440 identity
-        # (e.g. "v1.0.0" vs "1.0.0") — not a real update event.
-        if update_type == "none":
+        if update_type == "none":  # same PEP 440 identity, e.g. v1.0.0 vs 1.0.0
             continue
 
         events.append(
@@ -217,11 +197,7 @@ def _build_timeline_entry(
 def _compute_trend(
     scan_timeline: List[ScanTimelineEntry],
 ) -> Tuple[str, str]:
-    """
-    Compute trend by comparing the first half vs second half of scan timeline.
-
-    Returns (direction, detail) tuple.
-    """
+    """Trend ``(direction, detail)`` from comparing the first vs second half of the timeline."""
     if len(scan_timeline) < 4:
         return "unknown", "Not enough scans to determine trend (need at least 4)"
 
@@ -258,30 +234,6 @@ def _compute_trend(
     return "stable", (f"Consistent (~{newer_avg_updates:.1f} updates/scan, ~{newer_avg_outdated:.0f} outdated)")
 
 
-def _resolve_event_aggregates(
-    type_counter: Optional[Counter],
-    recent_events: Optional[List[DependencyUpdateEvent]],
-    all_events: Optional[List[DependencyUpdateEvent]],
-) -> Tuple[Counter, List[DependencyUpdateEvent], int]:
-    """Pick streamed counters or, for legacy callers, derive them from a list.
-
-    Returns ``(type_counter, recent_events, total_updates)``. Either the
-    streamed pair or the all_events list must be supplied.
-    """
-    if all_events is not None:
-        return (
-            Counter(e.update_type for e in all_events),
-            sorted(all_events, key=lambda e: e.scan_date, reverse=True)[:30],
-            len(all_events),
-        )
-    if type_counter is None or recent_events is None:
-        raise TypeError(
-            "_aggregate_metrics requires either `all_events` or both "
-            "`type_counter` and `recent_events`"
-        )
-    return type_counter, recent_events, sum(type_counter.values())
-
-
 def _granularity_ratio(type_counter: Counter, total_updates: int) -> Dict[str, float]:
     """Per-update-type share of all updates, rounded to 2 dp."""
     if not total_updates:
@@ -293,10 +245,10 @@ def _granularity_ratio(type_counter: Counter, total_updates: int) -> Dict[str, f
 
 
 def _coverage_pct(ever_outdated: set, ever_resolved: set) -> Optional[float]:
-    """Percentage of ever-outdated packages that were eventually resolved.
+    """Resolved share of ever-outdated packages.
 
-    None when nothing was ever flagged as outdated (semantic N/A — distinct
-    from 0.0 which means "outdated detected, nothing resolved").
+    Returns ``None`` when nothing was ever outdated — distinct from 0.0
+    which means "outdated detected, nothing resolved".
     """
     total = len(ever_outdated)
     if not total:
@@ -315,23 +267,12 @@ def _aggregate_metrics(
     project_id: str,
     project_name: str,
     *,
-    type_counter: Optional[Counter] = None,
-    recent_events: Optional[List[DependencyUpdateEvent]] = None,
-    all_events: Optional[List[DependencyUpdateEvent]] = None,
+    type_counter: Counter,
+    recent_events: List[DependencyUpdateEvent],
     upstream: Optional[UpstreamCadenceMetrics] = None,
 ) -> UpdateFrequencyMetrics:
-    """Aggregate streamed counters into the final metrics response.
-
-    The orchestrator accumulates ``type_counter`` and a bounded ring buffer
-    of recent events while iterating scans, so peak memory does not depend
-    on the number of update events. The legacy ``all_events`` argument is
-    accepted for tests that still construct the metrics directly from a
-    list — when supplied it overrides the streamed values.
-    """
-    type_counter, recent_events, total_updates = _resolve_event_aggregates(
-        type_counter, recent_events, all_events
-    )
-
+    """Build the final metrics response from streamed counters."""
+    total_updates = sum(type_counter.values())
     num_intervals = len(completed_scans) - 1
 
     first_date: datetime = completed_scans[0]["created_at"]
@@ -445,25 +386,17 @@ def _empty_metrics(project_id: str, project_name: str, scan_count: int, scan_dat
 
 _RECENT_EVENTS_BUFFER_SIZE = 30
 
-# Defensive cap on the (package, version) -> first_scan_date map used for
-# adoption-latency. The map only grows with *new* (pkg, version) pairs, so
-# 10k entries is far above realistic project sizes; the bound guards against
-# pathological histories with extreme version churn.
+# Bounds the (package, version) -> first_scan_date map used for adoption-latency.
+# Far above realistic projects; protects against pathological version churn.
 _MAX_OBSERVATIONS = 10_000
 
-# Share of classified deps a single ecosystem must hold to "win" the project.
-# Below the threshold the project is labelled "mixed" instead.
 _ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
 
 
 def _dominant_ecosystem(dep_type_map: Dict[str, str]) -> Optional[str]:
-    """Pick the registry/ecosystem that owns >=70% of the project's classified deps.
+    """Ecosystem owning ≥70% of classified deps; ``"mixed"`` otherwise; ``None`` if empty.
 
-    Returns ``None`` when there are no classified deps at all, ``"mixed"``
-    when no single ecosystem clears the threshold, otherwise the winning
-    ecosystem name (e.g. "pypi", "npm", "maven"). The "unknown" type is
-    excluded from the count so that missing-PURL noise doesn't tilt the
-    classification.
+    Excludes ``"unknown"`` so missing-PURL noise doesn't tilt the result.
     """
     classified = [t for t in dep_type_map.values() if t and t != "unknown"]
     if not classified:
@@ -480,11 +413,7 @@ _DEFAULT_HARD_LIMIT = 1000
 
 @dataclass
 class _AccumulatorState:
-    """All state the streaming loop accumulates as it walks scan pairs.
-
-    Bundling these into one object keeps the orchestrator function from
-    juggling ten loose locals and lets each helper take a single argument.
-    """
+    """Streaming-loop state, bundled so each helper takes a single argument."""
 
     type_counter: Counter = field(default_factory=Counter)
     recent_events_buffer: Deque[DependencyUpdateEvent] = field(
@@ -533,11 +462,10 @@ async def _load_completed_scans(
     since: Optional[datetime],
     hard_limit: int,
 ) -> List[Dict[str, Any]]:
-    """Resolve the scan window into a chronologically ordered list of completed scans.
+    """Return completed scans for the project, chronologically ordered.
 
-    When ``since`` is set the calendar window dominates and ``max_scans`` is
-    ignored; ``hard_limit`` is the safety cap. When ``since`` is None the
-    newest ``max_scans`` are taken.
+    When ``since`` is set the calendar window dominates (capped by
+    ``hard_limit``) and ``max_scans`` is ignored.
     """
     fetch_limit = hard_limit if since is not None else max_scans
     scans_raw = await scan_repo.find_by_project(
@@ -549,7 +477,7 @@ async def _load_completed_scans(
     )
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
-    scans_raw.reverse()  # oldest -> newest for the streaming loop
+    scans_raw.reverse()
     return [s for s in scans_raw if s.get("status") == "completed"]
 
 
@@ -564,21 +492,10 @@ async def compute_update_frequency(
     release_fetcher: Optional[ReleaseHistoryFetcher] = None,
     hard_limit: int = _DEFAULT_HARD_LIMIT,
 ) -> UpdateFrequencyMetrics:
-    """
-    Compute update frequency metrics for a project.
+    """Compute update-frequency metrics for one project.
 
-    Streaming model: dependencies and outdated-results are loaded one scan
-    (or scan pair) at a time. Update events are accumulated as a Counter
-    plus a bounded deque, so peak memory does not grow with the number of
-    update events or scans analysed.
-
-    Selection:
-        - When ``since`` is set, every completed scan with ``created_at >= since``
-          is analysed, bounded only by ``hard_limit`` (default 1000) as a
-          safety cap. ``max_scans`` is *ignored* in this mode — the calendar
-          window is the user's stated intent.
-        - When ``since`` is None, the most recent ``max_scans`` completed scans
-          are analysed.
+    With ``since`` set, all scans newer than the cutoff are analysed (up
+    to ``hard_limit``). Otherwise the newest ``max_scans`` are taken.
     """
     completed_scans = await _load_completed_scans(
         scan_repo, project_id, max_scans, since, hard_limit
@@ -594,8 +511,6 @@ async def compute_update_frequency(
         docs = await dep_repo.find_all({"scan_id": scan_id}, projection=_DEP_PROJECTION)
         return _pregroup_deps_by_scan(docs).get(scan_id, {})
 
-    # Bootstrap: load first scan's deps + outdated. Subsequent iterations
-    # roll the previous scan's data forward instead of reloading.
     first_scan = completed_scans[0]
     prev_deps = await _load_scan_deps(first_scan["_id"])
     state.accumulate_types(prev_deps)
@@ -650,8 +565,7 @@ async def compute_update_frequency(
         project_id,
         project_name,
         type_counter=state.type_counter,
-        # Buffer holds events oldest -> newest (insertion order); reverse for newest-first.
-        recent_events=list(state.recent_events_buffer)[::-1],
+        recent_events=list(state.recent_events_buffer)[::-1],  # newest first
         upstream=upstream,
     )
 
@@ -661,11 +575,10 @@ async def _maybe_fetch_upstream_cadence(
     package_purls: Dict[str, str],
     first_seen_versions: Dict[Tuple[str, str], datetime],
 ) -> Optional[UpstreamCadenceMetrics]:
-    """Resolve packages via PURLs, call the fetcher, compute aggregate cadence.
+    """Call the fetcher and aggregate cadence; supplementary, never load-bearing.
 
-    Returns None when no fetcher is configured. Failures inside the fetcher
-    are swallowed so that the rest of the report still ships — upstream
-    cadence is supplementary, not load-bearing.
+    Failures and a missing fetcher both yield ``None`` so the rest of the
+    report still ships.
     """
     if release_fetcher is None:
         return None
@@ -706,14 +619,11 @@ async def compute_update_frequency_comparison(
     since: Optional[datetime] = None,
     release_fetcher: Optional[ReleaseHistoryFetcher] = None,
 ) -> UpdateFrequencyComparison:
-    """
-    Compute update frequency comparison across multiple projects.
+    """Cross-project update-frequency ranking.
 
-    At most _COMPARISON_CONCURRENCY concurrent per-project computations run at
-    once to avoid saturating MongoDB with simultaneous large queries. Pass
-    ``since`` to align all projects on the same calendar window — without it,
-    different projects may end up analysed over different time spans
-    depending on their scan cadence.
+    Per-project computations run with bounded concurrency. Pass ``since``
+    to align projects on the same calendar window; otherwise scan-cadence
+    differences make the comparison apples-to-oranges.
     """
     semaphore = _get_comparison_semaphore()
 
@@ -758,8 +668,7 @@ async def compute_update_frequency_comparison(
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
     summaries: List[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
 
-    # Sort by coverage desc (None == "perfect / nothing to resolve" → top), then by updates_per_month desc.
-    # Treat None as +inf so projects with no outdated history rank above ones with measured coverage.
+    # None coverage == "nothing to resolve" — rank above any measured coverage.
     def _coverage_key(s: ProjectUpdateSummary) -> float:
         return float("inf") if s.update_coverage_pct is None else s.update_coverage_pct
 
@@ -793,12 +702,10 @@ async def compute_update_frequency_comparison(
 def _per_ecosystem_winners(
     summaries: List[ProjectUpdateSummary],
 ) -> Tuple[Dict[str, str], Dict[str, str]]:
-    """Group summaries by dominant_ecosystem and return per-ecosystem
-    best/worst project names. The "mixed" bucket and unclassified projects
-    are skipped — for those the global ranking is the only fair option.
+    """Per-ecosystem ``(best, worst)`` from a globally-sorted summary list.
 
-    The summaries list is already sorted globally; per-ecosystem ordering
-    falls out by walking the list once.
+    Skips ``"mixed"`` and unclassified projects — only the global ranking
+    is meaningful for them.
     """
     best: Dict[str, str] = {}
     worst: Dict[str, str] = {}

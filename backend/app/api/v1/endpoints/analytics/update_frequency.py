@@ -44,19 +44,14 @@ router = CustomAPIRouter()
 
 
 def _resolve_since(window_days: Optional[int]) -> Optional[datetime]:
-    """Translate the user-facing window_days param into a `since` cutoff."""
+    """Translate ``window_days`` into a ``since`` UTC cutoff."""
     if window_days is None:
         return None
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
 
 
 def _build_release_fetcher() -> ReleaseHistoryFetcher:
-    """Wire the production deps.dev fetcher to Redis cache + httpx client.
-
-    The fetcher is constructed per-request so the underlying httpx client
-    lifecycle is bounded; release history is served from Redis on warm
-    cache, so the per-request HTTP cost is small in practice.
-    """
+    """Production deps.dev fetcher wired to Redis + httpx, built per request."""
 
     async def cache_get(key: str) -> Optional[Any]:
         return await cache_service.get(key)
@@ -94,11 +89,10 @@ async def get_project_update_frequency(
     max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
     window_days: Annotated[Optional[int], Query(ge=1, le=3650)] = None,
 ) -> UpdateFrequencyMetrics:
-    """Update frequency metrics from comparing dependency versions across consecutive scans.
+    """Update-frequency metrics from version diffs across consecutive scans.
 
-    Pass `window_days` (e.g. 365) to analyse all completed scans within that
-    calendar window — recommended for cross-project comparability. Without it,
-    the most recent `max_scans` completed scans are used.
+    With ``window_days`` set, all completed scans inside that window are
+    analysed. Without it, the most recent ``max_scans`` are used.
     """
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
@@ -143,11 +137,7 @@ async def get_update_frequency_comparison(
     max_scans: Annotated[int, Query(ge=2, le=200)] = 10,
     window_days: Annotated[Optional[int], Query(ge=1, le=3650)] = None,
 ) -> UpdateFrequencyComparison:
-    """Ranking of projects by update behavior, optionally filtered by team.
-
-    Pass `window_days` to align all projects on the same calendar window —
-    recommended whenever scan cadences differ across projects.
-    """
+    """Cross-project ranking. Pass ``window_days`` to align scan cadences."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     cache_key = (

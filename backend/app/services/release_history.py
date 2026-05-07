@@ -1,14 +1,7 @@
-"""Upstream release-history analytics.
+"""Upstream release-history analytics: cadence and adoption-latency math.
 
-The Update-Frequency report measures *team update velocity* (how often the
-team bumps versions between scans). That number is shaped as much by the
-team's scan cadence as by the underlying ecosystem. To complement it, this
-module computes *upstream release cadence* — how often the upstream packages
-themselves are released — plus *adoption latency*, the gap between an
-upstream release and the team adopting it.
-
-The pure math lives here; HTTP fetching from deps.dev is a follow-up that
-plugs into the ``ReleaseHistoryFetcher`` protocol.
+Pure analysis lives here. HTTP fetching from deps.dev plugs in via the
+``ReleaseHistoryFetcher`` protocol so it can be swapped in tests.
 """
 
 from __future__ import annotations
@@ -26,18 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 def _is_stable_release(version: str) -> bool:
-    """True for normal X.Y.Z releases. Excludes alpha/beta/rc/dev pre-releases.
+    """True for X.Y.Z; False for alpha/beta/rc/dev pre-releases.
 
-    Cadence metrics need this filter — a project that ships an alpha every
-    week looks "active" by raw count but isn't actually shipping stable
-    versions any faster than its peers. ``packaging.Version`` already knows
-    PEP 440 prerelease semantics; we just trust that.
+    Non-PEP-440 versions (calver, hashes) are treated as stable since
+    there's no portable way to tell otherwise.
     """
     try:
         return not Version(version).is_prerelease
     except InvalidVersion:
-        # Non-PEP-440 versions (calver, hashes) — keep them, no way to
-        # tell whether they're "stable" without ecosystem-specific rules.
         return True
 
 
@@ -47,24 +36,16 @@ def _stable_only(releases: Sequence[ReleaseInfo]) -> List[ReleaseInfo]:
 
 @dataclass(frozen=True)
 class ReleaseInfo:
-    """Single release of a package, as reported by the registry."""
-
     version: str
     published_at: datetime
 
 
-# Map of package name -> chronologically arbitrary list of releases.
 ReleaseHistory = Dict[str, List[ReleaseInfo]]
-
-# An "observation" is a tuple (package_name, version, scan_date_seen) — the
-# moment the platform first saw this version in a project's scan history.
 Observation = Tuple[str, str, datetime]
 
 
 @dataclass(frozen=True)
 class UpstreamCadenceMetrics:
-    """Aggregated upstream-cadence numbers for a single project."""
-
     upstream_releases_last_12m_median: Optional[float]
     upstream_days_between_releases_median: Optional[float]
     upstream_days_since_latest_release_median: Optional[float]
@@ -72,23 +53,9 @@ class UpstreamCadenceMetrics:
 
 
 class ReleaseHistoryFetcher(Protocol):
-    """Loads release histories for a set of packages.
+    """Loads release histories for a set of packages, with caching."""
 
-    Implementations call out to ecosystem registries (deps.dev today) and
-    cache aggressively — release lists rarely change, so 24h+ TTL is fine.
-    """
-
-    async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory:
-        """Return release history per package name.
-
-        ``packages`` is a list of ``(registry_system, package_name)`` tuples.
-        The result is keyed by package_name to match how the orchestrator
-        identifies packages internally.
-        """
-        ...
-
-
-# --- Pure analysis ---
+    async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory: ...
 
 
 def releases_in_last_n_days(
@@ -96,21 +63,13 @@ def releases_in_last_n_days(
     window_days: int,
     ref: datetime,
 ) -> int:
-    """Count *stable* releases whose ``published_at`` falls within ``window_days`` of ``ref``.
-
-    Pre-releases (alpha/beta/rc) are excluded so that an alpha-heavy
-    package doesn't look more active than it actually is.
-    """
+    """Count stable releases within ``window_days`` of ``ref``."""
     cutoff = ref - timedelta(days=window_days)
     return sum(1 for r in _stable_only(releases) if r.published_at >= cutoff)
 
 
 def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> Optional[float]:
-    """Median gap (in days) between consecutive *stable* releases.
-
-    Pre-releases are filtered out — a 1.0.0-rc1 the day before 1.0.0 is
-    not a meaningful "release gap" for cadence purposes.
-    """
+    """Median gap (in days) between consecutive stable releases, or None if <2."""
     stable = _stable_only(releases)
     if len(stable) < 2:
         return None
@@ -126,40 +85,31 @@ def days_since_latest_release(
     releases: Sequence[ReleaseInfo],
     ref: datetime,
 ) -> Optional[int]:
-    """Days between ``ref`` and the most recent *stable* release.
-
-    Excludes pre-releases so a beta published yesterday doesn't pretend
-    a long-stagnant project is "actively maintained".
-    """
+    """Days between ``ref`` and the most recent stable release, or None if empty."""
     stable = _stable_only(releases)
     if not stable:
         return None
-    latest = max(r.published_at for r in stable)
-    return (ref - latest).days
+    return (ref - max(r.published_at for r in stable)).days
 
 
 def compute_adoption_latencies(
     history: ReleaseHistory,
     observations: Sequence[Observation],
 ) -> List[int]:
-    """For each (package, version, scan_date) observation, return the
-    number of days between the upstream publish date and the scan date.
+    """Days between upstream publish and first observed scan, per (pkg, version).
 
-    Observations whose version has no corresponding release date in the
-    history are skipped (we can't know latency without an upstream date).
+    Observations whose version is missing from the history are skipped.
     """
-    publish_lookup: Dict[Tuple[str, str], datetime] = {}
-    for pkg, releases in history.items():
-        for r in releases:
-            publish_lookup[(pkg, r.version)] = r.published_at
-
-    latencies: List[int] = []
-    for pkg, version, scan_date in observations:
-        published = publish_lookup.get((pkg, version))
-        if published is None:
-            continue
-        latencies.append((scan_date - published).days)
-    return latencies
+    publish_lookup: Dict[Tuple[str, str], datetime] = {
+        (pkg, r.version): r.published_at
+        for pkg, releases in history.items()
+        for r in releases
+    }
+    return [
+        (scan_date - publish_lookup[(pkg, version)]).days
+        for pkg, version, scan_date in observations
+        if (pkg, version) in publish_lookup
+    ]
 
 
 def aggregate_upstream_metrics(
@@ -196,14 +146,11 @@ def aggregate_upstream_metrics(
     )
 
 
-# --- deps.dev integration ---
-
-
 def parse_deps_dev_response(payload: Dict[str, Any]) -> List[ReleaseInfo]:
-    """Translate a deps.dev ``GetPackage`` response into ReleaseInfo entries.
+    """Translate a deps.dev GetPackage response into ReleaseInfo entries.
 
-    Versions without a parsable ``publishedAt`` are dropped — they would
-    poison the cadence math (we'd treat them as "released at epoch 0").
+    Versions without a parsable ``publishedAt`` are dropped — keeping them
+    would treat them as released at epoch 0.
     """
     out: List[ReleaseInfo] = []
     for entry in payload.get("versions", []) or []:
@@ -212,9 +159,7 @@ def parse_deps_dev_response(payload: Dict[str, Any]) -> List[ReleaseInfo]:
         if not version or not published_at_str:
             continue
         try:
-            # deps.dev uses ISO 8601 with a "Z" suffix; fromisoformat needs +00:00.
-            normalized = published_at_str.replace("Z", "+00:00")
-            published_at = datetime.fromisoformat(normalized)
+            published_at = datetime.fromisoformat(published_at_str.replace("Z", "+00:00"))
             if published_at.tzinfo is None:
                 published_at = published_at.replace(tzinfo=timezone.utc)
         except ValueError:
@@ -223,19 +168,13 @@ def parse_deps_dev_response(payload: Dict[str, Any]) -> List[ReleaseInfo]:
     return out
 
 
-# Type aliases for the cache + HTTP hooks the fetcher takes. Tests inject
-# fakes; production wires them to cache_service and InstrumentedAsyncClient.
 CacheGet = Callable[[str], Awaitable[Optional[Any]]]
 CacheSet = Callable[..., Awaitable[None]]
 HttpFetch = Callable[[str], Awaitable[Optional[Dict[str, Any]]]]
 
 
 class DepsDevReleaseHistoryFetcher:
-    """Fetches per-package release histories from deps.dev with caching.
-
-    The fetcher is constructed with hooks for cache get/set and HTTP fetch
-    so it can be exercised without Redis or network in tests.
-    """
+    """Per-package release histories from deps.dev, cached. Hooks injected for testability."""
 
     def __init__(
         self,
@@ -278,18 +217,14 @@ class DepsDevReleaseHistoryFetcher:
 
 
 def _build_deps_dev_url(system: str, name: str) -> str:
-    """deps.dev V3 GetPackage endpoint, with the package name URL-encoded."""
-    encoded = quote(name, safe="")
-    return f"https://api.deps.dev/v3alpha/systems/{system}/packages/{encoded}"
+    return f"https://api.deps.dev/v3alpha/systems/{system}/packages/{quote(name, safe='')}"
 
 
 def _release_list_to_cache(releases: Sequence[ReleaseInfo]) -> List[Dict[str, str]]:
-    """Serialize ReleaseInfo list for JSON-friendly caches (e.g. Redis)."""
     return [{"version": r.version, "published_at": r.published_at.isoformat()} for r in releases]
 
 
 def _release_list_from_cache(raw: Any) -> List[ReleaseInfo]:
-    """Reverse of ``_release_list_to_cache``; tolerant of malformed entries."""
     if not isinstance(raw, list):
         return []
     out: List[ReleaseInfo] = []

@@ -17,7 +17,13 @@ class ThreatIntelligenceStats(BaseModel):
 
 
 class ReachabilityStats(BaseModel):
-    """Statistics from reachability analysis."""
+    """Statistics from reachability analysis.
+
+    The ``*_high_confidence`` fields gate the reachable count by
+    ``confidence_score >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD``. UIs
+    should prefer these for headline numbers; the raw counts remain for
+    transparency.
+    """
 
     analyzed_count: int = Field(0, description="Count of vulnerabilities analyzed for reachability")
     reachable_count: int = Field(0, description="Count of confirmed reachable vulnerabilities")
@@ -26,38 +32,24 @@ class ReachabilityStats(BaseModel):
     unknown_count: int = Field(0, description="Count of vulnerabilities with unknown reachability")
     reachable_critical: int = Field(0, description="Critical vulns that are reachable")
     reachable_high: int = Field(0, description="High vulns that are reachable")
-
-    # High-confidence variants — gate the boolean by confidence_score >=
-    # REACHABILITY_HIGH_CONFIDENCE_THRESHOLD so prioritisation isn't driven
-    # by import-only matches without symbol-level corroboration. UIs should
-    # prefer these for headline numbers and use the raw counts for transparency.
-    reachable_count_high_confidence: int = Field(
-        0, description="Reachable vulns whose evidence cleared the high-confidence threshold"
-    )
-    reachable_critical_high_confidence: int = Field(
-        0, description="Critical vulns reachable with high confidence"
-    )
-    reachable_high_high_confidence: int = Field(
-        0, description="High-severity vulns reachable with high confidence"
-    )
+    reachable_count_high_confidence: int = Field(0, description="Reachable vulns above the high-confidence threshold")
+    reachable_critical_high_confidence: int = Field(0, description="Critical vulns reachable with high confidence")
+    reachable_high_high_confidence: int = Field(0, description="High-severity vulns reachable with high confidence")
 
 
 class PrioritizedCounts(BaseModel):
-    """Vulnerability counts with intelligent prioritization."""
+    """Vulnerability counts focused on exploitability + reachability."""
 
-    # Traditional severity counts
     total: int = Field(0, description="Total vulnerability count")
     critical: int = Field(0, description="Critical severity count")
     high: int = Field(0, description="High severity count")
     medium: int = Field(0, description="Medium severity count")
     low: int = Field(0, description="Low severity count")
 
-    # Actionable/Priority counts (the ones you should focus on)
     actionable_critical: int = Field(0, description="Critical vulns that are exploitable AND reachable")
     actionable_high: int = Field(0, description="High vulns that are exploitable AND reachable")
     actionable_total: int = Field(0, description="Total actionable vulns (KEV/high-EPSS AND reachable)")
 
-    # Deprioritized counts (vulns you can safely defer)
     deprioritized_count: int = Field(0, description="Vulns that are unreachable or low-EPSS without KEV")
 
 
@@ -69,15 +61,8 @@ class Stats(BaseModel):
     info: int = Field(0, description="Count of informational findings")
     unknown: int = Field(0, description="Count of findings with unknown severity")
     risk_score: float = Field(0.0, description="Calculated risk score (0-100)")
-
-    # Adjusted risk score considering EPSS, KEV, and Reachability
     adjusted_risk_score: float = Field(0.0, description="Risk score adjusted for exploitability and reachability")
 
-    # Threat intelligence stats
     threat_intel: Optional[ThreatIntelligenceStats] = Field(None, description="EPSS/KEV statistics")
-
-    # Reachability stats
     reachability: Optional[ReachabilityStats] = Field(None, description="Reachability analysis statistics")
-
-    # Prioritized counts
-    prioritized: Optional[PrioritizedCounts] = Field(None, description="Intelligently prioritized vulnerability counts")
+    prioritized: Optional[PrioritizedCounts] = Field(None, description="Prioritized vulnerability counts")

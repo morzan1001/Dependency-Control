@@ -18,7 +18,6 @@ from .base import Analyzer
 
 logger = logging.getLogger(__name__)
 
-# OSV severity to our Severity enum mapping
 OSV_SEVERITY_MAP = {
     "CRITICAL": Severity.CRITICAL.value,
     "HIGH": Severity.HIGH.value,
@@ -31,12 +30,7 @@ OSV_SEVERITY_MAP = {
 def _build_batch_payload(
     chunk: List[Dict[str, Any]],
 ) -> Tuple[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
-    """Build the OSV batch-query payload from a slice of components.
-
-    Returns ``(payload, valid_components)``. Components without a PURL are
-    skipped (they can't be queried) but their count is logged so a scan
-    that drops most components doesn't fail silently.
-    """
+    """``(payload, valid_components)`` from a chunk; PURL-less components are skipped."""
     payload: Dict[str, List[Dict[str, Any]]] = {"queries": []}
     valid_components: List[Dict[str, Any]] = []
     skipped = 0
@@ -53,11 +47,7 @@ def _build_batch_payload(
 
 
 class OSVAnalyzer(Analyzer):
-    """
-    Analyzer that checks packages for known vulnerabilities via the OSV API.
-
-    Uses Redis cache to reduce API calls across all pods.
-    """
+    """Vulnerability lookup via the OSV batch API, cached across pods."""
 
     name = "osv"
     api_url = OSV_BATCH_API_URL
@@ -86,7 +76,7 @@ class OSVAnalyzer(Analyzer):
         uncached_components: List[Dict[str, Any]],
         results: List[Dict[str, Any]],
     ) -> None:
-        """Iterate uncached components in batches, populating ``results`` in-place."""
+        """Drive the chunked batch loop, populating ``results`` in-place."""
         timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
 
@@ -97,7 +87,6 @@ class OSVAnalyzer(Analyzer):
                 if not payload["queries"]:
                     continue
                 await self._post_and_handle(client, payload, valid_components, results, chunk_start)
-                # Small delay between batches
                 if chunk_start + batch_size < len(uncached_components):
                     await asyncio.sleep(0.2)
 
@@ -109,7 +98,7 @@ class OSVAnalyzer(Analyzer):
         results: List[Dict[str, Any]],
         chunk_start: int,
     ) -> None:
-        """POST one batch, dispatch on the response status, log errors verbosely."""
+        """POST one batch and dispatch on response status."""
         try:
             response = await client.post(self.api_url, json=payload)
         except httpx.TimeoutException:
@@ -118,7 +107,7 @@ class OSVAnalyzer(Analyzer):
         except httpx.ConnectError:
             logger.warning("OSV API connection error")
             return
-        except Exception as e:  # noqa: BLE001 — defensive: never fail the whole scan
+        except Exception as e:
             logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
             return
 
@@ -176,14 +165,12 @@ class OSVAnalyzer(Analyzer):
     async def _get_cached_components(
         self, components: List[Dict[str, Any]]
     ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        """Check cache for components, return cached results and uncached components."""
-        cached_results = []
-        uncached_components = []
+        """``(cached_results, uncached_components)`` from a batch Redis lookup."""
+        cached_results: List[Dict[str, Any]] = []
+        uncached_components: List[Dict[str, Any]] = []
 
-        # Build cache keys for components with PURLs
-        cache_keys = []
+        cache_keys: List[str] = []
         component_map: Dict[str, Any] = {}
-
         for component in components:
             purl = component.get("purl")
             if purl:
@@ -194,16 +181,12 @@ class OSVAnalyzer(Analyzer):
         if not cache_keys:
             return [], components
 
-        # Batch get from Redis
         cached_data = await cache_service.mget(cache_keys)
-
         for cache_key, data in cached_data.items():
             cached_comp = component_map.get(cache_key)
             if not cached_comp:
                 continue
-
             if data:
-                # Only add to results if there are vulnerabilities
                 if data.get("vulnerabilities"):
                     cached_results.append(data)
             else:
@@ -212,35 +195,20 @@ class OSVAnalyzer(Analyzer):
         return cached_results, uncached_components
 
     def _normalize_vulnerabilities(self, vulns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Normalize OSV vulnerabilities with severity and message.
-
-        Drops entries with a non-empty ``withdrawn`` timestamp — those are
-        retracted by upstream (often false positives or misidentifications)
-        and surfacing them as live findings inflates the report.
-        """
+        """Normalize OSV vulnerabilities, dropping retracted entries (``withdrawn`` set)."""
         normalized = []
         for vuln in vulns:
-            # Skip retracted vulnerabilities. An empty/missing withdrawn
-            # field means the entry is still live; only a non-empty
-            # value indicates the vuln was withdrawn.
             if vuln.get("withdrawn"):
                 continue
-
             vuln_id = vuln.get("id", "")
             summary = vuln.get("summary", "")
-            details = vuln.get("details", "")
-            aliases = vuln.get("aliases", [])
-
-            # Extract severity from OSV data
-            severity = self._extract_severity(vuln)
-
             normalized.append(
                 {
                     "id": vuln_id,
-                    "aliases": aliases,
+                    "aliases": vuln.get("aliases", []),
                     "summary": summary,
-                    "details": details,
-                    "severity": severity,
+                    "details": vuln.get("details", ""),
+                    "severity": self._extract_severity(vuln),
                     "message": summary or f"Vulnerability {vuln_id} detected",
                     "references": [ref.get("url") for ref in vuln.get("references", []) if ref.get("url")],
                     "affected": vuln.get("affected", []),
@@ -248,28 +216,23 @@ class OSVAnalyzer(Analyzer):
             )
         return normalized
 
-    # OSV ``severity[].type`` values, ranked newest-first. We pick the
-    # highest-ranked entry the record actually contains, so a v4 score
-    # is preferred over v3 over v2.
+    # CVSS-type preference order — newest standard wins.
     _CVSS_TYPE_PREFERENCE = ("CVSS_V4", "CVSS_V3", "CVSS_V3.1", "CVSS_V3.0", "CVSS_V2")
 
     @staticmethod
     def _cvss_to_severity(cvss_score: float, cvss_type: str = "CVSS_V3") -> str:
-        """Convert a CVSS score to a severity string using version-specific buckets.
+        """Map a CVSS score to a severity using version-specific cutoffs.
 
-        CVSS v2 has no CRITICAL bucket — its top tier is HIGH. v3 and v4
-        share the standard 9 / 7 / 4 / 0 cutoffs. Scores outside [0, 10]
-        are clamped so a malformed entry can't silently land in CRITICAL.
+        v2 has no CRITICAL tier; v3/v4 use 9 / 7 / 4 / 0. Scores outside
+        ``[0, 10]`` are clamped so malformed input can't land in CRITICAL.
         """
         score = max(0.0, min(10.0, cvss_score))
         if cvss_type == "CVSS_V2":
-            # v2: HIGH 7.0-10.0, MEDIUM 4.0-6.9, LOW 0.0-3.9.
             if score >= 7.0:
                 return Severity.HIGH.value
             if score >= 4.0:
                 return Severity.MEDIUM.value
             return Severity.LOW.value
-        # v3 / v3.x / v4 — same boundaries.
         if score >= 9.0:
             return Severity.CRITICAL.value
         if score >= 7.0:
@@ -279,8 +242,7 @@ class OSVAnalyzer(Analyzer):
         return Severity.LOW.value
 
     def _severity_from_cvss_array(self, severity_array: List[Dict[str, Any]]) -> Optional[str]:
-        """Pick the best (newest-standard) CVSS entry and map it to a severity."""
-        # Group entries by type so we can prefer v4 > v3 > v2 deterministically.
+        """Pick the highest-ranked CVSS entry (newest standard wins) and map it."""
         entries_by_type: Dict[str, List[Dict[str, Any]]] = {}
         for sev_info in severity_array:
             sev_type = sev_info.get("type", "")
@@ -293,8 +255,7 @@ class OSVAnalyzer(Analyzer):
                 if cvss_score is not None:
                     return self._cvss_to_severity(cvss_score, preferred_type)
 
-        # Fall through for unknown CVSS subtypes (e.g. a future "CVSS_V5"
-        # we haven't enumerated yet) — better than dropping the signal.
+        # Fall through for unknown CVSS subtypes (e.g. a future v5).
         for sev_info in severity_array:
             sev_type = sev_info.get("type", "")
             if "CVSS" not in sev_type or not sev_info.get("score"):

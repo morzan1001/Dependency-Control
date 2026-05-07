@@ -26,15 +26,7 @@ _SEPARATORS = {"-", "_", "."}
 
 
 def _normalize_pkg_name(name: Optional[str]) -> str:
-    """Normalize a package name for typosquat comparison.
-
-    - Strips an npm scope (``@scope/pkg`` → ``pkg``); typosquatting
-      targets the unscoped name.
-    - Collapses runs of ``- _ .`` to a single ``-`` (PEP 503 for PyPI;
-      a reasonable approximation for npm) so ``python_dateutil`` and
-      ``python.dateutil`` compare equal to ``python-dateutil``.
-    - Lowercases.
-    """
+    """PEP 503-style canonical name; strips ``@scope/`` for npm, collapses ``-_.`` to ``-``."""
     if not name:
         return ""
     if name.startswith("@") and "/" in name:
@@ -44,23 +36,16 @@ def _normalize_pkg_name(name: Optional[str]) -> str:
 
 
 def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
-    """True if ``longer`` extends ``shorter`` with a real separator afterwards.
-
-    Catches the suffix-bypass: ``expresss`` starts with ``express`` but the
-    next char (``s``) is not a separator, so we should *not* treat the pair
-    as legitimate (it's the typosquat we want to flag). ``react-dom`` is
-    fine because it adds ``-dom``.
-    """
+    """True if ``longer`` extends ``shorter`` with a separator (``react-dom`` ✓, ``expresss`` ✗)."""
     if not longer or not shorter or longer == shorter:
         return False
     if not longer.startswith(shorter):
         return False
-    next_char = longer[len(shorter)]
-    return next_char in _SEPARATORS
+    return longer[len(shorter)] in _SEPARATORS
 
 
 def _resolve_ecosystem(component: Dict[str, Any], purl: str) -> str:
-    """Map a component to ``pypi`` / ``npm`` / ``unknown`` from PURL or type."""
+    """``pypi`` / ``npm`` / ``unknown`` from PURL or component type."""
     if is_pypi(purl) or component.get("type") == "python":
         return "pypi"
     if is_npm(purl) or component.get("type") == "npm":
@@ -69,7 +54,6 @@ def _resolve_ecosystem(component: Dict[str, Any], purl: str) -> str:
 
 
 def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str:
-    """Map a similarity ratio onto a typosquat severity tier."""
     if ratio > critical_at:
         return Severity.CRITICAL.value
     if ratio > high_at:
@@ -83,7 +67,6 @@ def _build_typosquat_issue(
     ratio: float,
     severity: str,
 ) -> Dict[str, Any]:
-    """Construct the user-facing finding dict for a flagged typosquat."""
     name = component.get("name")
     return {
         "component": name,
@@ -259,15 +242,12 @@ class TyposquattingAnalyzer(Analyzer):
         components = self._get_components(sbom, parsed_components)
         issues = []
 
-        # Configurable thresholds (defaults preserve existing behavior)
         settings = settings or {}
         similarity_threshold = float(settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD))
         critical_at = float(settings.get("critical_similarity", 0.95))
         high_at = float(settings.get("high_similarity", 0.90))
 
-        # Per-ecosystem normalised popular set, computed lazily so we only
-        # pay the cost when at least one component actually maps to it.
-        normalized_popular: Dict[str, Set[str]] = {}
+        normalized_popular: Dict[str, Set[str]] = {}  # lazy per-ecosystem cache
 
         for component in components:
             issue = self._scan_component(

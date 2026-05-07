@@ -361,38 +361,26 @@ class UpdateFrequencyMetrics(BaseModel):
     # Scan cadence
     avg_days_between_scans: float
 
-    # Coverage — how many outdated packages actually got updated.
-    # None when nothing has ever been outdated (semantic N/A, not 0%).
+    # Coverage — share of ever-outdated packages that were resolved.
+    # None means nothing was ever outdated (N/A, distinct from 0%).
     total_outdated_detected: int
     outdated_resolved: int
     update_coverage_pct: Optional[float] = None
 
-    # Trend — comparing recent vs older scan history.
-    # "unknown" is returned when there isn't enough data (fewer than 4 scans).
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     trend_detail: str
 
-    # Upstream release cadence — how often the packages themselves are
-    # released, independent of how often the team scans/updates. All four
-    # are None when no release-history data is available (no fetcher
-    # configured, no packages with parsable PURLs, registry unreachable).
+    # Upstream release cadence (independent of scan frequency).
+    # All four are None when no release-history data is available.
     upstream_releases_last_12m_median: Optional[float] = None
     upstream_days_between_releases_median: Optional[float] = None
     upstream_days_since_latest_release_median: Optional[float] = None
-    # Days between an upstream release and our first scan that observed it.
-    # Pairs naturally with team-update-velocity to expose adoption lag.
-    adoption_latency_days_median: Optional[float] = None
+    adoption_latency_days_median: Optional[float] = None  # release-to-first-scan lag
 
-    # Dominant dependency ecosystem (e.g. "pypi", "npm", "maven"); "mixed"
-    # when no single ecosystem owns >=70% of classified deps; None when
-    # there are no classified deps. Cross-project comparisons should group
-    # by this rather than ranking globally.
+    # Dominant dep ecosystem ("pypi"/"npm"/...); "mixed" if none >=70%; None if empty.
     dominant_ecosystem: Optional[str] = None
 
-    # Chart data
     scan_timeline: List[ScanTimelineEntry]
-
-    # Tables
     slowest_packages: List[SlowPackage]
     recent_updates: List[DependencyUpdateEvent]
 
@@ -410,25 +398,22 @@ class ProjectUpdateSummary(BaseModel):
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     total_outdated: int
     last_scan_date: str
-    # Most common dependency type across the project's history. "mixed" when
-    # no single ecosystem hits the dominance threshold; None when the
-    # project has no classified dependencies. Used for fair cross-project
-    # comparisons (npm and Maven projects don't share a release cadence).
     dominant_ecosystem: Optional[str] = None
 
 
 class UpdateFrequencyComparison(BaseModel):
-    """Cross-project comparison of update frequency metrics."""
+    """Cross-project comparison of update frequency metrics.
+
+    ``best_per_ecosystem`` / ``worst_per_ecosystem`` are the fair view
+    when projects span multiple registries; the global ``best_project`` /
+    ``worst_project`` are kept for backward compatibility.
+    """
 
     projects: List[ProjectUpdateSummary]
     team_avg_updates_per_month: float
     team_avg_coverage_pct: float
     best_project: Optional[str] = None
     worst_project: Optional[str] = None
-    # Per-ecosystem winners — the fair comparison when projects span
-    # multiple registries. Keyed by dominant_ecosystem (e.g. "pypi", "npm").
-    # The global best_project / worst_project remain for backward compat
-    # but are misleading when the project mix is heterogeneous.
     best_per_ecosystem: Dict[str, str] = {}
     worst_per_ecosystem: Dict[str, str] = {}
 

@@ -1,6 +1,7 @@
 """Tests for update frequency analysis — version classification, trend, aggregates,
 and the streaming orchestrator."""
 
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -194,7 +195,8 @@ class TestAggregateMetricsCoverage:
         ]
         timeline = [_make_timeline_entry(0), _make_timeline_entry(1)]
         m = _aggregate_metrics(
-            all_events=[],
+            type_counter=Counter(),
+            recent_events=[],
             completed_scans=scans,
             ever_outdated=set(),
             ever_resolved=set(),
@@ -216,7 +218,8 @@ class TestAggregateMetricsCoverage:
         ]
         timeline = [_make_timeline_entry(0), _make_timeline_entry(1)]
         m = _aggregate_metrics(
-            all_events=[],
+            type_counter=Counter(),
+            recent_events=[],
             completed_scans=scans,
             ever_outdated={"pkg-a", "pkg-b"},
             ever_resolved={"pkg-a"},
