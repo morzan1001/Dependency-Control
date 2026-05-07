@@ -1,8 +1,10 @@
 """Analytics update-frequency endpoints."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
+import httpx
 from fastapi import HTTPException, Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -13,6 +15,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
 from app.repositories import (
     AnalysisResultRepository,
@@ -24,12 +27,18 @@ from app.schemas.analytics import (
     UpdateFrequencyComparison,
     UpdateFrequencyMetrics,
 )
+from app.services.release_history import (
+    DepsDevReleaseHistoryFetcher,
+    ReleaseHistoryFetcher,
+)
 from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
 )
 
 from ._shared import _MSG_ACCESS_DENIED
+
+logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
@@ -39,6 +48,42 @@ def _resolve_since(window_days: Optional[int]) -> Optional[datetime]:
     if window_days is None:
         return None
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
+
+
+def _build_release_fetcher() -> ReleaseHistoryFetcher:
+    """Wire the production deps.dev fetcher to Redis cache + httpx client.
+
+    The fetcher is constructed per-request so the underlying httpx client
+    lifecycle is bounded; release history is served from Redis on warm
+    cache, so the per-request HTTP cost is small in practice.
+    """
+
+    async def cache_get(key: str) -> Optional[Any]:
+        return await cache_service.get(key)
+
+    async def cache_set(key: str, value: Any, ttl_seconds: int) -> None:
+        await cache_service.set(key, value, ttl_seconds=ttl_seconds)
+
+    async def http_fetch(url: str) -> Optional[Dict[str, Any]]:
+        try:
+            async with InstrumentedAsyncClient("deps.dev API", timeout=10.0) as client:
+                response = await client.get(url, follow_redirects=True)
+                if response.status_code == 200:
+                    return response.json()
+                return None
+        except (httpx.TimeoutException, httpx.ConnectError):
+            return None
+        except Exception:
+            logger.debug("deps.dev release-history fetch failed", exc_info=True)
+            return None
+
+    return DepsDevReleaseHistoryFetcher(
+        cache_get=cache_get,
+        cache_set=cache_set,
+        http_fetch=http_fetch,
+        cache_key_builder=CacheKeys.release_history,
+        cache_ttl_seconds=CacheTTL.RELEASE_HISTORY,
+    )
 
 
 @router.get("/projects/{project_id}/update-frequency", responses=RESP_AUTH_404)
@@ -83,6 +128,7 @@ async def get_project_update_frequency(
         analysis_repo=analysis_repo,
         max_scans=max_scans,
         since=_resolve_since(window_days),
+        release_fetcher=_build_release_fetcher(),
     )
 
     await cache_service.set(cache_key, metrics.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
@@ -159,6 +205,7 @@ async def get_update_frequency_comparison(
         analysis_repo=analysis_repo,
         max_scans=max_scans,
         since=_resolve_since(window_days),
+        release_fetcher=_build_release_fetcher(),
     )
 
     await cache_service.set(cache_key, comparison.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)

@@ -2,11 +2,12 @@
 and the streaming orchestrator."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
 from app.schemas.analytics import ScanTimelineEntry
+from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _aggregate_metrics,
     _compute_trend,
@@ -254,7 +255,13 @@ def _make_scan(scan_id: str, day_offset: int, project_id: str = "proj-1") -> Dic
 
 
 def _make_dep(scan_id: str, name: str, version: str, ptype: str = "pypi") -> Dict[str, Any]:
-    return {"scan_id": scan_id, "name": name, "version": version, "type": ptype, "purl": ""}
+    return {
+        "scan_id": scan_id,
+        "name": name,
+        "version": version,
+        "type": ptype,
+        "purl": f"pkg:{ptype}/{name}@{version}",
+    }
 
 
 def _outdated_result(scan_id: str, entries: List[Dict[str, str]]) -> _AnalysisResultStub:
@@ -370,6 +377,79 @@ class TestStreamingOrchestrator:
 
         assert m.scan_count == 6
         assert m.total_updates == 5
+
+    @pytest.mark.asyncio
+    async def test_no_release_fetcher_yields_none_upstream_metrics(self):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+        assert m.upstream_releases_last_12m_median is None
+        assert m.upstream_days_between_releases_median is None
+        assert m.upstream_days_since_latest_release_median is None
+        assert m.adoption_latency_days_median is None
+
+    @pytest.mark.asyncio
+    async def test_release_fetcher_populates_upstream_metrics(self):
+        # Two scans, one update event (pkg-a 1.0.0 -> 1.0.1).
+        # Upstream history: 1.0.0 published 100d before scan 0, 1.0.1 20d before scan 1.
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+        }
+        scan0_date = scans[0]["created_at"]
+        scan1_date = scans[1]["created_at"]
+        history: ReleaseHistory = {
+            "pkg-a": [
+                ReleaseInfo(version="1.0.0", published_at=scan0_date - timedelta(days=100)),
+                ReleaseInfo(version="1.0.1", published_at=scan1_date - timedelta(days=20)),
+            ],
+        }
+
+        class FakeFetcher:
+            def __init__(self, h: ReleaseHistory):
+                self._h = h
+                self.calls: List[Sequence[Tuple[str, str]]] = []
+
+            async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory:
+                self.calls.append(list(packages))
+                return self._h
+
+        fetcher = FakeFetcher(history)
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            release_fetcher=fetcher,
+        )
+
+        # Adoption latency: 1.0.1 published 20d before scan 1 -> latency 20.
+        # Older 1.0.0 was already in scan 0 (we don't observe its first appearance).
+        assert m.adoption_latency_days_median == 20.0
+
+        # Two releases for pkg-a, both within the last 365d -> median count = 2
+        assert m.upstream_releases_last_12m_median == 2.0
+
+        # Days since latest release: ref is "now" but our latest is ~20d before scan 1
+        # which is well in the past of "now". The exact number depends on test runtime,
+        # so just sanity-check the field is populated and positive.
+        assert m.upstream_days_since_latest_release_median is not None
+        assert m.upstream_days_since_latest_release_median > 0
+
+        # Fetcher must have been called once with the unique packages from the scans.
+        assert len(fetcher.calls) == 1
+        assert ("pypi", "pkg-a") in fetcher.calls[0]
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):

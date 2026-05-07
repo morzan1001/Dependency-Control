@@ -84,6 +84,11 @@ class CacheTTL:
     # Update frequency analysis (changes only on new scan completion)
     UPDATE_FREQUENCY = 30 * 60  # 30 minutes
 
+    # Per-package release history (publishedAt for each version) — drives
+    # upstream-cadence metrics. Long TTL: full version histories almost
+    # never change retroactively; new releases just append.
+    RELEASE_HISTORY = 24 * 3600  # 24 hours
+
 
 class CacheKeys:
     """Cache key builders for consistent key naming."""
@@ -140,6 +145,10 @@ class CacheKeys:
     @staticmethod
     def update_frequency(project_id: str) -> str:
         return f"update_freq:{project_id}"
+
+    @staticmethod
+    def release_history(system: str, package: str) -> str:
+        return f"releases:{system}:{package}"
 
     @staticmethod
     def update_frequency_comparison(user_id: str, team_id: str = "all") -> str:

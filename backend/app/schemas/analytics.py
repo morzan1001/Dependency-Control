@@ -372,6 +372,17 @@ class UpdateFrequencyMetrics(BaseModel):
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     trend_detail: str
 
+    # Upstream release cadence — how often the packages themselves are
+    # released, independent of how often the team scans/updates. All four
+    # are None when no release-history data is available (no fetcher
+    # configured, no packages with parsable PURLs, registry unreachable).
+    upstream_releases_last_12m_median: Optional[float] = None
+    upstream_days_between_releases_median: Optional[float] = None
+    upstream_days_since_latest_release_median: Optional[float] = None
+    # Days between an upstream release and our first scan that observed it.
+    # Pairs naturally with team-update-velocity to expose adoption lag.
+    adoption_latency_days_median: Optional[float] = None
+
     # Chart data
     scan_timeline: List[ScanTimelineEntry]
 

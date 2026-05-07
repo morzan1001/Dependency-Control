@@ -28,6 +28,13 @@ from app.schemas.analytics import (
     UpdateFrequencyComparison,
     UpdateFrequencyMetrics,
 )
+from app.services.analyzers.purl_utils import parse_purl
+from app.services.release_history import (
+    Observation,
+    ReleaseHistoryFetcher,
+    UpstreamCadenceMetrics,
+    aggregate_upstream_metrics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +271,7 @@ def _aggregate_metrics(
     type_counter: Optional[Counter] = None,
     recent_events: Optional[List[DependencyUpdateEvent]] = None,
     all_events: Optional[List[DependencyUpdateEvent]] = None,
+    upstream: Optional[UpstreamCadenceMetrics] = None,
 ) -> UpdateFrequencyMetrics:
     """Aggregate streamed counters into the final metrics response.
 
@@ -344,6 +352,18 @@ def _aggregate_metrics(
         scan_timeline=scan_timeline,
         slowest_packages=slowest_packages,
         recent_updates=recent_events,
+        upstream_releases_last_12m_median=(
+            upstream.upstream_releases_last_12m_median if upstream else None
+        ),
+        upstream_days_between_releases_median=(
+            upstream.upstream_days_between_releases_median if upstream else None
+        ),
+        upstream_days_since_latest_release_median=(
+            upstream.upstream_days_since_latest_release_median if upstream else None
+        ),
+        adoption_latency_days_median=(
+            upstream.adoption_latency_days_median if upstream else None
+        ),
     )
 
 
@@ -406,6 +426,7 @@ async def compute_update_frequency(
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 20,
     since: Optional[datetime] = None,
+    release_fetcher: Optional[ReleaseHistoryFetcher] = None,
 ) -> UpdateFrequencyMetrics:
     """
     Compute update frequency metrics for a project.
@@ -449,6 +470,11 @@ async def compute_update_frequency(
     dep_type_map: Dict[str, str] = {}
     ever_outdated: set = set()
     ever_resolved: set = set()
+    # Earliest scan_date a (package, version) pair was observed as a transition.
+    # Powers adoption-latency calculation when a release fetcher is provided.
+    first_seen_versions: Dict[Tuple[str, str], datetime] = {}
+    # PURL string per package, used to derive registry_system for the fetcher.
+    package_purls: Dict[str, str] = {}
 
     async def _load_scan_deps(scan_id: str) -> Dict[str, Dict[str, str]]:
         docs = await dep_repo.find_all({"scan_id": scan_id}, projection=_DEP_PROJECTION)
@@ -458,6 +484,9 @@ async def compute_update_frequency(
         for name, info in deps.items():
             if name not in dep_type_map:
                 dep_type_map[name] = info.get("type", "unknown")
+            purl = info.get("purl") or ""
+            if purl and name not in package_purls:
+                package_purls[name] = purl
 
     # Bootstrap with the first scan: load its deps and outdated set so the
     # next iteration can roll forward without reloading.
@@ -500,6 +529,10 @@ async def compute_update_frequency(
                 ever_resolved.add(e.package_name)
             type_counter[e.update_type] += 1
             recent_events_buffer.append(e)
+            # Earliest scan_date for each (package, version) — used for adoption-latency.
+            key = (e.package_name, e.new_version)
+            if key not in first_seen_versions:
+                first_seen_versions[key] = curr_scan["created_at"]
 
         scan_timeline.append(
             _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], events, len(curr_outdated))
@@ -508,6 +541,10 @@ async def compute_update_frequency(
         # Roll forward: this iteration's curr is the next iteration's prev.
         prev_deps = curr_deps
         prev_outdated = curr_outdated
+
+    upstream = await _maybe_fetch_upstream_cadence(
+        release_fetcher, package_purls, first_seen_versions
+    )
 
     return _aggregate_metrics(
         completed_scans,
@@ -522,7 +559,49 @@ async def compute_update_frequency(
         type_counter=type_counter,
         # Buffer holds events oldest -> newest (insertion order); reverse for newest-first.
         recent_events=list(recent_events_buffer)[::-1],
+        upstream=upstream,
     )
+
+
+async def _maybe_fetch_upstream_cadence(
+    release_fetcher: Optional[ReleaseHistoryFetcher],
+    package_purls: Dict[str, str],
+    first_seen_versions: Dict[Tuple[str, str], datetime],
+) -> Optional[UpstreamCadenceMetrics]:
+    """Resolve packages via PURLs, call the fetcher, compute aggregate cadence.
+
+    Returns None when no fetcher is configured. Failures inside the fetcher
+    are swallowed so that the rest of the report still ships — upstream
+    cadence is supplementary, not load-bearing.
+    """
+    if release_fetcher is None:
+        return None
+
+    package_specs: List[Tuple[str, str]] = []
+    seen: set = set()
+    for name, purl in package_purls.items():
+        parsed = parse_purl(purl)
+        if parsed is None or not parsed.registry_system:
+            continue
+        spec = (parsed.registry_system, name)
+        if spec in seen:
+            continue
+        seen.add(spec)
+        package_specs.append(spec)
+
+    if not package_specs:
+        return None
+
+    try:
+        history = await release_fetcher.fetch(package_specs)
+    except Exception:
+        logger.warning("release-history fetcher failed; skipping upstream cadence", exc_info=True)
+        return None
+
+    observations: List[Observation] = [
+        (pkg, version, scan_date) for (pkg, version), scan_date in first_seen_versions.items()
+    ]
+    return aggregate_upstream_metrics(history, observations=observations)
 
 
 async def compute_update_frequency_comparison(
@@ -532,6 +611,7 @@ async def compute_update_frequency_comparison(
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 10,
     since: Optional[datetime] = None,
+    release_fetcher: Optional[ReleaseHistoryFetcher] = None,
 ) -> UpdateFrequencyComparison:
     """
     Compute update frequency comparison across multiple projects.
@@ -559,6 +639,7 @@ async def compute_update_frequency_comparison(
                     analysis_repo=analysis_repo,
                     max_scans=max_scans,
                     since=since,
+                    release_fetcher=release_fetcher,
                 )
             except Exception:
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
