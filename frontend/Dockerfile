@@ -1,12 +1,14 @@
 # Build stage
 FROM node:25-alpine AS builder
 
-# Enable pnpm
+# Non-interactive — pnpm's dep-status check otherwise aborts on no-TTY.
+ENV CI=true
+
 RUN npm install -g pnpm
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
