@@ -25,7 +25,7 @@ class TestCheckRaceCondition:
 
 
 class TestRunAnalysisScanNotFound:
-    """Regression: scan_doc=None used to leave the scan stuck in 'processing'."""
+    """A missing scan must terminate cleanly so the worker's retry path stops re-queueing it."""
 
     def test_marks_scan_failed_and_returns_false(self, monkeypatch):
         update_raw = AsyncMock()

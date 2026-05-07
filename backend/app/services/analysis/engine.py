@@ -630,8 +630,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     scan_doc = await scan_repo.get_by_id_strong(scan_id)
     if not scan_doc:
-        # Terminal: don't leave the scan stuck in "processing" — the worker's
-        # retry path only re-claims scans that are still "pending".
+        # Mark terminal — worker re-claim only matches scans still in "pending".
         logger.error(f"Scan {scan_id} not found, marking as failed")
         await scan_repo.update_raw(
             scan_id,

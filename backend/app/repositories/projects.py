@@ -20,7 +20,6 @@ class ProjectRepository:
         self.collection = db.projects
 
     def _primary(self):
-        # Strong reads for read-after-write paths (analysis engine post-claim).
         return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def get_by_id(self, project_id: str) -> Optional[Project]:

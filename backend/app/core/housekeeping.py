@@ -212,8 +212,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
                     continue
 
                 try:
-                    # TOCTOU re-check inside lock; strong read so a lagging
-                    # Secondary can't hide an active scan.
+                    # TOCTOU re-check inside lock — strong read.
                     scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
                     active_scan = await scans_primary.find_one(
                         {

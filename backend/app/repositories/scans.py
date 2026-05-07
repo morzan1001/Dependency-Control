@@ -28,7 +28,6 @@ class ScanRepository:
         self.collection = db.scans
 
     def _primary(self):
-        # Strong reads for read-after-write paths (worker/engine/housekeeping).
         return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def get_by_id(self, scan_id: str) -> Optional[Scan]:

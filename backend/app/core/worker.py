@@ -190,10 +190,7 @@ class AnalysisWorkerManager:
         return True
 
     async def _handle_failed_analysis(self, scan: dict, scan_id: str, db) -> bool:
-        """Decide whether to retry or mark a failed scan terminal. Returns True if terminal.
-
-        Engine owns status and retry_count writes; this only enforces the retry ceiling.
-        """
+        """Apply the retry ceiling. Engine owns status and retry_count writes."""
         max_retries = 5
         retry_count = scan.get("retry_count", 0) + 1
         self._active_scans.discard(scan_id)
