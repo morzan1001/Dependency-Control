@@ -79,6 +79,29 @@ class TestCalculateRiskScore:
         score = calculate_risk_score(None, 1.0, False, False)
         assert score <= 45.0  # 20 (default CVSS) + max 25 (EPSS)
 
+    def test_epss_contribution_continuous_at_medium_boundary(self):
+        # B1: no jump at the 0.01 boundary. Difference between just-below and
+        # just-above must be tiny (no >1-point cliff).
+        below = calculate_risk_score(None, 0.0099, False, False)
+        above = calculate_risk_score(None, 0.0101, False, False)
+        assert abs(above - below) < 0.5
+
+    def test_epss_contribution_continuous_at_high_boundary(self):
+        # B1: no jump at the 0.1 boundary either.
+        below = calculate_risk_score(None, 0.099, False, False)
+        above = calculate_risk_score(None, 0.101, False, False)
+        assert abs(above - below) < 0.5
+
+    def test_epss_contribution_monotonic(self):
+        # Higher EPSS must always yield >= contribution. Spot-check across
+        # the full range, including both former cliffs.
+        epss_grid = [0.0, 0.005, 0.0099, 0.01, 0.05, 0.099, 0.1, 0.3, 0.7, 1.0]
+        scores = [calculate_risk_score(None, e, False, False) for e in epss_grid]
+        for i in range(1, len(scores)):
+            assert scores[i] >= scores[i - 1] - 1e-9, (
+                f"Non-monotonic at epss={epss_grid[i]}: {scores[i]} < {scores[i-1]}"
+            )
+
     def test_unreachable_reduces_score(self):
         base = calculate_risk_score(10.0, None, False, False)
         reduced = calculate_risk_score(10.0, None, False, False, is_reachable=False)

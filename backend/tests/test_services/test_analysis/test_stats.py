@@ -131,24 +131,24 @@ class TestBuildEpssKevSummaryEpss:
         assert result["epss_scores"]["medium"] == 1
 
     def test_epss_low_bucket(self):
-        """Scores at or below 0.01 land in the low bucket."""
+        """Scores below 0.01 land in the low bucket."""
         findings = [_make_finding(epss_score=0.001)]
         result = build_epss_kev_summary(findings)
         assert result["epss_scores"]["low"] == 1
 
     def test_epss_boundary_high(self):
-        """Score of exactly 0.1 is NOT high (strictly greater than)."""
+        """Score of exactly 0.1 lands in high (inclusive boundary)."""
         findings = [_make_finding(epss_score=0.1)]
         result = build_epss_kev_summary(findings)
-        assert result["epss_scores"]["high"] == 0
-        assert result["epss_scores"]["medium"] == 1
+        assert result["epss_scores"]["high"] == 1
+        assert result["epss_scores"]["medium"] == 0
 
     def test_epss_boundary_medium(self):
-        """Score of exactly 0.01 is NOT medium (strictly greater than)."""
+        """Score of exactly 0.01 lands in medium (inclusive boundary)."""
         findings = [_make_finding(epss_score=0.01)]
         result = build_epss_kev_summary(findings)
-        assert result["epss_scores"]["medium"] == 0
-        assert result["epss_scores"]["low"] == 1
+        assert result["epss_scores"]["medium"] == 1
+        assert result["epss_scores"]["low"] == 0
 
     def test_avg_epss_score(self):
         """Average EPSS is computed across enriched findings only."""

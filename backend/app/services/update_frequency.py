@@ -11,10 +11,11 @@ load and compare one scan pair at a time, keeping peak memory to 2×deps/scan.
 
 import asyncio
 import logging
-import re
 from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
+
+from packaging.version import InvalidVersion, Version
 
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -44,35 +45,41 @@ def _get_comparison_semaphore() -> asyncio.Semaphore:
         _comparison_semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
     return _comparison_semaphore
 
-# Regex for semver-like versions: X.Y.Z with optional pre-release
-_SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)(?:\.(\d+))?")
-
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1}
+
+
+def _release_tuple(version: Version) -> Tuple[int, int, int]:
+    """Return the (major, minor, patch) tuple, padding shorter releases with 0."""
+    release = version.release
+    return (
+        release[0] if len(release) > 0 else 0,
+        release[1] if len(release) > 1 else 0,
+        release[2] if len(release) > 2 else 0,
+    )
 
 
 def classify_version_change(old_version: str, new_version: str) -> str:
     """
-    Classify a version change as patch, minor, major, or unknown.
+    Classify a version change as none, patch, minor, major, or unknown.
 
-    Handles semver-like patterns (X.Y.Z). Returns "unknown" for
-    versions that cannot be parsed (e.g. calver, hashes).
+    Uses PEP 440 parsing so pre-release identifiers (1.0.0-beta1, 1.0.0rc2)
+    are not collapsed into their underlying release tuple. Returns:
+      - "none"    if the parsed versions are equal
+      - "major" / "minor" / "patch"  by which release component changed
+      - "patch"   if only pre-release / post-release / local segments differ
+      - "unknown" if either version is not PEP 440 parseable
     """
-    old_match = _SEMVER_RE.match(old_version)
-    new_match = _SEMVER_RE.match(new_version)
-
-    if not old_match or not new_match:
+    try:
+        old_v = Version(old_version)
+        new_v = Version(new_version)
+    except InvalidVersion:
         return "unknown"
 
-    old_major, old_minor, old_patch = (
-        int(old_match.group(1)),
-        int(old_match.group(2)),
-        int(old_match.group(3) or 0),
-    )
-    new_major, new_minor, new_patch = (
-        int(new_match.group(1)),
-        int(new_match.group(2)),
-        int(new_match.group(3) or 0),
-    )
+    if old_v == new_v:
+        return "none"
+
+    old_major, old_minor, old_patch = _release_tuple(old_v)
+    new_major, new_minor, new_patch = _release_tuple(new_v)
 
     if new_major != old_major:
         return "major"
@@ -165,6 +172,12 @@ def _compare_scan_pair(
         if not prev_info or curr_info["version"] == prev_info["version"]:
             continue
 
+        update_type = classify_version_change(prev_info["version"], curr_info["version"])
+        # "none" means the versions parse to the same PEP 440 identity
+        # (e.g. "v1.0.0" vs "1.0.0") — not a real update event.
+        if update_type == "none":
+            continue
+
         events.append(
             DependencyUpdateEvent(
                 package_name=pkg_name,
@@ -172,7 +185,7 @@ def _compare_scan_pair(
                 purl=curr_info["purl"] or None,
                 old_version=prev_info["version"],
                 new_version=curr_info["version"],
-                update_type=classify_version_change(prev_info["version"], curr_info["version"]),
+                update_type=update_type,
                 scan_date=curr_scan_date.isoformat(),
                 previous_scan_date=prev_scan_date.isoformat(),
                 days_between_scans=days_between,

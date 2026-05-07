@@ -1,6 +1,7 @@
 from typing import Optional
 
 from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD
+from app.core.epss import bucket_epss
 
 
 def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: Optional[float]) -> str:
@@ -20,11 +21,7 @@ def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: O
     if is_kev:
         return "active"
     if epss_score is not None:
-        if epss_score >= EPSS_HIGH_THRESHOLD:
-            return "high"
-        if epss_score >= EPSS_MEDIUM_THRESHOLD:
-            return "medium"
-        return "low"
+        return bucket_epss(epss_score)
     return "unknown"
 
 
@@ -32,15 +29,27 @@ def _calculate_epss_contribution(epss_score: float) -> float:
     """
     Calculate the EPSS contribution to risk score (0-25 points).
 
-    Non-linear scaling: high EPSS scores get disproportionately more weight.
+    Piecewise linear, continuous at the bucket boundaries (no cliffs).
+    Tier targets:
+      - 0       at epss=0
+      - 10      at epss=EPSS_MEDIUM_THRESHOLD (0.01)
+      - 20      at epss=EPSS_HIGH_THRESHOLD   (0.1)
+      - 25      at epss=1.0
     """
-    if epss_score >= EPSS_HIGH_THRESHOLD:  # Top 10% - very likely to be exploited
-        contribution = 20 + (min(epss_score, 1.0) * 5)
-    elif epss_score >= EPSS_MEDIUM_THRESHOLD:  # 1-10% - moderate likelihood
-        contribution = 10 + (epss_score * 100)  # 10-20 points
-    else:  # < 1% - low likelihood
-        contribution = epss_score * 1000  # 0-10 points
-    return min(contribution, 25)
+    if epss_score <= 0:
+        return 0.0
+    if epss_score >= 1.0:
+        return 25.0
+    if epss_score >= EPSS_HIGH_THRESHOLD:
+        # 20 → 25 across [0.1, 1.0]
+        return 20.0 + (epss_score - EPSS_HIGH_THRESHOLD) * (5.0 / (1.0 - EPSS_HIGH_THRESHOLD))
+    if epss_score >= EPSS_MEDIUM_THRESHOLD:
+        # 10 → 20 across [0.01, 0.1]
+        return 10.0 + (epss_score - EPSS_MEDIUM_THRESHOLD) * (
+            10.0 / (EPSS_HIGH_THRESHOLD - EPSS_MEDIUM_THRESHOLD)
+        )
+    # 0 → 10 across [0, 0.01]
+    return epss_score * (10.0 / EPSS_MEDIUM_THRESHOLD)
 
 
 def _apply_reachability_modifier(

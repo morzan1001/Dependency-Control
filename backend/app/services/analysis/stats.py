@@ -6,9 +6,10 @@ EPSS/KEV enrichment and reachability analysis data.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from app.core.constants import HIGH_RISK_SCORE_THRESHOLD, sort_by_severity
+from app.core.epss import bucket_epss
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
@@ -41,15 +42,6 @@ def _format_datetime(value: Optional[Any]) -> Optional[str]:
     return str(value)
 
 
-def _classify_epss_score(epss_score: float) -> Literal["high", "medium", "low"]:
-    """Classify an EPSS score into high/medium/low bucket."""
-    if epss_score > 0.1:
-        return "high"
-    if epss_score > 0.01:
-        return "medium"
-    return "low"
-
-
 def _process_finding_epss(
     details: Dict[str, Any], summary: EPSSKEVSummary, epss_scores: List[float]
 ) -> Optional[float]:
@@ -59,7 +51,7 @@ def _process_finding_epss(
         return None
     summary["epss_enriched"] += 1
     epss_scores.append(float(epss_score))
-    summary["epss_scores"][_classify_epss_score(float(epss_score))] += 1
+    summary["epss_scores"][bucket_epss(float(epss_score))] += 1
     return float(epss_score)
 
 
