@@ -16,7 +16,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -197,84 +197,93 @@ class MaintainerRiskAnalyzer(Analyzer):
         if not cache_key:
             return None
 
-        async def fetch_maintainer_data() -> Optional[Dict[str, Any]]:
-            """Fetch maintainer data from APIs."""
-            cache_data: Dict[str, Any] = {"maintainer_info": {}, "github_info": None}
-
-            if is_pypi(purl):
-                info = await self._check_pypi(client, name)
-                if info:
-                    cache_data["maintainer_info"] = info
-
-            elif is_npm(purl):
-                info = await self._check_npm(client, name)
-                if info:
-                    cache_data["maintainer_info"] = info
-
-            # Check GitHub repository if available
-            github_repo = self._extract_github_repo(repo_url)
-            if github_repo:
-                gh_info = await self._check_github(client, github_repo, github_token)
-                if gh_info:
-                    cache_data["github_info"] = gh_info
-
-            # Return None for negative cache if no data found
-            if not cache_data["maintainer_info"] and not cache_data["github_info"]:
-                return {}  # Empty dict for negative cache
-
-            return cache_data
-
         # Use distributed lock to prevent multiple pods fetching same package
         cached_info = await cache_service.get_or_fetch_with_lock(
             key=cache_key,
-            fetch_fn=fetch_maintainer_data,
+            fetch_fn=lambda: self._fetch_maintainer_data(client, purl, name, repo_url, github_token),
             ttl_seconds=CacheTTL.MAINTAINER_INFO,
         )
 
         if not cached_info:
             return None
 
-        # Process the cached/fetched data
-        risks = []
-        maintainer_info = cached_info.get("maintainer_info", {})
-
-        if maintainer_info:
-            if registry == "pypi":
-                risks.extend(self._assess_risks(maintainer_info, "pypi"))
-            elif registry == "npm":
-                risks.extend(self._assess_risks(maintainer_info, "npm"))
-
-        # Check GitHub info
-        github_info = cached_info.get("github_info")
-        if github_info:
-            maintainer_info["github"] = github_info
-            risks.extend(self._assess_github_risks(github_info))
-
-        # Filter out signals whose corroborating evidence is missing
-        # (free-email without single-maintainer; staleness with an active repo).
-        github_active = self._infer_github_active(github_info)
-        # PyPI returns no maintainer_count; npm sometimes does. Pass through
-        # whatever we got so the correlation can use it as positive evidence.
-        maintainer_count = maintainer_info.get("maintainer_count") if maintainer_info else None
-        risks = correlate_maintainer_risks(
-            risks, github_active=github_active, maintainer_count=maintainer_count
-        )
-
+        risks, maintainer_info = self._assess_all_risks(cached_info, registry)
         if not risks:
             return None
-
-        overall_severity = self._calculate_overall_severity(risks)
-        message = self._create_summary_message(name, version, risks)
 
         return {
             "component": name,
             "version": version,
             "purl": purl,
             "risks": risks,
-            "severity": overall_severity,
-            "message": message,
+            "severity": self._calculate_overall_severity(risks),
+            "message": self._create_summary_message(name, version, risks),
             "maintainer_info": maintainer_info,
         }
+
+    async def _fetch_maintainer_data(
+        self,
+        client: InstrumentedAsyncClient,
+        purl: str,
+        name: str,
+        repo_url: Optional[str],
+        github_token: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Pull maintainer + GitHub data for one component, or return ``{}`` for
+        negative cache when neither registry nor GitHub had anything to say."""
+        cache_data: Dict[str, Any] = {"maintainer_info": {}, "github_info": None}
+
+        if is_pypi(purl):
+            info = await self._check_pypi(client, name)
+            if info:
+                cache_data["maintainer_info"] = info
+        elif is_npm(purl):
+            info = await self._check_npm(client, name)
+            if info:
+                cache_data["maintainer_info"] = info
+
+        github_repo = self._extract_github_repo(repo_url)
+        if github_repo:
+            gh_info = await self._check_github(client, github_repo, github_token)
+            if gh_info:
+                cache_data["github_info"] = gh_info
+
+        if not cache_data["maintainer_info"] and not cache_data["github_info"]:
+            return {}  # negative cache marker
+        return cache_data
+
+    def _assess_all_risks(
+        self,
+        cached_info: Dict[str, Any],
+        registry: Optional[str],
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Combine registry + GitHub risk assessment, then correlate signals.
+
+        Returns ``(risks, maintainer_info)``. ``risks`` is empty when no
+        signal corroborates after correlation — callers should drop the
+        component in that case rather than emit an empty finding.
+        """
+        risks: List[Dict[str, Any]] = []
+        maintainer_info: Dict[str, Any] = cached_info.get("maintainer_info", {}) or {}
+
+        if maintainer_info and registry in ("pypi", "npm"):
+            risks.extend(self._assess_risks(maintainer_info, registry))
+
+        github_info = cached_info.get("github_info")
+        if github_info:
+            maintainer_info["github"] = github_info
+            risks.extend(self._assess_github_risks(github_info))
+
+        # Filter signals whose corroborating evidence is missing
+        # (free-email without single-maintainer; staleness with an active repo).
+        # PyPI returns no maintainer_count; npm sometimes does — pass through
+        # whatever we got so the correlation can use it as positive evidence.
+        risks = correlate_maintainer_risks(
+            risks,
+            github_active=self._infer_github_active(github_info),
+            maintainer_count=maintainer_info.get("maintainer_count") if maintainer_info else None,
+        )
+        return risks, maintainer_info
 
     def _calculate_overall_severity(self, risks: List[Dict[str, Any]]) -> str:
         """Calculate overall severity from individual risk scores."""

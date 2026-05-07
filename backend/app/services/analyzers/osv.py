@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -28,6 +28,30 @@ OSV_SEVERITY_MAP = {
 }
 
 
+def _build_batch_payload(
+    chunk: List[Dict[str, Any]],
+) -> Tuple[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    """Build the OSV batch-query payload from a slice of components.
+
+    Returns ``(payload, valid_components)``. Components without a PURL are
+    skipped (they can't be queried) but their count is logged so a scan
+    that drops most components doesn't fail silently.
+    """
+    payload: Dict[str, List[Dict[str, Any]]] = {"queries": []}
+    valid_components: List[Dict[str, Any]] = []
+    skipped = 0
+    for component in chunk:
+        purl = component.get("purl")
+        if purl:
+            payload["queries"].append({"package": {"purl": purl}})
+            valid_components.append(component)
+        else:
+            skipped += 1
+    if skipped:
+        logger.debug(f"OSV: Skipped {skipped} components without PURL")
+    return payload, valid_components
+
+
 class OSVAnalyzer(Analyzer):
     """
     Analyzer that checks packages for known vulnerabilities via the OSV API.
@@ -45,106 +69,109 @@ class OSVAnalyzer(Analyzer):
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
-        results = []
+        results: List[Dict[str, Any]] = []
 
-        # Check cache first for all components
         cached_results, uncached_components = await self._get_cached_components(components)
         results.extend(cached_results)
-
         logger.debug(f"OSV: {len(cached_results)} from cache, {len(uncached_components)} to fetch")
 
         if not uncached_components:
             return {"osv_vulnerabilities": results}
 
+        await self._fetch_uncached(uncached_components, results)
+        return {"osv_vulnerabilities": results}
+
+    async def _fetch_uncached(
+        self,
+        uncached_components: List[Dict[str, Any]],
+        results: List[Dict[str, Any]],
+    ) -> None:
+        """Iterate uncached components in batches, populating ``results`` in-place."""
         timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
 
         async with InstrumentedAsyncClient("OSV API", timeout=timeout) as client:
             for chunk_start in range(0, len(uncached_components), batch_size):
                 chunk = uncached_components[chunk_start : chunk_start + batch_size]
-
-                batch_payload: Dict[str, List[Dict[str, Any]]] = {"queries": []}
-                valid_components = []
-                skipped_count = 0
-
-                for component in chunk:
-                    purl = component.get("purl")
-                    if purl:
-                        batch_payload["queries"].append({"package": {"purl": purl}})
-                        valid_components.append(component)
-                    else:
-                        skipped_count += 1
-
-                if skipped_count > 0:
-                    logger.debug(f"OSV: Skipped {skipped_count} components without PURL")
-
-                if not batch_payload["queries"]:
+                payload, valid_components = _build_batch_payload(chunk)
+                if not payload["queries"]:
                     continue
-
-                try:
-                    response = await client.post(self.api_url, json=batch_payload)
-                    if response.status_code == 200:
-                        data = response.json()
-                        batch_results = data.get("results", [])
-
-                        # Validate response length matches request
-                        if len(batch_results) != len(valid_components):
-                            logger.warning(
-                                f"OSV API response count mismatch: "
-                                f"sent {len(valid_components)}, received {len(batch_results)}"
-                            )
-                            # Only process matching pairs to avoid misalignment
-                            batch_results = batch_results[: len(valid_components)]
-
-                        # Cache results and add to output
-                        cache_mapping = {}
-                        for comp, res in zip(valid_components, batch_results):
-                            vulns = res.get("vulns", [])
-                            purl = comp.get("purl", "")
-                            comp_name = comp.get("name", "")
-                            comp_version = comp.get("version", "")
-
-                            # Normalize vulnerabilities with severity and message
-                            normalized_vulns = self._normalize_vulnerabilities(vulns)
-
-                            # Cache even empty results (with shorter TTL)
-                            cache_key = CacheKeys.osv(purl)
-                            cache_data = {
-                                "component": comp_name,
-                                "version": comp_version,
-                                "purl": purl,
-                                "vulnerabilities": normalized_vulns,
-                                "severity": self._get_highest_severity(normalized_vulns),
-                                "message": self._create_summary_message(comp_name, comp_version, normalized_vulns),
-                            }
-                            cache_mapping[cache_key] = cache_data
-
-                            if normalized_vulns:
-                                results.append(cache_data)
-
-                        # Batch cache all results
-                        if cache_mapping:
-                            await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
-
-                    elif response.status_code == 429:
-                        external_api_rate_limit_hits_total.labels(service="OSV API").inc()
-                        logger.warning("OSV API rate limit hit, waiting...")
-                        await asyncio.sleep(5)
-                    else:
-                        logger.warning(f"OSV Batch API error: {response.status_code}")
-
-                except httpx.TimeoutException:
-                    logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
-                except httpx.ConnectError:
-                    logger.warning("OSV API connection error")
-                except Exception as e:
-                    logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
-
+                await self._post_and_handle(client, payload, valid_components, results, chunk_start)
                 # Small delay between batches
                 if chunk_start + batch_size < len(uncached_components):
                     await asyncio.sleep(0.2)
 
-        return {"osv_vulnerabilities": results}
+    async def _post_and_handle(
+        self,
+        client: InstrumentedAsyncClient,
+        payload: Dict[str, List[Dict[str, Any]]],
+        valid_components: List[Dict[str, Any]],
+        results: List[Dict[str, Any]],
+        chunk_start: int,
+    ) -> None:
+        """POST one batch, dispatch on the response status, log errors verbosely."""
+        try:
+            response = await client.post(self.api_url, json=payload)
+        except httpx.TimeoutException:
+            logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
+            return
+        except httpx.ConnectError:
+            logger.warning("OSV API connection error")
+            return
+        except Exception as e:  # noqa: BLE001 — defensive: never fail the whole scan
+            logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
+            return
+
+        if response.status_code == 200:
+            await self._handle_success(response, valid_components, results)
+        elif response.status_code == 429:
+            external_api_rate_limit_hits_total.labels(service="OSV API").inc()
+            logger.warning("OSV API rate limit hit, waiting...")
+            await asyncio.sleep(5)
+        else:
+            logger.warning(f"OSV Batch API error: {response.status_code}")
+
+    async def _handle_success(
+        self,
+        response: Any,
+        valid_components: List[Dict[str, Any]],
+        results: List[Dict[str, Any]],
+    ) -> None:
+        """Parse a 200 response: align entries with components, cache, append."""
+        data = response.json()
+        batch_results = data.get("results", [])
+        if len(batch_results) != len(valid_components):
+            logger.warning(
+                f"OSV API response count mismatch: "
+                f"sent {len(valid_components)}, received {len(batch_results)}"
+            )
+            batch_results = batch_results[: len(valid_components)]
+
+        cache_mapping: Dict[str, Dict[str, Any]] = {}
+        for comp, res in zip(valid_components, batch_results):
+            cache_data = self._build_cache_entry(comp, res.get("vulns", []))
+            cache_mapping[CacheKeys.osv(comp.get("purl", ""))] = cache_data
+            if cache_data["vulnerabilities"]:
+                results.append(cache_data)
+
+        if cache_mapping:
+            await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
+
+    def _build_cache_entry(
+        self, component: Dict[str, Any], vulns: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Build the per-component dict that gets written to cache and to results."""
+        comp_name = component.get("name", "")
+        comp_version = component.get("version", "")
+        normalized = self._normalize_vulnerabilities(vulns)
+        return {
+            "component": comp_name,
+            "version": comp_version,
+            "purl": component.get("purl", ""),
+            "vulnerabilities": normalized,
+            "severity": self._get_highest_severity(normalized),
+            "message": self._create_summary_message(comp_name, comp_version, normalized),
+        }
 
     async def _get_cached_components(
         self, components: List[Dict[str, Any]]
