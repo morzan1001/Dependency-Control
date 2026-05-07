@@ -15,7 +15,7 @@ engine). Callers dispatch via ``evaluate_async``.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
@@ -33,12 +33,20 @@ from app.services.compliance.frameworks.base import (
 )
 
 
-# Severity -> (sla_days, control_title, severity_label)
-_SLA_BUCKETS: List[Tuple[Severity, int, str]] = [
-    (Severity.CRITICAL, 7, "Critical vulnerabilities remediated within 7 days"),
-    (Severity.HIGH, 30, "High-severity vulnerabilities remediated within 30 days"),
-    (Severity.MEDIUM, 90, "Medium-severity vulnerabilities remediated within 90 days"),
-]
+# Severity -> default sla_days. Overridable per instance via constructor.
+DEFAULT_SLA_DAYS: Dict[Severity, int] = {
+    Severity.CRITICAL: 7,
+    Severity.HIGH: 30,
+    Severity.MEDIUM: 90,
+}
+
+# Order of evaluation for the controls (kept fixed so output ordering is stable).
+_SLA_SEVERITY_ORDER: List[Severity] = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM]
+
+
+def _control_title(severity: Severity, sla_days: int) -> str:
+    label = severity.value.capitalize()
+    return f"{label}-severity vulnerabilities remediated within {sla_days} days"
 
 
 class CveRemediationSlaFramework:
@@ -47,11 +55,32 @@ class CveRemediationSlaFramework:
     version: str = "1"
     source_url: str = "https://www.first.org/cvss/"
     disclaimer: Optional[str] = (
-        "SLA windows are platform defaults (7 / 30 / 90 days for "
-        "CRITICAL / HIGH / MEDIUM). Customise via project policy in a "
-        "future iteration."
+        "SLA windows default to 7 / 30 / 90 days for CRITICAL / HIGH / MEDIUM "
+        "but can be overridden per project."
     )
     controls: List[ControlDefinition] = []
+
+    def __init__(
+        self,
+        sla_days_by_severity: Optional[Dict[Severity, int]] = None,
+    ) -> None:
+        """Build a framework instance.
+
+        ``sla_days_by_severity`` overrides any subset of the defaults. Any
+        severity not provided keeps its DEFAULT_SLA_DAYS value. Values must
+        be strictly positive — a zero-or-negative window would mark every
+        new finding as overdue immediately, which is almost always a
+        misconfiguration rather than an intentional policy.
+        """
+        merged: Dict[Severity, int] = dict(DEFAULT_SLA_DAYS)
+        if sla_days_by_severity:
+            for sev, days in sla_days_by_severity.items():
+                if days <= 0:
+                    raise ValueError(
+                        f"SLA window for {sev.value} must be > 0 days, got {days}"
+                    )
+                merged[sev] = days
+        self._sla_days = merged
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         raise RuntimeError("CveRemediationSlaFramework is async-only; callers must dispatch via evaluate_async()")
@@ -61,7 +90,9 @@ class CveRemediationSlaFramework:
         now = datetime.now(timezone.utc)
 
         controls: List[ControlResult] = []
-        for severity, sla_days, title in _SLA_BUCKETS:
+        for severity in _SLA_SEVERITY_ORDER:
+            sla_days = self._sla_days[severity]
+            title = _control_title(severity, sla_days)
             overdue = [f for f in findings if _is_overdue(f, severity, sla_days, now)]
             status, evidence = _classify(overdue)
             controls.append(

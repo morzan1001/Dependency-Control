@@ -258,6 +258,52 @@ def _compute_trend(
     return "stable", (f"Consistent (~{newer_avg_updates:.1f} updates/scan, ~{newer_avg_outdated:.0f} outdated)")
 
 
+def _resolve_event_aggregates(
+    type_counter: Optional[Counter],
+    recent_events: Optional[List[DependencyUpdateEvent]],
+    all_events: Optional[List[DependencyUpdateEvent]],
+) -> Tuple[Counter, List[DependencyUpdateEvent], int]:
+    """Pick streamed counters or, for legacy callers, derive them from a list.
+
+    Returns ``(type_counter, recent_events, total_updates)``. Either the
+    streamed pair or the all_events list must be supplied.
+    """
+    if all_events is not None:
+        return (
+            Counter(e.update_type for e in all_events),
+            sorted(all_events, key=lambda e: e.scan_date, reverse=True)[:30],
+            len(all_events),
+        )
+    if type_counter is None or recent_events is None:
+        raise TypeError(
+            "_aggregate_metrics requires either `all_events` or both "
+            "`type_counter` and `recent_events`"
+        )
+    return type_counter, recent_events, sum(type_counter.values())
+
+
+def _granularity_ratio(type_counter: Counter, total_updates: int) -> Dict[str, float]:
+    """Per-update-type share of all updates, rounded to 2 dp."""
+    if not total_updates:
+        return {"patch": 0.0, "minor": 0.0, "major": 0.0, "unknown": 0.0}
+    return {
+        bucket: round(type_counter.get(bucket, 0) / total_updates, 2)
+        for bucket in ("patch", "minor", "major", "unknown")
+    }
+
+
+def _coverage_pct(ever_outdated: set, ever_resolved: set) -> Optional[float]:
+    """Percentage of ever-outdated packages that were eventually resolved.
+
+    None when nothing was ever flagged as outdated (semantic N/A — distinct
+    from 0.0 which means "outdated detected, nothing resolved").
+    """
+    total = len(ever_outdated)
+    if not total:
+        return None
+    return round(len(ever_outdated & ever_resolved) / total * 100, 1)
+
+
 def _aggregate_metrics(
     completed_scans: List[Dict[str, Any]],
     ever_outdated: set,
@@ -282,17 +328,9 @@ def _aggregate_metrics(
     accepted for tests that still construct the metrics directly from a
     list — when supplied it overrides the streamed values.
     """
-    if all_events is not None:
-        type_counter = Counter(e.update_type for e in all_events)
-        recent_events = sorted(all_events, key=lambda e: e.scan_date, reverse=True)[:30]
-        total_updates = len(all_events)
-    else:
-        if type_counter is None or recent_events is None:
-            raise TypeError(
-                "_aggregate_metrics requires either `all_events` or both "
-                "`type_counter` and `recent_events`"
-            )
-        total_updates = sum(type_counter.values())
+    type_counter, recent_events, total_updates = _resolve_event_aggregates(
+        type_counter, recent_events, all_events
+    )
 
     num_intervals = len(completed_scans) - 1
 
@@ -306,24 +344,12 @@ def _aggregate_metrics(
     major_total = type_counter.get("major", 0)
     unknown_total = type_counter.get("unknown", 0)
 
-    granularity_ratio = {
-        "patch": round(patch_total / total_updates, 2) if total_updates else 0.0,
-        "minor": round(minor_total / total_updates, 2) if total_updates else 0.0,
-        "major": round(major_total / total_updates, 2) if total_updates else 0.0,
-        "unknown": round(unknown_total / total_updates, 2) if total_updates else 0.0,
-    }
-
+    granularity_ratio = _granularity_ratio(type_counter, total_updates)
     avg_days_between = time_range_days / num_intervals if num_intervals else 0
 
     total_outdated_detected = len(ever_outdated)
     outdated_resolved_count = len(ever_outdated & ever_resolved)
-    # None means "no outdated packages were ever detected" — semantic N/A.
-    # Distinct from 0.0 ("outdated detected but nothing resolved").
-    update_coverage_pct: Optional[float] = (
-        round(outdated_resolved_count / total_outdated_detected * 100, 1)
-        if total_outdated_detected
-        else None
-    )
+    update_coverage_pct = _coverage_pct(ever_outdated, ever_resolved)
 
     trend_direction, trend_detail = _compute_trend(scan_timeline)
 
