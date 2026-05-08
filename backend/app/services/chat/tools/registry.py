@@ -25,6 +25,7 @@ from ._helpers import (
     _serialize_doc,
     _serialize_finding_for_llm,
     _truncate_if_too_large,
+    _waiver_is_active,
 )
 from .crypto_tools import (
     generate_pqc_migration_plan,
@@ -445,26 +446,38 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
+            now = datetime.now(timezone.utc)
             waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": args["project_id"]})
-            if waiver:
-                return {"waived": True, "waiver": _serialize_doc(waiver)}
-            global_waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
-            if global_waiver:
-                return {"waived": True, "waiver": _serialize_doc(global_waiver), "scope": "global"}
-            return {"waived": False}
+            scope: Optional[str] = None
+            if not waiver:
+                waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
+                if waiver:
+                    scope = "global"
+            if not waiver:
+                return {"waived": False}
+            if _waiver_is_active(waiver, now):
+                response: Dict[str, Any] = {"waived": True, "waiver": _serialize_doc(waiver)}
+                if scope:
+                    response["scope"] = scope
+                return response
+            # Waiver exists but is expired — surface it explicitly so the caller
+            # can renew it instead of believing nothing was ever waived.
+            return {"waived": False, "expired_waiver": _serialize_doc(waiver)}
 
         if tool_name == "list_project_waivers":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
+            now = datetime.now(timezone.utc)
             cursor = db["waivers"].find({"project_id": args["project_id"]}, limit=100)
             waivers = await cursor.to_list(length=100)
-            return {"waivers": [_serialize_doc(w) for w in waivers]}
+            return {"waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers]}
 
         if tool_name == "list_global_waivers":
+            now = datetime.now(timezone.utc)
             cursor = db["waivers"].find({"project_id": None}, limit=100)
             waivers = await cursor.to_list(length=100)
-            return {"waivers": [_serialize_doc(w) for w in waivers]}
+            return {"waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers]}
 
         if tool_name == "get_top_priority_findings":
             limit = _clamp_limit(args.get("limit"), 5, maximum=20)

@@ -416,6 +416,8 @@ export interface ScanFindingsParams {
   search?: string;
   license_category?: string;
   hide_info?: boolean;
+  /** True: only waived findings; False: only active; omitted: both. */
+  waived?: boolean;
 }
 
 export interface ScanFindingsResponse {

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { getErrorMessage } from '@/lib/utils'
+import { expirationDateInputToIso } from '@/lib/waiver-date'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,7 +41,9 @@ function EditWaiverForm({ waiver, onClose }: { waiver: Waiver; onClose: () => vo
             data: {
                 reason,
                 status,
-                expiration_date: date ? new Date(date).toISOString() : null,
+                // Keep null distinct from undefined: null clears the expiry on PATCH,
+                // undefined would leave it untouched. Empty input → null.
+                expiration_date: date ? expirationDateInputToIso(date) ?? null : null,
             },
         }, {
             onSuccess: () => {

@@ -1080,6 +1080,53 @@ async def read_scan_sboms(
     return await resolve_sbom_refs(db, sbom_refs)
 
 
+def _build_scan_findings_match(
+    scan_id: str,
+    *,
+    type: Optional[str] = None,
+    category: Optional[str] = None,
+    severity: Optional[str] = None,
+    search: Optional[str] = None,
+    license_category: Optional[str] = None,
+    hide_info: Optional[bool] = None,
+    waived: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Compose the ``$match`` stage for the scan-findings aggregation.
+
+    Extracted so we can unit-test filter combinations (``waived`` in
+    particular) without standing up MongoDB or the surrounding pipeline.
+    """
+    query: Dict[str, Any] = {"scan_id": scan_id}
+
+    if type:
+        query["type"] = type
+
+    if category:
+        type_filter = get_category_type_filter(category)
+        if type_filter:
+            query["type"] = type_filter
+
+    if severity:
+        query["severity"] = severity.upper()
+    if hide_info:
+        query["severity"] = {"$ne": "INFO"}
+    if license_category:
+        query["details.category"] = license_category
+    if waived is not None:
+        # Explicit True/False — the UI uses this to split active vs waived
+        # findings into two lists. Default (None) keeps the old behaviour and
+        # returns both, so non-UI callers aren't affected.
+        query["waived"] = waived
+    if search:
+        escaped_search = re.escape(search)
+        query["$or"] = [
+            {"component": {"$regex": escaped_search, "$options": "i"}},
+            {"finding_id": {"$regex": escaped_search, "$options": "i"}},
+            {"description": {"$regex": escaped_search, "$options": "i"}},
+        ]
+    return query
+
+
 @router.get(
     "/scans/{scan_id}/findings",
     response_model=ScanFindingsResponse,
@@ -1100,6 +1147,7 @@ async def read_scan_findings(
     search: Optional[str] = None,
     license_category: Optional[str] = None,  # permissive, weak_copyleft, strong_copyleft, etc.
     hide_info: Optional[bool] = None,  # Hide INFO severity findings
+    waived: Optional[bool] = None,  # True: only waived; False: only active; None: both
 ) -> Dict[str, Any]:
     """
     Get paginated findings for a scan.
@@ -1115,29 +1163,16 @@ async def read_scan_findings(
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
 
-    query: Dict[str, Any] = {"scan_id": scan_id}
-
-    if type:
-        query["type"] = type
-
-    if category:
-        type_filter = get_category_type_filter(category)
-        if type_filter:
-            query["type"] = type_filter
-
-    if severity:
-        query["severity"] = severity.upper()
-    if hide_info:
-        query["severity"] = {"$ne": "INFO"}
-    if license_category:
-        query["details.category"] = license_category
-    if search:
-        escaped_search = re.escape(search)
-        query["$or"] = [
-            {"component": {"$regex": escaped_search, "$options": "i"}},
-            {"finding_id": {"$regex": escaped_search, "$options": "i"}},
-            {"description": {"$regex": escaped_search, "$options": "i"}},
-        ]
+    query = _build_scan_findings_match(
+        scan_id,
+        type=type,
+        category=category,
+        severity=severity,
+        search=search,
+        license_category=license_category,
+        hide_info=hide_info,
+        waived=waived,
+    )
 
     # Severity Ranking for sorting
     pipeline: List[Dict[str, Any]] = [

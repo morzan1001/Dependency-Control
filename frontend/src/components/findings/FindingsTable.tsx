@@ -33,9 +33,16 @@ interface FindingsTableProps {
     licenseCategory?: string;
     /** Hide INFO-level findings */
     hideInfo?: boolean;
+    /**
+     * Which side of the active/waived split this table shows.
+     * - "active" (default): only un-waived findings — the main list users care about.
+     * - "waived": only waived findings — used for the secondary "what is being suppressed" list.
+     * - "all": both. Kept as an escape hatch; not used by the standard scan view.
+     */
+    waivedFilter?: "active" | "waived" | "all";
 }
 
-export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo }: FindingsTableProps) {
+export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active" }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
     const scrollTargetRef = useRef<HTMLTableRowElement | null>(null)
     const hasScrolledRef = useRef(false)
@@ -95,7 +102,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         isError
     } = useInfiniteQuery({
         // severity is NOT passed to API - we show all findings but scroll to the target
-        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo],
+        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
@@ -106,6 +113,10 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 sort_order: sortOrder,
                 ...(licenseCategory ? { license_category: licenseCategory } : {}),
                 ...(hideInfo ? { hide_info: true } : {}),
+                // "all" is the escape hatch — omit the param so the backend
+                // returns both waived and active findings.
+                ...(waivedFilter === "active" ? { waived: false } : {}),
+                ...(waivedFilter === "waived" ? { waived: true } : {}),
             });
             return res;
         },

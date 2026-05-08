@@ -1,8 +1,27 @@
 """Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
+
+
+def _waiver_is_active(waiver: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+    """Return True if the waiver's ``expiration_date`` is absent, null, or in the future.
+
+    Mirrors ``WaiverRepository._non_expired_filter`` so that read-side tools
+    (status checks, listings) report the same active-set as the apply path
+    (``find_active_for_project`` -> ``_apply_waivers``).
+    """
+    expiration: Optional[datetime] = waiver.get("expiration_date")
+    if expiration is None:
+        return True
+    reference = now or datetime.now(timezone.utc)
+    # expiration_date may have been stored timezone-naive in older records;
+    # normalize to UTC so the comparison never raises.
+    if expiration.tzinfo is None:
+        expiration = expiration.replace(tzinfo=timezone.utc)
+    return bool(expiration > reference)
 
 MAX_TOOL_LIMIT = 200  # Hard cap on LLM-supplied limit arguments to prevent DoS.
 MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.

@@ -7,10 +7,11 @@ import { useProject } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
 import { canDeleteProjectWaiver, canCreateProjectWaiver } from '@/lib/project-roles'
 import { EditWaiverDialog } from '@/components/waivers/EditWaiverDialog'
+import { WaiverExpiryCell } from '@/components/waivers/WaiverExpiryCell'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { getErrorMessage, formatDate } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -207,7 +208,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                     </TableCell>
                                     <TableCell className="max-w-[300px] truncate" title={waiver.reason}>{waiver.reason}</TableCell>
                                     <TableCell>
-                                        {waiver.expiration_date ? formatDate(waiver.expiration_date) : "Never"}
+                                        <WaiverExpiryCell waiver={waiver} />
                                     </TableCell>
                                     <TableCell>
                                         <div className="flex items-center gap-1">

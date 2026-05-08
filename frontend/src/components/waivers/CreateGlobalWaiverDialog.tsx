@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { getErrorMessage } from '@/lib/utils'
+import { expirationDateInputToIso } from '@/lib/waiver-date'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -76,7 +77,7 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: CreateGlobalWai
             rule_id: scope === 'rule' && ruleId ? ruleId : undefined,
             status,
             reason,
-            expiration_date: date ? new Date(date).toISOString() : undefined,
+            expiration_date: expirationDateInputToIso(date),
         }, {
             onSuccess: () => {
                 toast.success('Global waiver created successfully')

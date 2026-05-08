@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { getErrorMessage } from '@/lib/utils'
+import { expirationDateInputToIso } from '@/lib/waiver-date'
 import { ShieldAlert } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -60,7 +61,7 @@ export function WaiverForm({
       rule_id: scope === 'rule' ? ruleId : undefined,
       reason,
       status,
-      expiration_date: date ? new Date(date).toISOString() : undefined,
+      expiration_date: expirationDateInputToIso(date),
     }, {
         onSuccess: () => {
             toast.success('Waiver created successfully')

@@ -1,13 +1,28 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, computed_field
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
 from app.models.base import CreatedAtModel
 from app.models.finding import FindingType
 from app.models.types import PyObjectId
+
+
+def is_waiver_active(expiration_date: Optional[datetime], now: Optional[datetime] = None) -> bool:
+    """Return True if a waiver with the given expiration_date is still active.
+
+    Mirrors ``WaiverRepository._non_expired_filter`` so server-side reads,
+    Pydantic responses and the apply path share one rule. Tolerates
+    timezone-naive expiration_dates (treats them as UTC).
+    """
+    if expiration_date is None:
+        return True
+    reference = now or datetime.now(timezone.utc)
+    if expiration_date.tzinfo is None:
+        expiration_date = expiration_date.replace(tzinfo=timezone.utc)
+    return expiration_date > reference
 
 
 class Waiver(CreatedAtModel):
@@ -33,3 +48,8 @@ class Waiver(CreatedAtModel):
     created_by: str
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_active(self) -> bool:
+        return is_waiver_active(self.expiration_date)

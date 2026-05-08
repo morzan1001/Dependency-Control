@@ -4,6 +4,7 @@ import { SbomResponse, SbomTool, SbomToolComponent } from '@/types/scan'
 import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
 import { FindingsTable } from '@/components/findings/FindingsTable'
+import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSection'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
@@ -483,23 +484,27 @@ export default function ScanDetails() {
 
         <TabsContent value="overview" className="space-y-4">
             <FindingsTable scanId={scanId!} projectId={projectId!} severity={severityFilter} scanContext={scanContext} stickyHeaderTop={0} />
+            <WaivedFindingsSection scanId={scanId!} projectId={projectId!} scanContext={scanContext} />
         </TabsContent>
 
         {showSecurity && (
             <TabsContent value="security" className="space-y-4">
                 <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} stickyHeaderTop={0} />
+                <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showSecrets && (
             <TabsContent value="secrets" className="space-y-4">
                 <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={0} />
+                <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showSast && (
             <TabsContent value="sast" className="space-y-4">
                 <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} stickyHeaderTop={0} />
+                <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} />
             </TabsContent>
         )}
 
@@ -536,12 +541,20 @@ export default function ScanDetails() {
                     licenseCategory={complianceLicenseCategory}
                     hideInfo={complianceHideInfo}
                 />
+                <WaivedFindingsSection
+                    scanId={scanId!}
+                    projectId={projectId!}
+                    category="compliance"
+                    licenseCategory={complianceLicenseCategory}
+                    scanContext={scanContext}
+                />
             </TabsContent>
         )}
 
         {showQuality && (
             <TabsContent value="quality" className="space-y-4">
                 <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} stickyHeaderTop={0} />
+                <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} />
             </TabsContent>
         )}
 

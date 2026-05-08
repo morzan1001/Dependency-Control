@@ -5,7 +5,8 @@ import { Waiver } from '@/types/waiver'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { getErrorMessage, formatDate } from '@/lib/utils'
+import { getErrorMessage } from '@/lib/utils'
+import { WaiverExpiryCell } from '@/components/waivers/WaiverExpiryCell'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -210,7 +211,7 @@ export default function GlobalWaivers() {
                                         </TableCell>
                                         <TableCell className="max-w-[250px] truncate" title={waiver.reason}>{waiver.reason}</TableCell>
                                         <TableCell>
-                                            {waiver.expiration_date ? formatDate(waiver.expiration_date) : 'Never'}
+                                            <WaiverExpiryCell waiver={waiver} />
                                         </TableCell>
                                         <TableCell className="text-muted-foreground text-xs">{waiver.created_by}</TableCell>
                                         <TableCell>

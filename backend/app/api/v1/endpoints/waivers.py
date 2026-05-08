@@ -2,6 +2,7 @@ import re
 from typing import Annotated, Any, Dict, Optional
 
 from fastapi import BackgroundTasks, HTTPException, Query
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -22,7 +23,7 @@ from app.models.waiver import Waiver
 from app.repositories import WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
-from app.services.stats import recalculate_all_projects, recalculate_project_stats
+from app.services.stats import _build_waiver_query, recalculate_all_projects, recalculate_project_stats
 
 
 def _invalidate_analytics_cache() -> None:
@@ -35,6 +36,54 @@ def _invalidate_analytics_cache() -> None:
         get_analytics_cache().clear()
     except Exception:  # pragma: no cover — defensive; clear() has no I/O
         pass
+
+
+_MSG_NO_MATCHING_FINDING = (
+    "Waiver criteria do not match any finding in the project's latest scan. "
+    "Verify finding_id, finding_type, package_name and package_version. "
+    "Use scope='rule' or 'file' to pre-emptively waive future findings."
+)
+
+
+async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> None:
+    """Reject finding-scope project waivers whose criteria do not match any
+    finding in the project's latest scan.
+
+    Without this check, a typo in finding_id (e.g. missing the QUALITY: prefix)
+    or finding_type produces a stored waiver that will never be applied — a
+    "zombie waiver". The user assumes findings are silenced; the scanner keeps
+    re-reporting them. This helper closes that gap at write time.
+
+    Skipped for:
+      - Global waivers (project_id is None) — no single project to validate against.
+      - rule/file scope — preventive waivers that may match future findings only.
+      - vulnerability_id-targeted waivers — applied via apply_vulnerability_waiver,
+        which matches by vulnerability_id, so finding_id format is irrelevant.
+      - Projects without a latest scan — nothing to validate against yet.
+    """
+    if not waiver_in.project_id:
+        return
+    if waiver_in.scope != "finding":
+        return
+    if waiver_in.vulnerability_id:
+        return
+
+    project = await db.projects.find_one({"_id": waiver_in.project_id}, {"latest_scan_id": 1})
+    if not project:
+        return
+    latest_scan_id = project.get("latest_scan_id")
+    if not latest_scan_id:
+        return
+
+    probe = Waiver(**waiver_in.model_dump(), created_by="__validation__")
+    finding_query = _build_waiver_query(probe)
+    if not finding_query:
+        return  # nothing concrete to validate against
+
+    finding_query["scan_id"] = latest_scan_id
+    matches = await db.findings.count_documents(finding_query)
+    if matches == 0:
+        raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)
 
 
 router = CustomAPIRouter()
@@ -60,6 +109,10 @@ async def create_waiver(
         # Global waiver requires waiver:manage permission
         if not has_permission(current_user.permissions, Permissions.WAIVER_MANAGE):
             raise HTTPException(status_code=403, detail="Only admins can create global waivers")
+
+    # Reject zombie waivers (no current finding matches) early, before we
+    # consume a write and trigger stats recalculation.
+    await _ensure_waiver_matches_finding(waiver_in, db)
 
     # Auto-populate rule_id for rule-scope waivers
     if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:
