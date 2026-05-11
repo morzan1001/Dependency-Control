@@ -27,6 +27,18 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
+
+class ArchiveFailureReason:
+    """String constants for the `reason` label on archive_failures_total."""
+    S3_ERROR = "s3_error"
+    ENCRYPTION = "encryption"
+    NOT_FOUND = "not_found"
+    LOCK_HELD = "lock_held"
+    VERSION_MISMATCH = "version_mismatch"
+    INTEGRITY = "integrity"
+    UNKNOWN = "unknown"
+
+
 # Get version from package metadata (pyproject.toml)
 try:
     APP_VERSION = get_version("dependency-checks")
@@ -279,8 +291,14 @@ analysis_aggregation_duration_seconds = Histogram(
 
 archive_operations_total = Counter(
     "archive_operations_total",
-    "Total archive operations by type and status",
+    "Archive operations (archive/restore/download) by status.",
     ["operation", "status"],
+)
+
+archive_failures_total = Counter(
+    "archive_failures_total",
+    "Archive failures by operation and reason.",
+    ["operation", "reason"],  # reason in: s3_error|encryption|not_found|lock_held|version_mismatch|integrity|unknown
 )
 
 archive_operation_duration_seconds = Histogram(
@@ -314,14 +332,14 @@ archive_stored_bytes_total = Gauge(
 
 archive_housekeeping_batch_total = Counter(
     "archive_housekeeping_batch_total",
-    "Total housekeeping archive batches by status",
-    ["status"],
+    "Housekeeping archive batches by outcome.",
+    ["status"],  # success|partial_failure
 )
 
 archive_housekeeping_scans_processed = Counter(
     "archive_housekeeping_scans_processed",
-    "Total scans processed by housekeeping archival",
-    ["status"],
+    "Scans processed by housekeeping by outcome.",
+    ["status"],  # archived|failed|orphan_reaped
 )
 
 external_api_requests_total = Counter(
