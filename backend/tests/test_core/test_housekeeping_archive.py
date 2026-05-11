@@ -71,6 +71,7 @@ class TestArchiveScansAndDelete:
     def test_partial_failure_only_deletes_successful(self):
         # scan-1 archives ok, scan-2 fails
         async def mock_archive_fn(db, scan_id):
+            await asyncio.sleep(0)
             if scan_id == "scan-1":
                 return _make_archive_metadata(scan_id="scan-1")
             return None
@@ -98,19 +99,19 @@ class TestArchiveScansAndDelete:
         call_args = mock_delete.call_args[0]
         assert call_args[1] == []  # No scans to delete
 
-    def test_respects_batch_size_limit(self):
+    def test_processes_all_provided_scan_ids(self):
+        # _process_scans_in_batches is responsible for chunking; _archive_scans_and_delete
+        # must process every ID it receives (no internal slicing).
         scan_ids = [f"scan-{i}" for i in range(100)]
         metadata = _make_archive_metadata()
 
         with (
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=50),
-            patch(f"{MODULE}.ARCHIVE_BATCH_SIZE", 50),
+            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=100),
         ):
             asyncio.run(_archive_scans_and_delete(MagicMock(), scan_ids, "test"))
 
-        # Should only process ARCHIVE_BATCH_SIZE scans
-        assert mock_archive.call_count == 50
+        assert mock_archive.call_count == 100
 
 
 # ---------------------------------------------------------------------------
@@ -285,3 +286,106 @@ class TestRunHousekeepingArchive:
             asyncio.run(run_housekeeping())
 
         mock_handle.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Status filter tests (in-progress scan exclusion)
+# ---------------------------------------------------------------------------
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
+    """Global retention cursor must exclude scans with status pending/processing."""
+    from datetime import datetime, timezone
+    from app.core.housekeeping import run_housekeeping
+
+    captured_queries: list[dict] = []
+
+    db = MagicMock()
+
+    class _EmptyCursor:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    def find_capture(query, projection=None):
+        captured_queries.append(query)
+        return _EmptyCursor()
+
+    db.scans.find = find_capture
+
+    class _SystemSettings:
+        retention_mode = "global"
+        global_retention_days = 30
+        global_retention_action = "delete"
+
+    settings_repo = MagicMock()
+    settings_repo.get = AsyncMock(return_value=_SystemSettings())
+
+    monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
+    monkeypatch.setattr("app.core.housekeeping._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
+
+    await run_housekeeping()
+
+    assert len(captured_queries) >= 1
+    q = captured_queries[0]
+    assert "status" in q, f"Expected status filter in query, got: {q}"
+    assert q["status"] == {"$nin": ["pending", "processing"]}
+
+
+@pytest.mark.asyncio
+async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch):
+    """Project-specific retention cursor must also exclude pending/processing scans."""
+    from app.core.housekeeping import run_housekeeping
+
+    captured_queries: list[dict] = []
+
+    db = MagicMock()
+
+    class _EmptyCursor:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    def find_capture(query, projection=None):
+        captured_queries.append(query)
+        return _EmptyCursor()
+
+    db.scans.find = find_capture
+
+    # Aggregate yields one group
+    async def _agg_iter(_pipeline):
+        yield {
+            "_id": {"days": 30, "action": "delete"},
+            "project_ids": ["proj-1"],
+        }
+
+    db.projects.aggregate = lambda pipeline: _agg_iter(pipeline)
+
+    class _SystemSettings:
+        retention_mode = "project"
+        global_retention_days = 0
+        global_retention_action = "none"
+
+    settings_repo = MagicMock()
+    settings_repo.get = AsyncMock(return_value=_SystemSettings())
+
+    monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
+    monkeypatch.setattr("app.core.housekeeping._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
+
+    await run_housekeeping()
+
+    assert any("status" in q and q["status"] == {"$nin": ["pending", "processing"]} for q in captured_queries), (
+        f"Expected status filter in at least one cursor query, got: {captured_queries}"
+    )

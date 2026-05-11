@@ -284,7 +284,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
     archived_count = 0
     failed_ids: List[str] = []
 
-    for scan_id in scan_ids[:ARCHIVE_BATCH_SIZE]:
+    for scan_id in scan_ids:
         try:
             metadata = await archive_scan(db, scan_id)
             if metadata:
@@ -305,7 +305,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
         archive_housekeeping_batch_total.labels(status="success").inc()
 
     # Only delete scans that were successfully archived
-    successfully_archived = [sid for sid in scan_ids[:ARCHIVE_BATCH_SIZE] if sid not in failed_ids]
+    successfully_archived = [sid for sid in scan_ids if sid not in failed_ids]
 
     deleted = await _delete_scans_and_related_data(db, successfully_archived, label)
 
@@ -379,6 +379,7 @@ async def run_housekeeping() -> None:
                         "created_at": {"$lt": cutoff_date},
                         "_id": {"$nin": referenced_scan_ids},
                         "pinned": {"$ne": True},
+                        "status": {"$nin": ["pending", "processing"]},
                     },
                     {"_id": 1},
                 )
@@ -430,6 +431,7 @@ async def run_housekeeping() -> None:
                         "created_at": {"$lt": cutoff_date},
                         "_id": {"$nin": referenced_scan_ids},
                         "pinned": {"$ne": True},
+                        "status": {"$nin": ["pending", "processing"]},
                     },
                     {"_id": 1},
                 )
