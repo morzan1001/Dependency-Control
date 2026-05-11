@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from bson import ObjectId
+from cryptography.exceptions import InvalidTag
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.core.config import settings
 from app.core.constants import (
@@ -218,6 +220,17 @@ async def _save_archive_metadata(
     try:
         await repo.create(metadata)
         return metadata
+    except DuplicateKeyError as e:
+        # Expected race: another worker beat us to the metadata insert.
+        # The other worker's S3 upload is the authoritative one; clean up ours.
+        logger.info(f"Lost archive race for {scan_id}, cleaning up our S3 orphan: {e}")
+        try:
+            await delete_object(s3_key)
+        except Exception:
+            logger.exception("Cleanup delete failed for orphan S3 upload")
+        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.ALREADY_EXISTS).inc()
+        archive_operations_total.labels(operation="archive", status="failure").inc()
+        return None
     except Exception as e:
         logger.warning(f"Metadata create failed for {scan_id}, cleaning up S3 object: {e}")
         try:
@@ -405,6 +418,12 @@ async def _replay_bundle(
     except ValueError as e:
         logger.error(f"Restore parse error for scan {scan_id}: {e}")
         return _parse_error_reason(e), collections_restored, gridfs_entries
+    except PyMongoError as e:
+        logger.error(f"Restore MongoDB error for scan {scan_id}: {e}")
+        return ArchiveFailureReason.UNKNOWN, collections_restored, gridfs_entries
+    except InvalidTag as e:
+        logger.error(f"Restore decryption error for scan {scan_id}: {e}")
+        return ArchiveFailureReason.ENCRYPTION, collections_restored, gridfs_entries
     except Exception as e:
         logger.error(f"Restore stream error for scan {scan_id}: {e}")
         return ArchiveFailureReason.S3_ERROR, collections_restored, gridfs_entries
@@ -442,6 +461,28 @@ async def _restore_gridfs(
         logger.error(f"Restore of scan {scan_id} incomplete — {len(failures)} GridFS files failed.")
         return False
     return True
+
+
+async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
+    """Best-effort cleanup of partial MongoDB state after a restore failure.
+
+    The header event in _replay_bundle inserts the scan doc before any
+    collections are processed, so a mid-stream failure can leave the scan
+    plus partial findings/etc. behind. This makes a retry hit the
+    ALREADY_EXISTS guard and never recover. Sweep what we touched.
+    """
+    try:
+        await db.scans.delete_one({"_id": scan_id})
+        for coll in (
+            "findings",
+            "finding_records",
+            "dependencies",
+            "analysis_results",
+            "callgraphs",
+        ):
+            await getattr(db, coll).delete_many({"scan_id": scan_id})
+    except Exception as e:
+        logger.warning(f"Partial-restore rollback failed for {scan_id}: {e}")
 
 
 async def restore_scan(
@@ -491,6 +532,7 @@ async def restore_scan(
         )
 
         if failure_reason is not None:
+            await _rollback_partial_restore(db, scan_id)
             archive_failures_total.labels(operation="restore", reason=failure_reason).inc()
             archive_operations_total.labels(operation="restore", status="failure").inc()
             return None
@@ -502,16 +544,20 @@ async def restore_scan(
                 return None
             collections_restored.append("gridfs_sboms")
 
-        # Delete S3 object FIRST; only delete metadata if S3 delete succeeds.
+        # Delete S3 object first; if it fails the object becomes an orphan that
+        # the housekeeping reaper picks up after ARCHIVE_ORPHAN_MIN_AGE_HOURS.
+        # Either way, the metadata MUST be removed — the scan is already back
+        # in MongoDB, so leaving the metadata creates a "zombie" that the
+        # reaper won't touch (because it still has metadata) and blocks future
+        # re-archival via the existing-metadata short-circuit in archive_scan.
         try:
             await delete_object(metadata.s3_key, bucket=metadata.s3_bucket)
         except Exception as e:
             logger.warning(
-                f"S3 delete failed after restore (leaving metadata for orphan-reaper): {e}",
+                f"S3 delete failed after restore; orphan reaper will retry: {e}",
                 extra={"scan_id": scan_id, "s3_key": metadata.s3_key},
             )
-        else:
-            await repo.delete_by_scan_id(scan_id)
+        await repo.delete_by_scan_id(scan_id)
 
         duration = time.monotonic() - start_time
         archive_operations_total.labels(operation="restore", status="success").inc()

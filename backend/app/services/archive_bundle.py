@@ -196,3 +196,7 @@ async def read_bundle_frames(source: AsyncIterator[bytes]) -> AsyncIterator[Dict
 
     if not header_seen:
         raise ValueError("Empty bundle (no header)")
+    # If we reach here, the stream ended without yielding the footer event.
+    # The `if obj.get("footer") is True:` branch returns early on footer, so
+    # falling through means the source iterator was exhausted mid-bundle.
+    raise ValueError("Bundle truncated — no footer line found")

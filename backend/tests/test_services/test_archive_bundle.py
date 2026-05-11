@@ -192,3 +192,24 @@ async def test_header_serializes_objectid_id_and_project_id():
     assert header is not None
     assert header["scan_id"] == str(oid_scan)
     assert header["project_id"] == str(oid_proj)
+
+
+@pytest.mark.asyncio
+async def test_read_raises_when_footer_missing():
+    """A bundle stream that ends without the footer line must raise ValueError."""
+    from app.services.archive_bundle import read_bundle_frames
+
+    header = json.dumps(
+        {"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}
+    ).encode() + b"\n"
+    marker = json.dumps({"collection": "findings"}).encode() + b"\n"
+    doc = json.dumps({"_id": "f1"}).encode() + b"\n"
+    # NO footer line at the end
+    truncated = header + marker + doc
+
+    async def source():
+        yield truncated
+
+    with pytest.raises(ValueError, match="truncated|footer"):
+        async for _ in read_bundle_frames(source()):
+            pass  # drive the generator until it raises

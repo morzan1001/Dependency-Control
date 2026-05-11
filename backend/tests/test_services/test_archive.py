@@ -315,3 +315,163 @@ async def test_restore_scan_returns_none_when_no_metadata(archive_env):
         result = await restore_scan(db, "scan-1")
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for follow-up review bugs #2–#5
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_replay_labels_mongo_error_not_as_s3_error():
+    """A PyMongoError during replay must produce reason=UNKNOWN, not S3_ERROR."""
+    import json
+
+    from pymongo.errors import OperationFailure
+
+    from app.services.archive import _replay_bundle
+
+    header = json.dumps(
+        {"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}
+    ).encode() + b"\n"
+
+    async def src():
+        yield header
+
+    db = MagicMock()
+
+    async def fail_insert(_doc):
+        raise OperationFailure("simulated mongo failure")
+
+    db.scans.insert_one = fail_insert
+
+    reason, _, _ = await _replay_bundle(db, "x", src())
+    assert reason == "unknown"
+    assert reason != "s3_error"
+
+
+@pytest.mark.asyncio
+async def test_replay_labels_invalid_tag_as_encryption():
+    """An InvalidTag during replay (e.g. wrong key) must produce reason=ENCRYPTION."""
+    from cryptography.exceptions import InvalidTag
+
+    from app.services.archive import _replay_bundle
+
+    class _RaisingStream:
+        """Async iterator that raises InvalidTag on the first iteration."""
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise InvalidTag()
+
+    src = _RaisingStream()
+
+    db = MagicMock()
+    reason, _, _ = await _replay_bundle(db, "x", src)
+    assert reason == "encryption"
+
+
+@pytest.mark.asyncio
+async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
+    """Bug #3: S3 delete failure must NOT leave a zombie metadata record."""
+    scan_doc = _make_scan_doc()
+    findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
+    db = _make_mock_db(scan_doc=scan_doc, findings=findings)
+
+    # 1. Archive normally
+    with _patch_repos()() as (RepoCls, _):
+        meta = await archive_scan(db, "scan-1")
+        assert meta is not None
+
+    # 2. Set up restore with: scan doesn't exist, metadata exists, S3 DELETE will fail
+    db.scans.find_one = AsyncMock(return_value=None)
+
+    delete_metadata = AsyncMock(return_value=True)
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls, patch(f"{MODULE}.delete_object", AsyncMock(side_effect=RuntimeError("S3 down"))):
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        RepoCls.return_value.delete_by_scan_id = delete_metadata
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is not None  # restore is still successful
+    delete_metadata.assert_awaited_once_with("scan-1")
+
+
+@pytest.mark.asyncio
+async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, monkeypatch):
+    """Bug #4: when _replay_bundle fails, partial scan + collections must be cleaned up."""
+    meta = _make_archive_metadata()
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)  # scan not yet present
+    db.scans.delete_one = AsyncMock()
+    db.findings.delete_many = AsyncMock()
+    db.finding_records.delete_many = AsyncMock()
+    db.dependencies.delete_many = AsyncMock()
+    db.analysis_results.delete_many = AsyncMock()
+    db.callgraphs.delete_many = AsyncMock()
+
+    # Force _replay_bundle to return a failure reason
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(return_value=("integrity", ["scans"], [])),
+    )
+    # Bypass the S3 stream construction
+    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None  # failure
+    # Rollback was attempted across the touched collections
+    db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
+    db.findings.delete_many.assert_awaited()
+    db.dependencies.delete_many.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, monkeypatch):
+    """Bug #5: a DuplicateKeyError from repo.create must be labeled ALREADY_EXISTS, not UNKNOWN."""
+    from pymongo.errors import DuplicateKeyError
+
+    from app.core.metrics import archive_failures_total
+
+    # Capture which reason label was used
+    seen_reasons: list[str] = []
+    orig_labels = archive_failures_total.labels
+
+    def capture_labels(**kw):
+        if kw.get("operation") == "archive":
+            seen_reasons.append(kw.get("reason"))
+        return orig_labels(**kw)
+
+    monkeypatch.setattr(archive_failures_total, "labels", capture_labels)
+
+    scan_doc = _make_scan_doc()
+    db = _make_mock_db(scan_doc=scan_doc, findings=[{"_id": "f1", "scan_id": "scan-1"}])
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=None)
+        RepoCls.return_value.create = AsyncMock(side_effect=DuplicateKeyError("dup"))
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await archive_scan(db, "scan-1")
+
+    assert result is None
+    assert "already_exists" in seen_reasons
+    assert "unknown" not in seen_reasons
