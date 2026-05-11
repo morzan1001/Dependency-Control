@@ -4,10 +4,11 @@ Archive API Endpoints
 Provides endpoints for listing, downloading, restoring, and managing archived scan data.
 """
 
+import logging
 import math
 import time
 from datetime import datetime
-from typing import Annotated, List, Optional
+from typing import Annotated, AsyncIterator, List, Optional
 
 from fastapi import HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -18,8 +19,13 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.permissions import Permissions, has_permission
-from app.core.encryption import is_encryption_enabled
-from app.core.metrics import archive_operation_duration_seconds, archive_operations_total
+from app.core.encryption import decrypt_stream, is_encryption_enabled
+from app.core.metrics import (
+    ArchiveFailureReason,
+    archive_failures_total,
+    archive_operation_duration_seconds,
+    archive_operations_total,
+)
 from app.core.s3 import download_stream, is_archive_enabled
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.schemas.archive import (
@@ -31,6 +37,8 @@ from app.schemas.archive import (
     ScanPinResponse,
 )
 from app.services.archive import restore_scan
+
+logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 admin_router = CustomAPIRouter()
@@ -141,10 +149,11 @@ async def restore_archive(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ArchiveRestoreResponse:
-    """
-    Restore an archived scan and all its data from S3 back to MongoDB.
-    The restored scan is automatically pinned to prevent re-archival by housekeeping.
-    Requires archive:restore permission and project admin role.
+    """Restore an archived scan from S3 back into MongoDB.
+
+    Returns 404 if no archive exists for this project, 409 if the scan
+    already exists in MongoDB (likely from a concurrent restore), 500 on
+    other failures.
     """
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_RESTORE)
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
@@ -159,8 +168,27 @@ async def restore_archive(
 
     result = await restore_scan(db, scan_id)
     if not result:
+        # restore_scan returns None for several failure modes (lock-held,
+        # scan-already-exists, integrity, S3 error). Distinguish the most
+        # actionable one for the API: scan already exists → 409.
+        # Best-effort 409 vs 500 disambiguation. There is a small TOCTOU
+        # window: by the time we check db.scans here, restore_scan has
+        # already released its lock, so a concurrent inserter could have
+        # added the scan. Acceptable: 409 is informational, not contract.
+        existing_scan = await db.scans.find_one({"_id": scan_id})
+        if existing_scan:
+            raise HTTPException(status_code=409, detail="Scan already exists in MongoDB")
         raise HTTPException(status_code=500, detail="Failed to restore archive")
 
+    logger.info(
+        "archive.restore",
+        extra={
+            "user_id": getattr(current_user, "id", None),
+            "scan_id": scan_id,
+            "project_id": project_id,
+            "collections_restored": result.collections_restored,
+        },
+    )
     return result
 
 
@@ -175,44 +203,60 @@ async def download_archive(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> StreamingResponse:
-    """Download the raw .json.gz archive file. Requires archive:download permission."""
+    """Download the raw bundle as a stream. Requires archive:download permission."""
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_DOWNLOAD)
     await check_project_access(project_id, current_user, db)
-
     _require_archive_enabled()
 
     repo = ArchiveMetadataRepository(db)
     metadata = await repo.find_by_scan_id(scan_id)
-
     if not metadata or metadata.project_id != project_id:
         raise HTTPException(status_code=404, detail="Archive not found for this project")
 
+    logger.info(
+        "archive.download.initiated",
+        extra={
+            "user_id": getattr(current_user, "id", None),
+            "scan_id": scan_id,
+            "project_id": project_id,
+            "s3_key": metadata.s3_key,
+        },
+    )
+
     start_time = time.monotonic()
 
-    async def _stream():
-        from app.core.encryption import decrypt_stream
+    async def _stream() -> AsyncIterator[bytes]:
         try:
-            s3_chunks = download_stream(metadata.s3_key)
-            source = decrypt_stream(s3_chunks) if is_encryption_enabled() else s3_chunks
-            async for chunk in source:
+            chunks = download_stream(metadata.s3_key, bucket=metadata.s3_bucket)
+            if is_encryption_enabled():
+                chunks = decrypt_stream(chunks)
+            async for chunk in chunks:
                 yield chunk
+            logger.info(
+                "archive.download.completed",
+                extra={
+                    "scan_id": scan_id,
+                    "project_id": project_id,
+                    "s3_key": metadata.s3_key,
+                },
+            )
+            duration = time.monotonic() - start_time
+            archive_operations_total.labels(operation="download", status="success").inc()
+            archive_operation_duration_seconds.labels(operation="download").observe(duration)
         except Exception:
+            archive_failures_total.labels(
+                operation="download", reason=ArchiveFailureReason.S3_ERROR
+            ).inc()
             archive_operations_total.labels(operation="download", status="failure").inc()
             raise
 
-    # TODO(task-10): success metric is emitted before the stream actually completes.
-    # Move duration + success increment into the _stream() generator's success path
-    # and ensure the failure path inside _stream() is the sole failure increment.
-    duration = time.monotonic() - start_time
-    archive_operations_total.labels(operation="download", status="success").inc()
-    archive_operation_duration_seconds.labels(operation="download").observe(duration)
+    suffix = ".bundle" if is_encryption_enabled() else ".json.gz"
+    media_type = "application/octet-stream" if is_encryption_enabled() else "application/gzip"
 
     return StreamingResponse(
         _stream(),
-        media_type="application/gzip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{scan_id}.bundle"',
-        },
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{scan_id}{suffix}"'},
     )
 
 
@@ -236,6 +280,14 @@ async def pin_scan(
         raise HTTPException(status_code=404, detail="Scan not found")
 
     await db.scans.update_one({"_id": scan_id}, {"$set": {"pinned": True}})
+    logger.info(
+        "archive.pin",
+        extra={
+            "user_id": getattr(current_user, "id", None),
+            "scan_id": scan_id,
+            "project_id": project_id,
+        },
+    )
     return ScanPinResponse(scan_id=scan_id, pinned=True)
 
 
@@ -259,6 +311,14 @@ async def unpin_scan(
         raise HTTPException(status_code=404, detail="Scan not found")
 
     await db.scans.update_one({"_id": scan_id}, {"$set": {"pinned": False}})
+    logger.info(
+        "archive.unpin",
+        extra={
+            "user_id": getattr(current_user, "id", None),
+            "scan_id": scan_id,
+            "project_id": project_id,
+        },
+    )
     return ScanPinResponse(scan_id=scan_id, pinned=False)
 
 
