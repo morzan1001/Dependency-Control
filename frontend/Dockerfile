@@ -1,5 +1,5 @@
 # Build stage
-FROM node:25-alpine AS builder
+FROM node:26-alpine AS builder
 
 # Non-interactive — pnpm's dep-status check otherwise aborts on no-TTY.
 ENV CI=true
