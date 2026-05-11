@@ -34,6 +34,7 @@ class ArchiveFailureReason:
     ENCRYPTION = "encryption"
     NOT_FOUND = "not_found"
     LOCK_HELD = "lock_held"
+    ALREADY_EXISTS = "already_exists"
     VERSION_MISMATCH = "version_mismatch"
     INTEGRITY = "integrity"
     UNKNOWN = "unknown"
@@ -298,7 +299,7 @@ archive_operations_total = Counter(
 archive_failures_total = Counter(
     "archive_failures_total",
     "Archive failures by operation and reason.",
-    ["operation", "reason"],  # reason in: s3_error|encryption|not_found|lock_held|version_mismatch|integrity|unknown
+    ["operation", "reason"],  # reason in: s3_error|encryption|not_found|lock_held|already_exists|version_mismatch|integrity|unknown
 )
 
 archive_operation_duration_seconds = Histogram(

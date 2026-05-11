@@ -18,9 +18,9 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
 from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.permissions import Permissions, has_permission
-from app.core.encryption import decrypt, is_encryption_enabled
+from app.core.encryption import is_encryption_enabled
 from app.core.metrics import archive_operation_duration_seconds, archive_operations_total
-from app.core.s3 import download_bytes, is_archive_enabled
+from app.core.s3 import download_stream, is_archive_enabled
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.schemas.archive import (
     AdminArchiveListItem,
@@ -188,25 +188,30 @@ async def download_archive(
         raise HTTPException(status_code=404, detail="Archive not found for this project")
 
     start_time = time.monotonic()
-    try:
-        data = await download_bytes(metadata.s3_key)
-    except Exception:
-        archive_operations_total.labels(operation="download", status="failure").inc()
-        raise HTTPException(status_code=500, detail="Failed to download archive from storage")
 
-    if is_encryption_enabled():
-        data = decrypt(data)
+    async def _stream():
+        from app.core.encryption import decrypt_stream
+        try:
+            s3_chunks = download_stream(metadata.s3_key)
+            source = decrypt_stream(s3_chunks) if is_encryption_enabled() else s3_chunks
+            async for chunk in source:
+                yield chunk
+        except Exception:
+            archive_operations_total.labels(operation="download", status="failure").inc()
+            raise
 
+    # TODO(task-10): success metric is emitted before the stream actually completes.
+    # Move duration + success increment into the _stream() generator's success path
+    # and ensure the failure path inside _stream() is the sole failure increment.
     duration = time.monotonic() - start_time
     archive_operations_total.labels(operation="download", status="success").inc()
     archive_operation_duration_seconds.labels(operation="download").observe(duration)
 
     return StreamingResponse(
-        iter([data]),
+        _stream(),
         media_type="application/gzip",
         headers={
-            "Content-Disposition": f'attachment; filename="{scan_id}.json.gz"',
-            "Content-Length": str(len(data)),
+            "Content-Disposition": f'attachment; filename="{scan_id}.bundle"',
         },
     )
 
