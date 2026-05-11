@@ -964,14 +964,26 @@ RETENTION_ACTIONS = [
     RETENTION_ACTION_NONE,
 ]
 
-# Archive S3 path template
-ARCHIVE_PATH_TEMPLATE = "{project_id}/{scan_id}.json.gz"
+# Archive bundle wire format
+ARCHIVE_BUNDLE_VERSION = 2
+ARCHIVE_PATH_TEMPLATE = "{project_id}/{scan_id}-{archived_at_unix}.bundle"
 
-# Archive bundle version for forward compatibility
-ARCHIVE_BUNDLE_VERSION = 1
+# Encryption wire format (chunked AES-GCM)
+ENCRYPTION_MAGIC = b"DCEN"
+ENCRYPTION_FORMAT_VERSION = 2
+ENCRYPTION_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB plaintext per chunk
 
-# Maximum number of scans to archive per housekeeping cycle (backpressure)
+# S3 multipart upload
+S3_MULTIPART_PART_SIZE = 5 * 1024 * 1024 + 256 * 1024  # ~5.25 MiB (S3 min is 5 MiB except final part)
+
+# Restore batching
+RESTORE_INSERT_BATCH_SIZE = 1000
+
+# Housekeeping
 ARCHIVE_BATCH_SIZE = 50
+
+# Orphan reaper: only delete S3 objects older than this without metadata
+ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 
 # CBOM / Crypto
 MAX_CRYPTO_ASSETS_PER_SCAN: int = 50_000
