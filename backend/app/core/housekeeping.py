@@ -11,6 +11,7 @@ from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
+    ARCHIVE_ORPHAN_MIN_AGE_HOURS,
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
@@ -20,7 +21,7 @@ from app.core.constants import (
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
 )
-from app.core.s3 import is_archive_enabled
+from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
 from app.repositories.system_settings import SystemSettingsRepository
@@ -269,6 +270,48 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         logger.error(f"Scheduled re-scan check failed: {e}")
 
 
+async def _reap_orphan_s3_objects(db: Any) -> int:
+    """Delete S3 archive objects that have no matching ``archive_metadata`` record.
+
+    Only deletes objects older than ``ARCHIVE_ORPHAN_MIN_AGE_HOURS`` to give
+    in-flight archives time to write their metadata. Best-effort: errors
+    listing or deleting are logged and swallowed.
+
+    Returns the number of objects actually deleted.
+    """
+    if not is_archive_enabled():
+        return 0
+    try:
+        all_objects = await list_objects()
+    except Exception as e:
+        logger.warning(f"Orphan reaper: list_objects failed: {e}")
+        return 0
+
+    known_keys: set[str] = set()
+    async for meta in db.archive_metadata.find({}, {"s3_key": 1}):
+        key = meta.get("s3_key")
+        if key:
+            known_keys.add(key)
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
+    deleted = 0
+    for obj in all_objects:
+        key = obj.get("Key")
+        last_mod = obj.get("LastModified")
+        if not key or key in known_keys:
+            continue
+        if last_mod and last_mod > cutoff:
+            continue
+        try:
+            await delete_object(key)
+            deleted += 1
+            archive_housekeeping_scans_processed.labels(status="orphan_reaped").inc()
+            logger.info(f"Reaped orphan S3 object: {key}")
+        except Exception as e:
+            logger.warning(f"Failed to delete orphan {key}: {e}")
+    return deleted
+
+
 async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "") -> int:
     """
     Archive scans to S3, then delete from MongoDB.
@@ -448,6 +491,12 @@ async def run_housekeeping() -> None:
             await sweep_expired_compliance_reports(db)
         except Exception as e:
             logger.error(f"Housekeeping: compliance report sweep failed: {e}")
+
+        # Orphan-reaper: delete S3 archive objects with no matching metadata
+        try:
+            await _reap_orphan_s3_objects(db)
+        except Exception as e:
+            logger.error(f"Orphan reaper failed: {e}")
 
     except Exception as e:
         logger.error(f"Housekeeping task failed: {e}")

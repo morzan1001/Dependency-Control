@@ -389,3 +389,80 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
     assert any("status" in q and q["status"] == {"$nin": ["pending", "processing"]} for q in captured_queries), (
         f"Expected status filter in at least one cursor query, got: {captured_queries}"
     )
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_s3_objects_deletes_only_old_unknown_keys(monkeypatch):
+    """Reaper deletes S3 objects that have no archive_metadata record AND are older than min age."""
+    from datetime import datetime, timezone, timedelta
+
+    from app.core.housekeeping import _reap_orphan_s3_objects
+
+    now = datetime.now(timezone.utc)
+    old_time = now - timedelta(hours=48)
+    recent_time = now - timedelta(hours=2)
+
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.core.housekeeping.list_objects",
+        AsyncMock(
+            return_value=[
+                {"Key": "p1/scan-orphan-old.bundle", "Size": 100, "LastModified": old_time},
+                {"Key": "p1/scan-orphan-recent.bundle", "Size": 100, "LastModified": recent_time},
+                {"Key": "p1/scan-known.bundle", "Size": 100, "LastModified": old_time},
+            ]
+        ),
+    )
+
+    delete_calls: list[str] = []
+
+    async def fake_delete(key, **kw):
+        delete_calls.append(key)
+
+    monkeypatch.setattr("app.core.housekeeping.delete_object", fake_delete)
+
+    db = MagicMock()
+
+    async def metadata_cursor(*_args, **_kwargs):
+        yield {"s3_key": "p1/scan-known.bundle"}
+
+    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
+
+    reaped = await _reap_orphan_s3_objects(db)
+
+    assert reaped == 1
+    assert delete_calls == ["p1/scan-orphan-old.bundle"]
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_skips_when_archive_disabled(monkeypatch):
+    from app.core.housekeeping import _reap_orphan_s3_objects
+
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
+    # list_objects should NOT be called
+    list_calls = []
+    monkeypatch.setattr(
+        "app.core.housekeeping.list_objects",
+        AsyncMock(side_effect=lambda *a, **kw: list_calls.append(1)),
+    )
+
+    db = MagicMock()
+    reaped = await _reap_orphan_s3_objects(db)
+    assert reaped == 0
+    assert list_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_tolerates_list_failure(monkeypatch):
+    """If list_objects raises, the reaper returns 0 (best-effort) without re-raising."""
+    from app.core.housekeeping import _reap_orphan_s3_objects
+
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.core.housekeeping.list_objects",
+        AsyncMock(side_effect=RuntimeError("S3 unavailable")),
+    )
+
+    db = MagicMock()
+    reaped = await _reap_orphan_s3_objects(db)
+    assert reaped == 0
