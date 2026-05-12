@@ -142,8 +142,7 @@ async def get_update_frequency_comparison(
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     cache_key = (
-        f"{CacheKeys.update_frequency_comparison(current_user.id, team_id or 'all')}"
-        f":m{max_scans}:w{window_days or 0}"
+        f"{CacheKeys.update_frequency_comparison(current_user.id, team_id or 'all')}:m{max_scans}:w{window_days or 0}"
     )
     cached = await cache_service.get(cache_key)
     if cached:

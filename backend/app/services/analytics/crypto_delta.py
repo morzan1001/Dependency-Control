@@ -85,7 +85,7 @@ async def compute_crypto_delta_envelope(
     total = len(items)
     total_pages = max(1, (total + page_size - 1) // page_size)
     start = (page - 1) * page_size
-    paged = items[start:start + page_size]
+    paged = items[start : start + page_size]
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,

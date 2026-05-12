@@ -54,4 +54,3 @@ class TestHandleFailedAnalysis:
         args, _ = update_one.await_args
         assert args[0] == {"_id": "scan-1"}
         assert args[1]["$set"]["status"] == "failed"
-

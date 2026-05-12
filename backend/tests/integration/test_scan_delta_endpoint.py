@@ -123,18 +123,20 @@ async def test_returns_200_findings(client, db, owner_auth_headers_proj):
     """Happy path: one added finding between two scans of project p."""
     await db["scans"].insert_one(_scan_doc("ok1", "p"))
     await db["scans"].insert_one(_scan_doc("ok2", "p"))
-    await db["findings"].insert_one({
-        "_id": "f1",
-        "project_id": "p",
-        "scan_id": "ok2",
-        "finding_id": "f1",
-        "type": "vulnerability",
-        "severity": "critical",
-        "component": "x",
-        "description": "d",
-        "details": {"cve_id": "C-1"},
-        "created_at": datetime.now(timezone.utc),
-    })
+    await db["findings"].insert_one(
+        {
+            "_id": "f1",
+            "project_id": "p",
+            "scan_id": "ok2",
+            "finding_id": "f1",
+            "type": "vulnerability",
+            "severity": "critical",
+            "component": "x",
+            "description": "d",
+            "details": {"cve_id": "C-1"},
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
 
     resp = await client.get(
         BASE,
@@ -160,25 +162,57 @@ async def test_returns_200_components_with_version_change(client, db, owner_auth
     """category=components surfaces version_changed entries with from/to versions."""
     await db["scans"].insert_one(_scan_doc("cmp_a", "p"))
     await db["scans"].insert_one(_scan_doc("cmp_b", "p"))
-    await db["dependencies"].insert_many([
-        {"_id": "d_a1", "project_id": "p", "scan_id": "cmp_a",
-         "name": "react", "version": "17.0.2", "purl": "pkg:npm/react@17.0.2",
-         "license": "MIT", "type": "npm"},
-        {"_id": "d_a2", "project_id": "p", "scan_id": "cmp_a",
-         "name": "left-pad", "version": "1.0.0", "purl": "pkg:npm/left-pad@1.0.0",
-         "license": "WTFPL", "type": "npm"},
-        {"_id": "d_b1", "project_id": "p", "scan_id": "cmp_b",
-         "name": "react", "version": "18.2.0", "purl": "pkg:npm/react@18.2.0",
-         "license": "MIT", "type": "npm"},
-        {"_id": "d_b2", "project_id": "p", "scan_id": "cmp_b",
-         "name": "axios", "version": "1.0.0", "purl": "pkg:npm/axios@1.0.0",
-         "license": "MIT", "type": "npm"},
-    ])
+    await db["dependencies"].insert_many(
+        [
+            {
+                "_id": "d_a1",
+                "project_id": "p",
+                "scan_id": "cmp_a",
+                "name": "react",
+                "version": "17.0.2",
+                "purl": "pkg:npm/react@17.0.2",
+                "license": "MIT",
+                "type": "npm",
+            },
+            {
+                "_id": "d_a2",
+                "project_id": "p",
+                "scan_id": "cmp_a",
+                "name": "left-pad",
+                "version": "1.0.0",
+                "purl": "pkg:npm/left-pad@1.0.0",
+                "license": "WTFPL",
+                "type": "npm",
+            },
+            {
+                "_id": "d_b1",
+                "project_id": "p",
+                "scan_id": "cmp_b",
+                "name": "react",
+                "version": "18.2.0",
+                "purl": "pkg:npm/react@18.2.0",
+                "license": "MIT",
+                "type": "npm",
+            },
+            {
+                "_id": "d_b2",
+                "project_id": "p",
+                "scan_id": "cmp_b",
+                "name": "axios",
+                "version": "1.0.0",
+                "purl": "pkg:npm/axios@1.0.0",
+                "license": "MIT",
+                "type": "npm",
+            },
+        ]
+    )
 
     resp = await client.get(
         BASE,
         params={
-            "project_id": "p", "from_scan_id": "cmp_a", "to_scan_id": "cmp_b",
+            "project_id": "p",
+            "from_scan_id": "cmp_a",
+            "to_scan_id": "cmp_b",
             "category": "components",
         },
         headers=owner_auth_headers_proj,
@@ -207,21 +241,41 @@ async def test_returns_200_crypto(client, db, owner_auth_headers_proj):
     await db["scans"].insert_one(_scan_doc("cr_a", "p"))
     await db["scans"].insert_one(_scan_doc("cr_b", "p"))
     repo = CryptoAssetRepository(db)
-    await repo.bulk_upsert("p", "cr_a", [
-        CryptoAsset(project_id="p", scan_id="cr_a", bom_ref="a1",
-                    name="MD5", asset_type=CryptoAssetType.ALGORITHM,
-                    primitive=CryptoPrimitive.HASH),
-    ])
-    await repo.bulk_upsert("p", "cr_b", [
-        CryptoAsset(project_id="p", scan_id="cr_b", bom_ref="b1",
-                    name="SHA-256", asset_type=CryptoAssetType.ALGORITHM,
-                    primitive=CryptoPrimitive.HASH),
-    ])
+    await repo.bulk_upsert(
+        "p",
+        "cr_a",
+        [
+            CryptoAsset(
+                project_id="p",
+                scan_id="cr_a",
+                bom_ref="a1",
+                name="MD5",
+                asset_type=CryptoAssetType.ALGORITHM,
+                primitive=CryptoPrimitive.HASH,
+            ),
+        ],
+    )
+    await repo.bulk_upsert(
+        "p",
+        "cr_b",
+        [
+            CryptoAsset(
+                project_id="p",
+                scan_id="cr_b",
+                bom_ref="b1",
+                name="SHA-256",
+                asset_type=CryptoAssetType.ALGORITHM,
+                primitive=CryptoPrimitive.HASH,
+            ),
+        ],
+    )
 
     resp = await client.get(
         BASE,
         params={
-            "project_id": "p", "from_scan_id": "cr_a", "to_scan_id": "cr_b",
+            "project_id": "p",
+            "from_scan_id": "cr_a",
+            "to_scan_id": "cr_b",
             "category": "crypto",
         },
         headers=owner_auth_headers_proj,
@@ -242,8 +296,11 @@ async def test_returns_400_for_unknown_severity(client, db, owner_auth_headers_p
     resp = await client.get(
         BASE,
         params={
-            "project_id": "p", "from_scan_id": "ts1", "to_scan_id": "ts2",
-            "category": "findings", "severity": "criticla",
+            "project_id": "p",
+            "from_scan_id": "ts1",
+            "to_scan_id": "ts2",
+            "category": "findings",
+            "severity": "criticla",
         },
         headers=owner_auth_headers_proj,
     )
@@ -258,8 +315,11 @@ async def test_returns_400_for_page_size_above_max(client, db, owner_auth_header
     resp = await client.get(
         BASE,
         params={
-            "project_id": "p", "from_scan_id": "ps1", "to_scan_id": "ps2",
-            "category": "findings", "page_size": 500,
+            "project_id": "p",
+            "from_scan_id": "ps1",
+            "to_scan_id": "ps2",
+            "category": "findings",
+            "page_size": 500,
         },
         headers=owner_auth_headers_proj,
     )

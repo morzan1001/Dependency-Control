@@ -39,11 +39,11 @@ def component_identity_key(comp: Dict) -> Tuple[str, str]:
 
 
 async def _fetch_components(
-    db: AsyncIOMotorDatabase, project_id: str, scan_id: str,
+    db: AsyncIOMotorDatabase,
+    project_id: str,
+    scan_id: str,
 ) -> List[dict]:
-    cursor = db["dependencies"].find(
-        {"project_id": project_id, "scan_id": scan_id}
-    ).limit(_MAX_FETCH)
+    cursor = db["dependencies"].find({"project_id": project_id, "scan_id": scan_id}).limit(_MAX_FETCH)
     return [doc async for doc in cursor]
 
 
@@ -125,7 +125,7 @@ async def compute_components_delta(
     total_items = len(items)
     total_pages = max(1, (total_items + page_size - 1) // page_size)
     start = (page - 1) * page_size
-    paged = items[start:start + page_size]
+    paged = items[start : start + page_size]
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,

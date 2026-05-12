@@ -131,8 +131,7 @@ class OSVAnalyzer(Analyzer):
         batch_results = data.get("results", [])
         if len(batch_results) != len(valid_components):
             logger.warning(
-                f"OSV API response count mismatch: "
-                f"sent {len(valid_components)}, received {len(batch_results)}"
+                f"OSV API response count mismatch: sent {len(valid_components)}, received {len(batch_results)}"
             )
             batch_results = batch_results[: len(valid_components)]
 
@@ -146,9 +145,7 @@ class OSVAnalyzer(Analyzer):
         if cache_mapping:
             await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
 
-    def _build_cache_entry(
-        self, component: Dict[str, Any], vulns: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _build_cache_entry(self, component: Dict[str, Any], vulns: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Build the per-component dict that gets written to cache and to results."""
         comp_name = component.get("name", "")
         comp_version = component.get("version", "")

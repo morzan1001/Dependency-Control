@@ -40,10 +40,7 @@ _MAX_PAGE_SIZE = 200
 def _reject_unknown(values: List[str], allowed: set, label: str) -> None:
     unknown = [v for v in values if v not in allowed]
     if unknown:
-        raise InvalidDeltaQuery(
-            f"unknown {label} values: {', '.join(unknown)} "
-            f"(valid: {', '.join(sorted(allowed))})"
-        )
+        raise InvalidDeltaQuery(f"unknown {label} values: {', '.join(unknown)} (valid: {', '.join(sorted(allowed))})")
 
 
 def _validate_query(
@@ -64,22 +61,16 @@ def _validate_query(
     if page < _MIN_PAGE:
         raise InvalidDeltaQuery(f"page must be >= {_MIN_PAGE}")
     if page_size < _MIN_PAGE_SIZE or page_size > _MAX_PAGE_SIZE:
-        raise InvalidDeltaQuery(
-            f"page_size must be between {_MIN_PAGE_SIZE} and {_MAX_PAGE_SIZE}"
-        )
+        raise InvalidDeltaQuery(f"page_size must be between {_MIN_PAGE_SIZE} and {_MAX_PAGE_SIZE}")
     if category != "findings" and (severity or finding_type):
-        raise InvalidDeltaQuery(
-            "severity and finding_type are only valid with category=findings"
-        )
+        raise InvalidDeltaQuery("severity and finding_type are only valid with category=findings")
     if severity:
         _reject_unknown(severity, _VALID_SEVERITIES, "severity")
     if finding_type:
         _reject_unknown(finding_type, _VALID_FINDING_TYPES, "finding_type")
     if change is not None and change not in _VALID_CHANGES_BY_CATEGORY[category]:
         valid = ", ".join(sorted(_VALID_CHANGES_BY_CATEGORY[category]))
-        raise InvalidDeltaQuery(
-            f"change={change} is not valid for category={category} (valid: {valid})"
-        )
+        raise InvalidDeltaQuery(f"change={change} is not valid for category={category} (valid: {valid})")
 
 
 async def compute_scan_delta_dispatch(

@@ -104,9 +104,7 @@ class TestCheckYankedIntegration:
     both branches affect whether a yanked finding actually surfaces."""
 
     @pytest.mark.asyncio
-    async def test_cache_hit_emits_finding_without_http(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_cache_hit_emits_finding_without_http(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Pre-seed the cache with a withdrawn version list. The analyzer
         # should never call the HTTP layer in this path.
         seeded_key = "yanked:pypi:retract-me"
@@ -128,9 +126,7 @@ class TestCheckYankedIntegration:
         assert seeded_key in cache.gets
 
     @pytest.mark.asyncio
-    async def test_cache_hit_with_active_version_emits_nothing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_cache_hit_with_active_version_emits_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Cache holds the withdrawn list, but our installed version isn't in it.
         cache = _FakeCache({"yanked:pypi:still-good": ["0.9.0"]})  # 1.0.0 not yanked
         monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
@@ -144,9 +140,7 @@ class TestCheckYankedIntegration:
         assert findings == []
 
     @pytest.mark.asyncio
-    async def test_cache_miss_falls_through_to_http_and_caches(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_cache_miss_falls_through_to_http_and_caches(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cache = _FakeCache()  # cold
         monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
 
@@ -154,8 +148,11 @@ class TestCheckYankedIntegration:
 
         class _ScriptedClient:
             def __init__(self, *_a: Any, **_k: Any) -> None: ...
-            async def __aenter__(self) -> "_ScriptedClient": return self
-            async def __aexit__(self, *_a: Any) -> None: return None
+            async def __aenter__(self) -> "_ScriptedClient":
+                return self
+
+            async def __aexit__(self, *_a: Any) -> None:
+                return None
 
             async def get(self, url: str, **_kwargs: Any) -> Any:
                 captured_urls.append(url)
@@ -170,9 +167,7 @@ class TestCheckYankedIntegration:
                     },
                 )
 
-        monkeypatch.setattr(
-            "app.services.analyzers.outdated.InstrumentedAsyncClient", _ScriptedClient
-        )
+        monkeypatch.setattr("app.services.analyzers.outdated.InstrumentedAsyncClient", _ScriptedClient)
 
         analyzer = OutdatedAnalyzer()
         findings = await analyzer._check_yanked([_component("withdrawn-pkg", "1.0.0")])
@@ -187,9 +182,7 @@ class TestCheckYankedIntegration:
         assert "yanked:pypi:withdrawn-pkg" in cache.sets
 
     @pytest.mark.asyncio
-    async def test_http_failure_skips_finding_rather_than_false_positive(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_http_failure_skips_finding_rather_than_false_positive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # If we can't reach deps.dev we must not invent yanked findings —
         # the conservative behaviour is "no signal".
         cache = _FakeCache()
@@ -197,15 +190,16 @@ class TestCheckYankedIntegration:
 
         class _ErrorClient:
             def __init__(self, *_a: Any, **_k: Any) -> None: ...
-            async def __aenter__(self) -> "_ErrorClient": return self
-            async def __aexit__(self, *_a: Any) -> None: return None
+            async def __aenter__(self) -> "_ErrorClient":
+                return self
+
+            async def __aexit__(self, *_a: Any) -> None:
+                return None
 
             async def get(self, *_a: Any, **_kw: Any) -> Any:
                 return _Response(500, {})
 
-        monkeypatch.setattr(
-            "app.services.analyzers.outdated.InstrumentedAsyncClient", _ErrorClient
-        )
+        monkeypatch.setattr("app.services.analyzers.outdated.InstrumentedAsyncClient", _ErrorClient)
 
         analyzer = OutdatedAnalyzer()
         findings = await analyzer._check_yanked([_component("flaky", "1.0.0")])
@@ -228,8 +222,11 @@ class _AlwaysFailingClient:
     assert the HTTP path was never taken."""
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None: ...
-    async def __aenter__(self) -> "_AlwaysFailingClient": return self
-    async def __aexit__(self, *_args: Any) -> None: return None
+    async def __aenter__(self) -> "_AlwaysFailingClient":
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
 
     async def get(self, *_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("HTTP client should not have been used; cache hit expected")

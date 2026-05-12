@@ -48,9 +48,7 @@ async def get_scan_delta(
     page: int = Query(1),
     page_size: int = Query(50),
     change: Optional[str] = Query(None),
-    severity: Optional[str] = Query(
-        None, description="csv: critical,high,medium,low"
-    ),
+    severity: Optional[str] = Query(None, description="csv: critical,high,medium,low"),
     finding_type: Optional[str] = Query(None, description="csv finding types"),
 ) -> ScanDeltaResponse:
     # 1. Project-level authorization (403 on non-membership).

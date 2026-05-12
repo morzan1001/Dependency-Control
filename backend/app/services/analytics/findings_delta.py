@@ -51,11 +51,7 @@ def finding_identity_key(finding: Dict[str, Any]) -> Tuple[str, str, str]:
         # Fallback: deterministic hash of description + file_path so
         # an unidentifiable finding at least matches itself across scans
         # if its description/location is identical.
-        digest_src = (
-            (finding.get("description") or "")
-            + "|"
-            + "|".join(finding.get("found_in") or [])
-        )
+        digest_src = (finding.get("description") or "") + "|" + "|".join(finding.get("found_in") or [])
         identifier = hashlib.sha1(digest_src.encode("utf-8")).hexdigest()[:12]
 
     return (ftype, component, identifier)

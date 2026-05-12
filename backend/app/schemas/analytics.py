@@ -468,5 +468,3 @@ class TrendSeries(BaseModel):
     range_start: datetime
     range_end: datetime
     cache_hit: bool = False
-
-

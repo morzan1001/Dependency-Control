@@ -99,7 +99,7 @@ class TestCalculateRiskScore:
         scores = [calculate_risk_score(None, e, False, False) for e in epss_grid]
         for i in range(1, len(scores)):
             assert scores[i] >= scores[i - 1] - 1e-9, (
-                f"Non-monotonic at epss={epss_grid[i]}: {scores[i]} < {scores[i-1]}"
+                f"Non-monotonic at epss={epss_grid[i]}: {scores[i]} < {scores[i - 1]}"
             )
 
     def test_unreachable_reduces_score(self):

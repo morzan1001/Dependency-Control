@@ -82,9 +82,7 @@ class OutdatedAnalyzer(Analyzer):
             "yanked_versions": yanked,
         }
 
-    async def _check_yanked(
-        self, components: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    async def _check_yanked(self, components: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Flag components whose installed version was withdrawn upstream."""
         findings: List[Dict[str, Any]] = []
         timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
@@ -154,8 +152,7 @@ class OutdatedAnalyzer(Analyzer):
         withdrawn = [
             v
             for entry in data.get("versions", [])
-            if entry.get("isWithdrawn")
-            and (v := (entry.get("versionKey") or {}).get("version", ""))
+            if entry.get("isWithdrawn") and (v := (entry.get("versionKey") or {}).get("version", ""))
         ]
         try:
             await cache_service.set(cache_key, withdrawn, ttl_seconds=CacheTTL.LATEST_VERSION)

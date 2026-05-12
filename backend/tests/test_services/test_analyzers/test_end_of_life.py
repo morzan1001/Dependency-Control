@@ -278,9 +278,7 @@ class TestSeverityBoundary:
 
     def _issue_for_eol_days_ago(self, days_ago: int) -> str:
         eol_date = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
-        issue = self.analyzer._create_eol_issue(
-            "pkg", "1.0", "pkg", {"eol": eol_date, "cycle": "1.0"}
-        )
+        issue = self.analyzer._create_eol_issue("pkg", "1.0", "pkg", {"eol": eol_date, "cycle": "1.0"})
         return issue["severity"]
 
     def test_exactly_high_threshold_returns_high(self):

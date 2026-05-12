@@ -23,6 +23,7 @@ def _waiver_is_active(waiver: Dict[str, Any], now: Optional[datetime] = None) ->
         expiration = expiration.replace(tzinfo=timezone.utc)
     return bool(expiration > reference)
 
+
 MAX_TOOL_LIMIT = 200  # Hard cap on LLM-supplied limit arguments to prevent DoS.
 MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
 

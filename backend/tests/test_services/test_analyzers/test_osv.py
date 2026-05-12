@@ -85,15 +85,11 @@ class TestCvssVersionAwareSeverity:
 
     def test_cvss_v2_top_score_is_high_not_critical(self):
         # v2 spec: 7.0-10.0 = HIGH. There is no CRITICAL bucket.
-        result = self.analyzer._severity_from_cvss_array(
-            [{"type": "CVSS_V2", "score": "9.5"}]
-        )
+        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V2", "score": "9.5"}])
         assert result == "HIGH"
 
     def test_cvss_v3_critical_score_is_critical(self):
-        result = self.analyzer._severity_from_cvss_array(
-            [{"type": "CVSS_V3", "score": "9.5"}]
-        )
+        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "9.5"}])
         assert result == "CRITICAL"
 
     def test_v3_preferred_over_v2_when_both_present(self):
@@ -121,13 +117,9 @@ class TestCvssVersionAwareSeverity:
         # Defensive: CVSS scores are bounded at 10.0. A bogus 15.0 must
         # not silently round-trip to CRITICAL — clamp into the valid range
         # so the resulting severity stays meaningful.
-        result = self.analyzer._severity_from_cvss_array(
-            [{"type": "CVSS_V3", "score": "15.0"}]
-        )
+        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "15.0"}])
         assert result == "CRITICAL"  # clamped to 10.0, still in CRITICAL bucket
 
     def test_score_below_zero_is_clamped(self):
-        result = self.analyzer._severity_from_cvss_array(
-            [{"type": "CVSS_V3", "score": "-1.0"}]
-        )
+        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "-1.0"}])
         assert result == "LOW"

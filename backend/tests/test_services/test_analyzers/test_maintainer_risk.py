@@ -110,25 +110,19 @@ class TestCorrelateMaintainerRisks:
         # have positive evidence of multiple maintainers, so we shouldn't
         # silently drop a free-email finding — keep the signal.
         risks = [_free_email()]
-        result = correlate_maintainer_risks(
-            risks, github_active=None, maintainer_count=None
-        )
+        result = correlate_maintainer_risks(risks, github_active=None, maintainer_count=None)
         assert "free_email_maintainer" in _types(result)
 
     def test_free_email_suppressed_when_multiple_maintainers_confirmed(self):
         # We checked, there are several maintainers. Free email is not a
         # bus-factor risk in that case.
         risks = [_free_email()]
-        result = correlate_maintainer_risks(
-            risks, github_active=None, maintainer_count=4
-        )
+        result = correlate_maintainer_risks(risks, github_active=None, maintainer_count=4)
         assert "free_email_maintainer" not in _types(result)
 
     def test_free_email_kept_when_maintainer_count_one(self):
         # Single maintainer, even without an explicit single_maintainer
         # finding (e.g. PyPI doesn't emit one) -> free email matters.
         risks = [_free_email()]
-        result = correlate_maintainer_risks(
-            risks, github_active=None, maintainer_count=1
-        )
+        result = correlate_maintainer_risks(risks, github_active=None, maintainer_count=1)
         assert "free_email_maintainer" in _types(result)

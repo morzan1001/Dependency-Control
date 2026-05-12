@@ -63,20 +63,14 @@ def correlate_maintainer_risks(
 
     types_present = {r.get("type") for r in risks}
     has_single_maintainer = _BUS_FACTOR_TYPE in types_present
-    multiple_maintainers_confirmed = (
-        maintainer_count is not None and maintainer_count > 1
-    )
+    multiple_maintainers_confirmed = maintainer_count is not None and maintainer_count > 1
 
     out: List[Dict[str, Any]] = []
     for r in risks:
         rtype = r.get("type")
         if rtype in _STALENESS_TYPES and github_active is True:
             continue
-        if (
-            rtype == _FREE_EMAIL_TYPE
-            and not has_single_maintainer
-            and multiple_maintainers_confirmed
-        ):
+        if rtype == _FREE_EMAIL_TYPE and not has_single_maintainer and multiple_maintainers_confirmed:
             continue
         out.append(r)
     return out

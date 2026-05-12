@@ -24,9 +24,7 @@ def _extract_products_from_cpes(cpes: List[str]) -> Set[str]:
     """
     products: Set[str] = set()
     for cpe in cpes:
-        match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(
-            r"cpe:/a:([^:]+):([^:]+)", cpe
-        )
+        match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(r"cpe:/a:([^:]+):([^:]+)", cpe)
         if not match:
             continue
         vendor = match.group(1).lower()
@@ -140,9 +138,7 @@ class EndOfLifeAnalyzer(Analyzer):
                 continue
             if value:  # Non-empty list = real EOL data; empty list = negative cache.
                 cached_cycles[product] = value
-        logger.debug(
-            f"EOL: {len(cached_cycles)} from cache, {len(to_fetch)} to fetch"
-        )
+        logger.debug(f"EOL: {len(cached_cycles)} from cache, {len(to_fetch)} to fetch")
         return cached_cycles, to_fetch
 
     async def _fetch_and_emit(
@@ -170,6 +166,7 @@ class EndOfLifeAnalyzer(Analyzer):
     ) -> Any:
         """Bind ``product`` and ``client`` into the closure that ``cache_service``
         will call on a miss."""
+
         async def fetch_eol_data() -> Optional[List[Dict[str, Any]]]:
             try:
                 safe_product = quote(product, safe="")
