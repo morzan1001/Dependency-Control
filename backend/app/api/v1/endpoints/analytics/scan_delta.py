@@ -45,8 +45,8 @@ async def get_scan_delta(
     from_scan_id: str = Query(...),
     to_scan_id: str = Query(...),
     category: str = Query(...),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page: int = Query(1),
+    page_size: int = Query(50),
     change: Optional[str] = Query(None),
     severity: Optional[str] = Query(
         None, description="csv: critical,high,medium,low"

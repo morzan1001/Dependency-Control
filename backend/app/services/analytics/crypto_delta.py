@@ -79,7 +79,9 @@ async def compute_crypto_delta_envelope(
     if change in (None, "all", "removed"):
         items.extend(_asset_to_envelope_item(from_map[k], "removed") for k in removed_keys)
 
-    items.sort(key=lambda i: (i.change, i.name))
+    # Sort by (change, name) with variant + primitive as final tiebreakers
+    # so pagination is deterministic regardless of set-iteration order.
+    items.sort(key=lambda i: (i.change, i.name, i.variant or "", i.primitive or ""))
     total = len(items)
     total_pages = max(1, (total + page_size - 1) // page_size)
     start = (page - 1) * page_size

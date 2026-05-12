@@ -109,7 +109,7 @@ export function ComponentsDeltaTab({ projectId, fromScanId, toScanId, onCountLoa
                 {it.from_license} → {it.to_license}
               </span>
             )}
-            {it.change === "added" && it.license && (
+            {(it.change === "added" || it.change === "removed") && it.license && (
               <span className="text-muted-foreground">[{it.license}]</span>
             )}
           </div>

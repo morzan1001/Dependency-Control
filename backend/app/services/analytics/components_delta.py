@@ -118,7 +118,9 @@ async def compute_components_delta(
         items.extend(version_changed)
         items.extend(license_changed)
 
-    items.sort(key=lambda i: (i.change, i.name))
+    # Sort by (change, name) with purl as a final tiebreaker so pagination is
+    # deterministic regardless of set-iteration order.
+    items.sort(key=lambda i: (i.change, i.name, i.purl or ""))
 
     total_items = len(items)
     total_pages = max(1, (total_items + page_size - 1) // page_size)
