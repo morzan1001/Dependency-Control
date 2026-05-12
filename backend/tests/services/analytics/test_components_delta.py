@@ -1,4 +1,9 @@
-from app.services.analytics.components_delta import component_identity_key
+import pytest
+
+from app.services.analytics.components_delta import (
+    component_identity_key,
+    compute_components_delta,
+)
 
 
 def test_identity_strips_version_from_purl():
@@ -18,10 +23,6 @@ def test_identity_without_purl_uses_name_and_type():
 
 def test_identity_without_purl_or_type():
     assert component_identity_key({"name": "react"}) == ("unknown", "react")
-
-
-import pytest
-from app.services.analytics.components_delta import compute_components_delta
 
 
 @pytest.mark.asyncio
