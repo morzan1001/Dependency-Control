@@ -71,6 +71,20 @@ def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
     return max(1, min(value, maximum))
 
 
+def _ensure_list(value: Any) -> Optional[List[Any]]:
+    """Coerce LLM-supplied scalar to a single-element list.
+
+    Some models send array-typed parameters as a bare string (e.g.
+    ``severity="critical"`` instead of ``severity=["critical"]``). This wraps
+    them so downstream Mongo ``$in`` queries don't misbehave.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    return [value] if value else None
+
+
 def _clip_value(value: Any) -> Any:
     """Trim long strings/lists that blow up the LLM context."""
     if hasattr(value, "isoformat"):

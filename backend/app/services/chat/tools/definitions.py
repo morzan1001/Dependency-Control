@@ -462,11 +462,17 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "function": {
             "name": "compare_scans",
             "description": (
-                "Diff two scans of the same project: what is NEW, what got FIXED, "
-                "and counts by severity. Use when the user asks 'what changed since "
-                "my last deploy?', 'did the last scan introduce new vulns?' or "
-                "'which findings did we resolve?'. Without explicit scan ids, "
-                "compares the two most recent scans of the project."
+                "Compare two scans of the same project. Returns a paginated findings "
+                "delta envelope: 'category' = 'findings', 'totals.added' / "
+                "'totals.removed' / 'totals.unchanged' (each a count, plus "
+                "'totals.by_severity' and 'totals.by_type' breakdowns), and an "
+                "'items' array of finding records with 'change' ('added'|'removed'), "
+                "'finding_type', 'severity', 'title', 'component', 'cve_id'. Use the "
+                "'severity' and 'finding_type' filters to narrow the items. Use when "
+                "the user asks 'what changed since my last deploy?', 'did the last "
+                "scan introduce new vulns?' or 'which findings did we resolve?'. "
+                "Without explicit scan ids, compares the two most recent scans of "
+                "the project."
             ),
             "parameters": {
                 "type": "object",
@@ -474,6 +480,26 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                     "project_id": {"type": "string", "description": "The project ID."},
                     "scan_id_a": {"type": "string", "description": "Optional older scan."},
                     "scan_id_b": {"type": "string", "description": "Optional newer scan."},
+                    "severity": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["critical", "high", "medium", "low", "info"],
+                        },
+                        "description": "Optional: restrict items to these severities.",
+                    },
+                    "finding_type": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional: restrict items to these finding types.",
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "default": 50,
+                        "minimum": 1,
+                        "maximum": 200,
+                        "description": "Items per page in the returned envelope.",
+                    },
                 },
                 "required": ["project_id"],
             },
@@ -891,8 +917,12 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_scan_delta",
             "description": (
-                "Compare two scans for a project and return the crypto assets that "
-                "were added, removed, or unchanged between them."
+                "Compare two scans of a project for cryptographic assets. Returns a "
+                "paginated crypto delta envelope: 'category' = 'crypto', "
+                "'totals.added' / 'totals.removed' / 'totals.unchanged' (counts), and "
+                "an 'items' array of crypto-asset records with 'change' "
+                "('added'|'removed'), 'name', 'variant', 'primitive', 'locations', "
+                "'asset_count'."
             ),
             "parameters": {
                 "type": "object",
@@ -900,6 +930,13 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                     "project_id": {"type": "string"},
                     "from_scan_id": {"type": "string", "description": "The baseline scan ID"},
                     "to_scan_id": {"type": "string", "description": "The target scan ID"},
+                    "page_size": {
+                        "type": "integer",
+                        "default": 50,
+                        "minimum": 1,
+                        "maximum": 200,
+                        "description": "Items per page in the returned envelope.",
+                    },
                 },
                 "required": ["project_id", "from_scan_id", "to_scan_id"],
             },

@@ -88,3 +88,102 @@ async def test_compare_scans_returns_error_when_project_not_authorized(db, admin
 
     assert result == {"error": "Project not found or access denied"}
     mock.assert_not_awaited()
+
+
+def _fake_findings_delta_response() -> ScanDeltaResponse:
+    return ScanDeltaResponse(
+        from_scan_id="sa",
+        to_scan_id="sb",
+        project_id="p1",
+        category=DeltaCategory.FINDINGS,
+        totals=ScanDeltaTotals(added=0, removed=0, unchanged=0),
+        page=1,
+        page_size=50,
+        total_pages=1,
+        items=[],
+    )
+
+
+async def _seed_project_and_scans(db) -> None:
+    db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
+    await db["scans"].insert_many(
+        [
+            {"_id": "sa", "project_id": "p1", "created_at": datetime.now(timezone.utc)},
+            {"_id": "sb", "project_id": "p1", "created_at": datetime.now(timezone.utc)},
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_compare_scans_coerces_string_severity_to_list(db, admin_user):
+    """The LLM may pass severity as a bare string -- coerce to a list before the service."""
+    await _seed_project_and_scans(db)
+
+    with patch(
+        "app.services.chat.tools.registry.compute_findings_delta",
+        new=AsyncMock(return_value=_fake_findings_delta_response()),
+    ) as mock:
+        await ChatToolRegistry()._dispatch(
+            "compare_scans",
+            {
+                "project_id": "p1",
+                "scan_id_a": "sa",
+                "scan_id_b": "sb",
+                "severity": "critical",
+                "finding_type": "vulnerability",
+            },
+            admin_user,
+            db,
+        )
+
+    kwargs = mock.await_args.kwargs
+    assert kwargs["severity"] == ["critical"]
+    assert kwargs["finding_type"] == ["vulnerability"]
+
+
+@pytest.mark.asyncio
+async def test_compare_scans_passes_list_severity_through_unchanged(db, admin_user):
+    """When severity is already a list, the value is forwarded as-is."""
+    await _seed_project_and_scans(db)
+
+    with patch(
+        "app.services.chat.tools.registry.compute_findings_delta",
+        new=AsyncMock(return_value=_fake_findings_delta_response()),
+    ) as mock:
+        await ChatToolRegistry()._dispatch(
+            "compare_scans",
+            {
+                "project_id": "p1",
+                "scan_id_a": "sa",
+                "scan_id_b": "sb",
+                "severity": ["critical", "high"],
+                "finding_type": ["vulnerability", "license"],
+            },
+            admin_user,
+            db,
+        )
+
+    kwargs = mock.await_args.kwargs
+    assert kwargs["severity"] == ["critical", "high"]
+    assert kwargs["finding_type"] == ["vulnerability", "license"]
+
+
+@pytest.mark.asyncio
+async def test_compare_scans_passes_none_when_severity_missing(db, admin_user):
+    """When severity/finding_type are omitted entirely, the service gets None."""
+    await _seed_project_and_scans(db)
+
+    with patch(
+        "app.services.chat.tools.registry.compute_findings_delta",
+        new=AsyncMock(return_value=_fake_findings_delta_response()),
+    ) as mock:
+        await ChatToolRegistry()._dispatch(
+            "compare_scans",
+            {"project_id": "p1", "scan_id_a": "sa", "scan_id_b": "sb"},
+            admin_user,
+            db,
+        )
+
+    kwargs = mock.await_args.kwargs
+    assert kwargs["severity"] is None
+    assert kwargs["finding_type"] is None

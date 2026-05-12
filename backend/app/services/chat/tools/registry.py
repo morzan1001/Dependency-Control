@@ -23,6 +23,7 @@ from ._helpers import (
     _clamp_limit,
     _clip_value,
     _compare_versions,
+    _ensure_list,
     _inject_urls,
     _serialize_doc,
     _serialize_finding_for_llm,
@@ -807,8 +808,8 @@ class ChatToolRegistry:
                 page=1,
                 page_size=int(args.get("page_size") or 50),
                 change=None,
-                severity=args.get("severity"),
-                finding_type=args.get("finding_type"),
+                severity=_ensure_list(args.get("severity")),
+                finding_type=_ensure_list(args.get("finding_type")),
             )
             return response.model_dump(mode="json")
 
