@@ -178,30 +178,6 @@ async def get_crypto_trends(
     return series.model_dump()
 
 
-async def get_scan_delta(
-    db: AsyncIOMotorDatabase,
-    *,
-    project_id: str,
-    from_scan_id: str,
-    to_scan_id: str,
-) -> Dict[str, Any]:
-    from app.services.analytics.crypto_delta import compute_scan_delta
-
-    delta = await compute_scan_delta(
-        db,
-        project_id,
-        from_scan=from_scan_id,
-        to_scan=to_scan_id,
-    )
-    return {
-        "from_scan_id": delta.from_scan_id,
-        "to_scan_id": delta.to_scan_id,
-        "added": [e.model_dump() for e in delta.added],
-        "removed": [e.model_dump() for e in delta.removed],
-        "unchanged_count": delta.unchanged_count,
-    }
-
-
 async def generate_pqc_migration_plan(
     db: AsyncIOMotorDatabase,
     *,

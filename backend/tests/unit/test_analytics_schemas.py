@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from app.schemas.analytics import (
     HotspotEntry,
     HotspotResponse,
-    ScanDelta,
     TrendPoint,
     TrendSeries,
 )
@@ -53,14 +52,3 @@ def test_trend_series_roundtrip():
         range_end=now,
     )
     assert len(series.points) == 1
-
-
-def test_scan_delta_shape():
-    delta = ScanDelta(
-        from_scan_id="s1",
-        to_scan_id="s2",
-        added=[],
-        removed=[],
-        unchanged_count=10,
-    )
-    assert delta.unchanged_count == 10
