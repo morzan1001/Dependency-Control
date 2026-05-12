@@ -133,9 +133,18 @@ async def compute_findings_delta(
         by_severity[item.severity] = by_severity.get(item.severity, 0) + 1
         by_type[item.finding_type] = by_type.get(item.finding_type, 0) + 1
 
-    # Stable sort: added before removed, then by severity (critical first), then title
+    # Stable sort: added before removed, then by severity (critical first), then title,
+    # then finding_id as a final tiebreaker so pagination is deterministic regardless
+    # of set-iteration order.
     severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-    items.sort(key=lambda i: (i.change != "added", severity_rank.get(i.severity, 99), i.title))
+    items.sort(
+        key=lambda i: (
+            i.change != "added",
+            severity_rank.get(i.severity, 99),
+            i.title,
+            i.finding_id,
+        )
+    )
 
     total_items = len(items)
     total_pages = max(1, (total_items + page_size - 1) // page_size)
