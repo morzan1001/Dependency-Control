@@ -443,6 +443,16 @@ class _FakeCollection:
         result.inserted_id = key
         return result
 
+    async def insert_many(self, docs: list, ordered: bool = True):
+        inserted_ids = []
+        for doc in docs:
+            key = doc.get("_id") or str(len(self._docs))
+            self._docs[key] = dict(doc)
+            inserted_ids.append(key)
+        result = MagicMock()
+        result.inserted_ids = inserted_ids
+        return result
+
     async def create_index(self, *args, **kwargs):
         return None
 

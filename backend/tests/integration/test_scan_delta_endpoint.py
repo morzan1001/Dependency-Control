@@ -153,3 +153,115 @@ async def test_returns_200_findings(client, db, owner_auth_headers_proj):
     assert body["to_scan_id"] == "ok2"
     assert body["project_id"] == "p"
     assert body["totals"]["added"] == 1
+
+
+@pytest.mark.asyncio
+async def test_returns_200_components_with_version_change(client, db, owner_auth_headers_proj):
+    """category=components surfaces version_changed entries with from/to versions."""
+    await db["scans"].insert_one(_scan_doc("cmp_a", "p"))
+    await db["scans"].insert_one(_scan_doc("cmp_b", "p"))
+    await db["dependencies"].insert_many([
+        {"_id": "d_a1", "project_id": "p", "scan_id": "cmp_a",
+         "name": "react", "version": "17.0.2", "purl": "pkg:npm/react@17.0.2",
+         "license": "MIT", "type": "npm"},
+        {"_id": "d_a2", "project_id": "p", "scan_id": "cmp_a",
+         "name": "left-pad", "version": "1.0.0", "purl": "pkg:npm/left-pad@1.0.0",
+         "license": "WTFPL", "type": "npm"},
+        {"_id": "d_b1", "project_id": "p", "scan_id": "cmp_b",
+         "name": "react", "version": "18.2.0", "purl": "pkg:npm/react@18.2.0",
+         "license": "MIT", "type": "npm"},
+        {"_id": "d_b2", "project_id": "p", "scan_id": "cmp_b",
+         "name": "axios", "version": "1.0.0", "purl": "pkg:npm/axios@1.0.0",
+         "license": "MIT", "type": "npm"},
+    ])
+
+    resp = await client.get(
+        BASE,
+        params={
+            "project_id": "p", "from_scan_id": "cmp_a", "to_scan_id": "cmp_b",
+            "category": "components",
+        },
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["category"] == "components"
+    assert body["totals"]["added"] == 1
+    assert body["totals"]["removed"] == 1
+    assert body["totals"]["changed"] == 1
+    by_change = {i["change"]: i for i in body["items"]}
+    assert by_change["version_changed"]["name"] == "react"
+    assert by_change["version_changed"]["from_version"] == "17.0.2"
+    assert by_change["version_changed"]["to_version"] == "18.2.0"
+    assert by_change["added"]["name"] == "axios"
+    assert by_change["removed"]["name"] == "left-pad"
+
+
+@pytest.mark.asyncio
+async def test_returns_200_crypto(client, db, owner_auth_headers_proj):
+    """category=crypto returns the crypto envelope with added/removed asset items."""
+    from app.models.crypto_asset import CryptoAsset
+    from app.repositories.crypto_asset import CryptoAssetRepository
+    from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+
+    await db["scans"].insert_one(_scan_doc("cr_a", "p"))
+    await db["scans"].insert_one(_scan_doc("cr_b", "p"))
+    repo = CryptoAssetRepository(db)
+    await repo.bulk_upsert("p", "cr_a", [
+        CryptoAsset(project_id="p", scan_id="cr_a", bom_ref="a1",
+                    name="MD5", asset_type=CryptoAssetType.ALGORITHM,
+                    primitive=CryptoPrimitive.HASH),
+    ])
+    await repo.bulk_upsert("p", "cr_b", [
+        CryptoAsset(project_id="p", scan_id="cr_b", bom_ref="b1",
+                    name="SHA-256", asset_type=CryptoAssetType.ALGORITHM,
+                    primitive=CryptoPrimitive.HASH),
+    ])
+
+    resp = await client.get(
+        BASE,
+        params={
+            "project_id": "p", "from_scan_id": "cr_a", "to_scan_id": "cr_b",
+            "category": "crypto",
+        },
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["category"] == "crypto"
+    assert body["totals"]["added"] == 1
+    assert body["totals"]["removed"] == 1
+    names = {i["name"] for i in body["items"]}
+    assert names == {"MD5", "SHA-256"}
+
+
+@pytest.mark.asyncio
+async def test_returns_400_for_unknown_severity(client, db, owner_auth_headers_proj):
+    """Typo in severity filter must surface as 400, not silently empty results."""
+    await db["scans"].insert_many([_scan_doc("ts1", "p"), _scan_doc("ts2", "p")])
+    resp = await client.get(
+        BASE,
+        params={
+            "project_id": "p", "from_scan_id": "ts1", "to_scan_id": "ts2",
+            "category": "findings", "severity": "criticla",
+        },
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "unknown severity" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_returns_400_for_page_size_above_max(client, db, owner_auth_headers_proj):
+    """page_size > 200 returns 400 via the orchestrator (not FastAPI auto-422)."""
+    await db["scans"].insert_many([_scan_doc("ps1", "p"), _scan_doc("ps2", "p")])
+    resp = await client.get(
+        BASE,
+        params={
+            "project_id": "p", "from_scan_id": "ps1", "to_scan_id": "ps2",
+            "category": "findings", "page_size": 500,
+        },
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "page_size" in resp.json()["detail"].lower()

@@ -74,4 +74,87 @@ describe("ScanDeltaModal", () => {
       expect(tab).toHaveTextContent("5"); // added+removed
     });
   });
+
+  it("each tab badge shows its own count, not other tabs'", async () => {
+    // Different totals per category — verify counts don't bleed across tabs.
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      ({ category }: { category: "findings" | "components" | "crypto" }) => {
+        const totalsByCategory = {
+          findings: { added: 3, removed: 2, unchanged: 0, changed: 0, by_severity: {}, by_type: {} },
+          components: { added: 7, removed: 1, unchanged: 0, changed: 4, by_severity: {}, by_type: {} },
+          crypto: { added: 10, removed: 5, unchanged: 0, changed: 0, by_severity: {}, by_type: {} },
+        } as const;
+        return Promise.resolve({ ...empty(category), totals: totalsByCategory[category] });
+      },
+    );
+    renderModal();
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /findings/i })).toHaveTextContent("5");
+    });
+
+    // Visit components — should show its OWN total (added+removed+changed=12), not the findings 5.
+    const compTab = screen.getByRole("tab", { name: /components/i });
+    fireEvent.mouseDown(compTab);
+    fireEvent.click(compTab);
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /components/i })).toHaveTextContent("12");
+      // Findings badge stays at 5
+      expect(screen.getByRole("tab", { name: /findings/i })).toHaveTextContent("5");
+    });
+
+    // Visit crypto — added+removed=15.
+    const cryptoTab = screen.getByRole("tab", { name: /crypto/i });
+    fireEvent.mouseDown(cryptoTab);
+    fireEvent.click(cryptoTab);
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /crypto/i })).toHaveTextContent("15");
+      expect(screen.getByRole("tab", { name: /findings/i })).toHaveTextContent("5");
+      expect(screen.getByRole("tab", { name: /components/i })).toHaveTextContent("12");
+    });
+  });
+
+  it("resets badge counts when reopened with a different scan pair", async () => {
+    // First open: returns 5 changes.
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ...empty("findings"),
+      totals: { added: 3, removed: 2, unchanged: 0, changed: 0, by_severity: {}, by_type: {} },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <ScanDeltaModal projectId="p1" fromScanId="a" toScanId="b" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /findings/i })).toHaveTextContent("5");
+    });
+
+    // Now switch to a different scan pair. The badge must immediately show "—"
+    // (loading), NOT the stale "5" from the previous comparison.
+    let resolveSecond: (v: unknown) => void = () => {};
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSecond = resolve;
+      }),
+    );
+    rerender(
+      <QueryClientProvider client={qc}>
+        <ScanDeltaModal projectId="p1" fromScanId="c" toScanId="d" onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+
+    // Stale "5" must be gone; badge shows "—" until the new fetch resolves.
+    expect(screen.getByRole("tab", { name: /findings/i })).not.toHaveTextContent("5");
+    expect(screen.getByRole("tab", { name: /findings/i })).toHaveTextContent("—");
+
+    // Resolve the second fetch with a new total.
+    resolveSecond({
+      ...empty("findings"),
+      totals: { added: 1, removed: 0, unchanged: 0, changed: 0, by_severity: {}, by_type: {} },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /findings/i })).toHaveTextContent("1");
+    });
+  });
 });
