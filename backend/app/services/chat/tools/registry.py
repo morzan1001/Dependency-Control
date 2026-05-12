@@ -800,7 +800,7 @@ class ChatToolRegistry:
             if not scan_a or not scan_b:
                 return {"error": "Scan not found in this project"}
 
-            response = await compute_findings_delta(
+            findings_response = await compute_findings_delta(
                 db,
                 project_id=args["project_id"],
                 from_scan=scan_a_id,
@@ -811,7 +811,7 @@ class ChatToolRegistry:
                 severity=_ensure_list(args.get("severity")),
                 finding_type=_ensure_list(args.get("finding_type")),
             )
-            return response.model_dump(mode="json")
+            return findings_response.model_dump(mode="json")
 
         if tool_name == "get_kev_findings":
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
@@ -1254,7 +1254,7 @@ class ChatToolRegistry:
             scan_b = await db["scans"].find_one({"_id": to_scan_id, "project_id": args["project_id"]})
             if not scan_a or not scan_b:
                 return {"error": "Scan not found in this project"}
-            response = await compute_crypto_delta_envelope(
+            crypto_response = await compute_crypto_delta_envelope(
                 db,
                 project_id=args["project_id"],
                 from_scan=from_scan_id,
@@ -1263,7 +1263,7 @@ class ChatToolRegistry:
                 page_size=int(args.get("page_size") or 50),
                 change=None,
             )
-            return response.model_dump(mode="json")
+            return crypto_response.model_dump(mode="json")
 
         if tool_name == "generate_pqc_migration_plan":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)

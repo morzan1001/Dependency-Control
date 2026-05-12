@@ -5,7 +5,7 @@ Key tuple: (name, variant, primitive). bom_ref can drift between scans, so
 we use the semantic identity of the crypto asset instead.
 """
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -73,7 +73,7 @@ async def compute_crypto_delta_envelope(
     removed_keys = from_map.keys() - to_map.keys()
     unchanged = len(to_map.keys() & from_map.keys())
 
-    items = []
+    items: List[CryptoDeltaItem] = []
     if change in (None, "all", "added"):
         items.extend(_asset_to_envelope_item(to_map[k], "added") for k in added_keys)
     if change in (None, "all", "removed"):
