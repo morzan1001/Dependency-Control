@@ -320,11 +320,6 @@ class _FakeCollection:
         return result
 
     async def find_one(self, query, projection=None):
-        # search by _id
-        key = query.get("_id")
-        if key:
-            return self._docs.get(key)
-        # search by field
         for doc in self._docs.values():
             if all(doc.get(k) == v for k, v in query.items()):
                 return doc

@@ -30,6 +30,12 @@ def admin_user():
 async def test_get_scan_delta_routes_through_crypto_envelope(db, admin_user):
     """get_scan_delta must call compute_crypto_delta_envelope and return its envelope."""
     db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
+    await db["scans"].insert_many(
+        [
+            {"_id": "s1", "project_id": "p1"},
+            {"_id": "s2", "project_id": "p1"},
+        ]
+    )
 
     fake_response = ScanDeltaResponse(
         from_scan_id="s1",
@@ -85,4 +91,30 @@ async def test_get_scan_delta_returns_error_when_project_not_authorized(db, admi
         )
 
     assert result == {"error": "Project not found or access denied"}
+    mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_scan_delta_rejects_scan_from_another_project(db, admin_user):
+    """Cross-project guard: scan IDs must belong to the requested project."""
+    db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
+    await db["scans"].insert_many(
+        [
+            {"_id": "s1", "project_id": "p1"},
+            {"_id": "foreign", "project_id": "p_other"},
+        ]
+    )
+
+    with patch(
+        "app.services.chat.tools.registry.compute_crypto_delta_envelope",
+        new=AsyncMock(),
+    ) as mock:
+        result = await ChatToolRegistry()._dispatch(
+            "get_scan_delta",
+            {"project_id": "p1", "from_scan_id": "s1", "to_scan_id": "foreign"},
+            admin_user,
+            db,
+        )
+
+    assert result == {"error": "Scan not found in this project"}
     mock.assert_not_awaited()

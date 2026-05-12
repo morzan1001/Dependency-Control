@@ -1248,11 +1248,21 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
+            from_scan_id = args["from_scan_id"]
+            to_scan_id = args["to_scan_id"]
+            scan_a = await db["scans"].find_one(
+                {"_id": from_scan_id, "project_id": args["project_id"]}
+            )
+            scan_b = await db["scans"].find_one(
+                {"_id": to_scan_id, "project_id": args["project_id"]}
+            )
+            if not scan_a or not scan_b:
+                return {"error": "Scan not found in this project"}
             response = await compute_crypto_delta_envelope(
                 db,
                 project_id=args["project_id"],
-                from_scan=args["from_scan_id"],
-                to_scan=args["to_scan_id"],
+                from_scan=from_scan_id,
+                to_scan=to_scan_id,
                 page=1,
                 page_size=int(args.get("page_size") or 50),
                 change=None,

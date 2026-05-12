@@ -76,6 +76,12 @@ async def test_mcp_get_scan_delta(db):
     from app.services.chat.tools import ChatToolRegistry
 
     db.projects._docs["p"] = {"_id": "p", "name": "test-project", "team_id": None}
+    await db["scans"].insert_many(
+        [
+            {"_id": "s1", "project_id": "p"},
+            {"_id": "s2", "project_id": "p"},
+        ]
+    )
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
         "s1",
