@@ -280,6 +280,28 @@ class _FakeCursor:
             results = results[: self._limit_n]
         return results
 
+    def __aiter__(self):
+        # Snapshot the filtered/sorted/sliced results once, then async-iterate.
+        # Mirrors `to_list` so services that use `async for doc in cursor`
+        # (e.g. findings_delta, components_delta) work against the fake DB.
+        results = [d for d in self._docs.values() if self._matches(d)]
+        if self._sort_key is not None:
+            results.sort(
+                key=lambda d: (d.get(self._sort_key) is None, d.get(self._sort_key)),
+                reverse=(self._sort_dir == -1),
+            )
+        results = results[self._skip_n :]
+        if self._limit_n:
+            results = results[: self._limit_n]
+        self._iter = iter(results)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration
+
 
 class _FakeCollection:
     """Minimal in-process collection that supports the operations used by the
