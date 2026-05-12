@@ -1,7 +1,7 @@
 import { api } from "@/api/client";
 import type {
   AnalyticsScope, GroupingDimension, HotspotResponse,
-  ScanDelta, TrendBucket, TrendMetric, TrendSeries,
+  TrendBucket, TrendMetric, TrendSeries,
 } from "@/types/cryptoAnalytics";
 
 export interface GetHotspotsParams {
@@ -44,15 +44,6 @@ export async function getCryptoTrends(p: GetTrendsParams): Promise<TrendSeries> 
       range_start: p.rangeStart.toISOString(),
       range_end: p.rangeEnd.toISOString(),
     },
-  });
-  return data;
-}
-
-export async function getScanDelta(
-  projectId: string, fromScanId: string, toScanId: string,
-): Promise<ScanDelta> {
-  const { data } = await api.get<ScanDelta>("/analytics/crypto/scan-delta", {
-    params: { project_id: projectId, from: fromScanId, to: toScanId },
   });
   return data;
 }
