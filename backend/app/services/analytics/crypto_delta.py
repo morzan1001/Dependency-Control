@@ -1,8 +1,8 @@
 """
-Scan-delta computation.
-
-Key tuple: (name, variant, primitive). bom_ref can drift between scans, so
-we use the semantic identity of the crypto asset instead.
+Crypto-delta computation: matches crypto assets across two scans by their
+semantic identity ``(name, variant, primitive)`` rather than ``bom_ref``,
+which is regenerated per scan and therefore unusable for cross-scan
+matching. Produces the unified ``ScanDeltaResponse`` envelope.
 """
 
 from typing import List, Optional, Tuple
@@ -17,36 +17,34 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
+from app.services.analytics._delta_pagination import MAX_FETCH, paginate
+
+
+def _primitive_str(asset: CryptoAsset) -> Optional[str]:
+    """Stringify ``asset.primitive`` whether it's an enum, string, or None."""
+    primitive = asset.primitive
+    if primitive is None:
+        return None
+    if hasattr(primitive, "value"):
+        return primitive.value
+    return str(primitive)
 
 
 def _key(asset: CryptoAsset) -> Tuple[str, str, str]:
-    primitive = asset.primitive
-    if primitive is None:
-        primitive_str = ""
-    elif hasattr(primitive, "value"):
-        primitive_str = primitive.value
-    else:
-        primitive_str = str(primitive)
+    """Semantic identity used for cross-scan matching."""
     return (
         asset.name or "",
         asset.variant or "",
-        primitive_str,
+        _primitive_str(asset) or "",
     )
 
 
 def _asset_to_envelope_item(asset: CryptoAsset, change: str) -> CryptoDeltaItem:
-    primitive = asset.primitive
-    if primitive is None:
-        prim_str = None
-    elif hasattr(primitive, "value"):
-        prim_str = primitive.value
-    else:
-        prim_str = str(primitive)
     return CryptoDeltaItem(
         change=change,
         name=asset.name or "",
         variant=asset.variant,
-        primitive=prim_str,
+        primitive=_primitive_str(asset),
         locations=list(asset.occurrence_locations or []),
         asset_count=1,
     )
@@ -63,8 +61,8 @@ async def compute_crypto_delta_envelope(
     change: Optional[str],
 ) -> ScanDeltaResponse:
     repo = CryptoAssetRepository(db)
-    from_assets = await repo.list_by_scan(project_id, from_scan, limit=50_000)
-    to_assets = await repo.list_by_scan(project_id, to_scan, limit=50_000)
+    from_assets = await repo.list_by_scan(project_id, from_scan, limit=MAX_FETCH)
+    to_assets = await repo.list_by_scan(project_id, to_scan, limit=MAX_FETCH)
 
     from_map = {_key(a): a for a in from_assets}
     to_map = {_key(a): a for a in to_assets}
@@ -82,10 +80,7 @@ async def compute_crypto_delta_envelope(
     # Sort by (change, name) with variant + primitive as final tiebreakers
     # so pagination is deterministic regardless of set-iteration order.
     items.sort(key=lambda i: (i.change, i.name, i.variant or "", i.primitive or ""))
-    total = len(items)
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    start = (page - 1) * page_size
-    paged = items[start : start + page_size]
+    paged, total_pages = paginate(items, page, page_size)
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,

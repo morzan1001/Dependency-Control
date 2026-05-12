@@ -1,9 +1,18 @@
+"""
+Orchestrator for the unified scan-delta endpoint.
+
+Validates the public query parameters, then dispatches to the per-category
+delta service. Service-layer functions trust pre-validated inputs; auth and
+cross-project scan checks live one layer above (REST handler / MCP wrapper).
+"""
+
 from __future__ import annotations
 
 from typing import List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.models.finding import FindingType, Severity
 from app.schemas.scan_delta import ScanDeltaResponse
 from app.services.analytics.components_delta import compute_components_delta
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
@@ -14,19 +23,10 @@ class InvalidDeltaQuery(ValueError):
     """Raised when scan-delta query parameters are mutually inconsistent."""
 
 
-_VALID_SEVERITIES = {"critical", "high", "medium", "low", "info"}
-_VALID_FINDING_TYPES = {
-    "vulnerability",
-    "license",
-    "secret",
-    "malware",
-    "eol",
-    "iac",
-    "sast",
-    "quality",
-    "outdated",
-    "other",
-}
+# Public API accepts severities case-insensitively; we lower-case them in
+# the response envelope. The actual Severity enum stores UPPERCASE values.
+_VALID_SEVERITIES = {s.value.lower() for s in Severity}
+_VALID_FINDING_TYPES = {t.value for t in FindingType}
 _VALID_CHANGES_BY_CATEGORY = {
     "findings": {"added", "removed", "all"},
     "components": {"added", "removed", "changed", "all"},
@@ -65,7 +65,9 @@ def _validate_query(
     if category != "findings" and (severity or finding_type):
         raise InvalidDeltaQuery("severity and finding_type are only valid with category=findings")
     if severity:
-        _reject_unknown(severity, _VALID_SEVERITIES, "severity")
+        # Case-insensitive validation; the service normalises to uppercase
+        # before querying Mongo (where Severity enum values are stored).
+        _reject_unknown([s.lower() for s in severity], _VALID_SEVERITIES, "severity")
     if finding_type:
         _reject_unknown(finding_type, _VALID_FINDING_TYPES, "finding_type")
     if change is not None and change not in _VALID_CHANGES_BY_CATEGORY[category]:

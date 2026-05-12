@@ -1,39 +1,35 @@
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { getScanDelta } from "@/api/scanDelta";
+import { useCallback } from "react";
 import type { CryptoDeltaItem } from "@/types/scanDelta";
+import { DeltaError } from "../shared/DeltaError";
 import { DeltaList } from "../shared/DeltaList";
 import { DeltaPagination } from "../shared/DeltaPagination";
+import { DeltaSummary } from "../shared/DeltaSummary";
+import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
-interface Props {
-  projectId: string;
-  fromScanId: string;
-  toScanId: string;
-  onCountLoaded: (totalChanges: number) => void;
-}
+export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onCountLoaded }: DeltaTabProps) {
+  const reportCount = useCallback(
+    (totals: { added: number; removed: number }) => onCountLoaded(totals.added + totals.removed),
+    [onCountLoaded],
+  );
 
-export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onCountLoaded }: Props) {
-  const [page, setPage] = useState(1);
-
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["scan-delta", "crypto", projectId, fromScanId, toScanId, page],
-    queryFn: () =>
-      getScanDelta({ projectId, fromScanId, toScanId, category: "crypto", page, pageSize: 50 }),
-    enabled: !!(projectId && fromScanId && toScanId),
+  const { query, setPage } = useDeltaTabQuery({
+    category: "crypto",
+    projectId,
+    fromScanId,
+    toScanId,
+    onCountLoaded: reportCount,
   });
+  const { data, isLoading, isError } = query;
 
-  useEffect(() => {
-    if (data) onCountLoaded(data.totals.added + data.totals.removed);
-  }, [data, onCountLoaded]);
+  if (isError) return <DeltaError category="crypto" />;
 
-  if (isError) {
-    return <div className="text-destructive text-sm">Failed to load crypto delta.</div>;
-  }
   return (
     <div className="space-y-3 text-sm">
-      <div className="rounded border bg-muted/20 p-2 text-xs">
-        +{data?.totals.added ?? 0} added · -{data?.totals.removed ?? 0} removed · {data?.totals.unchanged ?? 0} unchanged
-      </div>
+      <DeltaSummary
+        added={data?.totals.added ?? 0}
+        removed={data?.totals.removed ?? 0}
+        unchanged={data?.totals.unchanged ?? 0}
+      />
       <DeltaList<CryptoDeltaItem & { id: string }>
         isLoading={isLoading}
         items={
@@ -56,7 +52,11 @@ export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onCountLoaded 
           </div>
         )}
       />
-      <DeltaPagination page={data?.page ?? 1} totalPages={data?.total_pages ?? 1} onChange={setPage} />
+      <DeltaPagination
+        page={data?.page ?? 1}
+        totalPages={data?.total_pages ?? 1}
+        onChange={setPage}
+      />
     </div>
   );
 }

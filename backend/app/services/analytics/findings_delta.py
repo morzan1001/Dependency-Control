@@ -1,7 +1,17 @@
+"""
+Findings-delta computation: matches findings across two scans by a
+type-specific semantic key (CVE id, secret pattern hash, SAST rule id, …)
+and produces the unified envelope.
+
+The on-disk `severity` field is stored UPPERCASE (per the Severity enum);
+the envelope lower-cases it and `_SEVERITY_RANK` keys are lowercase so
+ordering works regardless of the caller's case.
+"""
+
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -11,48 +21,61 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
+from app.services.analytics._delta_pagination import MAX_FETCH, paginate
 
-_MAX_FETCH = 50_000
+_SEVERITY_RANK = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+    "negligible": 4,
+    "info": 5,
+    "unknown": 6,
+}
+
+
+def _sast_identifier(details: Dict[str, Any]) -> str:
+    rule = str(details.get("rule_id") or "")
+    line = details.get("line")
+    return f"{rule}:{line}" if line is not None else rule
+
+
+# Each entry returns the type-specific identifier or "" when no stable id
+# is present (callers fall back to the description+found_in hash).
+_FINDING_TYPE_IDENTIFIER: Dict[str, Callable[[Dict[str, Any]], str]] = {
+    "vulnerability": lambda d: str(d.get("cve_id") or d.get("vuln_id") or ""),
+    "secret": lambda d: str(d.get("pattern_hash") or d.get("rule_id") or ""),
+    "sast": _sast_identifier,
+    "iac": lambda d: str(d.get("rule_id") or ""),
+    "license": lambda d: str(d.get("license_id") or d.get("license") or ""),
+    "malware": lambda d: str(d.get("signature") or d.get("rule_id") or ""),
+    "eol": lambda d: str(d.get("eol_date") or d.get("version") or ""),
+    "outdated": lambda d: str(d.get("latest_version") or ""),
+}
+
+
+def _fallback_identifier(finding: Dict[str, Any]) -> str:
+    """Deterministic hash of description + found_in so an unidentifiable
+    finding at least matches itself across scans if those are stable."""
+    digest_src = (finding.get("description") or "") + "|" + "|".join(finding.get("found_in") or [])
+    return hashlib.sha1(digest_src.encode("utf-8")).hexdigest()[:12]
 
 
 def finding_identity_key(finding: Dict[str, Any]) -> Tuple[str, str, str]:
     """Stable identity for matching the 'same' finding across two scans.
 
     finding_id is per-scan and unusable; we derive a semantic key from
-    type-specific identifier fields.
+    type-specific identifier fields, with a description-hash fallback for
+    finding types that lack a stable identifier in their details dict.
     """
     ftype = finding.get("type") or ""
     component = finding.get("component") or ""
     details = finding.get("details") or {}
-    identifier: str
 
-    if ftype == "vulnerability":
-        identifier = str(details.get("cve_id") or details.get("vuln_id") or "")
-    elif ftype == "secret":
-        identifier = str(details.get("pattern_hash") or details.get("rule_id") or "")
-    elif ftype == "sast":
-        rule = str(details.get("rule_id") or "")
-        line = details.get("line")
-        identifier = f"{rule}:{line}" if line is not None else rule
-    elif ftype == "iac":
-        identifier = str(details.get("rule_id") or "")
-    elif ftype == "license":
-        identifier = str(details.get("license_id") or details.get("license") or "")
-    elif ftype == "malware":
-        identifier = str(details.get("signature") or details.get("rule_id") or "")
-    elif ftype == "eol":
-        identifier = str(details.get("eol_date") or details.get("version") or "")
-    elif ftype == "outdated":
-        identifier = str(details.get("latest_version") or "")
-    else:
-        identifier = ""
-
+    extractor = _FINDING_TYPE_IDENTIFIER.get(ftype)
+    identifier = extractor(details) if extractor else ""
     if not identifier:
-        # Fallback: deterministic hash of description + file_path so
-        # an unidentifiable finding at least matches itself across scans
-        # if its description/location is identical.
-        digest_src = (finding.get("description") or "") + "|" + "|".join(finding.get("found_in") or [])
-        identifier = hashlib.sha1(digest_src.encode("utf-8")).hexdigest()[:12]
+        identifier = _fallback_identifier(finding)
 
     return (ftype, component, identifier)
 
@@ -68,8 +91,10 @@ async def _fetch_scan_findings(
     if finding_type:
         query["type"] = {"$in": list(finding_type)}
     if severity:
-        query["severity"] = {"$in": list(severity)}
-    cursor = db["findings"].find(query).limit(_MAX_FETCH)
+        # Severity enum values are stored UPPERCASE; normalise the
+        # (case-insensitive) caller input here so the $in matches.
+        query["severity"] = {"$in": [s.upper() for s in severity]}
+    cursor = db["findings"].find(query).limit(MAX_FETCH)
     return [doc async for doc in cursor]
 
 
@@ -80,7 +105,9 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
         change=change,
         finding_id=str(doc.get("finding_id") or doc.get("_id") or ""),
         finding_type=doc.get("type") or "",
-        severity=doc.get("severity") or "unknown",
+        # Normalise to lowercase so the envelope is consistent regardless of
+        # how the underlying storage cased the value.
+        severity=(doc.get("severity") or "unknown").lower(),
         title=doc.get("description") or "",
         component=doc.get("component"),
         cve_id=details.get("cve_id"),
@@ -132,21 +159,16 @@ async def compute_findings_delta(
     # Stable sort: added before removed, then by severity (critical first), then title,
     # then finding_id as a final tiebreaker so pagination is deterministic regardless
     # of set-iteration order.
-    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
     items.sort(
         key=lambda i: (
             i.change != "added",
-            severity_rank.get(i.severity, 99),
+            _SEVERITY_RANK.get(i.severity, 99),
             i.title,
             i.finding_id,
         )
     )
 
-    total_items = len(items)
-    total_pages = max(1, (total_items + page_size - 1) // page_size)
-    start = (page - 1) * page_size
-    end = start + page_size
-    paged = items[start:end]
+    paged, total_pages = paginate(items, page, page_size)
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,

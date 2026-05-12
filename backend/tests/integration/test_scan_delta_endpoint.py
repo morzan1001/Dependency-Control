@@ -111,7 +111,7 @@ async def test_returns_400_for_severity_with_components(client, db, owner_auth_h
             "from_scan_id": "c1",
             "to_scan_id": "c2",
             "category": "components",
-            "severity": "critical",
+            "severity": "CRITICAL",
         },
         headers=owner_auth_headers_proj,
     )
@@ -130,7 +130,7 @@ async def test_returns_200_findings(client, db, owner_auth_headers_proj):
             "scan_id": "ok2",
             "finding_id": "f1",
             "type": "vulnerability",
-            "severity": "critical",
+            "severity": "CRITICAL",
             "component": "x",
             "description": "d",
             "details": {"cve_id": "C-1"},

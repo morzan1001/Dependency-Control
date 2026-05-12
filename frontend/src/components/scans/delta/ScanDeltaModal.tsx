@@ -1,5 +1,11 @@
 import { useCallback, useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FindingsDeltaTab } from "./tabs/FindingsDeltaTab";
 import { ComponentsDeltaTab } from "./tabs/ComponentsDeltaTab";
@@ -33,6 +39,9 @@ export function ScanDeltaModal({ projectId, fromScanId, toScanId, onClose }: Pro
       <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>Scan delta</DialogTitle>
+          <DialogDescription>
+            Added, removed, and changed entries between the two selected scans.
+          </DialogDescription>
         </DialogHeader>
         {open && fromScanId && toScanId && (
           // key forces a remount on scan-pair change, resetting tab/visited/counts

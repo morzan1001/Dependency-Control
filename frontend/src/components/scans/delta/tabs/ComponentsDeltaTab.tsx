@@ -1,19 +1,14 @@
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { getScanDelta } from "@/api/scanDelta";
+import { useCallback, useState } from "react";
 import type { ComponentDeltaItem } from "@/types/scanDelta";
 import { Button } from "@/components/ui/button";
+import { DeltaError } from "../shared/DeltaError";
 import { DeltaList } from "../shared/DeltaList";
 import { DeltaPagination } from "../shared/DeltaPagination";
-
-interface Props {
-  projectId: string;
-  fromScanId: string;
-  toScanId: string;
-  onCountLoaded: (totalChanges: number) => void;
-}
+import { DeltaSummary } from "../shared/DeltaSummary";
+import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
 const CHANGES = ["all", "added", "removed", "changed"] as const;
+type ComponentChangeFilter = (typeof CHANGES)[number];
 
 const CHANGE_PREFIX: Record<ComponentDeltaItem["change"], string> = {
   added: "+",
@@ -28,42 +23,41 @@ const CHANGE_COLOR: Record<ComponentDeltaItem["change"], string> = {
   license_changed: "text-blue-600",
 };
 
-export function ComponentsDeltaTab({ projectId, fromScanId, toScanId, onCountLoaded }: Props) {
-  const [page, setPage] = useState(1);
-  const [change, setChange] = useState<"all" | "added" | "removed" | "changed">("all");
+export function ComponentsDeltaTab({
+  projectId,
+  fromScanId,
+  toScanId,
+  onCountLoaded,
+}: DeltaTabProps) {
+  const [change, setChange] = useState<ComponentChangeFilter>("all");
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["scan-delta", "components", projectId, fromScanId, toScanId, page, change],
-    queryFn: () =>
-      getScanDelta({
-        projectId,
-        fromScanId,
-        toScanId,
-        category: "components",
-        page,
-        pageSize: 50,
-        change,
-      }),
-    enabled: !!(projectId && fromScanId && toScanId),
+  const reportCount = useCallback(
+    (totals: { added: number; removed: number; changed: number }) =>
+      onCountLoaded(totals.added + totals.removed + totals.changed),
+    [onCountLoaded],
+  );
+
+  const { query, setPage } = useDeltaTabQuery({
+    category: "components",
+    projectId,
+    fromScanId,
+    toScanId,
+    extra: { change },
+    filterKey: [change],
+    onCountLoaded: reportCount,
   });
+  const { data, isLoading, isError } = query;
 
-  useEffect(() => {
-    if (data) {
-      const t = data.totals;
-      onCountLoaded(t.added + t.removed + t.changed);
-    }
-  }, [data, onCountLoaded]);
-
-  if (isError) {
-    return <div className="text-destructive text-sm">Failed to load components delta.</div>;
-  }
+  if (isError) return <DeltaError category="components" />;
 
   return (
     <div className="space-y-3 text-sm">
-      <div className="rounded border bg-muted/20 p-2 text-xs">
-        +{data?.totals.added ?? 0} added · -{data?.totals.removed ?? 0} removed · ↻
-        {data?.totals.changed ?? 0} changed · {data?.totals.unchanged ?? 0} unchanged
-      </div>
+      <DeltaSummary
+        added={data?.totals.added ?? 0}
+        removed={data?.totals.removed ?? 0}
+        changed={data?.totals.changed ?? 0}
+        unchanged={data?.totals.unchanged ?? 0}
+      />
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-muted-foreground">Change:</span>
         {CHANGES.map((c) => (
@@ -93,10 +87,7 @@ export function ComponentsDeltaTab({ projectId, fromScanId, toScanId, onCountLoa
           <div className="flex items-baseline gap-2 font-mono text-xs">
             <span className={CHANGE_COLOR[it.change]}>{CHANGE_PREFIX[it.change]}</span>
             <span className="text-sm">{it.name}</span>
-            {it.change === "added" && it.version && (
-              <span className="text-muted-foreground">@{it.version}</span>
-            )}
-            {it.change === "removed" && it.version && (
+            {(it.change === "added" || it.change === "removed") && it.version && (
               <span className="text-muted-foreground">@{it.version}</span>
             )}
             {it.change === "version_changed" && (

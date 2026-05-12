@@ -1,3 +1,12 @@
+"""
+Components-delta computation: matches SBOM components across two scans by
+purl with the version stripped, so that a version bump appears as
+``version_changed`` rather than added+removed. License changes on an
+otherwise-stable component appear as ``license_changed``. A component that
+changed both version and license is emitted as a single ``version_changed``
+entry with both transitions populated.
+"""
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
@@ -11,8 +20,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-
-_MAX_FETCH = 50_000
+from app.services.analytics._delta_pagination import MAX_FETCH, paginate
 
 
 def component_identity_key(comp: Dict) -> Tuple[str, str]:
@@ -43,7 +51,7 @@ async def _fetch_components(
     project_id: str,
     scan_id: str,
 ) -> List[dict]:
-    cursor = db["dependencies"].find({"project_id": project_id, "scan_id": scan_id}).limit(_MAX_FETCH)
+    cursor = db["dependencies"].find({"project_id": project_id, "scan_id": scan_id}).limit(MAX_FETCH)
     return [doc async for doc in cursor]
 
 
@@ -122,10 +130,7 @@ async def compute_components_delta(
     # deterministic regardless of set-iteration order.
     items.sort(key=lambda i: (i.change, i.name, i.purl or ""))
 
-    total_items = len(items)
-    total_pages = max(1, (total_items + page_size - 1) // page_size)
-    start = (page - 1) * page_size
-    paged = items[start : start + page_size]
+    paged, total_pages = paginate(items, page, page_size)
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,

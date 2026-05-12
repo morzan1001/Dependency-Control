@@ -1,65 +1,51 @@
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { getScanDelta } from "@/api/scanDelta";
+import { useCallback, useState } from "react";
 import type { FindingDeltaItem } from "@/types/scanDelta";
 import { Button } from "@/components/ui/button";
+import { DeltaError } from "../shared/DeltaError";
 import { DeltaList } from "../shared/DeltaList";
 import { DeltaPagination } from "../shared/DeltaPagination";
-
-interface Props {
-  projectId: string;
-  fromScanId: string;
-  toScanId: string;
-  onCountLoaded: (totalChanges: number) => void;
-}
+import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
 const SEVERITIES = ["critical", "high", "medium", "low"] as const;
 const TYPES = ["vulnerability", "secret", "sast", "iac", "license", "malware", "eol"] as const;
 const CHANGES = ["all", "added", "removed"] as const;
+type FindingsChangeFilter = (typeof CHANGES)[number];
 
-export function FindingsDeltaTab({ projectId, fromScanId, toScanId, onCountLoaded }: Props) {
-  const [page, setPage] = useState(1);
+function toggle<T extends string>(list: readonly T[], value: T): T[] {
+  return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+}
+
+export function FindingsDeltaTab({
+  projectId,
+  fromScanId,
+  toScanId,
+  onCountLoaded,
+}: DeltaTabProps) {
   const [severity, setSeverity] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
-  const [change, setChange] = useState<"all" | "added" | "removed">("all");
+  const [change, setChange] = useState<FindingsChangeFilter>("all");
 
-  const toggle = (list: string[], setter: (v: string[]) => void, value: string) =>
-    setter(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+  const reportCount = useCallback(
+    (totals: { added: number; removed: number }) => onCountLoaded(totals.added + totals.removed),
+    [onCountLoaded],
+  );
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: [
-      "scan-delta",
-      "findings",
-      projectId,
-      fromScanId,
-      toScanId,
-      page,
-      severity,
-      types,
+  const { query, setPage } = useDeltaTabQuery({
+    category: "findings",
+    projectId,
+    fromScanId,
+    toScanId,
+    extra: {
       change,
-    ],
-    queryFn: () =>
-      getScanDelta({
-        projectId,
-        fromScanId,
-        toScanId,
-        category: "findings",
-        page,
-        pageSize: 50,
-        change,
-        severity: severity.length ? severity : undefined,
-        findingType: types.length ? types : undefined,
-      }),
-    enabled: !!(projectId && fromScanId && toScanId),
+      severity: severity.length ? severity : undefined,
+      findingType: types.length ? types : undefined,
+    },
+    filterKey: [severity, types, change],
+    onCountLoaded: reportCount,
   });
+  const { data, isLoading, isError } = query;
 
-  useEffect(() => {
-    if (data) onCountLoaded(data.totals.added + data.totals.removed);
-  }, [data, onCountLoaded]);
-
-  if (isError) {
-    return <div className="text-destructive text-sm">Failed to load findings delta.</div>;
-  }
+  if (isError) return <DeltaError category="findings" />;
 
   return (
     <div className="space-y-3 text-sm">
@@ -72,7 +58,7 @@ export function FindingsDeltaTab({ projectId, fromScanId, toScanId, onCountLoade
             variant={severity.includes(s) ? "default" : "outline"}
             onClick={() => {
               setPage(1);
-              toggle(severity, setSeverity, s);
+              setSeverity(toggle(severity, s));
             }}
           >
             {s}
@@ -88,7 +74,7 @@ export function FindingsDeltaTab({ projectId, fromScanId, toScanId, onCountLoade
             variant={types.includes(t) ? "default" : "outline"}
             onClick={() => {
               setPage(1);
-              toggle(types, setTypes, t);
+              setTypes(toggle(types, t));
             }}
           >
             {t}
