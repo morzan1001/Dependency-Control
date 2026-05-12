@@ -13,6 +13,7 @@ from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.teams import TeamRepository
+from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
 
 from ._helpers import (
@@ -36,7 +37,6 @@ from .crypto_tools import (
     get_crypto_trends,
     get_framework_evaluation_summary,
     get_project_crypto_policy,
-    get_scan_delta,
     list_compliance_reports,
     list_crypto_assets,
     list_policy_audit_entries,
@@ -1247,12 +1247,16 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
-            return await get_scan_delta(
+            response = await compute_crypto_delta_envelope(
                 db,
                 project_id=args["project_id"],
-                from_scan_id=args["from_scan_id"],
-                to_scan_id=args["to_scan_id"],
+                from_scan=args["from_scan_id"],
+                to_scan=args["to_scan_id"],
+                page=1,
+                page_size=int(args.get("page_size") or 50),
+                change=None,
             )
+            return response.model_dump(mode="json")
 
         if tool_name == "generate_pqc_migration_plan":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)

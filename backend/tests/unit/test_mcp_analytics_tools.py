@@ -65,8 +65,17 @@ async def test_mcp_get_crypto_trends_empty_range(db):
 
 @pytest.mark.asyncio
 async def test_mcp_get_scan_delta(db):
-    from app.services.chat.tools import get_scan_delta
+    """The MCP get_scan_delta dispatch must return the unified crypto envelope.
 
+    After the scan-delta extension (see plans/2026-05-11-scan-delta-extension.md
+    Task 10), the registry routes through ``compute_crypto_delta_envelope`` and
+    returns ``ScanDeltaResponse.model_dump(mode="json")``.
+    """
+    from app.core.permissions import PRESET_ADMIN
+    from app.models.user import User
+    from app.services.chat.tools import ChatToolRegistry
+
+    db.projects._docs["p"] = {"_id": "p", "name": "test-project", "team_id": None}
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
         "s1",
@@ -94,8 +103,32 @@ async def test_mcp_get_scan_delta(db):
         ],
     )
 
-    result = await get_scan_delta(db, project_id="p", from_scan_id="s1", to_scan_id="s2")
+    admin_user = User(
+        id="admin-1",
+        username="admin",
+        email="admin@test.com",
+        permissions=list(PRESET_ADMIN),
+    )
 
+    result = await ChatToolRegistry()._dispatch(
+        "get_scan_delta",
+        {"project_id": "p", "from_scan_id": "s1", "to_scan_id": "s2"},
+        admin_user,
+        db,
+    )
+
+    assert result["category"] == "crypto"
     assert result["from_scan_id"] == "s1"
-    assert isinstance(result["added"], list)
-    assert isinstance(result["removed"], list)
+    assert result["to_scan_id"] == "s2"
+    assert isinstance(result["totals"]["added"], int)
+    assert isinstance(result["totals"]["removed"], int)
+    assert isinstance(result["totals"]["unchanged"], int)
+    assert isinstance(result["items"], list)
+    if result["items"]:
+        item = result["items"][0]
+        assert "change" in item
+        assert "name" in item
+        assert "variant" in item
+        assert "primitive" in item
+        assert "locations" in item
+        assert "asset_count" in item
