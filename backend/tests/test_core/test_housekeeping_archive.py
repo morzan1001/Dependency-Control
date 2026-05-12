@@ -466,3 +466,85 @@ async def test_reap_orphan_tolerates_list_failure(monkeypatch):
     db = MagicMock()
     reaped = await _reap_orphan_s3_objects(db)
     assert reaped == 0
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for follow-up review bug #8
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch):
+    """Bug #8: archive_metadata entries whose scan_id lives in db.scans are stale and must be reaped."""
+    from app.core.housekeeping import _reap_stale_metadata
+
+    db = MagicMock()
+
+    # Two metadata entries: one whose scan exists (stale), one whose scan doesn't (still valid)
+    stale_meta = {"_id": "meta-stale", "scan_id": "scan-restored"}
+    valid_meta = {"_id": "meta-valid", "scan_id": "scan-archived"}
+
+    async def metadata_cursor(*_args, **_kwargs):
+        yield stale_meta
+        yield valid_meta
+
+    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
+
+    async def scans_find_one(query, *_args, **_kwargs):
+        # Only the restored scan exists in db.scans
+        if query.get("_id") == "scan-restored":
+            return {"_id": "scan-restored"}
+        return None
+
+    db.scans.find_one = scans_find_one
+
+    delete_calls: list[dict] = []
+
+    async def fake_delete_one(query):
+        delete_calls.append(query)
+        result = MagicMock()
+        result.deleted_count = 1
+        return result
+
+    db.archive_metadata.delete_one = fake_delete_one
+
+    reaped = await _reap_stale_metadata(db)
+
+    assert reaped == 1
+    assert delete_calls == [{"_id": "meta-stale"}]
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
+    """Bug #8: _reap_orphan_s3_objects must call _reap_stale_metadata before listing S3."""
+    from app.core.housekeeping import _reap_orphan_s3_objects
+
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
+
+    call_order: list[str] = []
+
+    async def fake_stale_reap(_db):
+        call_order.append("stale_metadata")
+        return 0
+
+    async def fake_list(*_a, **_kw):
+        call_order.append("list_objects")
+        return []
+
+    monkeypatch.setattr("app.core.housekeeping._reap_stale_metadata", fake_stale_reap)
+    monkeypatch.setattr("app.core.housekeeping.list_objects", fake_list)
+
+    db = MagicMock()
+
+    class _EmptyAsyncGen:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    db.archive_metadata.find = lambda *a, **kw: _EmptyAsyncGen()
+
+    await _reap_orphan_s3_objects(db)
+
+    assert call_order == ["stale_metadata", "list_objects"]

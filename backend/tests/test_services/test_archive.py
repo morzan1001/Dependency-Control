@@ -475,3 +475,85 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
     assert result is None
     assert "already_exists" in seen_reasons
     assert "unknown" not in seen_reasons
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for follow-up review bugs #6–#7
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeypatch):
+    """Bug #6: GridFS-fail path must also trigger _rollback_partial_restore."""
+    meta = _make_archive_metadata()
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)  # no pre-existing scan
+    db.scans.delete_one = AsyncMock()
+    db.findings.delete_many = AsyncMock()
+    db.finding_records.delete_many = AsyncMock()
+    db.dependencies.delete_many = AsyncMock()
+    db.analysis_results.delete_many = AsyncMock()
+    db.callgraphs.delete_many = AsyncMock()
+
+    # Replay succeeds and returns gridfs entries
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(
+            return_value=(
+                None,  # no failure_reason
+                ["scans", "findings"],  # collections_restored
+                [{"gridfs_id": "abc", "filename": "x.json", "data": {}}],  # gridfs_entries
+            )
+        ),
+    )
+    # GridFS restore returns False (failure)
+    monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
+    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None
+    # Rollback must run even though replay succeeded — GridFS failed
+    db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
+    db.findings.delete_many.assert_awaited()
+    db.dependencies.delete_many.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypatch):
+    """Bug #7: delete_by_scan_id failure after restore must NOT bubble up — log and return success."""
+    meta = _make_archive_metadata()
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(return_value=(None, ["scans"], [])),
+    )
+    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+
+    # delete_object succeeds, but delete_by_scan_id raises
+    monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        RepoCls.return_value.delete_by_scan_id = AsyncMock(
+            side_effect=RuntimeError("Mongo hiccup")
+        )
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    # Restore still reports success despite the metadata-delete glitch
+    assert result is not None
+    assert result.scan_id == "scan-1"

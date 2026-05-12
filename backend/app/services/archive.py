@@ -492,9 +492,10 @@ async def restore_scan(
     """Restore an archived scan back to MongoDB.
 
     Guarded by a distributed lock on restore:{scan_id}. Aborts if the scan
-    already exists in MongoDB (avoids partial state). On success, deletes
-    the S3 archive and the metadata. If S3 delete fails, metadata is LEFT
-    in place so the orphan-reaper can pick it up.
+    already exists in MongoDB (avoids partial state). On success, attempts
+    to delete both the S3 archive and the metadata record; either deletion
+    failing is logged but does not roll back the restore — the orphan
+    reaper's two-pass cleanup will sweep up any remnants.
     """
     if not is_archive_enabled():
         return None
@@ -539,6 +540,7 @@ async def restore_scan(
 
         if gridfs_entries:
             if not await _restore_gridfs(db, scan_id, gridfs_entries):
+                await _rollback_partial_restore(db, scan_id)
                 archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.INTEGRITY).inc()
                 archive_operations_total.labels(operation="restore", status="failure").inc()
                 return None
@@ -557,7 +559,15 @@ async def restore_scan(
                 f"S3 delete failed after restore; orphan reaper will retry: {e}",
                 extra={"scan_id": scan_id, "s3_key": metadata.s3_key},
             )
-        await repo.delete_by_scan_id(scan_id)
+        try:
+            await repo.delete_by_scan_id(scan_id)
+        except Exception as e:
+            # Stale metadata that points at a scan now living in db.scans will
+            # be reaped by the housekeeping orphan reaper's second pass.
+            logger.warning(
+                f"Metadata delete failed after restore; orphan reaper will retry: {e}",
+                extra={"scan_id": scan_id},
+            )
 
         duration = time.monotonic() - start_time
         archive_operations_total.labels(operation="restore", status="success").inc()

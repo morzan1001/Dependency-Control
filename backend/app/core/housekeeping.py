@@ -270,17 +270,53 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         logger.error(f"Scheduled re-scan check failed: {e}")
 
 
+async def _reap_stale_metadata(db: Any) -> int:
+    """Delete archive_metadata entries whose scan_id now lives in db.scans.
+
+    These appear after a restore where the S3 delete and/or metadata delete
+    failed: the scan is back in MongoDB but the metadata record still points
+    at the (now-orphaned) S3 object. Removing the metadata reclassifies the
+    S3 object as a true orphan that the next sweep will reap.
+    """
+    deleted = 0
+    async for meta in db.archive_metadata.find({}, {"_id": 1, "scan_id": 1}):
+        scan_id = meta.get("scan_id")
+        if not scan_id:
+            continue
+        scan = await db.scans.find_one({"_id": scan_id}, {"_id": 1})
+        if scan is None:
+            continue
+        try:
+            result = await db.archive_metadata.delete_one({"_id": meta["_id"]})
+            if result.deleted_count:
+                deleted += 1
+                logger.info(
+                    f"Reaped stale archive_metadata for scan {scan_id} (scan exists in db.scans)"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to delete stale metadata for scan {scan_id}: {e}")
+    return deleted
+
+
 async def _reap_orphan_s3_objects(db: Any) -> int:
     """Delete S3 archive objects that have no matching ``archive_metadata`` record.
 
-    Only deletes objects older than ``ARCHIVE_ORPHAN_MIN_AGE_HOURS`` to give
-    in-flight archives time to write their metadata. Best-effort: errors
-    listing or deleting are logged and swallowed.
+    Runs in two passes:
+      1. Stale metadata: drop archive_metadata rows whose scan is already in db.scans
+         (post-restore leftovers — Bug #7-class zombies).
+      2. S3 orphans: list bucket, skip objects with matching metadata, delete
+         the rest if older than ARCHIVE_ORPHAN_MIN_AGE_HOURS.
 
-    Returns the number of objects actually deleted.
+    Best-effort: errors are logged and swallowed.
+
+    Returns the number of S3 objects actually deleted.
     """
     if not is_archive_enabled():
         return 0
+
+    # Pass 1: clean up stale metadata before computing known_keys
+    await _reap_stale_metadata(db)
+
     try:
         all_objects = await list_objects()
     except Exception as e:
