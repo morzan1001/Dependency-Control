@@ -71,6 +71,7 @@ class TestArchiveScansAndDelete:
     def test_partial_failure_only_deletes_successful(self):
         # scan-1 archives ok, scan-2 fails
         async def mock_archive_fn(db, scan_id):
+            await asyncio.sleep(0)
             if scan_id == "scan-1":
                 return _make_archive_metadata(scan_id="scan-1")
             return None
@@ -98,19 +99,19 @@ class TestArchiveScansAndDelete:
         call_args = mock_delete.call_args[0]
         assert call_args[1] == []  # No scans to delete
 
-    def test_respects_batch_size_limit(self):
+    def test_processes_all_provided_scan_ids(self):
+        # _process_scans_in_batches is responsible for chunking; _archive_scans_and_delete
+        # must process every ID it receives (no internal slicing).
         scan_ids = [f"scan-{i}" for i in range(100)]
         metadata = _make_archive_metadata()
 
         with (
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=50),
-            patch(f"{MODULE}.ARCHIVE_BATCH_SIZE", 50),
+            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=100),
         ):
             asyncio.run(_archive_scans_and_delete(MagicMock(), scan_ids, "test"))
 
-        # Should only process ARCHIVE_BATCH_SIZE scans
-        assert mock_archive.call_count == 50
+        assert mock_archive.call_count == 100
 
 
 # ---------------------------------------------------------------------------
@@ -285,3 +286,265 @@ class TestRunHousekeepingArchive:
             asyncio.run(run_housekeeping())
 
         mock_handle.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Status filter tests (in-progress scan exclusion)
+# ---------------------------------------------------------------------------
+
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
+    """Global retention cursor must exclude scans with status pending/processing."""
+    from datetime import datetime, timezone
+    from app.core.housekeeping import run_housekeeping
+
+    captured_queries: list[dict] = []
+
+    db = MagicMock()
+
+    class _EmptyCursor:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    def find_capture(query, projection=None):
+        captured_queries.append(query)
+        return _EmptyCursor()
+
+    db.scans.find = find_capture
+
+    class _SystemSettings:
+        retention_mode = "global"
+        global_retention_days = 30
+        global_retention_action = "delete"
+
+    settings_repo = MagicMock()
+    settings_repo.get = AsyncMock(return_value=_SystemSettings())
+
+    monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
+    monkeypatch.setattr("app.core.housekeeping._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
+
+    await run_housekeeping()
+
+    assert len(captured_queries) >= 1
+    q = captured_queries[0]
+    assert "status" in q, f"Expected status filter in query, got: {q}"
+    assert q["status"] == {"$nin": ["pending", "processing"]}
+
+
+@pytest.mark.asyncio
+async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch):
+    """Project-specific retention cursor must also exclude pending/processing scans."""
+    from app.core.housekeeping import run_housekeeping
+
+    captured_queries: list[dict] = []
+
+    db = MagicMock()
+
+    class _EmptyCursor:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    def find_capture(query, projection=None):
+        captured_queries.append(query)
+        return _EmptyCursor()
+
+    db.scans.find = find_capture
+
+    # Aggregate yields one group
+    async def _agg_iter(_pipeline):
+        yield {
+            "_id": {"days": 30, "action": "delete"},
+            "project_ids": ["proj-1"],
+        }
+
+    db.projects.aggregate = lambda pipeline: _agg_iter(pipeline)
+
+    class _SystemSettings:
+        retention_mode = "project"
+        global_retention_days = 0
+        global_retention_action = "none"
+
+    settings_repo = MagicMock()
+    settings_repo.get = AsyncMock(return_value=_SystemSettings())
+
+    monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
+    monkeypatch.setattr("app.core.housekeeping._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
+
+    await run_housekeeping()
+
+    assert any("status" in q and q["status"] == {"$nin": ["pending", "processing"]} for q in captured_queries), (
+        f"Expected status filter in at least one cursor query, got: {captured_queries}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_s3_objects_deletes_only_old_unknown_keys(monkeypatch):
+    """Reaper deletes S3 objects that have no archive_metadata record AND are older than min age."""
+    from datetime import datetime, timezone, timedelta
+
+    from app.core.housekeeping import _reap_orphan_s3_objects
+
+    now = datetime.now(timezone.utc)
+    old_time = now - timedelta(hours=48)
+    recent_time = now - timedelta(hours=2)
+
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.core.housekeeping.list_objects",
+        AsyncMock(
+            return_value=[
+                {"Key": "p1/scan-orphan-old.bundle", "Size": 100, "LastModified": old_time},
+                {"Key": "p1/scan-orphan-recent.bundle", "Size": 100, "LastModified": recent_time},
+                {"Key": "p1/scan-known.bundle", "Size": 100, "LastModified": old_time},
+            ]
+        ),
+    )
+
+    delete_calls: list[str] = []
+
+    async def fake_delete(key, **kw):
+        delete_calls.append(key)
+
+    monkeypatch.setattr("app.core.housekeeping.delete_object", fake_delete)
+
+    db = MagicMock()
+
+    async def metadata_cursor(*_args, **_kwargs):
+        yield {"s3_key": "p1/scan-known.bundle"}
+
+    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
+
+    reaped = await _reap_orphan_s3_objects(db)
+
+    assert reaped == 1
+    assert delete_calls == ["p1/scan-orphan-old.bundle"]
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_skips_when_archive_disabled(monkeypatch):
+    from app.core.housekeeping import _reap_orphan_s3_objects
+
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
+    # list_objects should NOT be called
+    list_calls = []
+    monkeypatch.setattr(
+        "app.core.housekeeping.list_objects",
+        AsyncMock(side_effect=lambda *a, **kw: list_calls.append(1)),
+    )
+
+    db = MagicMock()
+    reaped = await _reap_orphan_s3_objects(db)
+    assert reaped == 0
+    assert list_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_tolerates_list_failure(monkeypatch):
+    """If list_objects raises, the reaper returns 0 (best-effort) without re-raising."""
+    from app.core.housekeeping import _reap_orphan_s3_objects
+
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.core.housekeeping.list_objects",
+        AsyncMock(side_effect=RuntimeError("S3 unavailable")),
+    )
+
+    db = MagicMock()
+    reaped = await _reap_orphan_s3_objects(db)
+    assert reaped == 0
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for follow-up review bug #8
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch):
+    """Bug #8: archive_metadata entries whose scan_id lives in db.scans are stale and must be reaped."""
+    from app.core.housekeeping import _reap_stale_metadata
+
+    db = MagicMock()
+
+    # Two metadata entries: one whose scan exists (stale), one whose scan doesn't (still valid)
+    stale_meta = {"_id": "meta-stale", "scan_id": "scan-restored"}
+    valid_meta = {"_id": "meta-valid", "scan_id": "scan-archived"}
+
+    async def metadata_cursor(*_args, **_kwargs):
+        yield stale_meta
+        yield valid_meta
+
+    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
+
+    async def scans_find_one(query, *_args, **_kwargs):
+        # Only the restored scan exists in db.scans
+        if query.get("_id") == "scan-restored":
+            return {"_id": "scan-restored"}
+        return None
+
+    db.scans.find_one = scans_find_one
+
+    delete_calls: list[dict] = []
+
+    async def fake_delete_one(query):
+        delete_calls.append(query)
+        result = MagicMock()
+        result.deleted_count = 1
+        return result
+
+    db.archive_metadata.delete_one = fake_delete_one
+
+    reaped = await _reap_stale_metadata(db)
+
+    assert reaped == 1
+    assert delete_calls == [{"_id": "meta-stale"}]
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
+    """Bug #8: _reap_orphan_s3_objects must call _reap_stale_metadata before listing S3."""
+    from app.core.housekeeping import _reap_orphan_s3_objects
+
+    monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)
+
+    call_order: list[str] = []
+
+    async def fake_stale_reap(_db):
+        call_order.append("stale_metadata")
+        return 0
+
+    async def fake_list(*_a, **_kw):
+        call_order.append("list_objects")
+        return []
+
+    monkeypatch.setattr("app.core.housekeeping._reap_stale_metadata", fake_stale_reap)
+    monkeypatch.setattr("app.core.housekeeping.list_objects", fake_list)
+
+    db = MagicMock()
+
+    class _EmptyAsyncGen:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    db.archive_metadata.find = lambda *a, **kw: _EmptyAsyncGen()
+
+    await _reap_orphan_s3_objects(db)
+
+    assert call_order == ["stale_metadata", "list_objects"]

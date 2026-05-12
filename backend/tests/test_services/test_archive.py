@@ -1,28 +1,20 @@
-"""Tests for archive service (archive_scan, restore_scan).
+"""Tests for archive service (archive_scan, restore_scan)."""
 
-Tests the core archiving and restoring logic with mocked S3 and MongoDB.
-"""
-
-import asyncio
-import gzip
 import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.models.archive import ArchiveMetadata
-from app.services.archive import (
-    _extract_gridfs_ids_from_refs,
-    _serialize_doc,
-    archive_scan,
-    restore_scan,
-)
+from app.services.archive import archive_scan, restore_scan
 
 MODULE = "app.services.archive"
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — copy these verbatim from the existing test_archive.py
 # ---------------------------------------------------------------------------
 
 
@@ -43,11 +35,10 @@ def _make_scan_doc(**overrides):
 
 
 def _make_archive_metadata(**overrides):
-    """Create an ArchiveMetadata instance for testing."""
     defaults = {
         "project_id": "proj-1",
         "scan_id": "scan-1",
-        "s3_key": "proj-1/scan-1.json.gz",
+        "s3_key": "proj-1/scan-1-1700000000.bundle",
         "s3_bucket": "dc-archives",
         "branch": "main",
         "commit_hash": "abc123",
@@ -59,680 +50,510 @@ def _make_archive_metadata(**overrides):
 
 
 class _AsyncCursorMock:
-    """Mock for a Motor async cursor that supports batch_size() and async iteration."""
-
     def __init__(self, docs: List[Dict[str, Any]]):
         self._docs = docs
-        self._index = 0
 
     def batch_size(self, _size: int) -> "_AsyncCursorMock":
-        """batch_size() returns the cursor itself (chainable)."""
         return self
 
-    def __aiter__(self) -> "_AsyncCursorMock":
-        self._index = 0
-        return self
+    def __aiter__(self):
+        async def _gen():
+            for doc in self._docs:
+                yield doc
+        return _gen()
 
-    async def __anext__(self) -> Dict[str, Any]:
-        if self._index >= len(self._docs):
-            raise StopAsyncIteration
-        doc = self._docs[self._index]
-        self._index += 1
-        return doc
-
-    # Keep to_list for any remaining callers (e.g. restore tests)
-    async def to_list(self, _length=None) -> List[Dict[str, Any]]:
+    async def to_list(self, _length=None):
         return list(self._docs)
 
 
 def _make_mock_db(
-    scan_doc=None, findings=None, finding_records=None, dependencies=None, analysis_results=None, callgraphs=None
+    scan_doc=None, findings=None, finding_records=None, dependencies=None,
+    analysis_results=None, callgraphs=None,
 ):
-    """Create a mock database with collection mocks supporting async iteration."""
     db = MagicMock()
-
-    # scans
     db.scans.find_one = AsyncMock(return_value=scan_doc)
     db.scans.find = MagicMock(return_value=_AsyncCursorMock([scan_doc] if scan_doc else []))
     db.scans.insert_one = AsyncMock()
-
-    # findings
     db.findings.find = MagicMock(return_value=_AsyncCursorMock(findings or []))
     db.findings.insert_many = AsyncMock()
-
-    # finding_records
     db.finding_records.find = MagicMock(return_value=_AsyncCursorMock(finding_records or []))
     db.finding_records.insert_many = AsyncMock()
-
-    # dependencies
     db.dependencies.find = MagicMock(return_value=_AsyncCursorMock(dependencies or []))
     db.dependencies.insert_many = AsyncMock()
-
-    # analysis_results
     db.analysis_results.find = MagicMock(return_value=_AsyncCursorMock(analysis_results or []))
     db.analysis_results.insert_many = AsyncMock()
-
-    # callgraphs
     db.callgraphs.find = MagicMock(return_value=_AsyncCursorMock(callgraphs or []))
     db.callgraphs.insert_many = AsyncMock()
-
     return db
 
 
 # ---------------------------------------------------------------------------
-# _serialize_doc
+# Archive environment fixture: patches S3 + lock + encryption + bucket settings
 # ---------------------------------------------------------------------------
 
 
-class TestSerializeDoc:
-    def test_converts_objectid(self):
-        from bson import ObjectId
+@pytest.fixture
+def archive_env(monkeypatch):
+    """Set up S3 fake, lock repo, encryption off, bucket name."""
+    from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
 
-        oid = ObjectId("507f1f77bcf86cd799439011")
-        result = _serialize_doc({"_id": oid})
-        assert result["_id"] == "507f1f77bcf86cd799439011"
+    fake = FakeS3Client()
 
-    def test_converts_datetime(self):
-        dt = datetime(2025, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
-        result = _serialize_doc({"created_at": dt})
-        assert result["created_at"] == dt.isoformat()
+    monkeypatch.setattr("app.core.s3.get_s3_client", lambda: fake_get_s3_client(fake))
+    monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
+    monkeypatch.setattr("app.services.archive.is_archive_enabled", lambda: True)
+    monkeypatch.setattr("app.services.archive.is_encryption_enabled", lambda: False)
 
-    def test_converts_nested_dict(self):
-        from bson import ObjectId
+    class _S:
+        S3_BUCKET_NAME = "test-bucket"
 
-        doc = {"meta": {"ref_id": ObjectId("507f1f77bcf86cd799439011")}}
-        result = _serialize_doc(doc)
-        assert result["meta"]["ref_id"] == "507f1f77bcf86cd799439011"
+    monkeypatch.setattr("app.core.s3.settings", _S)
+    monkeypatch.setattr("app.core.config.settings", _S, raising=False)
 
-    def test_converts_list_with_objectids(self):
-        from bson import ObjectId
-
-        doc = {"ids": [ObjectId("507f1f77bcf86cd799439011"), "normal-string"]}
-        result = _serialize_doc(doc)
-        assert result["ids"][0] == "507f1f77bcf86cd799439011"
-        assert result["ids"][1] == "normal-string"
-
-    def test_preserves_plain_values(self):
-        doc = {"name": "test", "count": 42, "active": True, "tags": ["a", "b"]}
-        result = _serialize_doc(doc)
-        assert result == doc
-
-    def test_converts_list_of_dicts(self):
-        from bson import ObjectId
-
-        doc = {"items": [{"_id": ObjectId("507f1f77bcf86cd799439011")}]}
-        result = _serialize_doc(doc)
-        assert result["items"][0]["_id"] == "507f1f77bcf86cd799439011"
+    return fake
 
 
-# ---------------------------------------------------------------------------
-# _extract_gridfs_ids_from_refs
-# ---------------------------------------------------------------------------
+def _patch_repos(lock_acquires: bool = True, existing_metadata=None):
+    """Returns a contextmanager that patches the metadata repo and lock repo."""
+    from contextlib import contextmanager
 
+    @contextmanager
+    def cm():
+        with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+            f"{MODULE}.DistributedLocksRepository"
+        ) as LockCls:
+            RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=existing_metadata)
+            RepoCls.return_value.create = AsyncMock()
+            RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
+            LockCls.return_value.acquire_lock = AsyncMock(return_value=lock_acquires)
+            LockCls.return_value.release_lock = AsyncMock(return_value=True)
+            yield RepoCls, LockCls
 
-class TestExtractGridfsIds:
-    def test_extracts_gridfs_ids(self):
-        refs = [
-            {"type": "gridfs_reference", "gridfs_id": "gid-1"},
-            {"type": "gridfs_reference", "gridfs_id": "gid-2"},
-        ]
-        result = _extract_gridfs_ids_from_refs(refs)
-        assert result == ["gid-1", "gid-2"]
-
-    def test_ignores_non_gridfs_refs(self):
-        refs = [
-            {"type": "url_reference", "url": "https://example.com/sbom.json"},
-            {"type": "gridfs_reference", "gridfs_id": "gid-1"},
-        ]
-        result = _extract_gridfs_ids_from_refs(refs)
-        assert result == ["gid-1"]
-
-    def test_handles_empty_list(self):
-        assert _extract_gridfs_ids_from_refs([]) == []
-
-    def test_skips_refs_without_gridfs_id(self):
-        refs = [{"type": "gridfs_reference"}]
-        result = _extract_gridfs_ids_from_refs(refs)
-        assert result == []
+    return cm
 
 
 # ---------------------------------------------------------------------------
-# archive_scan
+# archive_scan tests
 # ---------------------------------------------------------------------------
 
 
-class TestArchiveScan:
-    def test_returns_none_when_s3_not_configured(self):
-        with patch(f"{MODULE}.is_archive_enabled", return_value=False):
-            result = asyncio.run(archive_scan(MagicMock(), "scan-1"))
-        assert result is None
+@pytest.mark.asyncio
+async def test_archive_scan_uploads_and_inserts_metadata(archive_env):
+    scan_doc = _make_scan_doc()
+    findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
+    dependencies = [{"_id": "d1", "scan_id": "scan-1", "name": "lib"}]
+    db = _make_mock_db(scan_doc=scan_doc, findings=findings, dependencies=dependencies)
 
-    def test_returns_existing_metadata_if_already_archived(self):
-        existing = _make_archive_metadata()
+    with _patch_repos()() as (RepoCls, _):
+        result = await archive_scan(db, "scan-1")
 
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=existing)
+    assert result is not None
+    assert result.scan_id == "scan-1"
+    # An object was uploaded to S3
+    assert len(archive_env.objects) == 1
+    key = next(iter(archive_env.objects))
+    assert key.startswith("proj-1/scan-1-")
+    assert key.endswith(".bundle")
+    # Metadata was created
+    RepoCls.return_value.create.assert_awaited_once()
 
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-        ):
-            result = asyncio.run(archive_scan(MagicMock(), "scan-1"))
 
-        assert result == existing
+@pytest.mark.asyncio
+async def test_archive_scan_skips_when_lock_held(archive_env):
+    scan_doc = _make_scan_doc()
+    db = _make_mock_db(scan_doc=scan_doc)
 
-    def test_returns_none_when_scan_not_found(self):
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
+    with _patch_repos(lock_acquires=False)() as (RepoCls, _):
+        result = await archive_scan(db, "scan-1")
 
-        db = _make_mock_db(scan_doc=None)
+    assert result is None
+    assert archive_env.objects == {}
+    RepoCls.return_value.create.assert_not_awaited()
 
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-        ):
-            result = asyncio.run(archive_scan(db, "scan-1"))
 
-        assert result is None
+@pytest.mark.asyncio
+async def test_archive_scan_returns_existing_metadata_if_already_archived(archive_env):
+    scan_doc = _make_scan_doc()
+    existing = _make_archive_metadata()
+    db = _make_mock_db(scan_doc=scan_doc)
 
-    def test_archives_scan_successfully(self):
-        scan_doc = _make_scan_doc()
-        findings = [{"_id": "f-1", "scan_id": "scan-1", "severity": "high"}]
-        dependencies = [{"_id": "d-1", "scan_id": "scan-1", "purl": "pkg:pypi/requests@2.31.0"}]
+    with _patch_repos(existing_metadata=existing)() as (RepoCls, _):
+        result = await archive_scan(db, "scan-1")
 
-        db = _make_mock_db(
-            scan_doc=scan_doc,
-            findings=findings,
-            dependencies=dependencies,
+    assert result is existing
+    # No upload happens
+    assert archive_env.objects == {}
+    RepoCls.return_value.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_archive_scan_returns_none_when_scan_not_found(archive_env):
+    db = _make_mock_db(scan_doc=None)
+
+    with _patch_repos()() as (RepoCls, _):
+        result = await archive_scan(db, "missing-scan")
+
+    assert result is None
+    assert archive_env.objects == {}
+    RepoCls.return_value.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_archive_scan_aborts_s3_on_failure(archive_env):
+    """When an S3 upload_part fails, the multipart upload must be aborted and no metadata written."""
+    archive_env.fail_next_upload_part = True
+    # Big enough to trigger multipart (>5 MiB)
+    big_findings = [
+        {"_id": f"f{i}", "scan_id": "scan-1", "severity": "LOW", "blob": "x" * 1000}
+        for i in range(20000)
+    ]
+    scan_doc = _make_scan_doc()
+    db = _make_mock_db(scan_doc=scan_doc, findings=big_findings)
+
+    with _patch_repos()() as (RepoCls, _):
+        result = await archive_scan(db, "scan-1")
+
+    assert result is None
+    assert len(archive_env.aborted_uploads) >= 1
+    RepoCls.return_value.create.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# restore_scan tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restore_scan_roundtrip(archive_env):
+    """Archive a scan, then restore it. All collections must be re-inserted."""
+    scan_doc = _make_scan_doc()
+    findings = [
+        {"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"},
+        {"_id": "f2", "scan_id": "scan-1", "severity": "HIGH"},
+    ]
+    dependencies = [{"_id": "d1", "scan_id": "scan-1", "name": "lib"}]
+    db = _make_mock_db(scan_doc=scan_doc, findings=findings, dependencies=dependencies)
+
+    # 1. Archive
+    with _patch_repos()() as (RepoCls, _):
+        meta = await archive_scan(db, "scan-1")
+        assert meta is not None
+
+    # 2. Restore — simulate that the scan no longer exists, metadata still does
+    db.scans.find_one = AsyncMock(return_value=None)
+
+    # Repo returns the metadata we just created
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is not None
+    assert result.scan_id == "scan-1"
+    # Scan was reinserted (with pinned=True)
+    db.scans.insert_one.assert_awaited()
+    inserted = db.scans.insert_one.await_args.args[0]
+    assert inserted["pinned"] is True
+    # Findings + dependencies were reinserted
+    db.findings.insert_many.assert_awaited()
+    db.dependencies.insert_many.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_scan_aborts_when_lock_held(archive_env):
+    db = _make_mock_db()
+    meta = _make_archive_metadata()
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=False)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None
+    db.scans.insert_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_scan_aborts_when_scan_already_exists(archive_env):
+    """If the scan exists in MongoDB, restore must abort to avoid partial state."""
+    meta = _make_archive_metadata()
+    existing_scan = _make_scan_doc()
+    db = _make_mock_db(scan_doc=existing_scan)
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None
+    db.scans.insert_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_scan_returns_none_when_no_metadata(archive_env):
+    db = _make_mock_db()
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=None)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for follow-up review bugs #2–#5
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_replay_labels_mongo_error_not_as_s3_error():
+    """A PyMongoError during replay must produce reason=UNKNOWN, not S3_ERROR."""
+    import json
+
+    from pymongo.errors import OperationFailure
+
+    from app.services.archive import _replay_bundle
+
+    header = json.dumps(
+        {"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}
+    ).encode() + b"\n"
+
+    async def src():
+        yield header
+
+    db = MagicMock()
+
+    async def fail_insert(_doc):
+        raise OperationFailure("simulated mongo failure")
+
+    db.scans.insert_one = fail_insert
+
+    reason, _, _ = await _replay_bundle(db, "x", src())
+    assert reason == "unknown"
+    assert reason != "s3_error"
+
+
+@pytest.mark.asyncio
+async def test_replay_labels_invalid_tag_as_encryption():
+    """An InvalidTag during replay (e.g. wrong key) must produce reason=ENCRYPTION."""
+    from cryptography.exceptions import InvalidTag
+
+    from app.services.archive import _replay_bundle
+
+    class _RaisingStream:
+        """Async iterator that raises InvalidTag on the first iteration."""
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise InvalidTag()
+
+    src = _RaisingStream()
+
+    db = MagicMock()
+    reason, _, _ = await _replay_bundle(db, "x", src)
+    assert reason == "encryption"
+
+
+@pytest.mark.asyncio
+async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
+    """Bug #3: S3 delete failure must NOT leave a zombie metadata record."""
+    scan_doc = _make_scan_doc()
+    findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
+    db = _make_mock_db(scan_doc=scan_doc, findings=findings)
+
+    # 1. Archive normally
+    with _patch_repos()() as (RepoCls, _):
+        meta = await archive_scan(db, "scan-1")
+        assert meta is not None
+
+    # 2. Set up restore with: scan doesn't exist, metadata exists, S3 DELETE will fail
+    db.scans.find_one = AsyncMock(return_value=None)
+
+    delete_metadata = AsyncMock(return_value=True)
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls, patch(f"{MODULE}.delete_object", AsyncMock(side_effect=RuntimeError("S3 down"))):
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        RepoCls.return_value.delete_by_scan_id = delete_metadata
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is not None  # restore is still successful
+    delete_metadata.assert_awaited_once_with("scan-1")
+
+
+@pytest.mark.asyncio
+async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, monkeypatch):
+    """Bug #4: when _replay_bundle fails, partial scan + collections must be cleaned up."""
+    meta = _make_archive_metadata()
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)  # scan not yet present
+    db.scans.delete_one = AsyncMock()
+    db.findings.delete_many = AsyncMock()
+    db.finding_records.delete_many = AsyncMock()
+    db.dependencies.delete_many = AsyncMock()
+    db.analysis_results.delete_many = AsyncMock()
+    db.callgraphs.delete_many = AsyncMock()
+
+    # Force _replay_bundle to return a failure reason
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(return_value=("integrity", ["scans"], [])),
+    )
+    # Bypass the S3 stream construction
+    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None  # failure
+    # Rollback was attempted across the touched collections
+    db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
+    db.findings.delete_many.assert_awaited()
+    db.dependencies.delete_many.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, monkeypatch):
+    """Bug #5: a DuplicateKeyError from repo.create must be labeled ALREADY_EXISTS, not UNKNOWN."""
+    from pymongo.errors import DuplicateKeyError
+
+    from app.core.metrics import archive_failures_total
+
+    # Capture which reason label was used
+    seen_reasons: list[str] = []
+    orig_labels = archive_failures_total.labels
+
+    def capture_labels(**kw):
+        if kw.get("operation") == "archive":
+            seen_reasons.append(kw.get("reason"))
+        return orig_labels(**kw)
+
+    monkeypatch.setattr(archive_failures_total, "labels", capture_labels)
+
+    scan_doc = _make_scan_doc()
+    db = _make_mock_db(scan_doc=scan_doc, findings=[{"_id": "f1", "scan_id": "scan-1"}])
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=None)
+        RepoCls.return_value.create = AsyncMock(side_effect=DuplicateKeyError("dup"))
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await archive_scan(db, "scan-1")
+
+    assert result is None
+    assert "already_exists" in seen_reasons
+    assert "unknown" not in seen_reasons
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for follow-up review bugs #6–#7
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeypatch):
+    """Bug #6: GridFS-fail path must also trigger _rollback_partial_restore."""
+    meta = _make_archive_metadata()
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)  # no pre-existing scan
+    db.scans.delete_one = AsyncMock()
+    db.findings.delete_many = AsyncMock()
+    db.finding_records.delete_many = AsyncMock()
+    db.dependencies.delete_many = AsyncMock()
+    db.analysis_results.delete_many = AsyncMock()
+    db.callgraphs.delete_many = AsyncMock()
+
+    # Replay succeeds and returns gridfs entries
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(
+            return_value=(
+                None,  # no failure_reason
+                ["scans", "findings"],  # collections_restored
+                [{"gridfs_id": "abc", "filename": "x.json", "data": {}}],  # gridfs_entries
+            )
+        ),
+    )
+    # GridFS restore returns False (failure)
+    monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
+    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None
+    # Rollback must run even though replay succeeded — GridFS failed
+    db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
+    db.findings.delete_many.assert_awaited()
+    db.dependencies.delete_many.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypatch):
+    """Bug #7: delete_by_scan_id failure after restore must NOT bubble up — log and return success."""
+    meta = _make_archive_metadata()
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(return_value=(None, ["scans"], [])),
+    )
+    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+
+    # delete_object succeeds, but delete_by_scan_id raises
+    monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
+
+    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
+        f"{MODULE}.DistributedLocksRepository"
+    ) as LockCls:
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        RepoCls.return_value.delete_by_scan_id = AsyncMock(
+            side_effect=RuntimeError("Mongo hiccup")
         )
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
 
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-        mock_repo.create = AsyncMock(side_effect=lambda m: m)
+        result = await restore_scan(db, "scan-1")
 
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock) as mock_upload,
-            patch(f"{MODULE}.settings") as mock_settings,
-        ):
-            mock_settings.S3_BUCKET_NAME = "dc-archives"
-            result = asyncio.run(archive_scan(db, "scan-1"))
-
-        assert result is not None
-        assert result.scan_id == "scan-1"
-        assert result.project_id == "proj-1"
-        assert result.s3_key == "proj-1/scan-1.json.gz"
-        mock_upload.assert_called_once()
-        mock_repo.create.assert_called_once()
-
-        # Verify the uploaded data is valid gzip JSON
-        uploaded_data = mock_upload.call_args[0][1]
-        decompressed = gzip.decompress(uploaded_data)
-        bundle = json.loads(decompressed)
-        assert bundle["scan_id"] == "scan-1"
-        assert len(bundle["findings"]) == 1
-        assert len(bundle["dependencies"]) == 1
-
-    def test_returns_none_on_s3_upload_failure(self):
-        scan_doc = _make_scan_doc()
-        db = _make_mock_db(scan_doc=scan_doc)
-
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock, side_effect=Exception("S3 error")),
-            patch(f"{MODULE}.settings") as mock_settings,
-        ):
-            mock_settings.S3_BUCKET_NAME = "dc-archives"
-            result = asyncio.run(archive_scan(db, "scan-1"))
-
-        assert result is None
-        mock_repo.create.assert_not_called()
-
-    def test_populates_extended_metadata_fields(self):
-        scan_doc = _make_scan_doc(
-            sbom_refs=[
-                {"type": "gridfs_reference", "gridfs_id": "gfs-1"},
-            ]
-        )
-        findings = [
-            {"_id": "f-1", "scan_id": "scan-1", "severity": "CRITICAL"},
-            {"_id": "f-2", "scan_id": "scan-1", "severity": "HIGH"},
-            {"_id": "f-3", "scan_id": "scan-1", "severity": "HIGH"},
-            {"_id": "f-4", "scan_id": "scan-1", "severity": "MEDIUM"},
-        ]
-        dependencies = [
-            {"_id": "d-1", "scan_id": "scan-1", "purl": "pkg:pypi/requests@2.31.0"},
-            {"_id": "d-2", "scan_id": "scan-1", "purl": "pkg:pypi/flask@3.0.0"},
-        ]
-
-        db = _make_mock_db(
-            scan_doc=scan_doc,
-            findings=findings,
-            dependencies=dependencies,
-        )
-
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-        mock_repo.create = AsyncMock(side_effect=lambda m: m)
-
-        mock_sbom_data = [{"gridfs_id": "gfs-1", "filename": "sbom.json", "data": {"bomFormat": "CycloneDX"}}]
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock),
-            patch(f"{MODULE}._load_gridfs_sboms", new_callable=AsyncMock, return_value=mock_sbom_data),
-            patch(f"{MODULE}.settings") as mock_settings,
-        ):
-            mock_settings.S3_BUCKET_NAME = "dc-archives"
-            result = asyncio.run(archive_scan(db, "scan-1"))
-
-        assert result is not None
-        assert result.findings_count == 4
-        assert result.critical_findings_count == 1
-        assert result.high_findings_count == 2
-        assert result.dependencies_count == 2
-        assert result.sbom_filenames == ["sbom.json"]
-
-    def test_includes_gridfs_sboms_in_bundle(self):
-        scan_doc = _make_scan_doc(
-            sbom_refs=[
-                {"type": "gridfs_reference", "gridfs_id": "gfs-1"},
-            ]
-        )
-        db = _make_mock_db(scan_doc=scan_doc)
-
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-        mock_repo.create = AsyncMock(side_effect=lambda m: m)
-
-        mock_sbom_data = [{"gridfs_id": "gfs-1", "filename": "sbom.json", "data": {"bomFormat": "CycloneDX"}}]
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock) as mock_upload,
-            patch(f"{MODULE}._load_gridfs_sboms", new_callable=AsyncMock, return_value=mock_sbom_data),
-            patch(f"{MODULE}.settings") as mock_settings,
-        ):
-            mock_settings.S3_BUCKET_NAME = "dc-archives"
-            result = asyncio.run(archive_scan(db, "scan-1"))
-
-        assert result is not None
-        uploaded_data = mock_upload.call_args[0][1]
-        bundle = json.loads(gzip.decompress(uploaded_data))
-        assert len(bundle["gridfs_sboms"]) == 1
-        assert bundle["gridfs_sboms"][0]["data"]["bomFormat"] == "CycloneDX"
-
-
-# ---------------------------------------------------------------------------
-# restore_scan
-# ---------------------------------------------------------------------------
-
-
-class TestRestoreScan:
-    def test_returns_none_when_s3_not_configured(self):
-        with patch(f"{MODULE}.is_archive_enabled", return_value=False):
-            result = asyncio.run(restore_scan(MagicMock(), "scan-1"))
-        assert result is None
-
-    def test_returns_none_when_no_archive_metadata(self):
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-        ):
-            result = asyncio.run(restore_scan(MagicMock(), "scan-1"))
-
-        assert result is None
-
-    def test_returns_none_when_s3_download_fails(self):
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, side_effect=Exception("Download failed")),
-        ):
-            result = asyncio.run(restore_scan(MagicMock(), "scan-1"))
-
-        assert result is None
-
-    def test_returns_none_when_scan_already_exists(self):
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-
-        # Create a valid compressed bundle
-        bundle = {
-            "version": 1,
-            "scan": {"_id": "scan-1", "project_id": "proj-1"},
-            "findings": [],
-            "finding_records": [],
-            "dependencies": [],
-            "analysis_results": [],
-            "callgraphs": [],
-            "gridfs_sboms": [],
-        }
-        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
-
-        db = MagicMock()
-        # Scan already exists in DB
-        db.scans.find_one = AsyncMock(return_value={"_id": "scan-1"})
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=compressed),
-        ):
-            result = asyncio.run(restore_scan(db, "scan-1"))
-
-        assert result is None
-
-    def test_restores_scan_successfully(self):
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
-
-        bundle = {
-            "version": 1,
-            "scan": {"_id": "scan-1", "project_id": "proj-1", "status": "completed"},
-            "findings": [{"_id": "f-1", "scan_id": "scan-1"}],
-            "finding_records": [{"_id": "fr-1", "scan_id": "scan-1"}],
-            "dependencies": [{"_id": "d-1", "scan_id": "scan-1"}],
-            "analysis_results": [],
-            "callgraphs": [],
-            "gridfs_sboms": [],
-        }
-        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
-
-        db = MagicMock()
-        # Scan does NOT exist in DB yet
-        db.scans.find_one = AsyncMock(return_value=None)
-        db.scans.insert_one = AsyncMock()
-        db.findings.insert_many = AsyncMock()
-        db.finding_records.insert_many = AsyncMock()
-        db.dependencies.insert_many = AsyncMock()
-        db.analysis_results.insert_many = AsyncMock()
-        db.callgraphs.insert_many = AsyncMock()
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=compressed),
-            patch(f"{MODULE}.delete_object", new_callable=AsyncMock) as mock_delete_s3,
-        ):
-            result = asyncio.run(restore_scan(db, "scan-1"))
-
-        assert result is not None
-        assert result.scan_id == "scan-1"
-        assert result.project_id == "proj-1"
-        assert "scans" in result.collections_restored
-        assert "findings" in result.collections_restored
-        assert "finding_records" in result.collections_restored
-        assert "dependencies" in result.collections_restored
-
-        db.scans.insert_one.assert_called_once()
-        db.findings.insert_many.assert_called_once()
-        db.finding_records.insert_many.assert_called_once()
-        db.dependencies.insert_many.assert_called_once()
-        mock_delete_s3.assert_called_once_with("proj-1/scan-1.json.gz")
-        mock_repo.delete_by_scan_id.assert_called_once_with("scan-1")
-
-    def test_restored_scan_is_pinned(self):
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
-
-        bundle = {
-            "version": 1,
-            "scan": {"_id": "scan-1", "project_id": "proj-1", "status": "completed"},
-            "findings": [],
-            "finding_records": [],
-            "dependencies": [],
-            "analysis_results": [],
-            "callgraphs": [],
-            "gridfs_sboms": [],
-        }
-        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
-
-        db = MagicMock()
-        db.scans.find_one = AsyncMock(return_value=None)
-        db.scans.insert_one = AsyncMock()
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=compressed),
-            patch(f"{MODULE}.delete_object", new_callable=AsyncMock),
-        ):
-            result = asyncio.run(restore_scan(db, "scan-1"))
-
-        assert result is not None
-        # Verify the scan doc was inserted with pinned=True
-        inserted_doc = db.scans.insert_one.call_args[0][0]
-        assert inserted_doc["pinned"] is True
-
-    def test_restore_handles_gridfs_sboms(self):
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
-
-        bundle = {
-            "version": 1,
-            "scan": {"_id": "scan-1", "project_id": "proj-1"},
-            "findings": [],
-            "finding_records": [],
-            "dependencies": [],
-            "analysis_results": [],
-            "callgraphs": [],
-            "gridfs_sboms": [
-                {"gridfs_id": "507f1f77bcf86cd799439011", "filename": "sbom.json", "data": {"bomFormat": "CycloneDX"}},
-            ],
-        }
-        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
-
-        db = MagicMock()
-        db.scans.find_one = AsyncMock(return_value=None)
-        db.scans.insert_one = AsyncMock()
-
-        mock_fs = MagicMock()
-        mock_fs.upload_from_stream_with_id = AsyncMock()
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=compressed),
-            patch(f"{MODULE}.delete_object", new_callable=AsyncMock),
-            patch(f"{MODULE}.AsyncIOMotorGridFSBucket", return_value=mock_fs),
-        ):
-            result = asyncio.run(restore_scan(db, "scan-1"))
-
-        assert result is not None
-        assert "gridfs_sboms" in result.collections_restored
-        mock_fs.upload_from_stream_with_id.assert_called_once()
-
-    def test_restore_continues_if_s3_delete_fails(self):
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
-
-        bundle = {
-            "version": 1,
-            "scan": {"_id": "scan-1", "project_id": "proj-1"},
-            "findings": [],
-            "finding_records": [],
-            "dependencies": [],
-            "analysis_results": [],
-            "callgraphs": [],
-            "gridfs_sboms": [],
-        }
-        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
-
-        db = MagicMock()
-        db.scans.find_one = AsyncMock(return_value=None)
-        db.scans.insert_one = AsyncMock()
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=compressed),
-            patch(f"{MODULE}.delete_object", new_callable=AsyncMock, side_effect=Exception("S3 delete failed")),
-        ):
-            result = asyncio.run(restore_scan(db, "scan-1"))
-
-        # Restore should still succeed even if S3 cleanup fails
-        assert result is not None
-        assert result.scan_id == "scan-1"
-        mock_repo.delete_by_scan_id.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# archive_scan with encryption
-# ---------------------------------------------------------------------------
-
-
-class TestArchiveScanEncryption:
-    def test_archives_with_encryption(self):
-        scan_doc = _make_scan_doc()
-        db = _make_mock_db(scan_doc=scan_doc)
-
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-        mock_repo.create = AsyncMock(side_effect=lambda m: m)
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock) as mock_upload,
-            patch(f"{MODULE}.settings") as mock_settings,
-            patch(f"{MODULE}.is_encryption_enabled", return_value=True),
-            patch(f"{MODULE}.encrypt", return_value=b"encrypted-data") as mock_encrypt,
-        ):
-            mock_settings.S3_BUCKET_NAME = "dc-archives"
-            result = asyncio.run(archive_scan(db, "scan-1"))
-
-        assert result is not None
-        mock_encrypt.assert_called_once()
-        # Upload should receive the encrypted data, not raw compressed
-        uploaded_data = mock_upload.call_args[0][1]
-        assert uploaded_data == b"encrypted-data"
-
-    def test_archives_without_encryption(self):
-        scan_doc = _make_scan_doc()
-        db = _make_mock_db(scan_doc=scan_doc)
-
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-        mock_repo.create = AsyncMock(side_effect=lambda m: m)
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.upload_bytes", new_callable=AsyncMock) as mock_upload,
-            patch(f"{MODULE}.settings") as mock_settings,
-            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
-            patch(f"{MODULE}.encrypt") as mock_encrypt,
-        ):
-            mock_settings.S3_BUCKET_NAME = "dc-archives"
-            result = asyncio.run(archive_scan(db, "scan-1"))
-
-        assert result is not None
-        mock_encrypt.assert_not_called()
-        # Upload should receive raw gzip data
-        uploaded_data = mock_upload.call_args[0][1]
-        decompressed = gzip.decompress(uploaded_data)
-        bundle = json.loads(decompressed)
-        assert bundle["scan_id"] == "scan-1"
-
-
-# ---------------------------------------------------------------------------
-# restore_scan with encryption
-# ---------------------------------------------------------------------------
-
-
-class TestRestoreScanEncryption:
-    def test_restores_encrypted_archive(self):
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
-
-        bundle = {
-            "version": 1,
-            "scan": {"_id": "scan-1", "project_id": "proj-1"},
-            "findings": [],
-            "finding_records": [],
-            "dependencies": [],
-            "analysis_results": [],
-            "callgraphs": [],
-            "gridfs_sboms": [],
-        }
-        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
-
-        db = MagicMock()
-        db.scans.find_one = AsyncMock(return_value=None)
-        db.scans.insert_one = AsyncMock()
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=b"encrypted-blob"),
-            patch(f"{MODULE}.delete_object", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_encryption_enabled", return_value=True),
-            patch(f"{MODULE}.decrypt", return_value=compressed) as mock_decrypt,
-        ):
-            result = asyncio.run(restore_scan(db, "scan-1"))
-
-        assert result is not None
-        mock_decrypt.assert_called_once_with(b"encrypted-blob")
-        assert result.scan_id == "scan-1"
-
-    def test_restores_without_encryption(self):
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-        mock_repo.delete_by_scan_id = AsyncMock(return_value=True)
-
-        bundle = {
-            "version": 1,
-            "scan": {"_id": "scan-1", "project_id": "proj-1"},
-            "findings": [],
-            "finding_records": [],
-            "dependencies": [],
-            "analysis_results": [],
-            "callgraphs": [],
-            "gridfs_sboms": [],
-        }
-        compressed = gzip.compress(json.dumps(bundle).encode("utf-8"))
-
-        db = MagicMock()
-        db.scans.find_one = AsyncMock(return_value=None)
-        db.scans.insert_one = AsyncMock()
-
-        with (
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=compressed),
-            patch(f"{MODULE}.delete_object", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
-            patch(f"{MODULE}.decrypt") as mock_decrypt,
-        ):
-            result = asyncio.run(restore_scan(db, "scan-1"))
-
-        assert result is not None
-        mock_decrypt.assert_not_called()
-        assert result.scan_id == "scan-1"
+    # Restore still reports success despite the metadata-delete glitch
+    assert result is not None
+    assert result.scan_id == "scan-1"

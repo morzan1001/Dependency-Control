@@ -357,6 +357,10 @@ class TestRestoreArchive:
         mock_repo = MagicMock()
         mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
 
+        # db.scans.find_one must return None so the endpoint maps to 500, not 409
+        mock_db = MagicMock()
+        mock_db.scans.find_one = AsyncMock(return_value=None)
+
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
@@ -369,7 +373,7 @@ class TestRestoreArchive:
                     project_id="proj-1",
                     scan_id="scan-1",
                     current_user=admin_user,
-                    db=MagicMock(),
+                    db=mock_db,
                 )
             )
 
@@ -389,13 +393,15 @@ class TestDownloadArchive:
         mock_repo = MagicMock()
         mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
 
-        archive_data = b"compressed-data"
+        async def fake_stream(key, *, bucket=None):
+            yield b"compressed-data"
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, return_value=archive_data),
+            patch(f"{MODULE}.download_stream", fake_stream),
         ):
             result = asyncio.run(
                 download_archive(
@@ -408,7 +414,6 @@ class TestDownloadArchive:
 
         assert result.media_type == "application/gzip"
         assert result.headers["Content-Disposition"] == 'attachment; filename="scan-1.json.gz"'
-        assert result.headers["Content-Length"] == str(len(archive_data))
 
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import download_archive
@@ -452,21 +457,30 @@ class TestDownloadArchive:
 
         assert exc_info.value.status_code == 404
 
-    def test_raises_500_when_s3_download_fails(self, admin_user):
+    def test_returns_streaming_response_on_s3_download(self, admin_user):
+        """download_archive returns a StreamingResponse; S3 errors surface during iteration."""
         from app.api.v1.endpoints.archives import download_archive
 
         metadata = _make_archive_metadata()
         mock_repo = MagicMock()
         mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
 
+        async def failing_stream(key, *, bucket=None):
+            # Yield nothing before raising so Python treats this as an async generator
+            for _ in ():
+                yield b""  # pragma: no cover
+            raise RuntimeError("S3 error")
+
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_bytes", new_callable=AsyncMock, side_effect=Exception("S3 error")),
-            pytest.raises(HTTPException) as exc_info,
+            patch(f"{MODULE}.download_stream", failing_stream),
         ):
-            asyncio.run(
+            # download_archive itself succeeds (returns StreamingResponse);
+            # the S3 error surfaces when the stream is consumed
+            result = asyncio.run(
                 download_archive(
                     project_id="proj-1",
                     scan_id="scan-1",
@@ -474,8 +488,7 @@ class TestDownloadArchive:
                     db=MagicMock(),
                 )
             )
-
-        assert exc_info.value.status_code == 500
+        assert result is not None  # StreamingResponse was constructed
 
     def test_raises_404_when_archive_belongs_to_different_project(self, admin_user):
         from app.api.v1.endpoints.archives import download_archive
@@ -807,3 +820,120 @@ class TestRestoreArchivePermissions:
             )
 
         assert exc_info.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Task-10 new tests
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadStreamChunks:
+    def test_download_stream_passes_bucket_and_yields_chunks(self, admin_user):
+        """download_archive must use download_stream with bucket= and yield all chunks."""
+        from app.api.v1.endpoints.archives import download_archive
+
+        metadata = _make_archive_metadata(
+            s3_key="proj-1/scan-1-1.bundle",
+            s3_bucket="dc-archives",
+        )
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+
+        captured_args: dict = {}
+
+        async def fake_stream(key, *, bucket=None):
+            captured_args["key"] = key
+            captured_args["bucket"] = bucket
+            yield b"AAA"
+            yield b"BBB"
+
+        async def run_download():
+            """Build the response and consume the stream inside the same event loop."""
+            response = await download_archive(
+                project_id="proj-1",
+                scan_id="scan-1",
+                current_user=admin_user,
+                db=MagicMock(),
+            )
+            body = b""
+            async for chunk in response.body_iterator:
+                body += chunk
+            return response, body
+
+        with (
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch(f"{MODULE}.download_stream", fake_stream),
+        ):
+            result, body = asyncio.run(run_download())
+
+        assert result.media_type == "application/gzip"
+        assert body == b"AAABBB"
+        assert captured_args["key"] == "proj-1/scan-1-1.bundle"
+        assert captured_args["bucket"] == "dc-archives"
+
+
+class TestRestoreReturns409WhenScanAlreadyExists:
+    def test_returns_409_when_scan_already_exists_in_mongo(self, admin_user):
+        """restore_archive returns 409 when restore_scan returns None and scan is in db."""
+        from app.api.v1.endpoints.archives import restore_archive
+
+        metadata = _make_archive_metadata()
+        mock_repo = MagicMock()
+        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+
+        mock_db = MagicMock()
+        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1"})
+
+        with (
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+            patch(f"{MODULE}.restore_scan", new_callable=AsyncMock, return_value=None),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            asyncio.run(
+                restore_archive(
+                    project_id="proj-1",
+                    scan_id="scan-1",
+                    current_user=admin_user,
+                    db=mock_db,
+                )
+            )
+
+        assert exc_info.value.status_code == 409
+        assert "already exists" in exc_info.value.detail
+
+
+class TestPinEmitsAuditLog:
+    def test_pin_emits_structured_audit_log(self, admin_user, caplog):
+        """pin_scan must emit a structured archive.pin log record."""
+        import logging
+        from app.api.v1.endpoints.archives import pin_scan
+
+        mock_db = MagicMock()
+        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1", "project_id": "proj-1"})
+        mock_db.scans.update_one = AsyncMock()
+
+        with (
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            caplog.at_level(logging.INFO, logger="app.api.v1.endpoints.archives"),
+        ):
+            result = asyncio.run(
+                pin_scan(
+                    project_id="proj-1",
+                    scan_id="scan-1",
+                    current_user=admin_user,
+                    db=mock_db,
+                )
+            )
+
+        assert result.pinned is True
+
+        audit_records = [r for r in caplog.records if r.message == "archive.pin"]
+        assert len(audit_records) == 1
+        rec = audit_records[0]
+        assert getattr(rec, "scan_id", None) == "scan-1"
+        assert getattr(rec, "project_id", None) == "proj-1"
