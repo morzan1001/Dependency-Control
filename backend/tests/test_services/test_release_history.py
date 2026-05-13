@@ -264,7 +264,7 @@ class TestAggregateUpstreamMetrics:
         }
         observations = [
             ("pkg-a", "1.0.0", _REF - timedelta(days=80)),  # latency 20
-            ("pkg-a", "1.1.0", _REF - timedelta(days=5)),   # latency 15
+            ("pkg-a", "1.1.0", _REF - timedelta(days=5)),  # latency 15
         ]
         result = aggregate_upstream_metrics(history, observations=observations, ref=_REF)
         assert result.adoption_latency_days_median is not None
@@ -299,9 +299,7 @@ class TestDepsDevFetcherIntegration:
                 ]
             }
 
-        fetcher = DepsDevReleaseHistoryFetcher(
-            cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch
-        )
+        fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
         result = asyncio.run(fetcher.fetch([("pypi", "pkg-a")]))
 
         assert len(result["pkg-a"]) == 2
@@ -327,9 +325,7 @@ class TestDepsDevFetcherIntegration:
         async def http_fetch(_url):  # noqa: ANN001
             return None  # simulates timeout / 5xx
 
-        fetcher = DepsDevReleaseHistoryFetcher(
-            cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch
-        )
+        fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
         result = asyncio.run(fetcher.fetch([("pypi", "pkg-broken")]))
         # No history surfaces for the failed package; the orchestrator will
         # treat it as "no upstream data" rather than crash.
@@ -348,12 +344,8 @@ class TestDepsDevFetcherIntegration:
             cache[key] = value
 
         responses_by_url: dict = {
-            "first": {
-                "versions": [{"versionKey": {"version": "1.0"}, "publishedAt": "2024-01-01T00:00:00Z"}]
-            },
-            "second": {
-                "versions": [{"versionKey": {"version": "2.0"}, "publishedAt": "2024-02-01T00:00:00Z"}]
-            },
+            "first": {"versions": [{"versionKey": {"version": "1.0"}, "publishedAt": "2024-01-01T00:00:00Z"}]},
+            "second": {"versions": [{"versionKey": {"version": "2.0"}, "publishedAt": "2024-02-01T00:00:00Z"}]},
         }
         urls_seen: List[str] = []
 
@@ -362,9 +354,7 @@ class TestDepsDevFetcherIntegration:
             # Pick payload by ordinal so the assertion is unambiguous.
             return responses_by_url["first" if "first" in url else "second"]
 
-        fetcher = DepsDevReleaseHistoryFetcher(
-            cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch
-        )
+        fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
         result = asyncio.run(fetcher.fetch([("pypi", "first"), ("pypi", "second")]))
         assert "first" in result and "second" in result
         assert {r.version for r in result["first"]} == {"1.0"}
@@ -386,9 +376,7 @@ class TestDepsDevFetcherIntegration:
         async def http_fetch(_url):  # noqa: ANN001
             raise AssertionError("http_fetch must not be called on a cache hit")
 
-        fetcher = DepsDevReleaseHistoryFetcher(
-            cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch
-        )
+        fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
         result = asyncio.run(fetcher.fetch([("pypi", "warm")]))
         assert len(result["warm"]) == 1
         assert result["warm"][0].version == "5.0.0"

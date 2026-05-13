@@ -80,10 +80,7 @@ def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> Optional[fl
     if len(stable) < 2:
         return None
     sorted_dates = sorted(r.published_at for r in stable)
-    gaps = [
-        (sorted_dates[i] - sorted_dates[i - 1]).total_seconds() / 86400.0
-        for i in range(1, len(sorted_dates))
-    ]
+    gaps = [(sorted_dates[i] - sorted_dates[i - 1]).total_seconds() / 86400.0 for i in range(1, len(sorted_dates))]
     return float(median(gaps))
 
 
@@ -107,9 +104,7 @@ def compute_adoption_latencies(
     Observations whose version is missing from the history are skipped.
     """
     publish_lookup: Dict[Tuple[str, str], datetime] = {
-        (pkg, r.version): r.published_at
-        for pkg, releases in history.items()
-        for r in releases
+        (pkg, r.version): r.published_at for pkg, releases in history.items() for r in releases
     }
     return [
         (scan_date - publish_lookup[(pkg, version)]).days

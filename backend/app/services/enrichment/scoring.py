@@ -27,9 +27,7 @@ def _calculate_epss_contribution(epss_score: float) -> float:
     if epss_score >= EPSS_HIGH_THRESHOLD:
         return 20.0 + (epss_score - EPSS_HIGH_THRESHOLD) * (5.0 / (1.0 - EPSS_HIGH_THRESHOLD))
     if epss_score >= EPSS_MEDIUM_THRESHOLD:
-        return 10.0 + (epss_score - EPSS_MEDIUM_THRESHOLD) * (
-            10.0 / (EPSS_HIGH_THRESHOLD - EPSS_MEDIUM_THRESHOLD)
-        )
+        return 10.0 + (epss_score - EPSS_MEDIUM_THRESHOLD) * (10.0 / (EPSS_HIGH_THRESHOLD - EPSS_MEDIUM_THRESHOLD))
     return epss_score * (10.0 / EPSS_MEDIUM_THRESHOLD)
 
 

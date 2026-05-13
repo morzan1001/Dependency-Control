@@ -23,6 +23,7 @@ def _waiver_is_active(waiver: Dict[str, Any], now: Optional[datetime] = None) ->
         expiration = expiration.replace(tzinfo=timezone.utc)
     return bool(expiration > reference)
 
+
 MAX_TOOL_LIMIT = 200  # Hard cap on LLM-supplied limit arguments to prevent DoS.
 MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
 
@@ -69,6 +70,20 @@ def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
     except (TypeError, ValueError):
         value = default
     return max(1, min(value, maximum))
+
+
+def _ensure_list(value: Any) -> Optional[List[Any]]:
+    """Coerce LLM-supplied scalar to a single-element list.
+
+    Some models send array-typed parameters as a bare string (e.g.
+    ``severity="critical"`` instead of ``severity=["critical"]``). This wraps
+    them so downstream Mongo ``$in`` queries don't misbehave.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    return [value] if value else None
 
 
 def _clip_value(value: Any) -> Any:

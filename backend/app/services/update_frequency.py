@@ -46,6 +46,7 @@ def _get_comparison_semaphore() -> asyncio.Semaphore:
         _comparison_semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
     return _comparison_semaphore
 
+
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1}
 
 
@@ -280,9 +281,7 @@ def _aggregate_metrics(
     outdated_resolved_count = len(ever_outdated & ever_resolved)
     # None means "nothing was ever outdated" — distinct from 0.0 ("nothing resolved").
     update_coverage_pct: Optional[float] = (
-        round(outdated_resolved_count / total_outdated_detected * 100, 1)
-        if total_outdated_detected
-        else None
+        round(outdated_resolved_count / total_outdated_detected * 100, 1) if total_outdated_detected else None
     )
 
     trend_direction, trend_detail = _compute_trend(scan_timeline)
@@ -313,18 +312,12 @@ def _aggregate_metrics(
         scan_timeline=scan_timeline,
         slowest_packages=slowest_packages,
         recent_updates=recent_events,
-        upstream_releases_last_12m_median=(
-            upstream.upstream_releases_last_12m_median if upstream else None
-        ),
-        upstream_days_between_releases_median=(
-            upstream.upstream_days_between_releases_median if upstream else None
-        ),
+        upstream_releases_last_12m_median=(upstream.upstream_releases_last_12m_median if upstream else None),
+        upstream_days_between_releases_median=(upstream.upstream_days_between_releases_median if upstream else None),
         upstream_days_since_latest_release_median=(
             upstream.upstream_days_since_latest_release_median if upstream else None
         ),
-        adoption_latency_days_median=(
-            upstream.adoption_latency_days_median if upstream else None
-        ),
+        adoption_latency_days_median=(upstream.adoption_latency_days_median if upstream else None),
         dominant_ecosystem=_dominant_ecosystem(dep_type_map),
     )
 
@@ -434,9 +427,7 @@ class _AccumulatorState:
             self.package_outdated_counts[pkg] += 1
             self.ever_outdated.add(pkg)
 
-    def absorb_events(
-        self, events: List[DependencyUpdateEvent], curr_scan_date: datetime
-    ) -> None:
+    def absorb_events(self, events: List[DependencyUpdateEvent], curr_scan_date: datetime) -> None:
         for e in events:
             if e.was_outdated:
                 self.ever_resolved.add(e.package_name)
@@ -490,9 +481,7 @@ async def compute_update_frequency(
     With ``since`` set, all scans newer than the cutoff are analysed (up
     to ``hard_limit``). Otherwise the newest ``max_scans`` are taken.
     """
-    completed_scans = await _load_completed_scans(
-        scan_repo, project_id, max_scans, since, hard_limit
-    )
+    completed_scans = await _load_completed_scans(scan_repo, project_id, max_scans, since, hard_limit)
 
     if len(completed_scans) < 2:
         first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
@@ -507,9 +496,7 @@ async def compute_update_frequency(
     first_scan = completed_scans[0]
     prev_deps = await _load_scan_deps(first_scan["_id"])
     state.accumulate_types(prev_deps)
-    prev_outdated = await _load_outdated_for_scan(
-        analysis_repo, first_scan["_id"], state.package_latest_info
-    )
+    prev_outdated = await _load_outdated_for_scan(analysis_repo, first_scan["_id"], state.package_latest_info)
     state.record_outdated(prev_outdated)
     state.scan_timeline.append(
         _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(prev_outdated))
@@ -522,9 +509,7 @@ async def compute_update_frequency(
         curr_deps = await _load_scan_deps(curr_scan["_id"])
         state.accumulate_types(curr_deps)
 
-        curr_outdated = await _load_outdated_for_scan(
-            analysis_repo, curr_scan["_id"], state.package_latest_info
-        )
+        curr_outdated = await _load_outdated_for_scan(analysis_repo, curr_scan["_id"], state.package_latest_info)
         state.record_outdated(curr_outdated)
 
         events = _compare_scan_pair(
@@ -543,9 +528,7 @@ async def compute_update_frequency(
         prev_deps = curr_deps
         prev_outdated = curr_outdated
 
-    upstream = await _maybe_fetch_upstream_cadence(
-        release_fetcher, state.package_purls, state.first_seen_versions
-    )
+    upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_purls, state.first_seen_versions)
 
     return _aggregate_metrics(
         completed_scans,

@@ -1,5 +1,5 @@
 """
-REST endpoints for crypto analytics (hotspots, trends, scan-delta).
+REST endpoints for crypto analytics (hotspots, trends).
 """
 
 from datetime import datetime
@@ -9,8 +9,7 @@ from fastapi import HTTPException, Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.schemas.analytics import HotspotResponse, ScanDelta, TrendSeries
-from app.services.analytics.crypto_delta import compute_scan_delta
+from app.schemas.analytics import HotspotResponse, TrendSeries
 from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
 from app.services.analytics.crypto_trends import Bucket, CryptoTrendService, Metric
 from app.services.analytics.scopes import (
@@ -105,26 +104,3 @@ async def get_trends(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.get("/scan-delta", response_model=ScanDelta)
-async def get_scan_delta(
-    current_user: CurrentUserDep,
-    db: DatabaseDep,
-    project_id: str = Query(...),
-    from_scan: str = Query(..., alias="from"),
-    to_scan: str = Query(..., alias="to"),
-) -> ScanDelta:
-    try:
-        await ScopeResolver(db, current_user).resolve(
-            scope="project",
-            scope_id=project_id,
-        )
-    except ScopeResolutionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    return await compute_scan_delta(
-        db,
-        project_id,
-        from_scan=from_scan,
-        to_scan=to_scan,
-    )

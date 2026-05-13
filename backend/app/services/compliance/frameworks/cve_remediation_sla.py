@@ -39,8 +39,7 @@ class CveRemediationSlaFramework:
     version: str = "1"
     source_url: str = "https://www.first.org/cvss/"
     disclaimer: Optional[str] = (
-        "SLA windows default to 7 / 30 / 90 days for CRITICAL / HIGH / MEDIUM "
-        "but can be overridden per project."
+        "SLA windows default to 7 / 30 / 90 days for CRITICAL / HIGH / MEDIUM but can be overridden per project."
     )
     controls: List[ControlDefinition] = []
 
@@ -57,9 +56,7 @@ class CveRemediationSlaFramework:
         if sla_days_by_severity:
             for sev, days in sla_days_by_severity.items():
                 if days <= 0:
-                    raise ValueError(
-                        f"SLA window for {sev.value} must be > 0 days, got {days}"
-                    )
+                    raise ValueError(f"SLA window for {sev.value} must be > 0 days, got {days}")
                 merged[sev] = days
         self._sla_days = merged
 

@@ -13,7 +13,7 @@ import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert,
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
-import { ScanDeltaView } from '@/components/crypto/analytics/ScanDeltaView'
+import { ScanDeltaModal } from '@/components/scans/delta/ScanDeltaModal'
 
 interface ProjectScansProps {
   projectId: string
@@ -379,7 +379,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
           </div>
         )}
       </CardContent>
-      <ScanDeltaView
+      <ScanDeltaModal
         projectId={projectId}
         fromScanId={deltaState?.from ?? null}
         toScanId={deltaState?.to ?? null}

@@ -141,9 +141,7 @@ class TestRecommendationTypeBonusesOrdering:
         assert self._bonus("actively_exploited") > self._bonus("critical_hotspot")
 
     def test_regression_tier_below_impact_tier(self):
-        regression_max = max(
-            self._bonus(k) for k in ("regression_detected", "recurring_vulnerability")
-        )
+        regression_max = max(self._bonus(k) for k in ("regression_detected", "recurring_vulnerability"))
         impact_min = min(
             self._bonus(k)
             for k in (

@@ -21,11 +21,11 @@ COUNT_WEIGHT = 0.10
 # exposed = migrate sooner. Calibrated so that a public-facing X.509
 # certificate (the worst case) saturates at 100 while a well-isolated
 # binary embedding lands well below the default.
-EXPOSURE_CERTIFICATE = 100.0       # public-facing X.509 / TLS material
-EXPOSURE_RELATED_MATERIAL = 60.0   # certificate-adjacent material (e.g. CSR, chain)
-EXPOSURE_SOURCE = 50.0             # crypto referenced from source code
-EXPOSURE_DEFAULT = 45.0            # unclassified asset — assume moderate exposure
-EXPOSURE_BINARY = 30.0             # crypto embedded in compiled binary (harder to reach)
+EXPOSURE_CERTIFICATE = 100.0  # public-facing X.509 / TLS material
+EXPOSURE_RELATED_MATERIAL = 60.0  # certificate-adjacent material (e.g. CSR, chain)
+EXPOSURE_SOURCE = 50.0  # crypto referenced from source code
+EXPOSURE_DEFAULT = 45.0  # unclassified asset — assume moderate exposure
+EXPOSURE_BINARY = 30.0  # crypto embedded in compiled binary (harder to reach)
 
 # --- Count calibration ---
 # A single instance of a vulnerable asset is already meaningful (one weak

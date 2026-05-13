@@ -8,7 +8,7 @@ These define the response and request structures for analytics operations.
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class CVEEnrichmentResult(BaseModel):
@@ -468,15 +468,3 @@ class TrendSeries(BaseModel):
     range_start: datetime
     range_end: datetime
     cache_hit: bool = False
-
-
-class ScanDelta(BaseModel):
-    """Diff between two scans expressed as added/removed hotspot entries."""
-
-    from_scan_id: str
-    to_scan_id: str
-    added: List[HotspotEntry] = Field(default_factory=list)
-    removed: List[HotspotEntry] = Field(default_factory=list)
-    unchanged_count: int = Field(..., ge=0)
-
-    model_config = ConfigDict(populate_by_name=True)

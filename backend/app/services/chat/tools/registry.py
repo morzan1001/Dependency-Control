@@ -13,6 +13,8 @@ from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.teams import TeamRepository
+from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
+from app.services.analytics.findings_delta import compute_findings_delta
 
 from ._helpers import (
     KEV_EQUIVALENT_MATURITY,
@@ -21,6 +23,7 @@ from ._helpers import (
     _clamp_limit,
     _clip_value,
     _compare_versions,
+    _ensure_list,
     _inject_urls,
     _serialize_doc,
     _serialize_finding_for_llm,
@@ -35,7 +38,6 @@ from .crypto_tools import (
     get_crypto_trends,
     get_framework_evaluation_summary,
     get_project_crypto_policy,
-    get_scan_delta,
     list_compliance_reports,
     list_crypto_assets,
     list_policy_audit_entries,
@@ -792,59 +794,24 @@ class ChatToolRegistry:
                     return {"error": "Need at least two scans to compare"}
                 scan_b_id = recent[0]["_id"]
                 scan_a_id = recent[1]["_id"]
+
             scan_a = await db["scans"].find_one({"_id": scan_a_id, "project_id": args["project_id"]})
             scan_b = await db["scans"].find_one({"_id": scan_b_id, "project_id": args["project_id"]})
             if not scan_a or not scan_b:
                 return {"error": "Scan not found in this project"}
 
-            async def _ids(scan_id: str) -> Dict[str, str]:
-                items: Dict[str, str] = {}
-                async for f in db["findings"].find(
-                    {"scan_id": scan_id},
-                    {"finding_id": 1, "severity": 1},
-                ):
-                    if f.get("finding_id"):
-                        items[f["finding_id"]] = f.get("severity", "UNKNOWN")
-                return items
-
-            a_ids, b_ids = await _ids(scan_a_id), await _ids(scan_b_id)
-            new_keys = set(b_ids) - set(a_ids)
-            fixed_keys = set(a_ids) - set(b_ids)
-            unchanged_keys = set(a_ids) & set(b_ids)
-
-            def _sev_bucket(keys: set[str], sev_source: Dict[str, str]) -> Dict[str, int]:
-                bucket: Dict[str, int] = {}
-                for k in keys:
-                    sev = sev_source.get(k, "UNKNOWN")
-                    bucket[sev] = bucket.get(sev, 0) + 1
-                return bucket
-
-            def _sample(keys: set[str]) -> List[str]:
-                return sorted(keys)[:10]
-
-            return {
-                "scan_a": {
-                    "id": scan_a_id,
-                    "created_at": scan_a.get("created_at").isoformat()
-                    if hasattr(scan_a.get("created_at"), "isoformat")
-                    else scan_a.get("created_at"),
-                    "branch": scan_a.get("branch"),
-                },
-                "scan_b": {
-                    "id": scan_b_id,
-                    "created_at": scan_b.get("created_at").isoformat()
-                    if hasattr(scan_b.get("created_at"), "isoformat")
-                    else scan_b.get("created_at"),
-                    "branch": scan_b.get("branch"),
-                },
-                "new_findings_count": len(new_keys),
-                "new_findings_by_severity": _sev_bucket(new_keys, b_ids),
-                "new_findings_sample": _sample(new_keys),
-                "fixed_findings_count": len(fixed_keys),
-                "fixed_findings_by_severity": _sev_bucket(fixed_keys, a_ids),
-                "fixed_findings_sample": _sample(fixed_keys),
-                "unchanged_count": len(unchanged_keys),
-            }
+            findings_response = await compute_findings_delta(
+                db,
+                project_id=args["project_id"],
+                from_scan=scan_a_id,
+                to_scan=scan_b_id,
+                page=1,
+                page_size=int(args.get("page_size") or 50),
+                change=None,
+                severity=_ensure_list(args.get("severity")),
+                finding_type=_ensure_list(args.get("finding_type")),
+            )
+            return findings_response.model_dump(mode="json")
 
         if tool_name == "get_kev_findings":
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
@@ -1281,12 +1248,22 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": "Project not found or access denied"}
-            return await get_scan_delta(
+            from_scan_id = args["from_scan_id"]
+            to_scan_id = args["to_scan_id"]
+            scan_a = await db["scans"].find_one({"_id": from_scan_id, "project_id": args["project_id"]})
+            scan_b = await db["scans"].find_one({"_id": to_scan_id, "project_id": args["project_id"]})
+            if not scan_a or not scan_b:
+                return {"error": "Scan not found in this project"}
+            crypto_response = await compute_crypto_delta_envelope(
                 db,
                 project_id=args["project_id"],
-                from_scan_id=args["from_scan_id"],
-                to_scan_id=args["to_scan_id"],
+                from_scan=from_scan_id,
+                to_scan=to_scan_id,
+                page=1,
+                page_size=int(args.get("page_size") or 50),
+                change=None,
             )
+            return crypto_response.model_dump(mode="json")
 
         if tool_name == "generate_pqc_migration_plan":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)

@@ -166,10 +166,9 @@ class TestComputeTrend:
         assert direction == "stable"
 
     def test_improving_trend(self):
-        timeline = (
-            [_make_timeline_entry(i, updates=1, outdated=10) for i in range(3)]
-            + [_make_timeline_entry(i + 3, updates=10, outdated=10) for i in range(3)]
-        )
+        timeline = [_make_timeline_entry(i, updates=1, outdated=10) for i in range(3)] + [
+            _make_timeline_entry(i + 3, updates=10, outdated=10) for i in range(3)
+        ]
         direction, _ = _compute_trend(timeline)
         assert direction == "improving"
 
@@ -362,10 +361,7 @@ class TestStreamingOrchestrator:
         # Build 50 scans where every dep changes each scan -> 50 update events.
         # The streaming buffer must keep only the last 30 in `recent_updates`.
         scans = [_make_scan(f"s{i}", i) for i in range(50)]
-        deps = {
-            f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")]
-            for i in range(50)
-        }
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(50)}
         scan_repo = FakeScanRepo(scans)
         dep_repo = FakeDepRepo(deps)
         analysis_repo = FakeAnalysisRepo([])
@@ -389,10 +385,7 @@ class TestStreamingOrchestrator:
     async def test_default_takes_newest_scans_not_oldest(self):
         # 30 scans, max_scans=5 — analysis must use the newest 5, not the oldest 5.
         scans = [_make_scan(f"s{i}", i) for i in range(30)]
-        deps = {
-            f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")]
-            for i in range(30)
-        }
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
         scan_repo = FakeScanRepo(scans)
         dep_repo = FakeDepRepo(deps)
         analysis_repo = FakeAnalysisRepo([])
@@ -416,10 +409,7 @@ class TestStreamingOrchestrator:
     @pytest.mark.asyncio
     async def test_since_parameter_filters_scans(self):
         scans = [_make_scan(f"s{i}", i) for i in range(20)]
-        deps = {
-            f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")]
-            for i in range(20)
-        }
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(20)}
         scan_repo = FakeScanRepo(scans)
         dep_repo = FakeDepRepo(deps)
         analysis_repo = FakeAnalysisRepo([])
@@ -447,9 +437,7 @@ class TestStreamingOrchestrator:
         scans = [_make_scan(f"s{i}", i) for i in range(200)]
         deps: Dict[str, List[Dict[str, Any]]] = {}
         for i in range(200):
-            deps[f"s{i}"] = [
-                _make_dep(f"s{i}", f"pkg-{p}", f"1.{i}.{p}") for p in range(5)
-            ]
+            deps[f"s{i}"] = [_make_dep(f"s{i}", f"pkg-{p}", f"1.{i}.{p}") for p in range(5)]
         scan_repo = FakeScanRepo(scans)
         dep_repo = FakeDepRepo(deps)
         analysis_repo = FakeAnalysisRepo([])
@@ -562,9 +550,7 @@ class TestStreamingOrchestrator:
             max_scans=5,
             since=cutoff,
         )
-        assert m.scan_count == 30, (
-            "since cutoff should trump max_scans when the window contains more scans"
-        )
+        assert m.scan_count == 30, "since cutoff should trump max_scans when the window contains more scans"
 
     @pytest.mark.asyncio
     async def test_hard_limit_caps_runaway_queries(self):
@@ -674,6 +660,5 @@ class TestStreamingOrchestrator:
         for q in analysis_repo.find_many_calls:
             scan_filter = q.get("scan_id")
             assert not isinstance(scan_filter, dict), (
-                f"analysis_repo.find_many called with bulk scan filter {scan_filter}; "
-                "expected per-scan loading"
+                f"analysis_repo.find_many called with bulk scan filter {scan_filter}; expected per-scan loading"
             )

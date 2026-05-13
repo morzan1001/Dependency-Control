@@ -190,9 +190,7 @@ class AnalysisWorkerManager:
 
         return True
 
-    async def _handle_failed_analysis(
-        self, scan: Dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase
-    ) -> bool:
+    async def _handle_failed_analysis(self, scan: Dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase) -> bool:
         """Apply the retry ceiling. Engine owns status and retry_count writes."""
         max_retries = 5
         retry_count = scan.get("retry_count", 0) + 1

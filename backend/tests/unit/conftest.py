@@ -240,6 +240,9 @@ class _FakeCursor:
                 field_present = k in doc
                 if bool(v[_EXISTS]) != field_present:
                     return False
+            elif "$in" in v:
+                if doc.get(k) not in v["$in"]:
+                    return False
             elif doc.get(k) != v:
                 return False
         return True
@@ -306,12 +309,17 @@ class _FakeCollection:
         result.inserted_id = key
         return result
 
+    async def insert_many(self, docs: list, ordered: bool = True):
+        inserted = []
+        for doc in docs:
+            key = doc.get("_id", str(len(self._docs)))
+            self._docs[key] = dict(doc)
+            inserted.append(key)
+        result = MagicMock()
+        result.inserted_ids = inserted
+        return result
+
     async def find_one(self, query, projection=None):
-        # search by _id
-        key = query.get("_id")
-        if key:
-            return self._docs.get(key)
-        # search by field
         for doc in self._docs.values():
             if all(doc.get(k) == v for k, v in query.items()):
                 return doc

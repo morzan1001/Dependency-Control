@@ -50,7 +50,7 @@ class TestDefaultSlaBuckets:
         framework = CveRemediationSlaFramework()
         result = await framework.evaluate_async(_eval_input([_vuln(Severity.CRITICAL, 8)]))
         critical_control = next(c for c in result.controls if c.severity == Severity.CRITICAL)
-        assert critical_control.status =="failed"
+        assert critical_control.status == "failed"
 
     @pytest.mark.asyncio
     async def test_default_high_window_is_30_days(self):
@@ -75,7 +75,7 @@ class TestConfigurableSlaBuckets:
         # 4-day-old CRITICAL is overdue (would still be inside the 7-day default).
         result = await framework.evaluate_async(_eval_input([_vuln(Severity.CRITICAL, 4)]))
         critical = next(c for c in result.controls if c.severity == Severity.CRITICAL)
-        assert critical.status =="failed"
+        assert critical.status == "failed"
 
     @pytest.mark.asyncio
     async def test_custom_windows_appear_in_control_titles(self):
@@ -95,9 +95,7 @@ class TestConfigurableSlaBuckets:
     @pytest.mark.asyncio
     async def test_partial_override_falls_back_to_defaults(self):
         # Caller only overrides CRITICAL — HIGH/MEDIUM should keep their defaults.
-        framework = CveRemediationSlaFramework(
-            sla_days_by_severity={Severity.CRITICAL: 3}
-        )
+        framework = CveRemediationSlaFramework(sla_days_by_severity={Severity.CRITICAL: 3})
         result = await framework.evaluate_async(
             _eval_input([_vuln(Severity.HIGH, 25)])  # under default 30
         )
@@ -109,6 +107,4 @@ class TestConfigurableSlaBuckets:
         # Defensive: a zero/negative window would mean every finding is
         # immediately overdue, which is almost certainly a misconfiguration.
         with pytest.raises(ValueError):
-            CveRemediationSlaFramework(
-                sla_days_by_severity={Severity.CRITICAL: 0}
-            )
+            CveRemediationSlaFramework(sla_days_by_severity={Severity.CRITICAL: 0})

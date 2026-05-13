@@ -82,35 +82,6 @@ async def test_trends_endpoint(client, db, owner_auth_headers_proj):
 
 
 @pytest.mark.asyncio
-async def test_scan_delta_endpoint(client, db, owner_auth_headers_proj):
-    await CryptoAssetRepository(db).bulk_upsert(
-        "p",
-        "s1",
-        [
-            CryptoAsset(project_id="p", scan_id="s1", bom_ref="a", name="MD5", asset_type=CryptoAssetType.ALGORITHM),
-        ],
-    )
-    await CryptoAssetRepository(db).bulk_upsert(
-        "p",
-        "s2",
-        [
-            CryptoAsset(
-                project_id="p", scan_id="s2", bom_ref="b", name="SHA-256", asset_type=CryptoAssetType.ALGORITHM
-            ),
-        ],
-    )
-    resp = await client.get(
-        "/api/v1/analytics/crypto/scan-delta",
-        params={"project_id": "p", "from": "s1", "to": "s2"},
-        headers=owner_auth_headers_proj,
-    )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["from_scan_id"] == "s1"
-    assert body["to_scan_id"] == "s2"
-
-
-@pytest.mark.asyncio
 async def test_hotspots_user_scope_accepted(client, db, owner_auth_headers_proj):
     """scope=user must pass the Query regex (regression guard)."""
     resp = await client.get(

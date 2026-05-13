@@ -280,9 +280,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "reachability_level": {"$ifNull": ["$reachability_level", "unknown"]},
                 # Confidence is nested under details.reachability — pulled
                 # up here so the group stage can gate counts on it (B9).
-                "reachability_confidence": {
-                    "$ifNull": ["$details.reachability.confidence_score", None]
-                },
+                "reachability_confidence": {"$ifNull": ["$details.reachability.confidence_score", None]},
                 "risk_score": {"$ifNull": ["$details.risk_score", None]},
                 # Calculate default CVSS-based score if none provided
                 "calculated_score": {

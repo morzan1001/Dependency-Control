@@ -75,10 +75,7 @@ def _build_typosquat_issue(
         "imitated_package": popular,
         "similarity": round(ratio, 2),
         "severity": severity,
-        "message": (
-            f"Potential typosquatting: '{name}' "
-            f"is similar to popular package '{popular}'"
-        ),
+        "message": (f"Potential typosquatting: '{name}' is similar to popular package '{popular}'"),
     }
 
 
@@ -283,9 +280,7 @@ class TyposquattingAnalyzer(Analyzer):
             return None
 
         if ecosystem not in normalized_popular:
-            normalized_popular[ecosystem] = {
-                _normalize_pkg_name(p) for p in popular_packages[ecosystem]
-            }
+            normalized_popular[ecosystem] = {_normalize_pkg_name(p) for p in popular_packages[ecosystem]}
         popular_list = normalized_popular[ecosystem]
 
         if name in popular_list:
