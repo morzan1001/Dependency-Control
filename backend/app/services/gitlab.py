@@ -2,7 +2,7 @@ import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -427,145 +427,190 @@ class GitLabService:
             return result
         return None
 
+    async def _resolve_sync_target_group(
+        self,
+        gitlab_project_id: int,
+        gitlab_project_path: str,
+        gitlab_project_data: Optional[GitLabProjectDetails],
+    ) -> Optional[Tuple[int, str]]:
+        """Determine which GitLab group (id, path) should back the team for this project.
+
+        Returns None and logs a reason if the project has no syncable group target.
+        """
+        if not gitlab_project_data or not gitlab_project_data.namespace:
+            logger.warning(
+                f"Skipping team sync for project_id={gitlab_project_id} ({gitlab_project_path}): "
+                f"no GitLab project details available (likely access denied or 404 on /projects/{gitlab_project_id})."
+            )
+            return None
+
+        if gitlab_project_data.namespace.kind != "group":
+            logger.info(
+                f"Skipping team sync for project_id={gitlab_project_id} ({gitlab_project_path}): "
+                f"namespace is a user namespace, no group team to sync."
+            )
+            return None
+
+        namespace = gitlab_project_data.namespace
+        group_id = namespace.id
+        group_path = namespace.full_path
+
+        # Apply team_sync_depth to determine team granularity.
+        # depth=1: "mo/edge/k8s/app" -> team "mo" (top-level only)
+        # depth=2: "mo/edge/k8s/app" -> team "mo/edge"
+        # depth=0: full path (legacy behavior)
+        depth = getattr(self.instance, "team_sync_depth", 1)
+        if depth <= 0:
+            return group_id, group_path
+
+        parts = group_path.split("/")
+        truncated_path = "/".join(parts[:depth])
+        if len(parts) <= depth:
+            return group_id, truncated_path
+
+        parent_group = await self._resolve_group_by_path(truncated_path)
+        if parent_group:
+            return parent_group["id"], truncated_path
+
+        # Cannot resolve parent — fall back to the deepest known group consistently.
+        # Mixing the truncated *name* with the deep *id* produces a team whose
+        # gitlab_group_id doesn't match its name, which corrupts future lookups.
+        logger.warning(
+            f"Could not resolve GitLab group by path '{truncated_path}' for project_id={gitlab_project_id}. "
+            f"Falling back to deepest namespace '{group_path}' (id={group_id}) to keep team data consistent."
+        )
+        return group_id, group_path
+
+    async def _build_team_members(
+        self,
+        gitlab_members: List[GitLabMember],
+        user_repo: UserRepository,
+    ) -> List[TeamMember]:
+        """Resolve each GitLab member to a local user (creating one if missing) and map to TeamMember."""
+        team_members: List[TeamMember] = []
+        for member in gitlab_members:
+            user = await self._find_or_create_user(member, user_repo)
+            if not user:
+                continue
+            role = "admin" if member.access_level >= GITLAB_ADMIN_MIN_ACCESS else "member"
+            user_id = str(user.get("_id", user.get("id")))
+            team_members.append(TeamMember(user_id=user_id, role=role))
+        return team_members
+
+    async def _find_or_create_user(
+        self,
+        member: GitLabMember,
+        user_repo: UserRepository,
+    ) -> Optional[Dict[str, Any]]:
+        user = None
+        if member.email:
+            user = await user_repo.get_raw_by_email(member.email)
+        elif member.username:
+            user = await user_repo.get_raw_by_username(member.username)
+        if user:
+            return user
+        if not member.email:
+            return None
+        new_user = User(
+            username=member.username or member.email.split("@")[0],
+            email=member.email,
+            hashed_password=security.get_password_hash(secrets.token_urlsafe(16)),
+            is_active=True,
+            auth_provider="gitlab",
+        )
+        await user_repo.create(new_user)
+        return new_user.model_dump()
+
+    async def _upsert_team_with_members(
+        self,
+        team_repo: TeamRepository,
+        existing_team: Optional[Dict[str, Any]],
+        team_name: str,
+        description: str,
+        instance_id: str,
+        group_id: int,
+        team_members: List[TeamMember],
+    ) -> Optional[str]:
+        now = datetime.now(timezone.utc)
+        if existing_team:
+            update_data: dict = {
+                "members": [tm.model_dump() for tm in team_members],
+                "updated_at": now,
+            }
+            # Sync name only if it still has the auto-generated GitLab prefix.
+            # If the team was manually renamed (e.g. to "BOS"), keep the custom name.
+            current_name = existing_team.get("name", "")
+            if current_name.startswith("GitLab Group:") and current_name != team_name:
+                update_data["name"] = team_name
+                update_data["description"] = description
+            # Backfill gitlab IDs for legacy teams found by name
+            if not existing_team.get("gitlab_group_id"):
+                update_data["gitlab_instance_id"] = instance_id
+                update_data["gitlab_group_id"] = group_id
+            await team_repo.update(existing_team["_id"], update_data)
+            return str(existing_team["_id"])
+        if team_members:
+            new_team = Team(
+                name=team_name,
+                description=description,
+                gitlab_instance_id=instance_id,
+                gitlab_group_id=group_id,
+                members=team_members,
+            )
+            await team_repo.create(new_team)
+            return str(new_team.id)
+        return None
+
     async def sync_team_from_gitlab(
         self,
         db: AsyncIOMotorDatabase,
         gitlab_project_id: int,
-        gitlab_project_path: str,  # Currently unused, kept for API compatibility
+        gitlab_project_path: str,
         gitlab_project_data: Optional[GitLabProjectDetails] = None,
     ) -> Optional[str]:
-        """
-        Syncs GitLab project members to a local Team.
-
-        Args:
-            db: Database connection
-            gitlab_project_id: GitLab project ID
-            gitlab_project_path: GitLab project path (currently unused)
-            gitlab_project_data: Optional project data from GitLab API
-
-        Returns:
-            Team ID if sync successful, None otherwise
-        """
-        _ = gitlab_project_path  # Suppress unused parameter warning
+        """Sync GitLab group members to a local Team and return its id, or None on any failure."""
         team_repo = TeamRepository(db)
         user_repo = UserRepository(db)
 
         try:
-            members = None
-
-            # Only sync if it's a group
-            if gitlab_project_data and gitlab_project_data.namespace and gitlab_project_data.namespace.kind == "group":
-                namespace = gitlab_project_data.namespace
-                group_id = namespace.id
-                group_path = namespace.full_path
-
-                # Apply team_sync_depth to determine team granularity.
-                # depth=1: "mo/edge/k8s/app" -> team "mo" (top-level only)
-                # depth=2: "mo/edge/k8s/app" -> team "mo/edge"
-                # depth=0: full path (legacy behavior)
-                depth = getattr(self.instance, "team_sync_depth", 1)
-                if depth > 0:
-                    parts = group_path.split("/")
-                    truncated_path = "/".join(parts[:depth])
-                    # Use the parent group at the truncated level for member sync
-                    if len(parts) > depth:
-                        # Resolve the parent group ID via API
-                        parent_group = await self._resolve_group_by_path(truncated_path)
-                        if parent_group:
-                            group_id = parent_group["id"]
-                            group_path = truncated_path
-                        else:
-                            # Fallback to truncated path name but keep original group_id
-                            group_path = truncated_path
-                    else:
-                        group_path = truncated_path
-
-                team_name = f"GitLab Group: {group_path}"
-                description = f"Imported from GitLab Group {group_path}"
-
-                members = await self.get_group_members(group_id)
-            else:
-                # Not a group project (e.g. user namespace), skip sync
+            target = await self._resolve_sync_target_group(
+                gitlab_project_id, gitlab_project_path, gitlab_project_data
+            )
+            if target is None:
                 return None
-
+            group_id, group_path = target
+            team_name = f"GitLab Group: {group_path}"
+            description = f"Imported from GitLab Group {group_path}"
             instance_id = str(self.instance.id)
 
+            members = await self.get_group_members(group_id)
             if not members:
-                logger.warning(f"Failed to fetch members for group {team_name}. Skipping sync.")
-                # Try to find existing team to return its ID at least
+                logger.warning(
+                    f"Failed to fetch members for group '{team_name}' (group_id={group_id}) "
+                    f"while syncing project_id={gitlab_project_id}. Skipping member sync."
+                )
                 team = await team_repo.get_raw_by_gitlab_group(
                     instance_id, group_id
                 ) or await team_repo.get_raw_by_name(team_name)
                 if team:
                     return str(team["_id"])
+                logger.warning(
+                    f"No existing team for group '{team_name}' (group_id={group_id}); "
+                    f"project_id={gitlab_project_id} will be left without a team_id."
+                )
                 return None
 
-            # Find existing team by GitLab group ID (rename-safe) or fallback to name
-            team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id) or await team_repo.get_raw_by_name(
-                team_name
+            existing_team = await team_repo.get_raw_by_gitlab_group(
+                instance_id, group_id
+            ) or await team_repo.get_raw_by_name(team_name)
+            team_members = await self._build_team_members(members, user_repo)
+            return await self._upsert_team_with_members(
+                team_repo, existing_team, team_name, description, instance_id, group_id, team_members
             )
 
-            team_members = []
-            for member in members:
-                user = None
-                if member.email:
-                    user = await user_repo.get_raw_by_email(member.email)
-                elif member.username:
-                    user = await user_repo.get_raw_by_username(member.username)
-
-                if not user and member.email:
-                    # Create new user
-                    new_user = User(
-                        username=member.username or member.email.split("@")[0],
-                        email=member.email,
-                        hashed_password=security.get_password_hash(secrets.token_urlsafe(16)),
-                        is_active=True,
-                        auth_provider="gitlab",
-                    )
-                    await user_repo.create(new_user)
-                    user = new_user.model_dump()
-
-                if user:
-                    # Map GitLab access level to role
-                    # See constants: GITLAB_ACCESS_GUEST (10), REPORTER (20), etc.
-                    role = "member"
-                    if member.access_level >= GITLAB_ADMIN_MIN_ACCESS:
-                        role = "admin"
-
-                    user_id = str(user.get("_id", user.get("id")))
-                    team_members.append(TeamMember(user_id=user_id, role=role))
-
-            now = datetime.now(timezone.utc)
-            if team:
-                update_data: dict = {
-                    "members": [tm.model_dump() for tm in team_members],
-                    "updated_at": now,
-                }
-                # Sync name only if it still has the auto-generated GitLab prefix.
-                # If the team was manually renamed (e.g. to "BOS"), keep the custom name.
-                current_name = team.get("name", "")
-                if current_name.startswith("GitLab Group:") and current_name != team_name:
-                    update_data["name"] = team_name
-                    update_data["description"] = description
-                # Backfill gitlab IDs for legacy teams found by name
-                if not team.get("gitlab_group_id"):
-                    update_data["gitlab_instance_id"] = instance_id
-                    update_data["gitlab_group_id"] = group_id
-                await team_repo.update(team["_id"], update_data)
-                return str(team["_id"])
-            elif team_members:
-                new_team = Team(
-                    name=team_name,
-                    description=description,
-                    gitlab_instance_id=instance_id,
-                    gitlab_group_id=group_id,
-                    members=team_members,
-                )
-                await team_repo.create(new_team)
-                return str(new_team.id)
-
         except Exception as e:
-            logger.error(f"Error syncing GitLab teams: {e}")
+            logger.error(
+                f"Error syncing GitLab teams for project_id={gitlab_project_id} ({gitlab_project_path}): "
+                f"{type(e).__name__}: {e}"
+            )
             return None
-
-        return None

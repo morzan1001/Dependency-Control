@@ -611,3 +611,153 @@ class TestTeamSyncGroupMembers:
             assert result == "existing-team-id"
             # Should have called update_one to set members
             teams_coll.update_one.assert_called_once()
+
+
+class TestTeamSyncSilentReturnsAreLogged:
+    """Every silent return None path in sync_team_from_gitlab MUST emit a log
+    so operators can detect projects that were created without a team_id."""
+
+    def test_logs_when_project_data_is_none(self, gitlab_instance_a, caplog):
+        service = GitLabService(gitlab_instance_a)
+
+        with caplog.at_level("WARNING", logger="app.services.gitlab"):
+            result = asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=MagicMock(),
+                    gitlab_project_id=999,
+                    gitlab_project_path="grp/proj",
+                    gitlab_project_data=None,
+                )
+            )
+
+        assert result is None
+        assert any(
+            "999" in r.message and "project details" in r.message.lower()
+            for r in caplog.records
+        ), f"Expected warning naming project_id 999 and 'project details'. Got: {[r.message for r in caplog.records]}"
+
+    def test_logs_when_namespace_is_user(self, gitlab_instance_a, caplog):
+        service = GitLabService(gitlab_instance_a)
+
+        with caplog.at_level("INFO", logger="app.services.gitlab"):
+            result = asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=MagicMock(),
+                    gitlab_project_id=777,
+                    gitlab_project_path="alice/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="user",
+                        namespace_id=1,
+                        namespace_path="alice",
+                    ),
+                )
+            )
+
+        assert result is None
+        assert any(
+            "777" in r.message and "user namespace" in r.message.lower()
+            for r in caplog.records
+        ), f"Expected info naming project_id 777 and 'user namespace'. Got: {[r.message for r in caplog.records]}"
+
+    def test_logs_when_group_members_empty_and_no_existing_team(self, gitlab_instance_a, caplog):
+        service = GitLabService(gitlab_instance_a)
+
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.return_value = None
+            teams_coll = create_mock_collection(find_one=None)
+            db = create_mock_db({"teams": teams_coll, "users": create_mock_collection()})
+
+            with caplog.at_level("WARNING", logger="app.services.gitlab"):
+                result = asyncio.run(
+                    service.sync_team_from_gitlab(
+                        db=db,
+                        gitlab_project_id=555,
+                        gitlab_project_path="my-group/proj",
+                        gitlab_project_data=make_project_details(
+                            namespace_kind="group",
+                            namespace_id=42,
+                            namespace_path="my-group",
+                        ),
+                    )
+                )
+
+        assert result is None
+        assert any("555" in r.message for r in caplog.records), (
+            f"Expected the warning to mention project_id 555 so operators can locate the orphaned project. "
+            f"Got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_logs_when_exception_is_caught(self, gitlab_instance_a, caplog):
+        service = GitLabService(gitlab_instance_a)
+
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.side_effect = RuntimeError("kaboom")
+            db = create_mock_db({"teams": create_mock_collection(), "users": create_mock_collection()})
+
+            with caplog.at_level("ERROR", logger="app.services.gitlab"):
+                result = asyncio.run(
+                    service.sync_team_from_gitlab(
+                        db=db,
+                        gitlab_project_id=222,
+                        gitlab_project_path="grp/proj",
+                        gitlab_project_data=make_project_details(
+                            namespace_kind="group",
+                            namespace_id=10,
+                            namespace_path="grp",
+                        ),
+                    )
+                )
+
+        assert result is None
+        # error log must include the project id so operators can find the orphan
+        assert any("222" in r.message for r in caplog.records), (
+            f"Expected error log to include project_id 222. Got: {[r.message for r in caplog.records]}"
+        )
+
+
+class TestTeamSyncResolveGroupFallback:
+    """When _resolve_group_by_path fails, the team must be created consistently
+    (no team named for the truncated path but tagged with the deep subgroup's id)."""
+
+    def test_falls_back_to_deep_group_id_and_path_when_truncation_unresolvable(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        members = [
+            GitLabMember(username="dev", email="dev@test.com", access_level=30),
+        ]
+
+        with (
+            patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members,
+            patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve,
+        ):
+            mock_members.return_value = members
+            mock_resolve.return_value = None  # truncated path "org" cannot be resolved
+
+            user_doc = {"_id": "uid", "username": "dev"}
+            users_coll = create_mock_collection(find_one=user_doc)
+            teams_coll = create_mock_collection(find_one=None)
+            teams_coll.insert_one = AsyncMock()
+            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+
+            asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="org/subgroup/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group",
+                        namespace_id=42,  # deep "org/subgroup" id
+                        namespace_path="org/subgroup",
+                    ),
+                )
+            )
+
+            teams_coll.insert_one.assert_called_once()
+            team_data = teams_coll.insert_one.call_args[0][0]
+            # group_id and name must reference the SAME level — either both deep or
+            # both truncated. The current bug uses truncated name + deep group_id.
+            if team_data["gitlab_group_id"] == 42:
+                assert team_data["name"] == "GitLab Group: org/subgroup", (
+                    f"If gitlab_group_id is the deep namespace.id (42), the team name must reflect "
+                    f"the deep path, not the unresolvable truncated path. Got name={team_data['name']!r}"
+                )

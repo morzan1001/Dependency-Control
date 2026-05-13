@@ -17,6 +17,7 @@ from app.models.user import User
 from app.repositories import (
     ProjectRepository,
     SystemSettingsRepository,
+    TeamRepository,
     UserRepository,
 )
 from app.schemas.token import TokenPayload
@@ -199,6 +200,54 @@ async def _resolve_initial_member_id(
     return None
 
 
+async def _should_overwrite_team_id_from_sync(
+    project_team_id: Optional[str],
+    team_repo: TeamRepository,
+) -> bool:
+    """Decide whether a GitLab sync may overwrite project.team_id.
+
+    True when the project has no team yet, the referenced team no longer exists,
+    or the current team itself came from GitLab sync (has gitlab_group_id).
+    False only when the current team was assigned manually — preserving user intent.
+    """
+    if not project_team_id:
+        return True
+    current_team = await team_repo.get_raw_by_id(project_team_id)
+    if not current_team:
+        return True
+    return bool(current_team.get("gitlab_group_id"))
+
+
+async def _gitlab_team_sync_update(
+    project: Project,
+    gitlab_project_id: int,
+    gitlab_project_path: str,
+    gitlab_service: "GitLabService",
+    db: AsyncIOMotorDatabase,
+) -> dict:
+    """Compute the team_id update (if any) that GitLab sync should apply to an existing project.
+
+    Returns a dict to merge into the project update, or an empty dict to skip.
+    """
+    gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
+    team_id = await gitlab_service.sync_team_from_gitlab(
+        db,
+        gitlab_project_id,
+        gitlab_project_path,
+        gitlab_project_data=gitlab_project_data,
+    )
+    if not team_id or project.team_id == team_id:
+        return {}
+    team_repo = TeamRepository(db)
+    if await _should_overwrite_team_id_from_sync(project.team_id, team_repo):
+        return {"team_id": team_id}
+    logger.info(
+        f"Keeping manual team assignment for project {project.id} ({gitlab_project_path}); "
+        f"GitLab sync would have set team_id={team_id}."
+    )
+    return {}
+
+
 async def _sync_project_name(
     project: Project,
     new_path: str,
@@ -252,15 +301,11 @@ async def _handle_gitlab_oidc(
         extra_updates: dict = {}
 
         if gitlab_instance.sync_teams:
-            gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
-            team_id = await gitlab_service.sync_team_from_gitlab(
-                db,
-                gitlab_project_id,
-                gitlab_project_path,
-                gitlab_project_data=gitlab_project_data,
+            extra_updates.update(
+                await _gitlab_team_sync_update(
+                    project, gitlab_project_id, gitlab_project_path, gitlab_service, db
+                )
             )
-            if team_id and project.team_id != team_id:
-                extra_updates["team_id"] = team_id
 
         return await _sync_project_name(
             project,
