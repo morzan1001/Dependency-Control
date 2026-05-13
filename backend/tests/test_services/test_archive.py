@@ -60,6 +60,7 @@ class _AsyncCursorMock:
         async def _gen():
             for doc in self._docs:
                 yield doc
+
         return _gen()
 
     async def to_list(self, _length=None):
@@ -67,8 +68,12 @@ class _AsyncCursorMock:
 
 
 def _make_mock_db(
-    scan_doc=None, findings=None, finding_records=None, dependencies=None,
-    analysis_results=None, callgraphs=None,
+    scan_doc=None,
+    findings=None,
+    finding_records=None,
+    dependencies=None,
+    analysis_results=None,
+    callgraphs=None,
 ):
     db = MagicMock()
     db.scans.find_one = AsyncMock(return_value=scan_doc)
@@ -119,9 +124,10 @@ def _patch_repos(lock_acquires: bool = True, existing_metadata=None):
 
     @contextmanager
     def cm():
-        with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-            f"{MODULE}.DistributedLocksRepository"
-        ) as LockCls:
+        with (
+            patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+            patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+        ):
             RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=existing_metadata)
             RepoCls.return_value.create = AsyncMock()
             RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
@@ -203,10 +209,7 @@ async def test_archive_scan_aborts_s3_on_failure(archive_env):
     """When an S3 upload_part fails, the multipart upload must be aborted and no metadata written."""
     archive_env.fail_next_upload_part = True
     # Big enough to trigger multipart (>5 MiB)
-    big_findings = [
-        {"_id": f"f{i}", "scan_id": "scan-1", "severity": "LOW", "blob": "x" * 1000}
-        for i in range(20000)
-    ]
+    big_findings = [{"_id": f"f{i}", "scan_id": "scan-1", "severity": "LOW", "blob": "x" * 1000} for i in range(20000)]
     scan_doc = _make_scan_doc()
     db = _make_mock_db(scan_doc=scan_doc, findings=big_findings)
 
@@ -243,9 +246,10 @@ async def test_restore_scan_roundtrip(archive_env):
     db.scans.find_one = AsyncMock(return_value=None)
 
     # Repo returns the metadata we just created
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls:
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
@@ -269,9 +273,10 @@ async def test_restore_scan_aborts_when_lock_held(archive_env):
     db = _make_mock_db()
     meta = _make_archive_metadata()
 
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls:
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=False)
 
@@ -288,9 +293,10 @@ async def test_restore_scan_aborts_when_scan_already_exists(archive_env):
     existing_scan = _make_scan_doc()
     db = _make_mock_db(scan_doc=existing_scan)
 
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls:
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
@@ -305,9 +311,10 @@ async def test_restore_scan_aborts_when_scan_already_exists(archive_env):
 async def test_restore_scan_returns_none_when_no_metadata(archive_env):
     db = _make_mock_db()
 
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls:
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=None)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
@@ -330,9 +337,7 @@ async def test_replay_labels_mongo_error_not_as_s3_error():
 
     from app.services.archive import _replay_bundle
 
-    header = json.dumps(
-        {"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}
-    ).encode() + b"\n"
+    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}).encode() + b"\n"
 
     async def src():
         yield header
@@ -389,9 +394,11 @@ async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
 
     delete_metadata = AsyncMock(return_value=True)
 
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls, patch(f"{MODULE}.delete_object", AsyncMock(side_effect=RuntimeError("S3 down"))):
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+        patch(f"{MODULE}.delete_object", AsyncMock(side_effect=RuntimeError("S3 down"))),
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         RepoCls.return_value.delete_by_scan_id = delete_metadata
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
@@ -424,9 +431,10 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
     # Bypass the S3 stream construction
     monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
 
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls:
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
@@ -461,9 +469,10 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
     scan_doc = _make_scan_doc()
     db = _make_mock_db(scan_doc=scan_doc, findings=[{"_id": "f1", "scan_id": "scan-1"}])
 
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls:
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=None)
         RepoCls.return_value.create = AsyncMock(side_effect=DuplicateKeyError("dup"))
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
@@ -509,9 +518,10 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
     monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
     monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
 
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls:
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
@@ -541,13 +551,12 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
     # delete_object succeeds, but delete_by_scan_id raises
     monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
 
-    with patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls, patch(
-        f"{MODULE}.DistributedLocksRepository"
-    ) as LockCls:
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
-        RepoCls.return_value.delete_by_scan_id = AsyncMock(
-            side_effect=RuntimeError("Mongo hiccup")
-        )
+        RepoCls.return_value.delete_by_scan_id = AsyncMock(side_effect=RuntimeError("Mongo hiccup"))
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
 

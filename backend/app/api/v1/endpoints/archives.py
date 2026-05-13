@@ -244,9 +244,7 @@ async def download_archive(
             archive_operations_total.labels(operation="download", status="success").inc()
             archive_operation_duration_seconds.labels(operation="download").observe(duration)
         except Exception:
-            archive_failures_total.labels(
-                operation="download", reason=ArchiveFailureReason.S3_ERROR
-            ).inc()
+            archive_failures_total.labels(operation="download", reason=ArchiveFailureReason.S3_ERROR).inc()
             archive_operations_total.labels(operation="download", status="failure").inc()
             raise
 

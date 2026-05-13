@@ -62,11 +62,7 @@ class FakeS3Client:
         return {}
 
     async def list_objects_v2(self, Bucket: str, Prefix: str = "") -> Dict[str, Any]:
-        contents = [
-            {"Key": k, "Size": len(v)}
-            for k, v in self.objects.items()
-            if k.startswith(Prefix)
-        ]
+        contents = [{"Key": k, "Size": len(v)} for k, v in self.objects.items() if k.startswith(Prefix)]
         return {"Contents": contents, "KeyCount": len(contents)}
 
     async def create_multipart_upload(self, Bucket: str, Key: str, ContentType: str = "") -> Dict[str, Any]:
@@ -75,9 +71,7 @@ class FakeS3Client:
         self._multipart_keys[upload_id] = Key
         return {"UploadId": upload_id}
 
-    async def upload_part(
-        self, Bucket: str, Key: str, UploadId: str, PartNumber: int, Body: bytes
-    ) -> Dict[str, Any]:
+    async def upload_part(self, Bucket: str, Key: str, UploadId: str, PartNumber: int, Body: bytes) -> Dict[str, Any]:
         if self.fail_next_upload_part:
             self.fail_next_upload_part = False
             raise RuntimeError("simulated S3 error on upload_part")

@@ -135,9 +135,7 @@ async def upload_stream(
                 await s3.put_object(Bucket=b, Key=key, Body=b"", ContentType=content_type)
                 return 0
 
-            await s3.complete_multipart_upload(
-                Bucket=b, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}
-            )
+            await s3.complete_multipart_upload(Bucket=b, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts})
             return total
         except Exception:
             try:
@@ -147,9 +145,7 @@ async def upload_stream(
             raise
 
 
-async def download_stream(
-    key: str, *, bucket: Optional[str] = None, chunk_size: int = 65536
-) -> AsyncIterator[bytes]:
+async def download_stream(key: str, *, bucket: Optional[str] = None, chunk_size: int = 65536) -> AsyncIterator[bytes]:
     """Stream an S3 object as an async iterator of chunks (default 64 KiB each)."""
     async with get_s3_client() as s3:
         response = await s3.get_object(Bucket=_bucket(bucket), Key=key)

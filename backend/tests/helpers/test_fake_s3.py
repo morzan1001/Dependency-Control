@@ -21,7 +21,5 @@ async def test_multipart_upload_roundtrip():
     uid = r["UploadId"]
     await fake.upload_part(Bucket="b", Key="k", UploadId=uid, PartNumber=1, Body=b"AAA")
     await fake.upload_part(Bucket="b", Key="k", UploadId=uid, PartNumber=2, Body=b"BBB")
-    await fake.complete_multipart_upload(
-        Bucket="b", Key="k", UploadId=uid, MultipartUpload={"Parts": []}
-    )
+    await fake.complete_multipart_upload(Bucket="b", Key="k", UploadId=uid, MultipartUpload={"Parts": []})
     assert fake.objects["k"] == b"AAABBB"

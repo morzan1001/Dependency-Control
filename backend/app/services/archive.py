@@ -196,9 +196,7 @@ async def _save_archive_metadata(
 ) -> Optional[ArchiveMetadata]:
     """Persist ArchiveMetadata. On unique-key collision, deletes the S3 orphan and returns None."""
     sbom_filenames = [
-        ref["filename"]
-        for ref in scan_doc.get("sbom_refs", [])
-        if isinstance(ref, dict) and ref.get("filename")
+        ref["filename"] for ref in scan_doc.get("sbom_refs", []) if isinstance(ref, dict) and ref.get("filename")
     ]
     metadata = ArchiveMetadata(
         project_id=scan_doc["project_id"],
@@ -284,9 +282,7 @@ async def archive_scan(
 
         project_id = scan_doc["project_id"]
         archived_at_unix = int(datetime.now(timezone.utc).timestamp())
-        s3_key = ARCHIVE_PATH_TEMPLATE.format(
-            project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix
-        )
+        s3_key = ARCHIVE_PATH_TEMPLATE.format(project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix)
 
         stats = BundleStats()
         bytes_counter: Dict[str, int] = {"total": 0}
@@ -528,9 +524,7 @@ async def restore_scan(
 
         start_time = time.monotonic()
         decompressed = _open_restore_stream(metadata)
-        failure_reason, collections_restored, gridfs_entries = await _replay_bundle(
-            db, scan_id, decompressed
-        )
+        failure_reason, collections_restored, gridfs_entries = await _replay_bundle(db, scan_id, decompressed)
 
         if failure_reason is not None:
             await _rollback_partial_restore(db, scan_id)

@@ -27,13 +27,9 @@ async def test_write_then_read_roundtrip():
         async for chunk in BundleFrames.write(
             scan_doc=scan_doc,
             collections={
-                "findings": _async_iter(
-                    [{"_id": "f1", "severity": "CRITICAL"}, {"_id": "f2", "severity": "HIGH"}]
-                ),
+                "findings": _async_iter([{"_id": "f1", "severity": "CRITICAL"}, {"_id": "f2", "severity": "HIGH"}]),
                 "dependencies": _async_iter([{"_id": "d1", "name": "lib"}]),
-                "gridfs_sboms": _async_iter(
-                    [{"gridfs_id": "g1", "filename": "sbom.json", "data": {"x": 1}}]
-                ),
+                "gridfs_sboms": _async_iter([{"gridfs_id": "g1", "filename": "sbom.json", "data": {"x": 1}}]),
             },
             stats=stats,
         ):
@@ -93,9 +89,7 @@ async def test_read_detects_integrity_failure():
     from app.services.archive_bundle import read_bundle_frames
 
     # Build a valid prefix but with a footer SHA-256 that doesn't match
-    header = (
-        json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {}}).encode() + b"\n"
-    )
+    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {}}).encode() + b"\n"
     coll = json.dumps({"collection": "findings"}).encode() + b"\n"
     doc = json.dumps({"_id": "f1"}).encode() + b"\n"
     footer = json.dumps({"footer": True, "stats": {}, "sha256": "deadbeef" * 8}).encode() + b"\n"
@@ -199,9 +193,7 @@ async def test_read_raises_when_footer_missing():
     """A bundle stream that ends without the footer line must raise ValueError."""
     from app.services.archive_bundle import read_bundle_frames
 
-    header = json.dumps(
-        {"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}
-    ).encode() + b"\n"
+    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}).encode() + b"\n"
     marker = json.dumps({"collection": "findings"}).encode() + b"\n"
     doc = json.dumps({"_id": "f1"}).encode() + b"\n"
     # NO footer line at the end

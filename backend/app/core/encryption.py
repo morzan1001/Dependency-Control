@@ -126,9 +126,7 @@ class _StreamReader:
                 break
             self._buffer.extend(chunk)
         if len(self._buffer) < n:
-            raise ValueError(
-                f"Unexpected end of encrypted stream (wanted {n} bytes, have {len(self._buffer)})"
-            )
+            raise ValueError(f"Unexpected end of encrypted stream (wanted {n} bytes, have {len(self._buffer)})")
         out = bytes(self._buffer[:n])
         del self._buffer[:n]
         return out

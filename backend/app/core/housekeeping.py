@@ -290,9 +290,7 @@ async def _reap_stale_metadata(db: Any) -> int:
             result = await db.archive_metadata.delete_one({"_id": meta["_id"]})
             if result.deleted_count:
                 deleted += 1
-                logger.info(
-                    f"Reaped stale archive_metadata for scan {scan_id} (scan exists in db.scans)"
-                )
+                logger.info(f"Reaped stale archive_metadata for scan {scan_id} (scan exists in db.scans)")
         except Exception as e:
             logger.warning(f"Failed to delete stale metadata for scan {scan_id}: {e}")
     return deleted

@@ -79,6 +79,7 @@ async def test_upload_stream_with_bucket_override(fake_s3):
 async def test_upload_bytes_still_works(fake_s3):
     """Backward-compat wrapper for small uploads."""
     from app.core.s3 import upload_bytes
+
     n = await upload_bytes("small", b"hello")
     assert n == 5
     assert fake_s3.objects["small"] == b"hello"
@@ -88,6 +89,7 @@ async def test_upload_bytes_still_works(fake_s3):
 async def test_download_bytes_still_works(fake_s3):
     """Backward-compat wrapper for small downloads."""
     from app.core.s3 import download_bytes
+
     fake_s3.objects["small"] = b"world"
     data = await download_bytes("small")
     assert data == b"world"
@@ -96,6 +98,7 @@ async def test_download_bytes_still_works(fake_s3):
 @pytest.mark.asyncio
 async def test_delete_object_with_bucket_override(fake_s3):
     from app.core.s3 import delete_object
+
     fake_s3.objects["k"] = b"x"
     await delete_object("k", bucket="alt-bucket")
     assert "k" not in fake_s3.objects
@@ -104,6 +107,7 @@ async def test_delete_object_with_bucket_override(fake_s3):
 @pytest.mark.asyncio
 async def test_list_objects_returns_under_prefix(fake_s3):
     from app.core.s3 import list_objects
+
     fake_s3.objects["a/1"] = b"a"
     fake_s3.objects["a/2"] = b"b"
     fake_s3.objects["b/1"] = b"c"

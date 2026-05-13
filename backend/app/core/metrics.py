@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 class ArchiveFailureReason:
     """String constants for the `reason` label on archive_failures_total."""
+
     S3_ERROR = "s3_error"
     ENCRYPTION = "encryption"
     NOT_FOUND = "not_found"
@@ -299,7 +300,10 @@ archive_operations_total = Counter(
 archive_failures_total = Counter(
     "archive_failures_total",
     "Archive failures by operation and reason.",
-    ["operation", "reason"],  # reason in: s3_error|encryption|not_found|lock_held|already_exists|version_mismatch|integrity|unknown
+    [
+        "operation",
+        "reason",
+    ],  # reason in: s3_error|encryption|not_found|lock_held|already_exists|version_mismatch|integrity|unknown
 )
 
 archive_operation_duration_seconds = Histogram(

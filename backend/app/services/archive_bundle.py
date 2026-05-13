@@ -175,9 +175,7 @@ async def read_bundle_frames(source: AsyncIterator[bytes]) -> AsyncIterator[Dict
             expected = obj.get("sha256")
             actual = pre_footer_sha.hexdigest()
             if expected != actual:
-                raise ValueError(
-                    f"Bundle integrity (checksum) mismatch: expected {expected}, got {actual}"
-                )
+                raise ValueError(f"Bundle integrity (checksum) mismatch: expected {expected}, got {actual}")
             yield {"type": "footer", "data": obj}
             return
 
