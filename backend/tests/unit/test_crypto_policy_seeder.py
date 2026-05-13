@@ -1,22 +1,31 @@
+"""Unit tests for the crypto-policy seeder.
+
+Uses the FakeDb fixture from tests/unit/conftest.py instead of a real MongoDB
+so the test runs anywhere without infrastructure. ``record_policy_change`` is
+patched to avoid pulling in webhook/notification side effects on every seed.
+"""
+
+from unittest.mock import AsyncMock, patch
+
 import pytest
-import pytest_asyncio
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.crypto_policy.seeder import (
     CURRENT_SEED_VERSION,
-    seed_crypto_policies,
     load_seed_rules,
+    seed_crypto_policies,
 )
 
 
-@pytest_asyncio.fixture
-async def db():
-    client = AsyncIOMotorClient("mongodb://localhost:27017")
-    database = client["test_crypto_policy_seeder"]
-    yield database
-    await client.drop_database("test_crypto_policy_seeder")
-    client.close()
+@pytest.fixture(autouse=True)
+def _silence_audit_history():
+    """Seeder calls record_policy_change which would emit webhooks + notify users.
+    Neither is interesting for the seeder contract — patch it out."""
+    with patch(
+        "app.services.crypto_policy.seeder.record_policy_change",
+        new=AsyncMock(),
+    ):
+        yield
 
 
 def test_load_seed_rules_returns_nonempty():
@@ -50,7 +59,9 @@ async def test_seed_skipped_when_version_higher(db):
     from app.models.crypto_policy import CryptoPolicy
 
     repo = CryptoPolicyRepository(db)
-    await repo.upsert_system_policy(CryptoPolicy(scope="system", rules=[], version=CURRENT_SEED_VERSION + 5))
+    await repo.upsert_system_policy(
+        CryptoPolicy(scope="system", rules=[], version=CURRENT_SEED_VERSION + 5)
+    )
     await seed_crypto_policies(db)
     got = await repo.get_system_policy()
     assert got.version == CURRENT_SEED_VERSION + 5

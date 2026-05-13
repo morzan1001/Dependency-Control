@@ -1,16 +1,19 @@
-"""Tests for chat rate limiter."""
+"""Unit tests for ChatRateLimiter using fakeredis instead of a real Redis.
 
+fakeredis[lua] supports the EVAL pipeline + sorted-set operations the rate limiter
+relies on, so we exercise the actual Lua script — not a mock.
+"""
+
+import fakeredis.aioredis
 import pytest
 import pytest_asyncio
-import redis.asyncio as redis
 
 from app.services.chat.rate_limiter import ChatRateLimiter
 
 
 @pytest_asyncio.fixture
 async def redis_client():
-    client = redis.from_url("redis://localhost:6379/15")
-    await client.flushdb()
+    client = fakeredis.aioredis.FakeRedis()
     yield client
     await client.flushdb()
     await client.aclose()

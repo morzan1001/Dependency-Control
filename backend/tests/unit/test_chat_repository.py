@@ -1,19 +1,9 @@
-"""Tests for chat repository. Requires running MongoDB."""
+"""Unit tests for ChatRepository using the FakeDb fixture from conftest.py."""
 
 import pytest
 import pytest_asyncio
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.repositories.chat import ChatRepository
-
-
-@pytest_asyncio.fixture
-async def db():
-    client = AsyncIOMotorClient("mongodb://localhost:27017")
-    database = client["test_chat_repository"]
-    yield database
-    await client.drop_database("test_chat_repository")
-    client.close()
 
 
 @pytest_asyncio.fixture
@@ -95,7 +85,14 @@ async def test_add_message_with_tool_calls(repo):
         conv["_id"],
         role="assistant",
         content="Found your projects",
-        tool_calls=[{"tool_name": "list_projects", "arguments": {}, "result": {"projects": []}, "duration_ms": 50}],
+        tool_calls=[
+            {
+                "tool_name": "list_projects",
+                "arguments": {},
+                "result": {"projects": []},
+                "duration_ms": 50,
+            }
+        ],
         token_count=120,
     )
 
