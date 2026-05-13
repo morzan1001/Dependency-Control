@@ -10,7 +10,7 @@ from app.services.normalizers.utils import (
 )
 
 if TYPE_CHECKING:
-    from app.services.aggregator import ResultAggregator
+    from app.services.aggregation import ResultAggregator
 
 _CRYPTO_MISUSE_RULE_ID_PREFIX = "crypto-misuse-"
 

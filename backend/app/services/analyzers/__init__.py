@@ -8,7 +8,7 @@ from .end_of_life import EndOfLifeAnalyzer
 from .epss_kev import EPSSKEVAnalyzer
 from .grype import GrypeAnalyzer
 from .hash_verification import HashVerificationAnalyzer
-from .license import LicenseAnalyzer
+from .license_compliance import LicenseAnalyzer
 from .maintainer_risk import MaintainerRiskAnalyzer
 from .malware import OpenSourceMalwareAnalyzer
 from .osv import OSVAnalyzer

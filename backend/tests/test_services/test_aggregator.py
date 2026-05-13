@@ -1,7 +1,20 @@
 """Tests for the ResultAggregator."""
 
 from app.models.finding import Finding, FindingType, Severity
-from app.services.aggregator import ResultAggregator
+from app.services.aggregation import ResultAggregator
+from app.services.aggregation.components import (
+    extract_artifact_name,
+    normalize_component,
+)
+from app.services.aggregation.merging import (
+    merge_findings_data,
+    merge_vulnerability_into_list,
+)
+from app.services.aggregation.versions import (
+    calculate_aggregated_fixed_version,
+    normalize_version,
+    parse_version_key,
+)
 
 
 class TestParseVersionKey:
@@ -15,61 +28,61 @@ class TestParseVersionKey:
         self.agg = ResultAggregator()
 
     def test_simple_semver(self):
-        assert self.agg._parse_version_key("1.2.3") == ((0, 1), (0, 2), (0, 3))
+        assert parse_version_key("1.2.3") == ((0, 1), (0, 2), (0, 3))
 
     def test_v_prefix_stripped(self):
-        assert self.agg._parse_version_key("v1.2.3") == ((0, 1), (0, 2), (0, 3))
+        assert parse_version_key("v1.2.3") == ((0, 1), (0, 2), (0, 3))
 
     def test_uppercase_v_prefix(self):
-        assert self.agg._parse_version_key("V1.2.3") == ((0, 1), (0, 2), (0, 3))
+        assert parse_version_key("V1.2.3") == ((0, 1), (0, 2), (0, 3))
 
     def test_prerelease_label(self):
-        result = self.agg._parse_version_key("1.2.3-beta")
+        result = parse_version_key("1.2.3-beta")
         assert result == ((0, 1), (0, 2), (0, 3), (1, "beta"))
 
     def test_prerelease_with_number(self):
-        result = self.agg._parse_version_key("1.2.3-rc1")
+        result = parse_version_key("1.2.3-rc1")
         # "rc1" is now split into "rc" + "1" for safe comparison
         assert result == ((0, 1), (0, 2), (0, 3), (1, "rc"), (0, 1))
 
     def test_numeric_parts_have_int_values(self):
-        result = self.agg._parse_version_key("10.20.30")
+        result = parse_version_key("10.20.30")
         assert all(flag == 0 and isinstance(val, int) for flag, val in result)
 
     def test_comparison_works_correctly(self):
         """Higher versions should compare as greater."""
-        v1 = self.agg._parse_version_key("1.2.3")
-        v2 = self.agg._parse_version_key("1.2.4")
+        v1 = parse_version_key("1.2.3")
+        v2 = parse_version_key("1.2.4")
         assert v2 > v1
 
     def test_comparison_major_version(self):
-        v1 = self.agg._parse_version_key("1.9.9")
-        v2 = self.agg._parse_version_key("2.0.0")
+        v1 = parse_version_key("1.9.9")
+        v2 = parse_version_key("2.0.0")
         assert v2 > v1
 
     def test_empty_string(self):
-        assert self.agg._parse_version_key("") == ()
+        assert parse_version_key("") == ()
 
     def test_single_number(self):
-        assert self.agg._parse_version_key("42") == ((0, 42),)
+        assert parse_version_key("42") == ((0, 42),)
 
     def test_mixed_alphanumeric_comparison_safe(self):
         """Comparing '3.0.0a1' with '3.0.0' must not raise TypeError."""
-        v1 = self.agg._parse_version_key("3.0.0")
-        v2 = self.agg._parse_version_key("3.0.0a1")
+        v1 = parse_version_key("3.0.0")
+        v2 = parse_version_key("3.0.0a1")
         # Should not raise - this was the bug
         assert (v2 > v1) or (v2 <= v1)
 
     def test_prerelease_vs_release_comparison_safe(self):
         """Comparing versions with and without pre-release tags must not crash."""
-        v1 = self.agg._parse_version_key("1.2.3")
-        v2 = self.agg._parse_version_key("1.2.3rc1")
+        v1 = parse_version_key("1.2.3")
+        v2 = parse_version_key("1.2.3rc1")
         assert (v1 > v2) or (v1 <= v2)
 
     def test_go_incompatible_suffix_safe(self):
         """Go versions like '0.6.0+incompatible' must compare safely."""
-        v1 = self.agg._parse_version_key("0.6.0+incompatible")
-        v2 = self.agg._parse_version_key("0.7.0")
+        v1 = parse_version_key("0.6.0+incompatible")
+        v2 = parse_version_key("0.7.0")
         assert v2 > v1
 
 
@@ -80,36 +93,36 @@ class TestNormalizeVersion:
         self.agg = ResultAggregator()
 
     def test_go_prefix_stripped(self):
-        assert self.agg._normalize_version("go1.25.4") == "1.25.4"
+        assert normalize_version("go1.25.4") == "1.25.4"
 
     def test_v_prefix_stripped(self):
-        assert self.agg._normalize_version("v1.25.4") == "1.25.4"
+        assert normalize_version("v1.25.4") == "1.25.4"
 
     def test_plain_version_unchanged(self):
-        assert self.agg._normalize_version("1.25.4") == "1.25.4"
+        assert normalize_version("1.25.4") == "1.25.4"
 
     def test_empty_returns_unknown(self):
-        assert self.agg._normalize_version("") == "unknown"
+        assert normalize_version("") == "unknown"
 
     def test_none_returns_unknown(self):
-        assert self.agg._normalize_version(None) == "unknown"
+        assert normalize_version(None) == "unknown"
 
     def test_go_without_digit_not_stripped(self):
         """'gomodule' should NOT be stripped - only 'go' followed by digit."""
-        result = self.agg._normalize_version("gomodule")
+        result = normalize_version("gomodule")
         assert result == "gomodule"
 
     def test_v_without_digit_not_stripped(self):
         """'version' should NOT be stripped - only 'v' followed by digit."""
-        result = self.agg._normalize_version("version")
+        result = normalize_version("version")
         assert result == "version"
 
     def test_uppercase_preserved_after_lowering(self):
         """Version strings should be lowercased."""
-        assert self.agg._normalize_version("V2.0.0") == "2.0.0"
+        assert normalize_version("V2.0.0") == "2.0.0"
 
     def test_whitespace_stripped(self):
-        assert self.agg._normalize_version("  1.0.0  ") == "1.0.0"
+        assert normalize_version("  1.0.0  ") == "1.0.0"
 
 
 class TestNormalizeComponent:
@@ -119,16 +132,16 @@ class TestNormalizeComponent:
         self.agg = ResultAggregator()
 
     def test_lowercases(self):
-        assert self.agg._normalize_component("Lodash") == "lodash"
+        assert normalize_component("Lodash") == "lodash"
 
     def test_strips_whitespace(self):
-        assert self.agg._normalize_component("  requests  ") == "requests"
+        assert normalize_component("  requests  ") == "requests"
 
     def test_empty_returns_unknown(self):
-        assert self.agg._normalize_component("") == "unknown"
+        assert normalize_component("") == "unknown"
 
     def test_none_returns_unknown(self):
-        assert self.agg._normalize_component(None) == "unknown"
+        assert normalize_component(None) == "unknown"
 
 
 class TestExtractArtifactName:
@@ -138,29 +151,29 @@ class TestExtractArtifactName:
         self.agg = ResultAggregator()
 
     def test_plain_name(self):
-        assert self.agg._extract_artifact_name("lodash") == "lodash"
+        assert extract_artifact_name("lodash") == "lodash"
 
     def test_maven_group_artifact(self):
-        assert self.agg._extract_artifact_name("org.postgresql:postgresql") == "postgresql"
+        assert extract_artifact_name("org.postgresql:postgresql") == "postgresql"
 
     def test_npm_scoped(self):
-        assert self.agg._extract_artifact_name("@angular/core") == "core"
+        assert extract_artifact_name("@angular/core") == "core"
 
     def test_case_insensitive(self):
-        assert self.agg._extract_artifact_name("Lodash") == "lodash"
+        assert extract_artifact_name("Lodash") == "lodash"
 
     def test_whitespace_stripped(self):
-        assert self.agg._extract_artifact_name("  lodash  ") == "lodash"
+        assert extract_artifact_name("  lodash  ") == "lodash"
 
     def test_empty_returns_unknown(self):
-        assert self.agg._extract_artifact_name("") == "unknown"
+        assert extract_artifact_name("") == "unknown"
 
     def test_none_returns_unknown(self):
-        assert self.agg._extract_artifact_name(None) == "unknown"
+        assert extract_artifact_name(None) == "unknown"
 
     def test_colon_only_takes_last(self):
         """'com.google.guava:guava' -> 'guava'."""
-        assert self.agg._extract_artifact_name("com.google.guava:guava") == "guava"
+        assert extract_artifact_name("com.google.guava:guava") == "guava"
 
 
 class TestCalculateAggregatedFixedVersion:
@@ -170,28 +183,28 @@ class TestCalculateAggregatedFixedVersion:
         self.agg = ResultAggregator()
 
     def test_single_fix(self):
-        result = self.agg._calculate_aggregated_fixed_version(["1.2.5"])
+        result = calculate_aggregated_fixed_version(["1.2.5"])
         assert result == "1.2.5"
 
     def test_two_vulns_same_major(self):
         """Two vulns fixed in same major line - pick the highest."""
-        result = self.agg._calculate_aggregated_fixed_version(["1.2.3", "1.2.5"])
+        result = calculate_aggregated_fixed_version(["1.2.3", "1.2.5"])
         assert result == "1.2.5"
 
     def test_two_vulns_different_majors(self):
         """Two vulns with fixes in two major lines - return both."""
-        result = self.agg._calculate_aggregated_fixed_version(["1.2.5, 2.0.1", "1.2.6, 2.0.3"])
+        result = calculate_aggregated_fixed_version(["1.2.5, 2.0.1", "1.2.6, 2.0.3"])
         # For major 1: max(1.2.5, 1.2.6) = 1.2.6
         # For major 2: max(2.0.1, 2.0.3) = 2.0.3
         assert "1.2.6" in result
         assert "2.0.3" in result
 
     def test_empty_list_returns_none(self):
-        assert self.agg._calculate_aggregated_fixed_version([]) is None
+        assert calculate_aggregated_fixed_version([]) is None
 
     def test_single_vuln_multiple_major_fixes(self):
         """One vuln with fixes in multiple majors."""
-        result = self.agg._calculate_aggregated_fixed_version(["1.5.0, 2.1.0"])
+        result = calculate_aggregated_fixed_version(["1.5.0, 2.1.0"])
         assert "1.5.0" in result
         assert "2.1.0" in result
 
@@ -200,24 +213,24 @@ class TestCalculateAggregatedFixedVersion:
         # Vuln 1: fixed in 1.x and 2.x
         # Vuln 2: fixed only in 2.x
         # -> Only major 2 covers both
-        result = self.agg._calculate_aggregated_fixed_version(["1.5.0, 2.0.1", "2.0.3"])
+        result = calculate_aggregated_fixed_version(["1.5.0, 2.0.1", "2.0.3"])
         assert "2.0.3" in result
         # Major 1 should not be in result since it doesn't cover vuln 2
         assert "1.5.0" not in result
 
     def test_v_prefix_handled(self):
         """Version strings with v prefix should be parsed correctly."""
-        result = self.agg._calculate_aggregated_fixed_version(["v1.2.3"])
+        result = calculate_aggregated_fixed_version(["v1.2.3"])
         assert result is not None
 
     def test_mixed_prerelease_versions_no_crash(self):
         """Versions with alphanumeric parts like '3.0.0a1' must not crash."""
-        result = self.agg._calculate_aggregated_fixed_version(["3.0.0a1", "3.0.1"])
+        result = calculate_aggregated_fixed_version(["3.0.0a1", "3.0.1"])
         assert result is not None
 
     def test_rc_versions_no_crash(self):
         """RC versions compared with release versions must not crash."""
-        result = self.agg._calculate_aggregated_fixed_version(["1.2.3rc1, 2.0.0", "1.2.4, 2.0.1"])
+        result = calculate_aggregated_fixed_version(["1.2.3rc1, 2.0.0", "1.2.4, 2.0.1"])
         assert result is not None
 
 
@@ -230,7 +243,7 @@ class TestMergeVulnerabilityIntoList:
     def test_new_entry_appended(self):
         target = []
         entry = {"id": "CVE-2023-1234", "severity": "HIGH", "aliases": []}
-        self.agg._merge_vulnerability_into_list(target, entry)
+        merge_vulnerability_into_list(target, entry)
         assert len(target) == 1
         assert target[0]["id"] == "CVE-2023-1234"
 
@@ -251,7 +264,7 @@ class TestMergeVulnerabilityIntoList:
             "aliases": [],
             "scanners": ["grype"],
         }
-        self.agg._merge_vulnerability_into_list(target, entry)
+        merge_vulnerability_into_list(target, entry)
         assert len(target) == 1
         # Severity: higher wins
         assert target[0]["severity"] == "HIGH"
@@ -276,7 +289,7 @@ class TestMergeVulnerabilityIntoList:
             "aliases": [],
             "scanners": ["grype"],
         }
-        self.agg._merge_vulnerability_into_list(target, entry)
+        merge_vulnerability_into_list(target, entry)
         assert len(target) == 1
         # Should keep the original ID (CVE)
         assert target[0]["id"] == "CVE-2023-1234"
@@ -286,7 +299,7 @@ class TestMergeVulnerabilityIntoList:
     def test_no_match_creates_new_entry(self):
         target = [{"id": "CVE-2023-1111", "aliases": [], "scanners": []}]
         entry = {"id": "CVE-2023-2222", "aliases": [], "scanners": []}
-        self.agg._merge_vulnerability_into_list(target, entry)
+        merge_vulnerability_into_list(target, entry)
         assert len(target) == 2
 
     def test_cvss_merge_higher_wins(self):
@@ -306,7 +319,7 @@ class TestMergeVulnerabilityIntoList:
             "cvss_score": 9.8,
             "cvss_vector": "new",
         }
-        self.agg._merge_vulnerability_into_list(target, entry)
+        merge_vulnerability_into_list(target, entry)
         assert target[0]["cvss_score"] == 9.8
         assert target[0]["cvss_vector"] == "new"
 
@@ -325,7 +338,7 @@ class TestMergeVulnerabilityIntoList:
             "scanners": [],
             "fixed_version": "1.2.4",
         }
-        self.agg._merge_vulnerability_into_list(target, entry)
+        merge_vulnerability_into_list(target, entry)
         # Original fixed_version should be preserved (not overwritten)
         assert target[0]["fixed_version"] == "1.2.3"
 
@@ -344,7 +357,7 @@ class TestMergeVulnerabilityIntoList:
             "scanners": [],
             "fixed_version": "1.2.3",
         }
-        self.agg._merge_vulnerability_into_list(target, entry)
+        merge_vulnerability_into_list(target, entry)
         assert target[0]["fixed_version"] == "1.2.3"
 
 
@@ -501,7 +514,7 @@ class TestMergeFindingsData:
             scanners=["grype"],
             details={"vulnerabilities": [{"id": "CVE-2", "severity": "MEDIUM", "aliases": [], "scanners": ["grype"]}]},
         )
-        self.agg._merge_findings_data(target, source)
+        merge_findings_data(target, source)
         assert set(target.scanners) == {"trivy", "grype"}
 
     def test_severity_escalated(self):
@@ -525,7 +538,7 @@ class TestMergeFindingsData:
             scanners=["b"],
             details={"vulnerabilities": []},
         )
-        self.agg._merge_findings_data(target, source)
+        merge_findings_data(target, source)
         assert target.severity == "CRITICAL"
 
 

@@ -1,5 +1,7 @@
 """Tests for app.services.recommendation.vulnerabilities."""
 
+import pytest
+
 from app.services.recommendation.vulnerabilities import process_vulnerabilities
 from app.schemas.recommendation import RecommendationType, Priority
 
@@ -89,8 +91,17 @@ class TestEmptyFindings:
 class TestDirectDependencyUpdate:
     """Single critical direct vuln with fix should produce DIRECT_DEPENDENCY_UPDATE."""
 
-    def test_single_critical_vuln_with_fix(self):
-        finding = _make_finding(severity="CRITICAL", fixed_version="1.1.0")
+    @pytest.mark.parametrize(
+        "severity,expected_priority",
+        [
+            ("CRITICAL", Priority.CRITICAL),
+            ("HIGH", Priority.HIGH),
+            ("MEDIUM", Priority.MEDIUM),
+            ("LOW", Priority.LOW),
+        ],
+    )
+    def test_severity_maps_to_priority(self, severity, expected_priority):
+        finding = _make_finding(severity=severity)
         dep = _make_dependency()
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
@@ -99,41 +110,7 @@ class TestDirectDependencyUpdate:
         assert len(result) >= 1
         rec = result[0]
         assert rec.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE
-        assert rec.priority == Priority.CRITICAL
-
-    def test_high_severity_direct_vuln(self):
-        finding = _make_finding(severity="HIGH")
-        dep = _make_dependency()
-        dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
-
-        result = process_vulnerabilities([finding], dep_by_purl, dep_by_nv, [dep], None)
-
-        assert len(result) >= 1
-        rec = result[0]
-        assert rec.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE
-        assert rec.priority == Priority.HIGH
-
-    def test_medium_severity_direct_vuln(self):
-        finding = _make_finding(severity="MEDIUM")
-        dep = _make_dependency()
-        dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
-
-        result = process_vulnerabilities([finding], dep_by_purl, dep_by_nv, [dep], None)
-
-        assert len(result) >= 1
-        rec = result[0]
-        assert rec.priority == Priority.MEDIUM
-
-    def test_low_severity_direct_vuln(self):
-        finding = _make_finding(severity="LOW")
-        dep = _make_dependency()
-        dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
-
-        result = process_vulnerabilities([finding], dep_by_purl, dep_by_nv, [dep], None)
-
-        assert len(result) >= 1
-        rec = result[0]
-        assert rec.priority == Priority.LOW
+        assert rec.priority == expected_priority
 
     def test_affected_components_contains_package(self):
         finding = _make_finding(component="requests")
@@ -505,47 +482,26 @@ class TestTransitiveDependency:
 class TestNoFixAvailable:
     """Vulns without a fix and critical/high severity should produce NO_FIX_AVAILABLE."""
 
-    def test_critical_vuln_no_fix(self):
-        finding = _make_finding(severity="CRITICAL", fixed_version=None)
+    @pytest.mark.parametrize(
+        "severity,expected_count,expected_priority",
+        [
+            ("CRITICAL", 1, Priority.HIGH),
+            ("HIGH", 1, None),
+            ("MEDIUM", 0, None),
+            ("LOW", 0, None),
+        ],
+    )
+    def test_no_fix_by_severity(self, severity, expected_count, expected_priority):
+        finding = _make_finding(severity=severity, fixed_version=None)
         dep = _make_dependency()
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
 
         result = process_vulnerabilities([finding], dep_by_purl, dep_by_nv, [dep], None)
 
         no_fix_recs = [r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE]
-        assert len(no_fix_recs) == 1
-        assert no_fix_recs[0].priority == Priority.HIGH
-
-    def test_high_vuln_no_fix(self):
-        finding = _make_finding(severity="HIGH", fixed_version=None)
-        dep = _make_dependency()
-        dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
-
-        result = process_vulnerabilities([finding], dep_by_purl, dep_by_nv, [dep], None)
-
-        no_fix_recs = [r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE]
-        assert len(no_fix_recs) == 1
-
-    def test_medium_vuln_no_fix_no_recommendation(self):
-        """Medium severity with no fix should NOT produce a no-fix recommendation."""
-        finding = _make_finding(severity="MEDIUM", fixed_version=None)
-        dep = _make_dependency()
-        dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
-
-        result = process_vulnerabilities([finding], dep_by_purl, dep_by_nv, [dep], None)
-
-        no_fix_recs = [r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE]
-        assert len(no_fix_recs) == 0
-
-    def test_low_vuln_no_fix_no_recommendation(self):
-        finding = _make_finding(severity="LOW", fixed_version=None)
-        dep = _make_dependency()
-        dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
-
-        result = process_vulnerabilities([finding], dep_by_purl, dep_by_nv, [dep], None)
-
-        no_fix_recs = [r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE]
-        assert len(no_fix_recs) == 0
+        assert len(no_fix_recs) == expected_count
+        if expected_priority is not None:
+            assert no_fix_recs[0].priority == expected_priority
 
     def test_no_fix_high_effort(self):
         finding = _make_finding(severity="CRITICAL", fixed_version=None)

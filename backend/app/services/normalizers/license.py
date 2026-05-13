@@ -4,7 +4,7 @@ from app.models.finding import Finding, FindingType, Severity
 from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
-    from app.services.aggregator import ResultAggregator
+    from app.services.aggregation import ResultAggregator
 
 
 def normalize_license(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:

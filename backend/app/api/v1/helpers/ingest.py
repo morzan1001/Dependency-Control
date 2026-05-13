@@ -7,7 +7,7 @@ code organization and reusability.
 
 from typing import Any, Dict
 
-from app.services.aggregator import ResultAggregator
+from app.services.aggregation import ResultAggregator
 from app.services.scan_manager import ScanManager
 
 

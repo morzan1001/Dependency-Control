@@ -1,6 +1,6 @@
 """Tests for quality normalizers (Scorecard, Typosquatting, Maintainer Risk)."""
 
-from app.services.aggregator import ResultAggregator
+from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeScorecard:

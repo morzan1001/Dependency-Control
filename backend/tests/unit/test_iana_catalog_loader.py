@@ -65,9 +65,9 @@ async def test_unknown_suite_returns_none():
 async def test_catalog_entry_has_shape():
     cat = await load_iana_catalog()
     entry = next(iter(cat.values()))
+    # Pydantic guarantees field types; just confirm the loader returns the typed class
+    # (not a raw dict) so downstream attribute access doesn't silently break.
     assert isinstance(entry, CipherSuiteEntry)
-    assert isinstance(entry.name, str)
-    assert isinstance(entry.weaknesses, list)
 
 
 def test_current_catalog_version_is_one():

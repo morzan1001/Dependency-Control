@@ -22,7 +22,7 @@ from app.repositories import (
     ScanRepository,
 )
 from app.repositories.system_settings import SystemSettingsRepository
-from app.services.aggregator import ResultAggregator
+from app.services.aggregation import ResultAggregator
 from app.services.analyzers import Analyzer
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.reachability_enrichment import enrich_findings_with_reachability

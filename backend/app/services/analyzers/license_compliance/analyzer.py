@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from app.models.license import (
     DeploymentModel,
@@ -241,48 +241,3 @@ class LicenseAnalyzer(Analyzer):
 
         return best_issue
 
-    # Thin wrappers exposed for tests that import the legacy method names.
-    def _normalize_license(self, lic_id: str) -> str:
-        return normalizer.normalize_license(lic_id)
-
-    def _extract_licenses(self, component: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
-        return normalizer.extract_licenses(component)
-
-    def _evaluate_license(
-        self,
-        component: str,
-        version: str,
-        license_info: LicenseInfo,
-        lic_url: Optional[str],
-        purl: str,
-        policy: LicensePolicy,
-    ) -> Optional[Dict[str, Any]]:
-        return evaluator.evaluate_license(
-            component=component,
-            version=version,
-            license_info=license_info,
-            lic_url=lic_url,
-            purl=purl,
-            policy=policy,
-        )
-
-    def _has_spdx_expression(self, component: Dict[str, Any]) -> Optional[str]:
-        return normalizer.has_spdx_expression(component)
-
-    def _parse_spdx_expression(self, expr: str) -> List[List[str]]:
-        return normalizer.parse_spdx_expression(expr)
-
-    @staticmethod
-    def _apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> None:
-        evaluator.apply_transitive_adjustment(issue, is_transitive)
-
-    @staticmethod
-    def _should_include_finding(issue: Dict[str, Any], is_transitive: bool) -> bool:
-        return evaluator.should_include_finding(issue, is_transitive)
-
-    def _check_license_compatibility(
-        self,
-        components: List[Dict[str, Any]],
-        ignore_dev: bool,
-    ) -> List[Dict[str, Any]]:
-        return compatibility.check_license_compatibility(components, ignore_dev)

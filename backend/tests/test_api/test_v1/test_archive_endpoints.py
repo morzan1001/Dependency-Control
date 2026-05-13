@@ -45,6 +45,34 @@ def _make_archive_metadata(**overrides):
     return ArchiveMetadata(**defaults)
 
 
+def _assert_501_without_s3(endpoint, **call_kwargs):
+    """Assert endpoint raises 501 when S3 is not configured."""
+    with (
+        patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+        patch(f"{MODULE}.is_archive_enabled", return_value=False),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        asyncio.run(endpoint(**call_kwargs))
+
+    assert exc_info.value.status_code == 501
+
+
+def _assert_404_when_archive_missing(endpoint, *, metadata, **call_kwargs):
+    """Assert endpoint raises 404 when archive lookup returns metadata (or None)."""
+    mock_repo = MagicMock()
+    mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+
+    with (
+        patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+        patch(f"{MODULE}.is_archive_enabled", return_value=True),
+        patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        asyncio.run(endpoint(**call_kwargs))
+
+    assert exc_info.value.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # list_archives
 # ---------------------------------------------------------------------------
@@ -176,22 +204,14 @@ class TestListArchives:
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import list_archives
 
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=False),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                list_archives(
-                    project_id="proj-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                    page=1,
-                    size=20,
-                )
-            )
-
-        assert exc_info.value.status_code == 501
+        _assert_501_without_s3(
+            list_archives,
+            project_id="proj-1",
+            current_user=admin_user,
+            db=MagicMock(),
+            page=1,
+            size=20,
+        )
 
     def test_empty_archives(self, admin_user):
         from app.api.v1.endpoints.archives import list_archives
@@ -287,68 +307,37 @@ class TestRestoreArchive:
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import restore_archive
 
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=False),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                restore_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 501
+        _assert_501_without_s3(
+            restore_archive,
+            project_id="proj-1",
+            scan_id="scan-1",
+            current_user=admin_user,
+            db=MagicMock(),
+        )
 
     def test_raises_404_when_archive_not_found(self, admin_user):
         from app.api.v1.endpoints.archives import restore_archive
 
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                restore_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 404
+        _assert_404_when_archive_missing(
+            restore_archive,
+            metadata=None,
+            project_id="proj-1",
+            scan_id="scan-1",
+            current_user=admin_user,
+            db=MagicMock(),
+        )
 
     def test_raises_404_when_archive_belongs_to_different_project(self, admin_user):
         from app.api.v1.endpoints.archives import restore_archive
 
-        metadata = _make_archive_metadata(project_id="other-project")
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                restore_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 404
+        _assert_404_when_archive_missing(
+            restore_archive,
+            metadata=_make_archive_metadata(project_id="other-project"),
+            project_id="proj-1",
+            scan_id="scan-1",
+            current_user=admin_user,
+            db=MagicMock(),
+        )
 
     def test_raises_500_when_restore_fails(self, admin_user):
         from app.api.v1.endpoints.archives import restore_archive
@@ -418,44 +407,25 @@ class TestDownloadArchive:
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import download_archive
 
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=False),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                download_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 501
+        _assert_501_without_s3(
+            download_archive,
+            project_id="proj-1",
+            scan_id="scan-1",
+            current_user=admin_user,
+            db=MagicMock(),
+        )
 
     def test_raises_404_when_archive_not_found(self, admin_user):
         from app.api.v1.endpoints.archives import download_archive
 
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=None)
-
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                download_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 404
+        _assert_404_when_archive_missing(
+            download_archive,
+            metadata=None,
+            project_id="proj-1",
+            scan_id="scan-1",
+            current_user=admin_user,
+            db=MagicMock(),
+        )
 
     def test_returns_streaming_response_on_s3_download(self, admin_user):
         """download_archive returns a StreamingResponse; S3 errors surface during iteration."""
@@ -493,26 +463,14 @@ class TestDownloadArchive:
     def test_raises_404_when_archive_belongs_to_different_project(self, admin_user):
         from app.api.v1.endpoints.archives import download_archive
 
-        metadata = _make_archive_metadata(project_id="other-project")
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                download_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 404
+        _assert_404_when_archive_missing(
+            download_archive,
+            metadata=_make_archive_metadata(project_id="other-project"),
+            project_id="proj-1",
+            scan_id="scan-1",
+            current_user=admin_user,
+            db=MagicMock(),
+        )
 
     def test_raises_403_without_archive_download_permission(self, no_perms_user):
         from app.api.v1.endpoints.archives import download_archive
@@ -574,20 +532,12 @@ class TestListArchiveBranches:
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import list_archive_branches
 
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=False),
-            pytest.raises(HTTPException) as exc_info,
-        ):
-            asyncio.run(
-                list_archive_branches(
-                    project_id="proj-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 501
+        _assert_501_without_s3(
+            list_archive_branches,
+            project_id="proj-1",
+            current_user=admin_user,
+            db=MagicMock(),
+        )
 
 
 # ---------------------------------------------------------------------------

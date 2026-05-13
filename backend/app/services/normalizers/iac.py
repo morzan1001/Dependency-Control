@@ -9,7 +9,7 @@ from app.services.normalizers.utils import (
 )
 
 if TYPE_CHECKING:
-    from app.services.aggregator import ResultAggregator
+    from app.services.aggregation import ResultAggregator
 
 
 def _process_kics_file(

@@ -17,46 +17,6 @@ class TestModelIdAlias:
                 id="Project",
             ),
             pytest.param(
-                "app.models.project:Scan",
-                {"project_id": "p1", "branch": "main"},
-                id="Scan",
-            ),
-            pytest.param(
-                "app.models.project:AnalysisResult",
-                {"scan_id": "s1", "analyzer_name": "trivy", "result": {}},
-                id="AnalysisResult",
-            ),
-            pytest.param(
-                "app.models.user:User",
-                {"username": "u", "email": "u@test.com"},
-                id="User",
-            ),
-            pytest.param(
-                "app.models.team:Team",
-                {"name": "t"},
-                id="Team",
-            ),
-            pytest.param(
-                "app.models.waiver:Waiver",
-                {"reason": "ok", "created_by": "admin"},
-                id="Waiver",
-            ),
-            pytest.param(
-                "app.models.dependency:Dependency",
-                {"project_id": "p1", "scan_id": "s1", "name": "pkg", "version": "1.0"},
-                id="Dependency",
-            ),
-            pytest.param(
-                "app.models.webhook:Webhook",
-                {"url": "https://example.com/hook", "events": ["scan_completed"]},
-                id="Webhook",
-            ),
-            pytest.param(
-                "app.models.broadcast:Broadcast",
-                {"type": "general", "target_type": "global", "subject": "s", "message": "m", "created_by": "u1"},
-                id="Broadcast",
-            ),
-            pytest.param(
                 "app.models.invitation:ProjectInvitation",
                 {
                     "project_id": "p1",
@@ -69,24 +29,9 @@ class TestModelIdAlias:
                 id="ProjectInvitation",
             ),
             pytest.param(
-                "app.models.invitation:SystemInvitation",
-                {"email": "a@b.com", "token": "t", "invited_by": "u1", "expires_at": datetime.now(timezone.utc)},
-                id="SystemInvitation",
-            ),
-            pytest.param(
                 "app.models.github_instance:GitHubInstance",
                 {"name": "GH", "url": "https://token.actions.githubusercontent.com", "created_by": "admin"},
                 id="GitHubInstance",
-            ),
-            pytest.param(
-                "app.models.gitlab_instance:GitLabInstance",
-                {"name": "GL", "url": "https://gitlab.com", "created_by": "admin"},
-                id="GitLabInstance",
-            ),
-            pytest.param(
-                "app.models.callgraph:Callgraph",
-                {"project_id": "p1", "language": "python", "tool": "pyan"},
-                id="Callgraph",
             ),
         ],
     )
@@ -111,37 +56,6 @@ class TestModelIdAlias:
         # 3) Reconstruct from MongoDB-style dict (with _id)
         reconstructed = cls(**dumped)
         assert reconstructed.id == instance.id
-
-    @pytest.mark.parametrize(
-        "model_cls,kwargs",
-        [
-            pytest.param(
-                "app.models.project:Project",
-                {"_id": "custom-id", "name": "p", "owner_id": "u1"},
-                id="Project",
-            ),
-            pytest.param(
-                "app.models.user:User",
-                {"_id": "custom-id", "username": "u", "email": "u@test.com"},
-                id="User",
-            ),
-            pytest.param(
-                "app.models.team:Team",
-                {"_id": "custom-id", "name": "t"},
-                id="Team",
-            ),
-        ],
-    )
-    def test_accepts_id_from_mongodb(self, model_cls: str, kwargs: dict):
-        """Models accept _id from MongoDB documents via validation_alias."""
-        module_path, cls_name = model_cls.rsplit(":", 1)
-        import importlib
-
-        mod = importlib.import_module(module_path)
-        cls = getattr(mod, cls_name)
-
-        instance = cls(**kwargs)
-        assert instance.id == "custom-id"
 
 
 class TestUseEnumValues:

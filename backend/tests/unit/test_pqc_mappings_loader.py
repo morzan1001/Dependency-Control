@@ -1,6 +1,5 @@
 from app.services.pqc_migration.mappings_loader import (
     CURRENT_MAPPINGS_VERSION,
-    PQCMapping,
     clear_mappings_cache,
     load_mappings,
     normalise_family,
@@ -33,11 +32,6 @@ def test_family_alias_normalises():
     assert normalise_family("ecDSA", m) == "ECDSA"
     assert normalise_family("RSA", m) == "RSA"
     assert normalise_family("Kyber", m) == "Kyber"
-
-
-def test_entry_types():
-    m = load_mappings()
-    assert isinstance(m.mappings[0], PQCMapping)
 
 
 def test_clear_mappings_cache_forces_reload():

@@ -108,3 +108,40 @@ class TestConfigurableSlaBuckets:
         # immediately overdue, which is almost certainly a misconfiguration.
         with pytest.raises(ValueError):
             CveRemediationSlaFramework(sla_days_by_severity={Severity.CRITICAL: 0})
+
+
+class TestEvaluationSemantics:
+    """Behaviour around finding statuses and the sync-vs-async boundary."""
+
+    def test_sync_evaluate_rejected(self):
+        framework = CveRemediationSlaFramework()
+        with pytest.raises(RuntimeError, match="async-only"):
+            framework.evaluate(_eval_input([]))
+
+    @pytest.mark.asyncio
+    async def test_empty_input_yields_three_passing_buckets(self):
+        framework = CveRemediationSlaFramework()
+        result = await framework.evaluate_async(_eval_input([]))
+        assert result.summary["failed"] == 0
+        assert result.summary["total"] == 3  # CRITICAL / HIGH / MEDIUM buckets
+
+    @pytest.mark.asyncio
+    async def test_fixed_findings_excluded_from_sla(self):
+        framework = CveRemediationSlaFramework()
+        result = await framework.evaluate_async(
+            _eval_input([_vuln(Severity.CRITICAL, days_ago=30, status="fixed")])
+        )
+        critical = next(c for c in result.controls if c.severity == Severity.CRITICAL)
+        assert critical.status == "passed"
+
+    @pytest.mark.asyncio
+    async def test_waived_overdue_marks_control_waived_with_reason(self):
+        framework = CveRemediationSlaFramework()
+        result = await framework.evaluate_async(
+            _eval_input(
+                [_vuln(Severity.HIGH, days_ago=60, waived=True, waiver_reason="compensating control")]
+            )
+        )
+        high = next(c for c in result.controls if c.severity == Severity.HIGH)
+        assert high.status == "waived"
+        assert "compensating control" in high.waiver_reasons

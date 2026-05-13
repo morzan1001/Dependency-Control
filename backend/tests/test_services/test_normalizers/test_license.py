@@ -1,6 +1,6 @@
 """Tests for license normalizer."""
 
-from app.services.aggregator import ResultAggregator
+from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeLicense:

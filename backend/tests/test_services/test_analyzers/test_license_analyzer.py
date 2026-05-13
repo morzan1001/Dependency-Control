@@ -8,7 +8,18 @@ from app.models.license import (
     LicensePolicy,
     LibraryUsage,
 )
-from app.services.analyzers.license import LicenseAnalyzer
+from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.compatibility import check_license_compatibility
+from app.services.analyzers.license_compliance.evaluator import (
+    apply_transitive_adjustment,
+    evaluate_license,
+    should_include_finding,
+)
+from app.services.analyzers.license_compliance.normalizer import (
+    extract_licenses,
+    normalize_license,
+    parse_spdx_expression,
+)
 
 
 class TestNormalizeLicense:
@@ -19,74 +30,74 @@ class TestNormalizeLicense:
 
     def test_exact_match_returned_as_is(self):
         """Known SPDX ID is returned unchanged."""
-        assert self.analyzer._normalize_license("MIT") == "MIT"
+        assert normalize_license("MIT") == "MIT"
 
     def test_exact_match_apache(self):
-        assert self.analyzer._normalize_license("Apache-2.0") == "Apache-2.0"
+        assert normalize_license("Apache-2.0") == "Apache-2.0"
 
     def test_case_insensitive_match(self):
         """Lowercase input maps to correct SPDX ID."""
-        assert self.analyzer._normalize_license("mit") == "MIT"
+        assert normalize_license("mit") == "MIT"
 
     def test_case_insensitive_mixed(self):
-        assert self.analyzer._normalize_license("apache-2.0") == "Apache-2.0"
+        assert normalize_license("apache-2.0") == "Apache-2.0"
 
     def test_alias_resolution_apache(self):
         """Common alias 'Apache 2.0' resolves to SPDX 'Apache-2.0'."""
-        assert self.analyzer._normalize_license("Apache 2.0") == "Apache-2.0"
+        assert normalize_license("Apache 2.0") == "Apache-2.0"
 
     def test_alias_resolution_expat(self):
-        assert self.analyzer._normalize_license("Expat") == "MIT"
+        assert normalize_license("Expat") == "MIT"
 
     def test_alias_resolution_mit_x11(self):
-        assert self.analyzer._normalize_license("MIT/X11") == "MIT"
+        assert normalize_license("MIT/X11") == "MIT"
 
     def test_alias_resolution_gplv3(self):
-        assert self.analyzer._normalize_license("GPLv3") == "GPL-3.0"
+        assert normalize_license("GPLv3") == "GPL-3.0"
 
     def test_alias_resolution_agpl(self):
-        assert self.analyzer._normalize_license("AGPL") == "AGPL-3.0"
+        assert normalize_license("AGPL") == "AGPL-3.0"
 
     def test_alias_case_insensitive(self):
         """Case-insensitive alias lookup works."""
-        assert self.analyzer._normalize_license("apache 2.0") == "Apache-2.0"
+        assert normalize_license("apache 2.0") == "Apache-2.0"
 
     def test_metadata_stripping_semicolon(self):
         """Metadata suffix after semicolon is stripped."""
-        assert self.analyzer._normalize_license('MIT;link="https://example.com"') == "MIT"
+        assert normalize_license('MIT;link="https://example.com"') == "MIT"
 
     def test_metadata_stripping_complex(self):
-        result = self.analyzer._normalize_license('Apache-2.0";link="https://spdx.org"')
+        result = normalize_license('Apache-2.0";link="https://spdx.org"')
         assert result == "Apache-2.0"
 
     def test_surrounding_quotes_stripped(self):
-        assert self.analyzer._normalize_license('"MIT"') == "MIT"
+        assert normalize_license('"MIT"') == "MIT"
 
     def test_surrounding_spaces_stripped(self):
-        assert self.analyzer._normalize_license("  MIT  ") == "MIT"
+        assert normalize_license("  MIT  ") == "MIT"
 
     def test_empty_string_returns_empty(self):
-        assert self.analyzer._normalize_license("") == ""
+        assert normalize_license("") == ""
 
     def test_only_semicolon_metadata_returns_empty(self):
         """String that is only metadata after stripping."""
-        assert self.analyzer._normalize_license(';link="https://example.com"') == ""
+        assert normalize_license(';link="https://example.com"') == ""
 
     def test_unknown_license_passthrough(self):
         """Unrecognized license IDs are returned as-is."""
-        assert self.analyzer._normalize_license("SomeCustomLicense-1.0") == "SomeCustomLicense-1.0"
+        assert normalize_license("SomeCustomLicense-1.0") == "SomeCustomLicense-1.0"
 
     def test_bsd_alias(self):
-        assert self.analyzer._normalize_license("BSD") == "BSD-3-Clause"
+        assert normalize_license("BSD") == "BSD-3-Clause"
 
     def test_public_domain_alias(self):
-        assert self.analyzer._normalize_license("Public Domain") == "Unlicense"
+        assert normalize_license("Public Domain") == "Unlicense"
 
     def test_psf_alias(self):
-        assert self.analyzer._normalize_license("PSF") == "Python-2.0"
+        assert normalize_license("PSF") == "Python-2.0"
 
     def test_boost_alias(self):
-        assert self.analyzer._normalize_license("Boost") == "BSL-1.0"
+        assert normalize_license("Boost") == "BSL-1.0"
 
 
 class TestExtractLicenses:
@@ -98,14 +109,14 @@ class TestExtractLicenses:
     def test_cyclonedx_license_id(self):
         """CycloneDX format with license.id field."""
         component = {"licenses": [{"license": {"id": "MIT", "url": "https://spdx.org/licenses/MIT"}}]}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert len(result) == 1
         assert result[0] == ("MIT", "https://spdx.org/licenses/MIT")
 
     def test_cyclonedx_license_name_fallback(self):
         """CycloneDX format falling back to license.name when id is absent."""
         component = {"licenses": [{"license": {"name": "Apache-2.0"}}]}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert len(result) == 1
         assert result[0][0] == "Apache-2.0"
 
@@ -116,27 +127,27 @@ class TestExtractLicenses:
                 {"license": {"id": "Apache-2.0"}},
             ]
         }
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert len(result) == 2
 
     def test_spdx_expression_or(self):
         """SPDX expression 'MIT OR Apache-2.0' is split into individual licenses."""
         component = {"licenses": [{"expression": "MIT OR Apache-2.0"}]}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         ids = [r[0] for r in result]
         assert "MIT" in ids
         assert "Apache-2.0" in ids
 
     def test_spdx_expression_and(self):
         component = {"licenses": [{"expression": "MIT AND BSD-3-Clause"}]}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         ids = [r[0] for r in result]
         assert "MIT" in ids
         assert "BSD-3-Clause" in ids
 
     def test_spdx_expression_with_parentheses(self):
         component = {"licenses": [{"expression": "(MIT OR Apache-2.0)"}]}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         ids = [r[0] for r in result]
         assert "MIT" in ids
         assert "Apache-2.0" in ids
@@ -144,14 +155,14 @@ class TestExtractLicenses:
     def test_direct_license_field_simple(self):
         """Direct 'license' field on component."""
         component = {"license": "MIT", "license_url": "https://example.com/MIT"}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert len(result) == 1
         assert result[0] == ("MIT", "https://example.com/MIT")
 
     def test_direct_license_comma_separated(self):
         """Comma-separated licenses in direct field."""
         component = {"license": "MIT, Apache-2.0"}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         ids = [r[0] for r in result]
         assert "MIT" in ids
         assert "Apache-2.0" in ids
@@ -159,7 +170,7 @@ class TestExtractLicenses:
     def test_direct_license_spdx_expression(self):
         """SPDX expression in direct license field."""
         component = {"license": "MIT OR Apache-2.0"}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         ids = [r[0] for r in result]
         assert "MIT" in ids
         assert "Apache-2.0" in ids
@@ -167,43 +178,43 @@ class TestExtractLicenses:
     def test_unknown_pattern_filtered_noassertion(self):
         """NOASSERTION is filtered out as an unknown license pattern."""
         component = {"licenses": [{"license": {"id": "NOASSERTION"}}]}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert len(result) == 0
 
     def test_unknown_pattern_filtered_unknown(self):
         component = {"licenses": [{"license": {"id": "UNKNOWN"}}]}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert len(result) == 0
 
     def test_unknown_pattern_expression_filtered(self):
         component = {"licenses": [{"expression": "NOASSERTION"}]}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert len(result) == 0
 
     def test_unknown_pattern_direct_field_filtered(self):
         component = {"license": "NOASSERTION"}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert len(result) == 0
 
     def test_empty_licenses_list(self):
         component = {"licenses": []}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert result == []
 
     def test_no_licenses_key(self):
         component = {"name": "some-package"}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert result == []
 
     def test_license_none_direct_field_ignored(self):
         """Non-string direct license field is ignored."""
         component = {"license": None}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert result == []
 
     def test_empty_string_direct_license_ignored(self):
         component = {"license": "   "}
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         assert result == []
 
     def test_cyclonedx_and_direct_combined(self):
@@ -212,7 +223,7 @@ class TestExtractLicenses:
             "licenses": [{"license": {"id": "MIT"}}],
             "license": "Apache-2.0",
         }
-        result = self.analyzer._extract_licenses(component)
+        result = extract_licenses(component)
         ids = [r[0] for r in result]
         assert "MIT" in ids
         assert "Apache-2.0" in ids
@@ -235,7 +246,7 @@ class TestEvaluateLicense:
             allow_strong_copyleft=allow_strong,
             allow_network_copyleft=allow_network,
         )
-        return self.analyzer._evaluate_license(
+        return evaluate_license(
             component="test-pkg",
             version="1.0.0",
             license_info=info,
@@ -414,7 +425,7 @@ class TestEvaluateLicenseWithContext:
         """Evaluate a license with a specific LicensePolicy."""
         info = self._get_license_info(spdx_id)
         policy = LicensePolicy(**policy_kwargs)
-        return self.analyzer._evaluate_license(
+        return evaluate_license(
             component="test-pkg",
             version="1.0.0",
             license_info=info,
@@ -606,27 +617,27 @@ class TestSpdxExpressionEvaluation:
 
     def test_parse_simple_or(self):
         """'MIT OR Apache-2.0' splits into two OR alternatives."""
-        result = self.analyzer._parse_spdx_expression("MIT OR Apache-2.0")
+        result = parse_spdx_expression("MIT OR Apache-2.0")
         assert result == [["MIT"], ["Apache-2.0"]]
 
     def test_parse_simple_and(self):
         """'GPL-2.0 AND Classpath' stays as one AND group."""
-        result = self.analyzer._parse_spdx_expression("GPL-2.0 AND Classpath")
+        result = parse_spdx_expression("GPL-2.0 AND Classpath")
         assert result == [["GPL-2.0", "Classpath"]]
 
     def test_parse_mixed_or_and(self):
         """'MIT OR GPL-2.0 AND Classpath' splits correctly."""
-        result = self.analyzer._parse_spdx_expression("MIT OR GPL-2.0 AND Classpath")
+        result = parse_spdx_expression("MIT OR GPL-2.0 AND Classpath")
         assert len(result) == 2
         assert ["MIT"] in result
 
     def test_parse_with_exception(self):
         """WITH clauses are stripped (they modify but don't add licenses)."""
-        result = self.analyzer._parse_spdx_expression("GPL-2.0 WITH Classpath-exception-2.0")
+        result = parse_spdx_expression("GPL-2.0 WITH Classpath-exception-2.0")
         assert result == [["GPL-2.0"]]
 
     def test_parse_single_license(self):
-        result = self.analyzer._parse_spdx_expression("MIT")
+        result = parse_spdx_expression("MIT")
         assert result == [["MIT"]]
 
     def test_evaluate_or_picks_least_restrictive(self):
@@ -679,56 +690,56 @@ class TestTransitiveDependencySeverity:
 
     def test_transitive_critical_downgraded_to_high(self):
         issue = {"severity": Severity.CRITICAL.value, "category": "network_copyleft"}
-        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        apply_transitive_adjustment(issue, is_transitive=True)
         assert issue["severity"] == Severity.HIGH.value
         assert issue["is_transitive"] is True
         assert "context_reason" in issue
 
     def test_transitive_high_downgraded_to_medium(self):
         issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
-        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        apply_transitive_adjustment(issue, is_transitive=True)
         assert issue["severity"] == Severity.MEDIUM.value
 
     def test_transitive_medium_downgraded_to_low(self):
         issue = {"severity": Severity.MEDIUM.value, "category": "network_copyleft"}
-        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        apply_transitive_adjustment(issue, is_transitive=True)
         assert issue["severity"] == Severity.LOW.value
 
     def test_transitive_info_not_downgraded(self):
         issue = {"severity": Severity.INFO.value, "category": "weak_copyleft"}
-        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        apply_transitive_adjustment(issue, is_transitive=True)
         assert issue["severity"] == Severity.INFO.value
 
     def test_direct_not_affected(self):
         issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
-        self.analyzer._apply_transitive_adjustment(issue, is_transitive=False)
+        apply_transitive_adjustment(issue, is_transitive=False)
         assert issue["severity"] == Severity.HIGH.value
         assert "is_transitive" not in issue
 
     def test_transitive_preserves_effective_severity(self):
         issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
-        self.analyzer._apply_transitive_adjustment(issue, is_transitive=True)
+        apply_transitive_adjustment(issue, is_transitive=True)
         assert issue["effective_severity"] == Severity.HIGH.value
 
     def test_transitive_info_filtered_out(self):
         """INFO findings for transitive deps should be excluded."""
         issue = {"severity": Severity.INFO.value}
-        assert self.analyzer._should_include_finding(issue, is_transitive=True) is False
+        assert should_include_finding(issue, is_transitive=True) is False
 
     def test_transitive_low_filtered_out(self):
         """LOW findings for transitive deps should be excluded."""
         issue = {"severity": Severity.LOW.value}
-        assert self.analyzer._should_include_finding(issue, is_transitive=True) is False
+        assert should_include_finding(issue, is_transitive=True) is False
 
     def test_transitive_medium_included(self):
         """MEDIUM findings for transitive deps should be included."""
         issue = {"severity": Severity.MEDIUM.value}
-        assert self.analyzer._should_include_finding(issue, is_transitive=True) is True
+        assert should_include_finding(issue, is_transitive=True) is True
 
     def test_direct_info_included(self):
         """INFO findings for direct deps should always be included."""
         issue = {"severity": Severity.INFO.value}
-        assert self.analyzer._should_include_finding(issue, is_transitive=False) is True
+        assert should_include_finding(issue, is_transitive=False) is True
 
 
 class TestLicenseCompatibility:
@@ -752,7 +763,7 @@ class TestLicenseCompatibility:
             self._make_component("a", "1.0", "MIT"),
             self._make_component("b", "1.0", "Apache-2.0"),
         ]
-        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 0
 
     def test_gpl2_only_vs_gpl3_only_conflict(self):
@@ -761,7 +772,7 @@ class TestLicenseCompatibility:
             self._make_component("a", "1.0", "GPL-2.0-only"),
             self._make_component("b", "1.0", "GPL-3.0-only"),
         ]
-        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 1
         assert issues[0]["severity"] == Severity.HIGH.value
         assert issues[0]["category"] == "license_incompatibility"
@@ -772,7 +783,7 @@ class TestLicenseCompatibility:
             self._make_component("a", "1.0", "CDDL-1.0"),
             self._make_component("b", "1.0", "GPL-2.0"),
         ]
-        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 1
 
     def test_dev_dependencies_skipped(self):
@@ -781,7 +792,7 @@ class TestLicenseCompatibility:
             self._make_component("a", "1.0", "GPL-2.0-only"),
             self._make_component("b", "1.0", "GPL-3.0-only", scope="dev"),
         ]
-        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 0
 
     def test_same_license_no_conflict(self):
@@ -790,7 +801,7 @@ class TestLicenseCompatibility:
             self._make_component("a", "1.0", "GPL-3.0"),
             self._make_component("b", "1.0", "GPL-3.0"),
         ]
-        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 0
 
     def test_duplicate_conflict_deduplicated(self):
@@ -800,5 +811,5 @@ class TestLicenseCompatibility:
             self._make_component("b", "1.0", "GPL-3.0-only"),
             self._make_component("c", "2.0", "GPL-2.0-only"),
         ]
-        issues = self.analyzer._check_license_compatibility(components, ignore_dev=True)
+        issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 1

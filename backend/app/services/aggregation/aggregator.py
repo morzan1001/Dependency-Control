@@ -1,6 +1,6 @@
 """ResultAggregator - aggregates findings from multiple analyzers."""
 
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 from app.core.constants import (
     AGG_KEY_QUALITY,
@@ -31,9 +31,7 @@ from app.services.aggregation.merging import (
 from app.services.aggregation.quality import update_quality_description
 from app.services.aggregation.scorecard import enrich_with_scorecard
 from app.services.aggregation.versions import (
-    calculate_aggregated_fixed_version,
     normalize_version,
-    parse_version_key,
     resolve_fixed_versions,
 )
 from app.services.normalizers.crypto import normalize_crypto
@@ -381,33 +379,6 @@ class ResultAggregator:
 
     def _enrich_with_scorecard(self, findings: List[Finding]) -> None:
         enrich_with_scorecard(findings, self._scorecard_cache)
-
-    def _parse_version_key(self, v: str) -> Tuple[Tuple[int, Union[int, str]], ...]:
-        return parse_version_key(v)
-
-    def _calculate_aggregated_fixed_version(self, fixed_versions_list: List[str]) -> Optional[str]:
-        return calculate_aggregated_fixed_version(fixed_versions_list)
-
-    def _resolve_fixed_versions(self, versions: List[str]) -> Optional[str]:
-        return resolve_fixed_versions(versions)
-
-    def _normalize_version(self, version: str) -> str:
-        return normalize_version(version)
-
-    def _normalize_component(self, component: str) -> str:
-        return normalize_component(component)
-
-    def _extract_artifact_name(self, component: str) -> str:
-        return extract_artifact_name(component)
-
-    def _merge_sast_findings(self, findings: List[Finding]) -> Optional[Finding]:
-        return merge_sast_findings(findings)
-
-    def _merge_vulnerability_into_list(self, target_list: List[Any], source_entry: VulnerabilityEntry) -> None:
-        merge_vulnerability_into_list(target_list, source_entry)
-
-    def _merge_findings_data(self, target: Finding, source: Finding) -> None:
-        merge_findings_data(target, source)
 
     def add_finding(self, finding: Finding, source: Optional[str] = None) -> None:
         """Add a finding, merging if one already exists for the same key."""

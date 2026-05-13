@@ -6,7 +6,7 @@ from app.schemas.finding import SecretDetails
 from app.services.normalizers.utils import build_finding_id
 
 if TYPE_CHECKING:
-    from app.services.aggregator import ResultAggregator
+    from app.services.aggregation import ResultAggregator
 
 
 def _extract_file_path(finding: Dict[str, Any]) -> str:

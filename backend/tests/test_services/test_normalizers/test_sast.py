@@ -1,6 +1,6 @@
 """Tests for SAST normalizers (OpenGrep, Bearer)."""
 
-from app.services.aggregator import ResultAggregator
+from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeOpengrep:

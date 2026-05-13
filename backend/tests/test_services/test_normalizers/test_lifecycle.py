@@ -1,6 +1,6 @@
 """Tests for lifecycle normalizers (outdated packages, end-of-life)."""
 
-from app.services.aggregator import ResultAggregator
+from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeOutdated:
