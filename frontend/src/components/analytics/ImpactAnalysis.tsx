@@ -90,14 +90,14 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
           <div className="space-y-4">
             {/* Top 3 Priority Fixes */}
             <div className="grid gap-4 md:grid-cols-3">
-              {results.slice(0, 3).map((r, index) => (
-                <Card 
+              {results.slice(0, 3).map((r, index) => {
+                let borderClass = 'border-yellow-500 border-2'
+                if (index === 0) borderClass = 'border-red-500 border-2'
+                else if (index === 1) borderClass = 'border-orange-500 border-2'
+                return (
+                <Card
                   key={`${r.component}-${r.version}`}
-                  className={`cursor-pointer transition-colors hover:bg-muted ${
-                    index === 0 ? 'border-red-500 border-2' : 
-                    index === 1 ? 'border-orange-500 border-2' : 
-                    'border-yellow-500 border-2'
-                  }`}
+                  className={`cursor-pointer transition-colors hover:bg-muted ${borderClass}`}
                   onClick={() => onSelectComponent?.(r)}
                 >
                   <CardContent className="pt-4">
@@ -193,7 +193,8 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                     )}
                   </CardContent>
                 </Card>
-              ))}
+                )
+              })}
             </div>
 
             {/* Full Table */}

@@ -39,10 +39,11 @@ class CLIAnalyzer(Analyzer):
             return False
         return shutil.which(self.cli_command) is not None
 
-    def _is_retryable_error(self, stderr: bytes) -> bool:
+    def _is_retryable_error(self, _stderr: bytes) -> bool:
         """Check if the error is transient and worth retrying.
 
-        Subclasses can override to define tool-specific retryable errors.
+        Default: never retry. Subclasses override (e.g. trivy.py) to match tool-specific
+        transient errors against ``stderr``.
         """
         return False
 

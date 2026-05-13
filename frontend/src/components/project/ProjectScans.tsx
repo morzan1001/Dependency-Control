@@ -156,8 +156,8 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading && Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i}>
+              {isLoading && ['s1', 's2', 's3', 's4', 's5'].map((skeletonId) => (
+                  <TableRow key={skeletonId}>
                       <TableCell><Skeleton className="h-6 w-32" /></TableCell>
                       <TableCell><Skeleton className="h-6 w-16" /></TableCell>
                       <TableCell><Skeleton className="h-6 w-24" /></TableCell>

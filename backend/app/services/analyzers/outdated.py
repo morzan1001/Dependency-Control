@@ -82,6 +82,42 @@ class OutdatedAnalyzer(Analyzer):
             "yanked_versions": yanked,
         }
 
+    async def _check_yanked_component(
+        self,
+        client: InstrumentedAsyncClient,
+        component: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Return a finding dict if the component's version was withdrawn, else None."""
+        purl_str = component.get("purl", "")
+        version = component.get("version", "")
+        name = component.get("name", "")
+        if not version or not purl_str:
+            return None
+
+        parsed = parse_purl(purl_str)
+        if not parsed or not parsed.registry_system:
+            return None
+
+        withdrawn_versions = await self._get_withdrawn_versions(
+            client, parsed.registry_system, parsed.deps_dev_name
+        )
+        if withdrawn_versions is None:
+            return None
+
+        if version.lstrip("v") not in withdrawn_versions:
+            return None
+
+        return {
+            "component": name,
+            "current_version": version,
+            "purl": purl_str,
+            "severity": Severity.HIGH.value,
+            "message": (
+                f"Version {version} was withdrawn from the registry. "
+                "Installations should be replaced with a non-yanked release."
+            ),
+        }
+
     async def _check_yanked(self, components: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Flag components whose installed version was withdrawn upstream."""
         findings: List[Dict[str, Any]] = []
@@ -89,36 +125,9 @@ class OutdatedAnalyzer(Analyzer):
 
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
             for component in components:
-                purl_str = component.get("purl", "")
-                version = component.get("version", "")
-                name = component.get("name", "")
-                if not version or not purl_str:
-                    continue
-
-                parsed = parse_purl(purl_str)
-                if not parsed or not parsed.registry_system:
-                    continue
-
-                withdrawn_versions = await self._get_withdrawn_versions(
-                    client, parsed.registry_system, parsed.deps_dev_name
-                )
-                if withdrawn_versions is None:
-                    continue
-
-                normalized = version.lstrip("v")
-                if normalized in withdrawn_versions:
-                    findings.append(
-                        {
-                            "component": name,
-                            "current_version": version,
-                            "purl": purl_str,
-                            "severity": Severity.HIGH.value,
-                            "message": (
-                                f"Version {version} was withdrawn from the registry. "
-                                "Installations should be replaced with a non-yanked release."
-                            ),
-                        }
-                    )
+                finding = await self._check_yanked_component(client, component)
+                if finding is not None:
+                    findings.append(finding)
         return findings
 
     async def _get_withdrawn_versions(

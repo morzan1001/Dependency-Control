@@ -67,6 +67,12 @@ const severityOrder: Record<string, number> = {
 type SortField = 'id' | 'type' | 'severity' | 'project_name'
 type SortOrder = 'asc' | 'desc'
 
+function formatEnrichmentSource(source: string): string {
+  if (source === "deps_dev") return "deps.dev"
+  if (source === "license_compliance") return "License Scanner"
+  return source
+}
+
 const SortIcon = ({ field, sortBy, sortOrder }: { field: SortField, sortBy: SortField, sortOrder: 'asc'|'desc' }) => {
   if (sortBy !== field) return null
   return sortOrder === 'asc' 
@@ -275,9 +281,9 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               {metadata.deps_dev.known_advisories.length} Known Security {metadata.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
             </p>
             <div className="flex flex-wrap gap-1 mt-1">
-              {metadata.deps_dev.known_advisories.map((advisory, i) => (
+              {metadata.deps_dev.known_advisories.map((advisory) => (
                 <a
-                  key={i}
+                  key={advisory}
                   href={getAdvisoryUrl(advisory)}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -392,8 +398,8 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               License Considerations
             </p>
             <ul className="mt-1 space-y-0.5">
-              {metadata.license_risks.map((risk, i) => (
-                <li key={i} className="text-sm text-muted-foreground flex items-start gap-1">
+              {metadata.license_risks.map((risk) => (
+                <li key={risk} className="text-sm text-muted-foreground flex items-start gap-1">
                   <span className="text-amber-500">•</span>
                   {risk}
                 </li>
@@ -500,11 +506,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
           {/* Enrichment Sources */}
           {metadata.enrichment_sources && metadata.enrichment_sources.length > 0 && (
             <p className="text-xs text-muted-foreground pt-2 border-t">
-              Data enriched from: {metadata.enrichment_sources.map(s => 
-                s === "deps_dev" ? "deps.dev" : 
-                s === "license_compliance" ? "License Scanner" : 
-                s
-              ).join(", ")}
+              Data enriched from: {metadata.enrichment_sources.map(formatEnrichmentSource).join(", ")}
             </p>
           )}
         </CollapsibleContent>
@@ -604,8 +606,8 @@ export function AnalyticsDependencyModal({
 
             {isLoadingFindings && (
               <div className="space-y-2">
-                {new Array(3).fill(0).map((_, i) => (
-                  <Skeleton key={i} className="h-16 w-full" />
+                {['s1', 's2', 's3'].map((skeletonId) => (
+                  <Skeleton key={skeletonId} className="h-16 w-full" />
                 ))}
               </div>
             )}

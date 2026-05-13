@@ -122,32 +122,30 @@ async def check_team_access(
     if not team:
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
-    # SECURITY: team:read_all grants access to ALL teams (superuser)
-    # Note: team:update does NOT bypass membership - only grants write permission
-    if has_permission(user.permissions, Permissions.TEAM_READ_ALL):
-        return team
+    # SECURITY: team:read_all grants access to ALL teams (superuser); skip member/role checks.
+    # Note: team:update does NOT bypass membership - only grants write permission.
+    if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
+        member_role = None
+        is_member = False
+        for member in team.members:
+            if member.user_id == str(user.id):
+                is_member = True
+                member_role = member.role
+                break
 
-    member_role = None
-    is_member = False
-    for member in team.members:
-        if member.user_id == str(user.id):
-            is_member = True
-            member_role = member.role
-            break
+        if not is_member:
+            raise HTTPException(status_code=403, detail="Not a member of this team")
 
-    if not is_member:
-        raise HTTPException(status_code=403, detail="Not a member of this team")
+        # Check for basic read permission
+        if Permissions.TEAM_READ not in user.permissions and Permissions.TEAM_READ_ALL not in user.permissions:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    # Check for basic read permission
-    if Permissions.TEAM_READ not in user.permissions and Permissions.TEAM_READ_ALL not in user.permissions:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
-
-    if required_role:
-        if member_role is None:
-            raise HTTPException(status_code=403, detail="Not enough permissions in this team")
-        # Role hierarchy: admin > member (TEAM_ROLES is ordered this way)
-        if TEAM_ROLES.index(member_role) < TEAM_ROLES.index(required_role):
-            raise HTTPException(status_code=403, detail="Not enough permissions in this team")
+        if required_role:
+            if member_role is None:
+                raise HTTPException(status_code=403, detail="Not enough permissions in this team")
+            # Role hierarchy: admin > member (TEAM_ROLES is ordered this way)
+            if TEAM_ROLES.index(member_role) < TEAM_ROLES.index(required_role):
+                raise HTTPException(status_code=403, detail="Not enough permissions in this team")
 
     return team
 

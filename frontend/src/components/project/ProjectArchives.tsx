@@ -125,8 +125,8 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            {[...Array(3)].map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
+            {['s1', 's2', 's3'].map((skeletonId) => (
+              <Skeleton key={skeletonId} className="h-12 w-full" />
             ))}
           </div>
         </CardContent>

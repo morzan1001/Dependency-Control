@@ -25,6 +25,8 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
+const ARCHIVE_SKELETON_KEYS = ['s1', 's2', 's3', 's4', 's5']
+
 export default function ArchivesPage() {
   const [page, setPage] = useState(1)
   const [branchFilter, setBranchFilter] = useState('')
@@ -50,6 +52,164 @@ export default function ArchivesPage() {
   }
 
   const hasActiveFilters = branchFilter || dateFrom || dateTo
+
+  const items = data?.items || []
+  const totalPages = data?.pages || 1
+
+  const renderContent = () => {
+    if (isLoading) {
+      return (
+        <div className="space-y-2">
+          {ARCHIVE_SKELETON_KEYS.map((skeletonId) => (
+            <Skeleton key={skeletonId} className="h-12 w-full" />
+          ))}
+        </div>
+      )
+    }
+
+    if (items.length === 0) {
+      let emptyHint: string
+      if (hasActiveFilters) {
+        emptyHint = 'Try adjusting your filters.'
+      } else {
+        emptyHint = 'Archives will appear here when data retention archiving is active.'
+      }
+      return (
+        <div className="text-center py-8 text-muted-foreground">
+          <Archive className="h-12 w-12 mx-auto mb-3 opacity-30" />
+          <p>No archived scans found.</p>
+          <p className="text-sm mt-1">{emptyHint}</p>
+        </div>
+      )
+    }
+
+    return (
+      <>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Project</TableHead>
+              <TableHead>Branch</TableHead>
+              <TableHead>Commit</TableHead>
+              <TableHead>Scan Date</TableHead>
+              <TableHead>Findings</TableHead>
+              <TableHead>Deps</TableHead>
+              <TableHead>SBOMs</TableHead>
+              <TableHead>Size</TableHead>
+              <TableHead>Archived At</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((archive) => (
+              <TableRow key={archive.id}>
+                <TableCell>
+                  <Link
+                    to={`/projects/${archive.project_id}`}
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    {archive.project_name || archive.project_id}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1.5">
+                    <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="font-mono text-sm">{archive.branch || '-'}</span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1.5">
+                    <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="font-mono text-sm">
+                      {archive.commit_hash ? shortCommitHash(archive.commit_hash) : '-'}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="text-sm">
+                  {archive.scan_created_at ? formatDateTime(archive.scan_created_at) : '-'}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm">{archive.findings_count}</span>
+                    {archive.critical_findings_count > 0 && (
+                      <Badge variant="destructive" className="text-xs px-1.5 py-0">
+                        {archive.critical_findings_count} C
+                      </Badge>
+                    )}
+                    {archive.high_findings_count > 0 && (
+                      <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+                        {archive.high_findings_count} H
+                      </Badge>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell className="text-sm">
+                  <div className="flex items-center gap-1">
+                    <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                    {archive.dependencies_count}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  {archive.sbom_filenames.length > 0 ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex items-center gap-1 cursor-help">
+                            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="text-sm">{archive.sbom_filenames.length}</span>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <ul className="text-xs space-y-0.5">
+                            {archive.sbom_filenames.map((f) => (
+                              <li key={f} className="font-mono">{f}</li>
+                            ))}
+                          </ul>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">-</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-sm">
+                  {formatBytes(archive.compressed_size_bytes)}
+                </TableCell>
+                <TableCell className="text-sm">
+                  {formatDateTime(archive.archived_at)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between pt-4">
+            <p className="text-sm text-muted-foreground">
+              Page {page} of {data?.pages} ({data?.total} total)
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page <= 1}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
 
   return (
     <div className="container mx-auto py-10 space-y-8">
@@ -110,148 +270,7 @@ export default function ArchivesPage() {
             )}
           </div>
 
-          {isLoading ? (
-            <div className="space-y-2">
-              {[...Array(5)].map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
-            </div>
-          ) : (data?.items || []).length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Archive className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p>No archived scans found.</p>
-              <p className="text-sm mt-1">
-                {hasActiveFilters
-                  ? 'Try adjusting your filters.'
-                  : 'Archives will appear here when data retention archiving is active.'}
-              </p>
-            </div>
-          ) : (
-            <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Project</TableHead>
-                    <TableHead>Branch</TableHead>
-                    <TableHead>Commit</TableHead>
-                    <TableHead>Scan Date</TableHead>
-                    <TableHead>Findings</TableHead>
-                    <TableHead>Deps</TableHead>
-                    <TableHead>SBOMs</TableHead>
-                    <TableHead>Size</TableHead>
-                    <TableHead>Archived At</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(data?.items || []).map((archive) => (
-                    <TableRow key={archive.id}>
-                      <TableCell>
-                        <Link
-                          to={`/projects/${archive.project_id}`}
-                          className="text-sm font-medium text-primary hover:underline"
-                        >
-                          {archive.project_name || archive.project_id}
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="font-mono text-sm">{archive.branch || '-'}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="font-mono text-sm">
-                            {archive.commit_hash ? shortCommitHash(archive.commit_hash) : '-'}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {archive.scan_created_at ? formatDateTime(archive.scan_created_at) : '-'}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm">{archive.findings_count}</span>
-                          {archive.critical_findings_count > 0 && (
-                            <Badge variant="destructive" className="text-xs px-1.5 py-0">
-                              {archive.critical_findings_count} C
-                            </Badge>
-                          )}
-                          {archive.high_findings_count > 0 && (
-                            <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
-                              {archive.high_findings_count} H
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        <div className="flex items-center gap-1">
-                          <Package className="h-3.5 w-3.5 text-muted-foreground" />
-                          {archive.dependencies_count}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {archive.sbom_filenames.length > 0 ? (
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <div className="flex items-center gap-1 cursor-help">
-                                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                                  <span className="text-sm">{archive.sbom_filenames.length}</span>
-                                </div>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <ul className="text-xs space-y-0.5">
-                                  {archive.sbom_filenames.map((f) => (
-                                    <li key={f} className="font-mono">{f}</li>
-                                  ))}
-                                </ul>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {formatBytes(archive.compressed_size_bytes)}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {formatDateTime(archive.archived_at)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-
-              {(data?.pages || 1) > 1 && (
-                <div className="flex items-center justify-between pt-4">
-                  <p className="text-sm text-muted-foreground">
-                    Page {page} of {data?.pages} ({data?.total} total)
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPage(p => Math.max(1, p - 1))}
-                      disabled={page <= 1}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setPage(p => Math.min(data?.pages || 1, p + 1))}
-                      disabled={page >= (data?.pages || 1)}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+          {renderContent()}
         </CardContent>
       </Card>
     </div>

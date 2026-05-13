@@ -225,46 +225,37 @@ async def _build_advisory_scan_map(
     return scan_map
 
 
-def _find_affected_projects(
-    dep: Any,
-    payload_packages: list,
-    scan_map: Dict[str, Project],
+def _match_package_rule(dep: Any, payload_packages: list) -> Any:
+    """Find the first package rule matching the dependency name/type."""
+    for pkg_rule in payload_packages:
+        if pkg_rule.name != dep.name:
+            continue
+        if pkg_rule.type and dep.type != pkg_rule.type:
+            continue
+        return pkg_rule
+    return None
+
+
+def _is_dep_affected(dep_version: str, matching_rule: Any) -> bool:
+    """Decide whether a dependency version is affected by the rule."""
+    if not matching_rule.version:
+        return True
+    try:
+        target_ver = parse_version(matching_rule.version)
+        dep_ver = parse_version(dep_version)
+        return dep_ver <= target_ver
+    except Exception:
+        return True
+
+
+def _record_affected_project(
+    p_data: Project,
+    dep_name: str,
+    dep_version: str,
     affected_projects_map: Dict[str, Project],
     project_findings: Dict[str, List[str]],
 ) -> None:
-    """Check if a dependency is affected by any advisory package rule."""
-    dep_name = dep.name
-    dep_version = dep.version
-
-    matching_rule = None
-    for pkg_rule in payload_packages:
-        if pkg_rule.name == dep_name:
-            if pkg_rule.type and dep.type != pkg_rule.type:
-                continue
-            matching_rule = pkg_rule
-            break
-
-    if not matching_rule:
-        return
-
-    is_affected = False
-    if matching_rule.version:
-        try:
-            target_ver = parse_version(matching_rule.version)
-            dep_ver = parse_version(dep_version)
-            is_affected = dep_ver <= target_ver
-        except Exception:
-            is_affected = True
-    else:
-        is_affected = True
-
-    if not is_affected:
-        return
-
-    p_data = scan_map.get(dep.scan_id)
-    if not p_data:
-        return
-
+    """Track an affected project and the dependency finding string."""
     project_id = str(p_data.id)
     if project_id not in affected_projects_map:
         affected_projects_map[project_id] = p_data
@@ -274,6 +265,28 @@ def _find_affected_projects(
     finding_str = f"{dep_name} ({dep_version})"
     if finding_str not in project_findings[project_id]:
         project_findings[project_id].append(finding_str)
+
+
+def _find_affected_projects(
+    dep: Any,
+    payload_packages: list,
+    scan_map: Dict[str, Project],
+    affected_projects_map: Dict[str, Project],
+    project_findings: Dict[str, List[str]],
+) -> None:
+    """Check if a dependency is affected by any advisory package rule."""
+    matching_rule = _match_package_rule(dep, payload_packages)
+    if not matching_rule:
+        return
+
+    if not _is_dep_affected(dep.version, matching_rule):
+        return
+
+    p_data = scan_map.get(dep.scan_id)
+    if not p_data:
+        return
+
+    _record_affected_project(p_data, dep.name, dep.version, affected_projects_map, project_findings)
 
 
 def _build_advisory_html(
@@ -318,6 +331,78 @@ def _build_advisory_html(
     return final_html, findings_text_block
 
 
+def _collect_admin_ids(affected_projects_map: Dict[str, Project]) -> Set[str]:
+    """Collect unique admin member IDs across all affected projects."""
+    admin_ids: Set[str] = set()
+    for project in affected_projects_map.values():
+        for member in project.members:
+            if member.role == "admin":
+                admin_ids.add(member.user_id)
+    return admin_ids
+
+
+def _group_projects_by_admin(
+    affected_projects_map: Dict[str, Project],
+    project_findings: Dict[str, List[str]],
+    users_dict: Dict[str, Any],
+) -> Dict[str, Dict]:
+    """Group affected projects under each admin user that should be notified."""
+    user_notification_map: Dict[str, Dict] = {}
+    for pid, project in affected_projects_map.items():
+        for member in project.members:
+            if member.role != "admin" or member.user_id not in users_dict:
+                continue
+            uid = member.user_id
+            if uid not in user_notification_map:
+                user_notification_map[uid] = {"user": users_dict[uid], "projects": []}
+            user_notification_map[uid]["projects"].append(
+                {"id": pid, "name": project.name, "findings": project_findings.get(pid, [])},
+            )
+    return user_notification_map
+
+
+def _queue_advisory_for_user(
+    data: Dict,
+    payload: "BroadcastRequest",
+    background_tasks: BackgroundTasks,
+    message_html: str,
+    frontend_url: str,
+    db: Any,
+    forced_channels: Any,
+) -> None:
+    """Build and queue an advisory notification background task for a single user."""
+    projects_data = data["projects"]
+    final_html, findings_text = _build_advisory_html(message_html, projects_data, frontend_url)
+    context_message = f"{payload.message}\n\n--- Affected Projects ---\n{findings_text}\n"
+
+    advisory_subject = f"ACTION REQUIRED: {payload.subject}"
+    advisory_blocks = build_advisory_blocks(
+        subject=advisory_subject,
+        message=payload.message,
+        affected_projects=projects_data,
+        dashboard_link=frontend_url,
+    )
+    advisory_mm = mm_advisory_props(
+        subject=advisory_subject,
+        message=payload.message,
+        affected_projects=projects_data,
+        dashboard_link=frontend_url,
+    )
+
+    background_tasks.add_task(
+        notification_service.notify_users,
+        [data["user"]],
+        "vulnerability_found",
+        advisory_subject,
+        context_message,
+        db=db,
+        forced_channels=forced_channels,
+        html_message=final_html,
+        slack_blocks=advisory_blocks,
+        mattermost_props=advisory_mm,
+    )
+
+
 async def _notify_advisory_admins(
     affected_projects_map: Dict[str, Project],
     project_findings: Dict[str, List[str]],
@@ -330,60 +415,17 @@ async def _notify_advisory_admins(
     forced_channels: Any,
 ) -> int:
     """Group affected projects by admin members and queue advisory notifications. Returns unique user count."""
-    # Collect all admin member IDs across affected projects
-    all_admin_ids: Set[str] = set()
-    for project in affected_projects_map.values():
-        for member in project.members:
-            if member.role == "admin":
-                all_admin_ids.add(member.user_id)
+    all_admin_ids = _collect_admin_ids(affected_projects_map)
 
     admin_users = await user_repo.find_many({"_id": {"$in": list(all_admin_ids)}, "is_active": True}, limit=2000)
     users_dict = {str(u.id): u for u in admin_users}
 
-    # Group projects by admin members
-    user_notification_map: Dict[str, Dict] = {}
-    for pid, project in affected_projects_map.items():
-        for member in project.members:
-            if member.role != "admin" or member.user_id not in users_dict:
-                continue
-            uid = member.user_id
-            if uid not in user_notification_map:
-                user_notification_map[uid] = {"user": users_dict[uid], "projects": []}
-            user_notification_map[uid]["projects"].append(
-                {"id": pid, "name": project.name, "findings": project_findings.get(pid, [])},
-            )
+    user_notification_map = _group_projects_by_admin(affected_projects_map, project_findings, users_dict)
 
     if not payload.dry_run:
-        for uid, data in user_notification_map.items():
-            projects_data = data["projects"]
-            final_html, findings_text = _build_advisory_html(message_html, projects_data, frontend_url)
-            context_message = f"{payload.message}\n\n--- Affected Projects ---\n{findings_text}\n"
-
-            advisory_subject = f"ACTION REQUIRED: {payload.subject}"
-            advisory_blocks = build_advisory_blocks(
-                subject=advisory_subject,
-                message=payload.message,
-                affected_projects=projects_data,
-                dashboard_link=frontend_url,
-            )
-            advisory_mm = mm_advisory_props(
-                subject=advisory_subject,
-                message=payload.message,
-                affected_projects=projects_data,
-                dashboard_link=frontend_url,
-            )
-
-            background_tasks.add_task(
-                notification_service.notify_users,
-                [data["user"]],
-                "vulnerability_found",
-                advisory_subject,
-                context_message,
-                db=db,
-                forced_channels=forced_channels,
-                html_message=final_html,
-                slack_blocks=advisory_blocks,
-                mattermost_props=advisory_mm,
+        for data in user_notification_map.values():
+            _queue_advisory_for_user(
+                data, payload, background_tasks, message_html, frontend_url, db, forced_channels,
             )
 
     return len(user_notification_map)

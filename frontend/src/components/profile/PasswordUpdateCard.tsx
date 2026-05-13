@@ -146,13 +146,15 @@ export function PasswordUpdateCard({ user }: PasswordUpdateCardProps) {
               required
             />
           </div>
-          <Button 
-            type="submit" 
+          <Button
+            type="submit"
             disabled={updatePasswordMutation.isPending || migrateToLocalMutation.isPending}
           >
-            {updatePasswordMutation.isPending || migrateToLocalMutation.isPending 
-              ? "Updating..." 
-              : (isLocalUser ? "Update Password" : "Set Password & Migrate")}
+            {(() => {
+              if (updatePasswordMutation.isPending || migrateToLocalMutation.isPending) return "Updating..."
+              if (isLocalUser) return "Update Password"
+              return "Set Password & Migrate"
+            })()}
           </Button>
         </form>
       </CardContent>

@@ -29,6 +29,8 @@ interface CrossProjectSearchProps {
   onSelectResult?: (result: AdvancedSearchResult) => void;
 }
 
+const CROSS_PROJECT_SKELETON_IDS = ['cps1', 'cps2', 'cps3', 'cps4', 'cps5']
+
 export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) {
   const [query, setQuery] = useState('')
   const [version, setVersion] = useState('')
@@ -264,18 +266,26 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
 
         {/* Results */}
         <div ref={parentRef}>
-          {query.length < 2 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <Search className="h-12 w-12 mb-4" />
-              <p>Enter at least 2 characters to search</p>
-            </div>
-          ) : isLoading ? (
-            <div className="space-y-2">
-              {new Array(5).fill(0).map((_, i) => (
-                <Skeleton key={i} className="h-12 w-full" />
-              ))}
-            </div>
-          ) : allResults.length > 0 ? (
+          {(() => {
+            if (query.length < 2) {
+              return (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <Search className="h-12 w-12 mb-4" />
+                  <p>Enter at least 2 characters to search</p>
+                </div>
+              )
+            }
+            if (isLoading) {
+              return (
+                <div className="space-y-2">
+                  {CROSS_PROJECT_SKELETON_IDS.map((id) => (
+                    <Skeleton key={id} className="h-12 w-full" />
+                  ))}
+                </div>
+              )
+            }
+            if (allResults.length > 0) {
+              return (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted-foreground">
@@ -374,17 +384,20 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
               </Table>
             </div>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <Package className="h-12 w-12 mb-4" />
-            <p>No packages found matching "{query}"</p>
-            {hasActiveFilters && (
-              <Button variant="link" onClick={clearFilters}>
-                Try clearing filters
-              </Button>
-            )}
-          </div>
-        )}
+              )
+            }
+            return (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Package className="h-12 w-12 mb-4" />
+                <p>No packages found matching "{query}"</p>
+                {hasActiveFilters && (
+                  <Button variant="link" onClick={clearFilters}>
+                    Try clearing filters
+                  </Button>
+                )}
+              </div>
+            )
+          })()}
         </div>
       </CardContent>
     </Card>

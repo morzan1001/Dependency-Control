@@ -20,26 +20,161 @@ import { FindingTypeBadge } from './FindingTypeBadge'
 import { getSourceInfo } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
 
+// Stable keys for the loading skeleton rows. Using fixed string keys avoids
+// the "array index as key" anti-pattern while still rendering a stable list.
+const SKELETON_ROW_KEYS = Array.from({ length: 10 }, (_, i) => `skeleton-row-${i}`)
+
+// Sub-shape of `Finding.details` we touch when computing the display ID.
+type FindingWithDetails = {
+    id: string
+    type?: string
+    details?: {
+        vulnerabilities?: ReadonlyArray<{ id?: string }>
+        quality_issues?: ReadonlyArray<{ id?: string }>
+    }
+}
+
+/**
+ * Compute the user-visible ID for a finding row.
+ *
+ * Vulnerability and quality findings can aggregate multiple underlying issues;
+ * we show "Multiple …" when there is more than one, the single issue's id when
+ * there is exactly one, and otherwise fall back to the finding's own id.
+ */
+function getDisplayId(finding: FindingWithDetails): string | undefined {
+    const vulnCount = finding.details?.vulnerabilities?.length ?? 0
+    if (finding.type === 'vulnerability') {
+        if (vulnCount > 1) return 'Multiple Vulnerabilities'
+        if (vulnCount === 1) return finding.details?.vulnerabilities?.[0]?.id
+    }
+    const qualityCount = finding.details?.quality_issues?.length ?? 0
+    if (finding.type === 'quality') {
+        if (qualityCount > 1) return 'Multiple Quality Issues'
+        if (qualityCount === 1) return finding.details?.quality_issues?.[0]?.id
+    }
+    return finding.id
+}
+
+interface ReachabilityIndicatorProps {
+    readonly reachability: NonNullable<NonNullable<Finding['details']>['reachability']>
+}
+
+function ReachabilityIndicator({ reachability }: ReachabilityIndicatorProps) {
+    const isReachable = reachability.is_reachable
+    const containerClass = isReachable
+        ? 'bg-red-100 text-severity-critical'
+        : 'bg-green-100 text-success'
+    const label = isReachable ? 'Reachable Code' : 'Not Reachable'
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <div className={`flex items-center justify-center w-5 h-5 rounded-full ${containerClass}`}>
+                    {isReachable ? <AlertTriangle className="h-3 w-3" /> : <Shield className="h-3 w-3" />}
+                </div>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+                <div className="space-y-1">
+                    <p className="font-medium">{label}</p>
+                    {reachability.analysis_level && (
+                        <p className="text-xs">Analysis: {reachability.analysis_level}</p>
+                    )}
+                    {reachability.confidence_score && (
+                        <p className="text-xs">
+                            Confidence: {Math.round(reachability.confidence_score * 100)}%
+                        </p>
+                    )}
+                </div>
+            </TooltipContent>
+        </Tooltip>
+    )
+}
+
+type SourceInfo = NonNullable<ReturnType<typeof getSourceInfo>>
+
+interface SourceCellProps {
+    readonly finding: Finding
+    readonly sourceInfo: SourceInfo | null
+}
+
+function SourceCell({ finding, sourceInfo }: SourceCellProps) {
+    if (!sourceInfo) {
+        return <span className="text-muted-foreground text-center block">-</span>
+    }
+    const directLabel = finding.direct ? 'Direct dependency' : 'Transitive dependency'
+    const inferredSuffix = finding.direct_inferred ? ' (inferred)' : ''
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <div className="flex items-center justify-center">
+                    <sourceInfo.icon className={`h-5 w-5 ${sourceInfo.color}`} />
+                </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-xs">
+                <div className="space-y-1">
+                    <p className="font-medium">{sourceInfo.label}</p>
+                    {finding.source_target && (
+                        <p className="text-xs text-muted-foreground break-all">{finding.source_target}</p>
+                    )}
+                    {finding.direct !== undefined && (
+                        <div className="space-y-0.5">
+                            <p className="text-xs">{directLabel}{inferredSuffix}</p>
+                            {finding.direct_inferred && (
+                                <p className="text-xs text-muted-foreground italic">
+                                    Classification inferred (SBOM had no dependency graph)
+                                </p>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </TooltipContent>
+        </Tooltip>
+    )
+}
+
+interface TypeBadgesProps {
+    readonly finding: Finding
+}
+
+function TypeBadges({ finding }: TypeBadgesProps) {
+    const additionalTypes = finding.details?.additional_finding_types ?? []
+    const hasAdditional = (type: string) =>
+        additionalTypes.some((t: { type: string }) => t.type === type)
+    return (
+        <div className="flex flex-wrap gap-1">
+            <FindingTypeBadge type={finding.type} />
+            {additionalTypes.map((addType: { type: string; severity: string }) => (
+                <FindingTypeBadge key={addType.type} type={addType.type} />
+            ))}
+            {finding.details?.outdated_info && !hasAdditional('outdated') && (
+                <FindingTypeBadge type="outdated" />
+            )}
+            {finding.details?.quality_info && !hasAdditional('quality') && (
+                <FindingTypeBadge type="quality" />
+            )}
+        </div>
+    )
+}
+
 interface FindingsTableProps {
-    scanId: string;
-    projectId: string;
-    category?: string;
-    search?: string;
-    severity?: string;
-    scanContext?: ScanContext;
+    readonly scanId: string;
+    readonly projectId: string;
+    readonly category?: string;
+    readonly search?: string;
+    readonly severity?: string;
+    readonly scanContext?: ScanContext;
     /** Top offset (px) for the sticky table header, e.g. when a sticky TabsList sits above. */
-    stickyHeaderTop?: number;
+    readonly stickyHeaderTop?: number;
     /** Filter by license category (e.g. weak_copyleft, strong_copyleft) */
-    licenseCategory?: string;
+    readonly licenseCategory?: string;
     /** Hide INFO-level findings */
-    hideInfo?: boolean;
+    readonly hideInfo?: boolean;
     /**
      * Which side of the active/waived split this table shows.
      * - "active" (default): only un-waived findings — the main list users care about.
      * - "waived": only waived findings — used for the secondary "what is being suppressed" list.
      * - "all": both. Kept as an escape hatch; not used by the standard scan view.
      */
-    waivedFilter?: "active" | "waived" | "all";
+    readonly waivedFilter?: "active" | "waived" | "all";
 }
 
 export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active" }: FindingsTableProps) {
@@ -198,8 +333,8 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {Array.from({ length: 10 }).map((_, i) => (
-                                <TableRow key={`skeleton-${i}`} className="w-full border-b">
+                            {SKELETON_ROW_KEYS.map((key) => (
+                                <TableRow key={key} className="w-full border-b">
                                     <TableCell className="p-4"><Skeleton className="h-6 w-16" /></TableCell>
                                     <TableCell className="p-4"><Skeleton className="h-6 w-24" /></TableCell>
                                     <TableCell className="p-4"><Skeleton className="h-6 w-32" /></TableCell>
@@ -250,66 +385,26 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                             // the URL param. The index is derived purely from `allRows` above
                             // (no ref reads during render).
                             const isScrollTarget = index === scrollTargetIndex
+                            const rowClass = `border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
+                                finding.type === 'system_warning' ? 'bg-destructive/5 hover:bg-destructive/10 border-l-2 border-l-destructive' : ''
+                            }`
                             return (
                                 <TableRow
                                     ref={isScrollTarget ? scrollTargetRef : undefined}
                                     onClick={() => setSelectedFinding(finding)}
                                     key={finding.id}
-                                    className={`border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
-                                        finding.type === 'system_warning' ? 'bg-destructive/5 hover:bg-destructive/10 border-l-2 border-l-destructive' : ''
-                                    }`}
+                                    className={rowClass}
                                 >
                                     <TableCell className="p-4 align-middle">
                                         <div className="flex items-center gap-1.5">
                                             <SeverityBadge severity={finding.severity} />
                                             {finding.details?.reachability && (
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <div className={`flex items-center justify-center w-5 h-5 rounded-full ${
-                                                            finding.details.reachability.is_reachable
-                                                                ? 'bg-red-100 text-severity-critical'
-                                                                : 'bg-green-100 text-success'
-                                                        }`}>
-                                                            {finding.details.reachability.is_reachable ? (
-                                                                <AlertTriangle className="h-3 w-3" />
-                                                            ) : (
-                                                                <Shield className="h-3 w-3" />
-                                                            )}
-                                                        </div>
-                                                    </TooltipTrigger>
-                                                    <TooltipContent side="right">
-                                                        <div className="space-y-1">
-                                                            <p className="font-medium">
-                                                                {finding.details.reachability.is_reachable
-                                                                    ? 'Reachable Code'
-                                                                    : 'Not Reachable'}
-                                                            </p>
-                                                            {finding.details.reachability.analysis_level && (
-                                                                <p className="text-xs">
-                                                                    Analysis: {finding.details.reachability.analysis_level}
-                                                                </p>
-                                                            )}
-                                                            {finding.details.reachability.confidence_score && (
-                                                                <p className="text-xs">
-                                                                    Confidence: {Math.round(finding.details.reachability.confidence_score * 100)}%
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                    </TooltipContent>
-                                                </Tooltip>
+                                                <ReachabilityIndicator reachability={finding.details.reachability} />
                                             )}
                                         </div>
                                     </TableCell>
                                     <TableCell className="p-4 align-middle font-mono text-xs truncate" title={finding.id}>
-                                        {finding.type === 'vulnerability' && (finding.details?.vulnerabilities?.length ?? 0) > 1
-                                            ? 'Multiple Vulnerabilities'
-                                            : (finding.type === 'vulnerability' && (finding.details?.vulnerabilities?.length ?? 0) === 1
-                                                ? finding.details?.vulnerabilities?.[0]?.id
-                                                : finding.type === 'quality' && (finding.details?.quality_issues?.length ?? 0) > 1
-                                                    ? 'Multiple Quality Issues'
-                                                    : finding.type === 'quality' && (finding.details?.quality_issues?.length ?? 0) === 1
-                                                        ? finding.details?.quality_issues?.[0]?.id
-                                                        : finding.id)}
+                                        {getDisplayId(finding)}
                                     </TableCell>
                                     <TableCell className="p-4 align-middle">
                                         <div className="flex flex-col truncate">
@@ -318,52 +413,10 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                         </div>
                                     </TableCell>
                                     <TableCell className="p-4 align-middle">
-                                        {sourceInfo ? (
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <div className="flex items-center justify-center">
-                                                        <sourceInfo.icon className={`h-5 w-5 ${sourceInfo.color}`} />
-                                                    </div>
-                                                </TooltipTrigger>
-                                                <TooltipContent side="top" className="max-w-xs">
-                                                    <div className="space-y-1">
-                                                        <p className="font-medium">{sourceInfo.label}</p>
-                                                        {finding.source_target && (
-                                                            <p className="text-xs text-muted-foreground break-all">{finding.source_target}</p>
-                                                        )}
-                                                        {finding.direct !== undefined && (
-                                                            <div className="space-y-0.5">
-                                                                <p className="text-xs">
-                                                                    {finding.direct ? "Direct dependency" : "Transitive dependency"}
-                                                                    {finding.direct_inferred ? " (inferred)" : ""}
-                                                                </p>
-                                                                {finding.direct_inferred && (
-                                                                    <p className="text-xs text-muted-foreground italic">
-                                                                        Classification inferred (SBOM had no dependency graph)
-                                                                    </p>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </TooltipContent>
-                                            </Tooltip>
-                                        ) : (
-                                            <span className="text-muted-foreground text-center block">-</span>
-                                        )}
+                                        <SourceCell finding={finding} sourceInfo={sourceInfo} />
                                     </TableCell>
                                     <TableCell className="p-4 align-middle">
-                                        <div className="flex flex-wrap gap-1">
-                                            <FindingTypeBadge type={finding.type} />
-                                            {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }) => (
-                                                <FindingTypeBadge key={addType.type} type={addType.type} />
-                                            ))}
-                                            {finding.details?.outdated_info && !finding.details?.additional_finding_types?.some((t: { type: string }) => t.type === 'outdated') && (
-                                                <FindingTypeBadge type="outdated" />
-                                            )}
-                                            {finding.details?.quality_info && !finding.details?.additional_finding_types?.some((t: { type: string }) => t.type === 'quality') && (
-                                                <FindingTypeBadge type="quality" />
-                                            )}
-                                        </div>
+                                        <TypeBadges finding={finding} />
                                     </TableCell>
                                     <TableCell className="p-4 align-middle text-sm text-muted-foreground">
                                         {finding.scanners?.join(', ') || 'Unknown'}

@@ -29,12 +29,12 @@ export function CollapsibleReferences({ references, title = 'References' }: Coll
       
       {isOpen && (
         <div className="flex flex-col gap-1 mt-1 pl-2 border-l-2 border-muted ml-1">
-          {references.map((ref, i) => (
-            <a 
-              key={i} 
-              href={ref} 
-              target="_blank" 
-              rel="noopener noreferrer" 
+          {references.map((ref) => (
+            <a
+              key={ref}
+              href={ref}
+              target="_blank"
+              rel="noopener noreferrer"
               className="text-xs text-blue-500 hover:underline truncate block"
             >
               {ref}
@@ -60,11 +60,11 @@ export function ReferenceLinks({ references, maxVisible = 3 }: { references?: st
   return (
     <div className="flex flex-wrap gap-1 items-center">
       {visible.map((ref, i) => (
-        <a 
-          key={i} 
-          href={ref} 
-          target="_blank" 
-          rel="noopener noreferrer" 
+        <a
+          key={ref}
+          href={ref}
+          target="_blank"
+          rel="noopener noreferrer"
           className="text-xs text-blue-500 hover:underline"
         >
           [{i + 1}]

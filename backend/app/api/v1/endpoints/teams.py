@@ -159,17 +159,20 @@ async def delete_team(
     if not has_permission(current_user.permissions, "team:delete"):
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
+    # Sanitize for logs to prevent CRLF log injection (S5145); team_id is a path parameter.
+    safe_team_id = team_id.replace("\n", "_").replace("\r", "_")
+
     # CASCADE: Unassign team from all projects
     project_repo = ProjectRepository(db)
     updated_count = await project_repo.update_many({"team_id": team_id}, {"team_id": None})
 
     if updated_count > 0:
-        logger.info(f"Team {team_id} deleted: unassigned from {updated_count} project(s)")
+        logger.info("Team %s deleted: unassigned from %d project(s)", safe_team_id, updated_count)
 
     # CASCADE: Delete all team webhooks
     webhook_result = await db.webhooks.delete_many({"team_id": team_id})
     if webhook_result.deleted_count > 0:
-        logger.info(f"Team {team_id} deleted: removed {webhook_result.deleted_count} webhook(s)")
+        logger.info("Team %s deleted: removed %d webhook(s)", safe_team_id, webhook_result.deleted_count)
 
     team_repo = TeamRepository(db)
     await team_repo.delete(team_id)

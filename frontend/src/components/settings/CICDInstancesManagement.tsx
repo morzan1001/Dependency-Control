@@ -813,7 +813,7 @@ function InstanceForm({
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   value={formData.team_sync_depth}
                   onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, team_sync_depth: parseInt(e.target.value) }))
+                    setFormData((prev) => ({ ...prev, team_sync_depth: Number.parseInt(e.target.value) }))
                   }
                 >
                   <option value={1}>Top-level group only (e.g. &quot;foo&quot;)</option>

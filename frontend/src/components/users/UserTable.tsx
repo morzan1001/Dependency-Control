@@ -137,19 +137,27 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                 </TableCell>
                 <TableCell>{user.email}</TableCell>
                 <TableCell>
-                  {user.status === 'invited' ? (
-                    <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800">
-                      Invited
-                    </span>
-                  ) : user.is_active ? (
-                    <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
-                      Active
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
-                      Inactive
-                    </span>
-                  )}
+                  {(() => {
+                    if (user.status === 'invited') {
+                      return (
+                        <span className="inline-flex items-center rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800">
+                          Invited
+                        </span>
+                      )
+                    }
+                    if (user.is_active) {
+                      return (
+                        <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
+                          Active
+                        </span>
+                      )
+                    }
+                    return (
+                      <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
+                        Inactive
+                      </span>
+                    )
+                  })()}
                 </TableCell>
                 <TableCell>
                     {(() => {

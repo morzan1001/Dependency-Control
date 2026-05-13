@@ -99,10 +99,10 @@ def _resolve_finding_id_query(
     return finding_id
 
 
-def _build_waiver_query(waiver: Waiver) -> Dict[str, Union[str, Dict[str, str]]]:
+def _build_waiver_query(waiver: Waiver) -> Dict[str, str | Dict[str, str]]:
     """Build a finding query dict from a waiver's matching fields."""
     scope = waiver.scope or "finding"
-    query: Dict[str, Union[str, Dict[str, str]]] = {}
+    query: Dict[str, str | Dict[str, str]] = {}
 
     waiver_values = {
         "finding_id": waiver.finding_id,

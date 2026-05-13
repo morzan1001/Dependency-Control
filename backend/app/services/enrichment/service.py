@@ -55,6 +55,47 @@ def _add_finding_to_map(
         cve_to_findings[cve].append(finding)
 
 
+def _extract_finding_id_cve(
+    finding: Dict[str, Any],
+    details: Dict[str, Any],
+    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    cvss_scores: Dict[str, float],
+) -> None:
+    """Extract CVE from the finding ID itself."""
+    finding_id = finding.get("finding_id") or finding.get("id", "")
+    if not (finding_id and finding_id.startswith("CVE-")):
+        return
+    _add_finding_to_map(cve_to_findings, finding_id, finding)
+    if details.get("cvss_score") is not None:
+        cvss_scores[finding_id] = details["cvss_score"]
+
+
+def _extract_aliases(
+    aliases: List[str],
+    finding: Dict[str, Any],
+    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    """Add any CVE aliases to the CVE-to-findings map."""
+    for alias in aliases:
+        if alias.startswith("CVE-"):
+            _add_finding_to_map(cve_to_findings, alias, finding)
+
+
+def _extract_vuln_cves(
+    vuln: Dict[str, Any],
+    finding: Dict[str, Any],
+    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    cvss_scores: Dict[str, float],
+) -> None:
+    """Extract CVE/GHSA IDs from a single vulnerability entry."""
+    cve = vuln.get("id", "")
+    if cve and (cve.startswith("CVE-") or cve.startswith("GHSA-")):
+        _add_finding_to_map(cve_to_findings, cve, finding)
+        if vuln.get("cvss_score") is not None and cve not in cvss_scores:
+            cvss_scores[cve] = vuln["cvss_score"]
+    _extract_aliases(vuln.get("aliases", []), finding, cve_to_findings)
+
+
 def _extract_cves_from_finding(
     finding: Dict[str, Any],
     cve_to_findings: Dict[str, List[Dict[str, Any]]],
@@ -65,30 +106,12 @@ def _extract_cves_from_finding(
     if not isinstance(details, dict):
         return
 
-    # Check if finding ID itself is a CVE
-    finding_id = finding.get("finding_id") or finding.get("id", "")
-    if finding_id and finding_id.startswith("CVE-"):
-        _add_finding_to_map(cve_to_findings, finding_id, finding)
-        if details.get("cvss_score") is not None:
-            cvss_scores[finding_id] = details["cvss_score"]
+    _extract_finding_id_cve(finding, details, cve_to_findings, cvss_scores)
 
-    # Extract CVEs from vulnerabilities array (aggregated findings)
     for vuln in details.get("vulnerabilities", []):
-        cve = vuln.get("id", "")
-        if cve and (cve.startswith("CVE-") or cve.startswith("GHSA-")):
-            _add_finding_to_map(cve_to_findings, cve, finding)
-            if vuln.get("cvss_score") is not None and cve not in cvss_scores:
-                cvss_scores[cve] = vuln["cvss_score"]
+        _extract_vuln_cves(vuln, finding, cve_to_findings, cvss_scores)
 
-        # Also check aliases within the vulnerability
-        for alias in vuln.get("aliases", []):
-            if alias.startswith("CVE-"):
-                _add_finding_to_map(cve_to_findings, alias, finding)
-
-    # Also check aliases at finding level
-    for alias in finding.get("aliases", []):
-        if alias.startswith("CVE-"):
-            _add_finding_to_map(cve_to_findings, alias, finding)
+    _extract_aliases(finding.get("aliases", []), finding, cve_to_findings)
 
 
 def _apply_ghsa_to_vuln(
@@ -119,6 +142,37 @@ def _apply_ghsa_to_vuln(
             vuln["aliases"].append(alias)
 
 
+def _apply_ghsa_cve_alias_to_finding(
+    finding: Dict[str, Any],
+    cve_id: Optional[str],
+) -> None:
+    """Append resolved CVE id to finding aliases if not present."""
+    if not cve_id:
+        return
+    if "aliases" not in finding:
+        finding["aliases"] = []
+    if cve_id not in finding["aliases"]:
+        finding["aliases"].append(cve_id)
+
+
+def _apply_ghsa_to_finding(
+    finding: Dict[str, Any],
+    ghsa_id: str,
+    ghsa_data: GHSAData,
+    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+) -> None:
+    """Apply a single GHSA resolution to a single finding."""
+    if "details" not in finding:
+        finding["details"] = {}
+
+    finding["details"]["github_advisory_url"] = ghsa_data.advisory_url
+
+    for vuln in finding["details"].get("vulnerabilities", []):
+        _apply_ghsa_to_vuln(vuln, ghsa_id, ghsa_data, cve_to_findings, finding)
+
+    _apply_ghsa_cve_alias_to_finding(finding, ghsa_data.cve_id)
+
+
 def _apply_ghsa_resolutions(
     ghsa_resolutions: Dict[str, GHSAData],
     cve_to_findings: Dict[str, List[Dict[str, Any]]],
@@ -126,19 +180,7 @@ def _apply_ghsa_resolutions(
     """Apply all GHSA resolutions to affected findings."""
     for ghsa_id, ghsa_data in ghsa_resolutions.items():
         for finding in cve_to_findings.get(ghsa_id, []):
-            if "details" not in finding:
-                finding["details"] = {}
-
-            finding["details"]["github_advisory_url"] = ghsa_data.advisory_url
-
-            for vuln in finding["details"].get("vulnerabilities", []):
-                _apply_ghsa_to_vuln(vuln, ghsa_id, ghsa_data, cve_to_findings, finding)
-
-            if ghsa_data.cve_id:
-                if "aliases" not in finding:
-                    finding["aliases"] = []
-                if ghsa_data.cve_id not in finding["aliases"]:
-                    finding["aliases"].append(ghsa_data.cve_id)
+            _apply_ghsa_to_finding(finding, ghsa_id, ghsa_data, cve_to_findings)
 
 
 def _apply_enrichment_to_vuln(

@@ -2,9 +2,13 @@ export type ScmProvider = 'github' | 'gitlab'
 
 function normalizeBaseUrl(url?: string | null): string | null {
   if (!url) return null
-  const trimmed = url.trim()
+  let trimmed = url.trim()
   if (!trimmed) return null
-  return trimmed.replace(/\/+$/, '')
+  // Trim trailing slashes without a regex (avoids the S5852 super-linear hotspot).
+  while (trimmed.endsWith('/')) {
+    trimmed = trimmed.slice(0, -1)
+  }
+  return trimmed
 }
 
 function encodeRef(ref: string): string {

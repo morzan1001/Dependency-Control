@@ -20,25 +20,36 @@ SPDX_EXPR_SPLIT = re.compile(r"\s+(?:AND|OR|WITH)\s+")
 SPDX_OR_SPLIT = re.compile(r"\s+OR\s+")
 SPDX_AND_SPLIT = re.compile(r"\s+AND\s+")
 
+# SPDX identifiers used across the incompatibility table - centralized to satisfy S1192.
+SPDX_GPL_2_0 = "GPL-2.0"
+SPDX_GPL_2_0_ONLY = "GPL-2.0-only"
+SPDX_GPL_3_0 = "GPL-3.0"
+SPDX_GPL_3_0_ONLY = "GPL-3.0-only"
+SPDX_AGPL_3_0 = "AGPL-3.0"
+SPDX_AGPL_3_0_ONLY = "AGPL-3.0-only"
+SPDX_CDDL_1_0 = "CDDL-1.0"
+SPDX_EPL_1_0 = "EPL-1.0"
+SPDX_SSPL_1_0 = "SSPL-1.0"
+
 # (license_a, license_b) → explanation. Both directions are checked.
 LICENSE_INCOMPATIBILITIES: Dict[tuple, str] = {
     (
-        "GPL-2.0-only",
-        "GPL-3.0-only",
-    ): "GPL-2.0-only and GPL-3.0-only are not compatible — code cannot satisfy both simultaneously.",
-    ("GPL-2.0-only", "GPL-3.0"): "GPL-2.0-only cannot be combined with GPL-3.0 code.",
-    ("GPL-2.0-only", "AGPL-3.0"): "GPL-2.0-only is not compatible with AGPL-3.0.",
-    ("GPL-2.0-only", "AGPL-3.0-only"): "GPL-2.0-only is not compatible with AGPL-3.0-only.",
-    ("CDDL-1.0", "GPL-2.0"): "CDDL-1.0 and GPL-2.0 are incompatible due to conflicting copyleft terms.",
-    ("CDDL-1.0", "GPL-2.0-only"): "CDDL-1.0 and GPL-2.0-only are incompatible.",
-    ("CDDL-1.0", "GPL-3.0"): "CDDL-1.0 and GPL-3.0 are incompatible due to conflicting copyleft terms.",
-    ("CDDL-1.0", "GPL-3.0-only"): "CDDL-1.0 and GPL-3.0-only are incompatible.",
-    ("EPL-1.0", "GPL-2.0"): "EPL-1.0 is not compatible with GPL-2.0.",
-    ("EPL-1.0", "GPL-2.0-only"): "EPL-1.0 is not compatible with GPL-2.0-only.",
-    ("EPL-1.0", "GPL-3.0"): "EPL-1.0 is not compatible with GPL-3.0.",
-    ("SSPL-1.0", "GPL-2.0"): "SSPL-1.0 is not compatible with any GPL version.",
-    ("SSPL-1.0", "GPL-3.0"): "SSPL-1.0 is not compatible with any GPL version.",
-    ("SSPL-1.0", "AGPL-3.0"): "SSPL-1.0 is not compatible with AGPL-3.0.",
+        SPDX_GPL_2_0_ONLY,
+        SPDX_GPL_3_0_ONLY,
+    ): f"{SPDX_GPL_2_0_ONLY} and {SPDX_GPL_3_0_ONLY} are not compatible — code cannot satisfy both simultaneously.",
+    (SPDX_GPL_2_0_ONLY, SPDX_GPL_3_0): f"{SPDX_GPL_2_0_ONLY} cannot be combined with {SPDX_GPL_3_0} code.",
+    (SPDX_GPL_2_0_ONLY, SPDX_AGPL_3_0): f"{SPDX_GPL_2_0_ONLY} is not compatible with {SPDX_AGPL_3_0}.",
+    (SPDX_GPL_2_0_ONLY, SPDX_AGPL_3_0_ONLY): f"{SPDX_GPL_2_0_ONLY} is not compatible with {SPDX_AGPL_3_0_ONLY}.",
+    (SPDX_CDDL_1_0, SPDX_GPL_2_0): f"{SPDX_CDDL_1_0} and {SPDX_GPL_2_0} are incompatible due to conflicting copyleft terms.",
+    (SPDX_CDDL_1_0, SPDX_GPL_2_0_ONLY): f"{SPDX_CDDL_1_0} and {SPDX_GPL_2_0_ONLY} are incompatible.",
+    (SPDX_CDDL_1_0, SPDX_GPL_3_0): f"{SPDX_CDDL_1_0} and {SPDX_GPL_3_0} are incompatible due to conflicting copyleft terms.",
+    (SPDX_CDDL_1_0, SPDX_GPL_3_0_ONLY): f"{SPDX_CDDL_1_0} and {SPDX_GPL_3_0_ONLY} are incompatible.",
+    (SPDX_EPL_1_0, SPDX_GPL_2_0): f"{SPDX_EPL_1_0} is not compatible with {SPDX_GPL_2_0}.",
+    (SPDX_EPL_1_0, SPDX_GPL_2_0_ONLY): f"{SPDX_EPL_1_0} is not compatible with {SPDX_GPL_2_0_ONLY}.",
+    (SPDX_EPL_1_0, SPDX_GPL_3_0): f"{SPDX_EPL_1_0} is not compatible with {SPDX_GPL_3_0}.",
+    (SPDX_SSPL_1_0, SPDX_GPL_2_0): f"{SPDX_SSPL_1_0} is not compatible with any GPL version.",
+    (SPDX_SSPL_1_0, SPDX_GPL_3_0): f"{SPDX_SSPL_1_0} is not compatible with any GPL version.",
+    (SPDX_SSPL_1_0, SPDX_AGPL_3_0): f"{SPDX_SSPL_1_0} is not compatible with {SPDX_AGPL_3_0}.",
 }
 
 SEVERITY_RANK: Dict[Optional[str], int] = {
@@ -225,8 +236,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=False,
         network_clause=False,
     ),
-    "EPL-1.0": LicenseInfo(
-        spdx_id="EPL-1.0",
+    SPDX_EPL_1_0: LicenseInfo(
+        spdx_id=SPDX_EPL_1_0,
         category=LicenseCategory.WEAK_COPYLEFT,
         name="Eclipse Public License 1.0",
         description="Weak copyleft with patent grant.",
@@ -251,8 +262,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=False,
         network_clause=False,
     ),
-    "CDDL-1.0": LicenseInfo(
-        spdx_id="CDDL-1.0",
+    SPDX_CDDL_1_0: LicenseInfo(
+        spdx_id=SPDX_CDDL_1_0,
         category=LicenseCategory.WEAK_COPYLEFT,
         name="Common Development and Distribution License 1.0",
         description="File-level copyleft similar to MPL.",
@@ -264,8 +275,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=False,
         network_clause=False,
     ),
-    "GPL-2.0": LicenseInfo(
-        spdx_id="GPL-2.0",
+    SPDX_GPL_2_0: LicenseInfo(
+        spdx_id=SPDX_GPL_2_0,
         category=LicenseCategory.STRONG_COPYLEFT,
         name="GNU General Public License v2.0",
         description="Strong copyleft - entire derivative work must use GPL when distributed.",
@@ -285,8 +296,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=True,
         network_clause=False,
     ),
-    "GPL-2.0-only": LicenseInfo(
-        spdx_id="GPL-2.0-only",
+    SPDX_GPL_2_0_ONLY: LicenseInfo(
+        spdx_id=SPDX_GPL_2_0_ONLY,
         category=LicenseCategory.STRONG_COPYLEFT,
         name="GNU General Public License v2.0 only",
         description="GPL 2.0 without the 'or later' upgrade option.",
@@ -311,8 +322,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=True,
         network_clause=False,
     ),
-    "GPL-3.0": LicenseInfo(
-        spdx_id="GPL-3.0",
+    SPDX_GPL_3_0: LicenseInfo(
+        spdx_id=SPDX_GPL_3_0,
         category=LicenseCategory.STRONG_COPYLEFT,
         name="GNU General Public License v3.0",
         description="Modern GPL with patent protection and anti-tivoization.",
@@ -332,8 +343,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=True,
         network_clause=False,
     ),
-    "GPL-3.0-only": LicenseInfo(
-        spdx_id="GPL-3.0-only",
+    SPDX_GPL_3_0_ONLY: LicenseInfo(
+        spdx_id=SPDX_GPL_3_0_ONLY,
         category=LicenseCategory.STRONG_COPYLEFT,
         name="GNU General Public License v3.0 only",
         description="GPL 3.0 without the 'or later' option.",
@@ -358,8 +369,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=True,
         network_clause=False,
     ),
-    "AGPL-3.0": LicenseInfo(
-        spdx_id="AGPL-3.0",
+    SPDX_AGPL_3_0: LicenseInfo(
+        spdx_id=SPDX_AGPL_3_0,
         category=LicenseCategory.NETWORK_COPYLEFT,
         name="GNU Affero General Public License v3.0",
         description="GPL-3.0 extended to network services - must share source if users interact over network.",
@@ -379,8 +390,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=True,
         network_clause=True,
     ),
-    "AGPL-3.0-only": LicenseInfo(
-        spdx_id="AGPL-3.0-only",
+    SPDX_AGPL_3_0_ONLY: LicenseInfo(
+        spdx_id=SPDX_AGPL_3_0_ONLY,
         category=LicenseCategory.NETWORK_COPYLEFT,
         name="GNU Affero General Public License v3.0 only",
         description="AGPL 3.0 without the 'or later' option.",
@@ -405,8 +416,8 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         viral=True,
         network_clause=True,
     ),
-    "SSPL-1.0": LicenseInfo(
-        spdx_id="SSPL-1.0",
+    SPDX_SSPL_1_0: LicenseInfo(
+        spdx_id=SPDX_SSPL_1_0,
         category=LicenseCategory.NETWORK_COPYLEFT,
         name="Server Side Public License v1",
         description="MongoDB's license - even stricter than AGPL for SaaS use.",

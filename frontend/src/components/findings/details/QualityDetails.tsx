@@ -48,6 +48,19 @@ interface MaintainerInfo {
   project_urls?: Record<string, string> | null
 }
 
+function describeScorecardScore(score: number): string {
+  if (score >= 7) return 'Good security practices'
+  if (score >= 5) return 'Moderate security practices - room for improvement'
+  if (score >= 3) return 'Concerning security practices - review carefully'
+  return 'Poor security practices - high risk'
+}
+
+function normalizeRepoUrl(repo: string): string {
+  if (repo.startsWith('http')) return repo
+  if (repo.includes('github.com')) return `https://${repo}`
+  return `https://github.com/${repo}`
+}
+
 export function QualityDetailsView({ details }: { details: FindingDetails }) {
   const overallScore = details.overall_score as number
   const failedChecks = (details.failed_checks as Array<{ name: string; score: number }>) || []
@@ -72,23 +85,11 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
           <div className="flex-1">
             <h4 className="font-medium">OpenSSF Scorecard</h4>
             <p className="text-sm text-muted-foreground">
-              {overallScore >= 7
-                ? 'Good security practices'
-                : overallScore >= 5
-                  ? 'Moderate security practices - room for improvement'
-                  : overallScore >= 3
-                    ? 'Concerning security practices - review carefully'
-                    : 'Poor security practices - high risk'}
+              {describeScorecardScore(overallScore)}
             </p>
             {repository && (
               <a
-                href={
-                  repository.startsWith('http')
-                    ? repository
-                    : repository.includes('github.com')
-                      ? `https://${repository}`
-                      : `https://github.com/${repository}`
-                }
+                href={normalizeRepoUrl(repository)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 text-xs text-primary mt-1 hover:underline"
@@ -388,6 +389,19 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
     }
   }
 
+  const renderIssueDetails = (type: string, detailsData: unknown) => {
+    const typed = detailsData as unknown as FindingDetails
+    if (type === 'scorecard') return <QualityDetailsView details={typed} />
+    if (type === 'maintainer_risk') return <MaintainerRiskDetailsView details={typed} />
+    return <AdditionalDetailsView details={typed} />
+  }
+
+  const getScoreTextColor = (score: number): string => {
+    if (score >= 7) return 'text-green-600'
+    if (score >= 5) return 'text-yellow-600'
+    return 'text-red-600'
+  }
+
   const getIssueLabel = (type: string) => {
     switch (type) {
       case 'scorecard':
@@ -404,13 +418,7 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
     const singleIssue = qualityIssues[0]
     return (
       <div className="space-y-4">
-        {singleIssue.type === 'scorecard' ? (
-          <QualityDetailsView details={singleIssue.details as unknown as FindingDetails} />
-        ) : singleIssue.type === 'maintainer_risk' ? (
-          <MaintainerRiskDetailsView details={singleIssue.details as unknown as FindingDetails} />
-        ) : (
-          <AdditionalDetailsView details={singleIssue.details as unknown as FindingDetails} />
-        )}
+        {renderIssueDetails(singleIssue.type, singleIssue.details)}
       </div>
     )
   }
@@ -431,9 +439,7 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
           {overallScore !== undefined && (
             <p className="text-sm text-muted-foreground">
               OpenSSF Scorecard:{' '}
-              <span
-                className={overallScore >= 7 ? 'text-green-600' : overallScore >= 5 ? 'text-yellow-600' : 'text-red-600'}
-              >
+              <span className={getScoreTextColor(overallScore)}>
                 {overallScore.toFixed(1)}/10
               </span>
             </p>
@@ -477,13 +483,7 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
               {/* Expanded Details */}
               {isExpanded && (
                 <div className="p-4 border-t bg-background">
-                  {issue.type === 'scorecard' ? (
-                    <QualityDetailsView details={issue.details as unknown as FindingDetails} />
-                  ) : issue.type === 'maintainer_risk' ? (
-                    <MaintainerRiskDetailsView details={issue.details as unknown as FindingDetails} />
-                  ) : (
-                    <AdditionalDetailsView details={issue.details as unknown as FindingDetails} />
-                  )}
+                  {renderIssueDetails(issue.type, issue.details)}
                 </div>
               )}
             </div>

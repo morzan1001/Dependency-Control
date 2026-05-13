@@ -441,7 +441,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       )}
 
       {/* Post-Processor Intelligence (EPSS/KEV, Reachability) - per branch */}
-      {activeBranch && scanResults && scanResults.some(r => isPostProcessorResult(r.analyzer_name)) && (
+      {activeBranch && scanResults?.some(r => isPostProcessorResult(r.analyzer_name)) && (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-xl font-semibold">Enrichment & Intelligence</h3>

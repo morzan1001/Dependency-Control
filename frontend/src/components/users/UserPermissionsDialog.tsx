@@ -44,12 +44,12 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
     setPrevOpen(open);
   }
 
-  const handlePermissionChange = (permission: string, checked: boolean) => {
-    if (checked) {
-      setSelectedPermissions(prev => [...prev, permission]);
-    } else {
-      setSelectedPermissions(prev => prev.filter(p => p !== permission));
-    }
+  const addPermission = (permission: string) => {
+    setSelectedPermissions(prev => [...prev, permission]);
+  };
+
+  const removePermission = (permission: string) => {
+    setSelectedPermissions(prev => prev.filter(p => p !== permission));
   };
 
   const handleSelectPreset = (preset: string[]) => {
@@ -174,10 +174,10 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                           {group.permissions.map((perm) => (
                               <div key={perm.id} className="flex items-start space-x-2">
-                                  <Checkbox 
-                                      id={`perm-dialog-${perm.id}`} 
+                                  <Checkbox
+                                      id={`perm-dialog-${perm.id}`}
                                       checked={selectedPermissions.includes(perm.id)}
-                                      onCheckedChange={(checked: boolean) => handlePermissionChange(perm.id, checked)}
+                                      onCheckedChange={(checked: boolean) => checked ? addPermission(perm.id) : removePermission(perm.id)}
                                   />
                                   <div className="grid gap-1.5 leading-none">
                                       <Label htmlFor={`perm-dialog-${perm.id}`} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">

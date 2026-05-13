@@ -22,6 +22,8 @@ interface DependencyNodeProps {
   onSelect?: (node: DependencyTreeNode) => void;
 }
 
+const DEP_TREE_SKELETON_IDS = ['dt1', 'dt2', 'dt3', 'dt4', 'dt5', 'dt6', 'dt7', 'dt8']
+
 function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>) {
   const [isExpanded, setIsExpanded] = useState(false)
   const hasChildren = node.children && node.children.length > 0
@@ -199,14 +201,26 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
         </div>
       </CardHeader>
       <CardContent>
-        {selectedProjectId ? (
-          isLoadingTree ? (
-            <div className="space-y-2">
-              {Array.from({ length: 8 }, (_, i) => (
-                <Skeleton key={`skeleton-${i}`} className="h-10 w-full" />
-              ))}
-            </div>
-          ) : filteredTree && filteredTree.length > 0 ? (
+        {(() => {
+          if (!selectedProjectId) {
+            return (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Package className="h-12 w-12 mb-4" />
+                <p>Select a project to view its dependency tree</p>
+              </div>
+            )
+          }
+          if (isLoadingTree) {
+            return (
+              <div className="space-y-2">
+                {DEP_TREE_SKELETON_IDS.map((id) => (
+                  <Skeleton key={id} className="h-10 w-full" />
+                ))}
+              </div>
+            )
+          }
+          if (filteredTree && filteredTree.length > 0) {
+            return (
             <div className="space-y-4">
               {/* Summary */}
               <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
@@ -264,18 +278,15 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
                 </div>
               )}
             </div>
-          ) : (
+            )
+          }
+          return (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Package className="h-12 w-12 mb-4" />
               <p>No dependencies found for this project</p>
             </div>
           )
-        ) : (
-          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-            <Package className="h-12 w-12 mb-4" />
-            <p>Select a project to view its dependency tree</p>
-          </div>
-        )}
+        })()}
       </CardContent>
     </Card>
   )

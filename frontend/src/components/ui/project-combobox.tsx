@@ -133,8 +133,8 @@ export function ProjectCombobox({
           <div className="max-h-[300px] overflow-y-auto p-1">
             {isLoading && (
               <div className="space-y-1 p-1">
-                {new Array(5).fill(0).map((_, i) => (
-                  <Skeleton key={i} className="h-9 w-full" />
+                {['pc1', 'pc2', 'pc3', 'pc4', 'pc5'].map((skeletonId) => (
+                  <Skeleton key={skeletonId} className="h-9 w-full" />
                 ))}
               </div>
             )}

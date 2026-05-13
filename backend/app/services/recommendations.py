@@ -105,6 +105,37 @@ class RecommendationEngine:
         self.outdated_threshold_days = OUTDATED_DEPENDENCY_THRESHOLD_DAYS
         self.max_dependency_depth = MAX_DEPENDENCY_DEPTH
 
+    @staticmethod
+    def _collect_typosquat_quality_findings(quality_findings: List[ModelOrDict]) -> List[ModelOrDict]:
+        """Filter quality findings for typosquatting indicators."""
+        typosquat_findings: List[ModelOrDict] = []
+        for f in quality_findings:
+            details = get_attr(f, "details", {})
+            risk_type = details.get("risk_type", "") if isinstance(details, dict) else ""
+            if "typosquat" in risk_type.lower():
+                typosquat_findings.append(f)
+        return typosquat_findings
+
+    def _process_typosquatting(
+        self,
+        recommendations: List[Recommendation],
+        findings_by_type: Dict[str, List[ModelOrDict]],
+    ) -> None:
+        """Detect typosquatting findings (in quality or dedicated type) and queue recommendations."""
+        typosquat_findings = self._collect_typosquat_quality_findings(findings_by_type.get("quality", []))
+        if typosquat_findings:
+            _safe_extend(
+                recommendations,
+                lambda: incidents.process_typosquatting(typosquat_findings),
+                "typosquatting_quality",
+            )
+        if findings_by_type.get("typosquatting"):
+            _safe_extend(
+                recommendations,
+                lambda: incidents.process_typosquatting(findings_by_type["typosquatting"]),
+                "typosquatting",
+            )
+
     async def generate_recommendations(
         self,
         findings: Optional[Sequence[ModelOrDict]] = None,
@@ -316,24 +347,7 @@ class RecommendationEngine:
         )
 
         # Typosquatting
-        typosquat_findings = []
-        for f in findings_by_type.get("quality", []):
-            details = get_attr(f, "details", {})
-            risk_type = details.get("risk_type", "") if isinstance(details, dict) else ""
-            if "typosquat" in risk_type.lower():
-                typosquat_findings.append(f)
-        if typosquat_findings:
-            _safe_extend(
-                recommendations,
-                lambda: incidents.process_typosquatting(typosquat_findings),
-                "typosquatting_quality",
-            )
-        if findings_by_type.get("typosquatting"):
-            _safe_extend(
-                recommendations,
-                lambda: incidents.process_typosquatting(findings_by_type["typosquatting"]),
-                "typosquatting",
-            )
+        self._process_typosquatting(recommendations, findings_by_type)
 
         # 13. End-of-Life Dependencies
         _safe_extend(

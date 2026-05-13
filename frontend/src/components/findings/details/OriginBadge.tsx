@@ -77,8 +77,8 @@ export function OriginBadge({ finding }: { finding: Finding }) {
             <div>
               <span className="text-muted-foreground block mb-1">File Locations ({finding.locations.length}):</span>
               <div className="space-y-1 max-h-32 overflow-y-auto">
-                {finding.locations.map((loc, i) => (
-                  <code key={i} className="block px-2 py-0.5 bg-background rounded text-xs font-mono break-all">
+                {finding.locations.map((loc) => (
+                  <code key={loc} className="block px-2 py-0.5 bg-background rounded text-xs font-mono break-all">
                     {loc}
                   </code>
                 ))}

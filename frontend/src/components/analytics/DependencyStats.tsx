@@ -18,6 +18,8 @@ interface DependencyStatsProps {
   onSelectDependency?: (dep: DependencyUsage) => void;
 }
 
+const DEP_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4', 'ds5']
+
 export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
@@ -65,13 +67,18 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
         </div>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="space-y-2">
-            {new Array(5).fill(0).map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
-          </div>
-        ) : dependencies && dependencies.length > 0 ? (
+        {(() => {
+          if (isLoading) {
+            return (
+              <div className="space-y-2">
+                {DEP_STATS_SKELETON_IDS.map((id) => (
+                  <Skeleton key={id} className="h-12 w-full" />
+                ))}
+              </div>
+            )
+          }
+          if (dependencies && dependencies.length > 0) {
+            return (
           <Table>
             <TableHeader>
               <TableRow>
@@ -126,12 +133,15 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
               ))}
             </TableBody>
           </Table>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-            <Package className="h-12 w-12 mb-4" />
-            <p>No dependencies found</p>
-          </div>
-        )}
+            )
+          }
+          return (
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+              <Package className="h-12 w-12 mb-4" />
+              <p>No dependencies found</p>
+            </div>
+          )
+        })()}
       </CardContent>
     </Card>
   )

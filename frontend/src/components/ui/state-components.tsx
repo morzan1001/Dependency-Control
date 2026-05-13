@@ -36,13 +36,24 @@ interface SkeletonGridProps {
 /**
  * Grid of skeleton cards for loading states
  */
+function getGridColsClass(columns: number): string {
+  if (columns === 1) return ''
+  if (columns === 2) return 'md:grid-cols-2'
+  return 'md:grid-cols-3'
+}
+
+function makeSkeletonIds(prefix: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `${prefix}-${i}`)
+}
+
 export function SkeletonGrid({ rows = 3, columns = 1, className = '' }: SkeletonGridProps) {
-  const gridCols = columns === 1 ? '' : columns === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'
-  
+  const gridCols = getGridColsClass(columns)
+  const skeletonIds = makeSkeletonIds('skeleton-grid', rows * columns)
+
   return (
     <div className={`grid gap-4 ${gridCols} ${className}`}>
-      {new Array(rows * columns).fill(0).map((_, i) => (
-        <Card key={i}>
+      {skeletonIds.map((id) => (
+        <Card key={id}>
           <CardContent className="p-6">
             <Skeleton className="h-4 w-3/4 mb-2" />
             <Skeleton className="h-4 w-1/2" />
@@ -99,15 +110,16 @@ interface CardSkeletonProps {
  * Skeleton for card content
  */
 export function CardSkeleton({ showHeader = true, lines = 3, className = '' }: CardSkeletonProps) {
+  const skeletonIds = makeSkeletonIds('skeleton-card-line', lines)
   return (
     <Card className={className}>
       <CardContent className="p-6">
         {showHeader && <Skeleton className="h-6 w-1/3 mb-4" />}
         <div className="space-y-2">
-          {new Array(lines).fill(0).map((_, i) => (
-            <Skeleton 
-              key={i} 
-              className={`h-4 ${i === lines - 1 ? 'w-2/3' : 'w-full'}`} 
+          {skeletonIds.map((id, i) => (
+            <Skeleton
+              key={id}
+              className={`h-4 ${i === lines - 1 ? 'w-2/3' : 'w-full'}`}
             />
           ))}
         </div>

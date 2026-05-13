@@ -524,6 +524,89 @@ async def read_project(
     return project
 
 
+async def _load_project_for_update(
+    project_id: str,
+    current_user: User,
+    db: Any,
+    project_repo: ProjectRepository,
+) -> Project:
+    """Load the project for an update request and verify the caller can edit it."""
+    if has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
+        project = await project_repo.get_by_id(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+        return project
+    return await check_project_access(project_id, current_user, db, required_role="admin")
+
+
+async def _assert_can_transfer_team(
+    project: Project,
+    project_in: ProjectUpdate,
+    current_user: User,
+    team_repo: TeamRepository,
+) -> None:
+    """Block team transfers unless the actor is a global admin or member of the target team."""
+    if not project_in.team_id or project_in.team_id == project.team_id:
+        return
+    if has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
+        return
+    is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
+    if not is_member:
+        raise HTTPException(status_code=403, detail="You are not a member of the target team")
+
+
+async def _assert_gitlab_mr_token_present(
+    project: Project,
+    update_data: Dict[str, Any],
+    db: Any,
+) -> None:
+    """Reject MR-decoration enablement when the linked GitLab instance lacks a token."""
+    mr_enabled = update_data.get("gitlab_mr_comments_enabled", project.gitlab_mr_comments_enabled)
+    instance_id = update_data.get("gitlab_instance_id", project.gitlab_instance_id)
+    if not (mr_enabled and instance_id):
+        return
+    from app.repositories.gitlab_instances import GitLabInstanceRepository
+
+    instance_repo = GitLabInstanceRepository(db)
+    gitlab_instance = await instance_repo.get_by_id(instance_id)
+    if gitlab_instance and not gitlab_instance.access_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot enable MR decoration: the linked GitLab instance has no access token configured",
+        )
+
+
+async def _audit_license_policy_change(
+    db: Any,
+    project_id: str,
+    old_license_policy: Optional[Dict[str, Any]],
+    updated_project: Project,
+    actor: User,
+) -> None:
+    """Record a best-effort license-policy audit entry; never blocks the caller."""
+    try:
+        new_license_policy = _resolve_license_policy(updated_project)
+        if old_license_policy == new_license_policy:
+            return
+        from app.schemas.policy_audit import PolicyAuditAction
+        from app.services.audit.history import record_license_policy_change
+
+        action = PolicyAuditAction.CREATE if not old_license_policy else PolicyAuditAction.UPDATE
+        await record_license_policy_change(
+            db,
+            project_id=project_id,
+            old_policy=old_license_policy,
+            new_policy=new_license_policy,
+            action=action,
+            actor=actor,
+            comment=None,
+        )
+    except Exception:  # pragma: no cover - defensive
+        logging.getLogger(__name__).exception(
+            "License-policy audit for project %s failed (non-blocking)", project_id
+        )
+
+
 @router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_404)
 async def update_project(
     project_id: str,
@@ -538,37 +621,11 @@ async def update_project(
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    if has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
-        project = await project_repo.get_by_id(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-    else:
-        project = await check_project_access(project_id, current_user, db, required_role="admin")
-
-    # If transferring to a team, verify membership
-    if project_in.team_id and project_in.team_id != project.team_id:
-        # Check if user is member of the new team
-        # Exception: Users with project:update can transfer to any team
-        if not has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
-            is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
-            if not is_member:
-                raise HTTPException(status_code=403, detail="You are not a member of the target team")
+    project = await _load_project_for_update(project_id, current_user, db, project_repo)
+    await _assert_can_transfer_team(project, project_in, current_user, team_repo)
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
-
-    # Validate MR decoration requires a token on the linked GitLab instance
-    mr_enabled = update_data.get("gitlab_mr_comments_enabled", project.gitlab_mr_comments_enabled)
-    instance_id = update_data.get("gitlab_instance_id", project.gitlab_instance_id)
-    if mr_enabled and instance_id:
-        from app.repositories.gitlab_instances import GitLabInstanceRepository
-
-        instance_repo = GitLabInstanceRepository(db)
-        gitlab_instance = await instance_repo.get_by_id(instance_id)
-        if gitlab_instance and not gitlab_instance.access_token:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot enable MR decoration: the linked GitLab instance has no access token configured",
-            )
+    await _assert_gitlab_mr_token_present(project, update_data, db)
 
     # Apply system settings enforcement
     system_settings = await deps.get_system_settings(db)
@@ -585,34 +642,13 @@ async def update_project(
         await project_repo.update(project_id, update_data)
 
     updated_project = await project_repo.get_by_id(project_id)
-    if updated_project:
-        # Best-effort license-policy audit. Any failure must not block
-        # the project update; record_license_policy_change itself is
-        # already fail-soft internally.
-        try:
-            new_license_policy = _resolve_license_policy(updated_project)
-            if old_license_policy != new_license_policy:
-                from app.schemas.policy_audit import PolicyAuditAction
-                from app.services.audit.history import record_license_policy_change
+    if not updated_project:
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
-                action = PolicyAuditAction.CREATE if not old_license_policy else PolicyAuditAction.UPDATE
-                await record_license_policy_change(
-                    db,
-                    project_id=project_id,
-                    old_policy=old_license_policy,
-                    new_policy=new_license_policy,
-                    action=action,
-                    actor=current_user,
-                    comment=None,
-                )
-        except Exception:  # pragma: no cover - defensive
-            import logging
-
-            logging.getLogger(__name__).exception(
-                "License-policy audit for project %s failed (non-blocking)", project_id
-            )
-        return updated_project
-    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    await _audit_license_policy_change(
+        db, project_id, old_license_policy, updated_project, current_user
+    )
+    return updated_project
 
 
 def _resolve_license_policy(project: Project) -> Optional[Dict[str, Any]]:
@@ -1127,6 +1163,135 @@ def _build_scan_findings_match(
     return query
 
 
+def _scan_findings_lookup_stage() -> Dict[str, Any]:
+    """The ``$lookup`` stage that pulls dependency info into each finding."""
+    return {
+        "$lookup": {
+            "from": "dependencies",
+            "let": {
+                "scan_id": "$scan_id",
+                "component": "$component",
+                "version": "$version",
+            },
+            "pipeline": [
+                {
+                    "$match": {
+                        "$expr": {
+                            "$and": [
+                                {"$eq": ["$scan_id", "$$scan_id"]},
+                                {"$eq": ["$name", "$$component"]},
+                                {"$eq": ["$version", "$$version"]},
+                            ]
+                        }
+                    }
+                },
+                {"$limit": 1},
+                {
+                    "$project": {
+                        "source_type": 1,
+                        "source_target": 1,
+                        "layer_digest": 1,
+                        "found_by": 1,
+                        "locations": 1,
+                        "purl": 1,
+                        "direct": 1,
+                        "direct_inferred": 1,
+                    }
+                },
+            ],
+            "as": "dependency_info",
+        }
+    }
+
+
+def _scan_findings_add_fields_stage() -> Dict[str, Any]:
+    """The ``$addFields`` stage that ranks severity and flattens dependency info."""
+    return {
+        "$addFields": {
+            "severity_rank": {
+                "$switch": {
+                    "branches": [
+                        {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 5},
+                        {"case": {"$eq": ["$severity", "HIGH"]}, "then": 4},
+                        {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 3},
+                        {"case": {"$eq": ["$severity", "LOW"]}, "then": 2},
+                        {"case": {"$eq": ["$severity", "INFO"]}, "then": 1},
+                    ],
+                    "default": 0,
+                }
+            },
+            # Map finding_id to id for frontend compatibility
+            "id": "$finding_id",
+            # Flatten dependency info
+            "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
+            "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
+            "layer_digest": {"$arrayElemAt": ["$dependency_info.layer_digest", 0]},
+            "found_by": {"$arrayElemAt": ["$dependency_info.found_by", 0]},
+            "locations": {"$arrayElemAt": ["$dependency_info.locations", 0]},
+            "purl": {"$arrayElemAt": ["$dependency_info.purl", 0]},
+            "direct": {"$arrayElemAt": ["$dependency_info.direct", 0]},
+            "direct_inferred": {"$arrayElemAt": ["$dependency_info.direct_inferred", 0]},
+        }
+    }
+
+
+def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> Dict[str, Any]:
+    """Compose the ``$sort`` stage, honouring the severity-rank shortcut."""
+    sort_dir = -1 if sort_order == "desc" else 1
+    if sort_by == "severity":
+        return {"$sort": {"severity_rank": sort_dir, "component": 1}}
+    return {"$sort": {sort_by: sort_dir}}
+
+
+def _build_scan_findings_pipeline(
+    query: Dict[str, Any],
+    *,
+    sort_by: str,
+    sort_order: str,
+    skip: int,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Compose the full aggregation pipeline used by ``read_scan_findings``."""
+    return [
+        {"$match": query},
+        _scan_findings_lookup_stage(),
+        _scan_findings_add_fields_stage(),
+        # Remove the temporary lookup array and exclude MongoDB _id
+        {"$project": {"dependency_info": 0, "_id": 0}},
+        _scan_findings_sort_stage(sort_by, sort_order),
+        {
+            "$facet": {
+                "metadata": [{"$count": "total"}],
+                "data": [{"$skip": skip}, {"$limit": limit}],
+            }
+        },
+    ]
+
+
+def _unpack_scan_findings_facet(result: List[Dict[str, Any]]) -> tuple:
+    """Pull ``(data, total)`` out of the ``$facet`` result envelope."""
+    if not result:
+        return [], 0
+    bucket = result[0]
+    data = bucket.get("data") or []
+    metadata = bucket.get("metadata") or []
+    total = metadata[0]["total"] if metadata else 0
+    return data, total
+
+
+async def _resolve_scan_for_findings(
+    scan_id: str,
+    current_user: User,
+    db: Any,
+) -> None:
+    """Look up the scan and verify the caller can access its project."""
+    scan_repo = ScanRepository(db)
+    scan = await scan_repo.get_minimal_by_id(scan_id)
+    if not scan or not scan.project_id:
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
+    await check_project_access(scan.project_id, current_user, db)
+
+
 @router.get(
     "/scans/{scan_id}/findings",
     response_model=ScanFindingsResponse,
@@ -1152,16 +1317,7 @@ async def read_scan_findings(
     """
     Get paginated findings for a scan.
     """
-    scan_repo = ScanRepository(db)
-    finding_repo = FindingRepository(db)
-
-    # Check access
-    scan = await scan_repo.get_minimal_by_id(scan_id)
-    if not scan:
-        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-    if not scan.project_id:
-        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-    await check_project_access(scan.project_id, current_user, db)
+    await _resolve_scan_for_findings(scan_id, current_user, db)
 
     query = _build_scan_findings_match(
         scan_id,
@@ -1173,101 +1329,17 @@ async def read_scan_findings(
         hide_info=hide_info,
         waived=waived,
     )
-
-    # Severity Ranking for sorting
-    pipeline: List[Dict[str, Any]] = [
-        {"$match": query},
-        # Lookup dependency info to get source details
-        {
-            "$lookup": {
-                "from": "dependencies",
-                "let": {
-                    "scan_id": "$scan_id",
-                    "component": "$component",
-                    "version": "$version",
-                },
-                "pipeline": [
-                    {
-                        "$match": {
-                            "$expr": {
-                                "$and": [
-                                    {"$eq": ["$scan_id", "$$scan_id"]},
-                                    {"$eq": ["$name", "$$component"]},
-                                    {"$eq": ["$version", "$$version"]},
-                                ]
-                            }
-                        }
-                    },
-                    {"$limit": 1},
-                    {
-                        "$project": {
-                            "source_type": 1,
-                            "source_target": 1,
-                            "layer_digest": 1,
-                            "found_by": 1,
-                            "locations": 1,
-                            "purl": 1,
-                            "direct": 1,
-                            "direct_inferred": 1,
-                        }
-                    },
-                ],
-                "as": "dependency_info",
-            }
-        },
-        {
-            "$addFields": {
-                "severity_rank": {
-                    "$switch": {
-                        "branches": [
-                            {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 5},
-                            {"case": {"$eq": ["$severity", "HIGH"]}, "then": 4},
-                            {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 3},
-                            {"case": {"$eq": ["$severity", "LOW"]}, "then": 2},
-                            {"case": {"$eq": ["$severity", "INFO"]}, "then": 1},
-                        ],
-                        "default": 0,
-                    }
-                },
-                # Map finding_id to id for frontend compatibility
-                "id": "$finding_id",
-                # Flatten dependency info
-                "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
-                "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
-                "layer_digest": {"$arrayElemAt": ["$dependency_info.layer_digest", 0]},
-                "found_by": {"$arrayElemAt": ["$dependency_info.found_by", 0]},
-                "locations": {"$arrayElemAt": ["$dependency_info.locations", 0]},
-                "purl": {"$arrayElemAt": ["$dependency_info.purl", 0]},
-                "direct": {"$arrayElemAt": ["$dependency_info.direct", 0]},
-                "direct_inferred": {"$arrayElemAt": ["$dependency_info.direct_inferred", 0]},
-            }
-        },
-        # Remove the temporary lookup array and exclude MongoDB _id
-        {"$project": {"dependency_info": 0, "_id": 0}},
-    ]
-
-    # Sorting
-    sort_dir = -1 if sort_order == "desc" else 1
-    if sort_by == "severity":
-        pipeline.append({"$sort": {"severity_rank": sort_dir, "component": 1}})
-    else:
-        pipeline.append({"$sort": {sort_by: sort_dir}})
-
-    # Pagination
-    pipeline.append(
-        {
-            "$facet": {
-                "metadata": [{"$count": "total"}],
-                "data": [{"$skip": skip}, {"$limit": limit}],
-            }
-        }
+    pipeline = _build_scan_findings_pipeline(
+        query,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        skip=skip,
+        limit=limit,
     )
 
+    finding_repo = FindingRepository(db)
     result = await finding_repo.aggregate(pipeline)
-
-    data = result[0]["data"] if result else []
-    metadata = result[0]["metadata"] if result else []
-    total = metadata[0]["total"] if metadata else 0
+    data, total = _unpack_scan_findings_facet(result)
 
     return build_pagination_response(data, total, skip, limit)
 
@@ -1302,6 +1374,64 @@ async def get_scan_stats(
     return aggregate_stats_by_category(results)
 
 
+def _find_project_member_index(project: Project, user_id: str) -> int:
+    """Return the index of ``user_id`` within ``project.members`` or raise 404."""
+    for i, member in enumerate(project.members):
+        if member.user_id == user_id:
+            return i
+    raise HTTPException(status_code=404, detail="User is not a member of this project")
+
+
+async def _count_team_admins(project: Project, db: Any) -> int:
+    """Return the number of admins on the project's owning team (0 if no team)."""
+    if not project.team_id:
+        return 0
+    team_repo = TeamRepository(db)
+    team = await team_repo.get_raw_by_id(project.team_id)
+    if not team:
+        return 0
+    return sum(1 for m in team.get("members", []) if m.get("role") == "admin")
+
+
+async def _assert_not_demoting_last_admin(
+    project: Project,
+    member_index: int,
+    member_in: ProjectMemberUpdate,
+    db: Any,
+) -> None:
+    """Refuse to demote the final admin across direct and team membership."""
+    current_member = project.members[member_index]
+    is_demotion = (
+        current_member.role == "admin"
+        and member_in.role
+        and member_in.role != "admin"
+    )
+    if not is_demotion:
+        return
+    direct_admin_count = sum(1 for m in project.members if m.role == "admin")
+    team_admin_count = await _count_team_admins(project, db)
+    if direct_admin_count + team_admin_count <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot demote the last admin. Add another admin first.",
+        )
+
+
+def _build_member_update_fields(
+    member_index: int,
+    member_in: ProjectMemberUpdate,
+) -> Dict[str, Any]:
+    """Compose the Mongo ``$set`` payload for an in-place member update."""
+    update_fields: Dict[str, Any] = {}
+    if member_in.role:
+        update_fields[f"members.{member_index}.role"] = member_in.role
+    if member_in.notification_preferences:
+        update_fields[f"members.{member_index}.notification_preferences"] = (
+            member_in.notification_preferences
+        )
+    return update_fields
+
+
 @router.put(
     "/{project_id}/members/{user_id}",
     summary="Update project member role",
@@ -1320,44 +1450,18 @@ async def update_project_member(
     """
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
-    # Check if target user is a member
-    member_index = -1
-    for i, member in enumerate(project.members):
-        if member.user_id == user_id:
-            member_index = i
-            break
+    member_index = _find_project_member_index(project, user_id)
+    await _assert_not_demoting_last_admin(project, member_index, member_in, db)
 
-    if member_index == -1:
-        raise HTTPException(status_code=404, detail="User is not a member of this project")
-
-    # Prevent demoting the last admin (count both direct and team admins)
-    current_member = project.members[member_index]
-    if current_member.role == "admin" and member_in.role and member_in.role != "admin":
-        direct_admin_count = sum(1 for m in project.members if m.role == "admin")
-        team_admin_count = 0
-        if project.team_id:
-            team_repo = TeamRepository(db)
-            team = await team_repo.get_raw_by_id(project.team_id)
-            if team:
-                team_admin_count = sum(1 for m in team.get("members", []) if m.get("role") in ("admin"))
-        if direct_admin_count + team_admin_count <= 1:
-            raise HTTPException(status_code=400, detail="Cannot demote the last admin. Add another admin first.")
-
+    update_fields = _build_member_update_fields(member_index, member_in)
     project_repo = ProjectRepository(db)
-
-    update_fields: Dict[str, Any] = {}
-    if member_in.role:
-        update_fields[f"members.{member_index}.role"] = member_in.role
-    if member_in.notification_preferences:
-        update_fields[f"members.{member_index}.notification_preferences"] = member_in.notification_preferences
-
     if update_fields:
         await project_repo.update_member(project_id, user_id, update_fields)
 
     updated_project = await project_repo.get_by_id(project_id)
-    if updated_project:
-        return updated_project
-    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    if not updated_project:
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    return updated_project
 
 
 @router.delete(

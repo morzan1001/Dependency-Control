@@ -430,7 +430,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                     </div>
                 )}
 
-                {projectSource !== "github" && (gitlabInstances?.items?.length ?? 0) > 0 && (
+                {(projectSource === "gitlab" || projectSource === "none") && (gitlabInstances?.items?.length ?? 0) > 0 && (
                     <div className="grid gap-2">
                         <Label>GitLab Integration</Label>
                         <div className="border rounded-md p-4 space-y-4">

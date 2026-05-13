@@ -242,6 +242,51 @@ class GitLabService:
 
         return None
 
+    async def _fetch_jwks_from_uri(
+        self,
+        client: InstrumentedAsyncClient,
+        jwks_uri: str,
+        cache_key: str,
+    ) -> Optional[dict]:
+        """Fetch JWKS from a known URI and cache it; returns None if unavailable."""
+        response = await client.get(jwks_uri)
+        if response.status_code != 200:
+            return None
+        jwks: dict[Any, Any] = response.json()
+        await cache_service.set(cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
+        return jwks
+
+    async def _fetch_jwks_from_fallbacks(
+        self,
+        client: InstrumentedAsyncClient,
+        cache_key: str,
+    ) -> Optional[dict]:
+        """Try common fallback JWKS endpoints; returns None if all fail."""
+        for path in ["/oauth/discovery/keys", "/-/jwks"]:
+            response = await client.get(f"{self.base_url}{path}")
+            if response.status_code == 200:
+                jwks_fallback: dict[Any, Any] = response.json()
+                await cache_service.set(cache_key, jwks_fallback, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
+                logger.info(f"JWKS fetched from fallback path: {path}")
+                return jwks_fallback
+        return None
+
+    async def _try_fetch_jwks_once(self, cache_key: str) -> Optional[dict]:
+        """Single attempt to fetch JWKS via discovery + fallbacks. Returns {} on definitive failure."""
+        async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
+            jwks_uri = await self._get_jwks_uri()
+            if jwks_uri:
+                jwks = await self._fetch_jwks_from_uri(client, jwks_uri, cache_key)
+                if jwks is not None:
+                    return jwks
+
+            fallback = await self._fetch_jwks_from_fallbacks(client, cache_key)
+            if fallback is not None:
+                return fallback
+
+            logger.error(f"Failed to fetch JWKS from any known endpoint for {self.base_url}")
+            return {}
+
     async def get_jwks(self) -> Optional[dict]:
         """
         Fetches and caches the JWKS from GitLab.
@@ -258,35 +303,14 @@ class GitLabService:
         import asyncio as _asyncio
 
         for attempt in range(3):
-            async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
-                try:
-                    # Try to get JWKS URI from discovery document
-                    jwks_uri = await self._get_jwks_uri()
-
-                    if jwks_uri:
-                        response = await client.get(jwks_uri)
-                        if response.status_code == 200:
-                            jwks: dict[Any, Any] = response.json()
-                            await cache_service.set(cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
-                            return jwks
-
-                    # Fallback: Try common JWKS endpoints
-                    for path in ["/oauth/discovery/keys", "/-/jwks"]:
-                        response = await client.get(f"{self.base_url}{path}")
-                        if response.status_code == 200:
-                            jwks_fallback: dict[Any, Any] = response.json()
-                            await cache_service.set(cache_key, jwks_fallback, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
-                            logger.info(f"JWKS fetched from fallback path: {path}")
-                            return jwks_fallback
-
-                    logger.error(f"Failed to fetch JWKS from any known endpoint for {self.base_url}")
-                    return {}
-                except Exception as e:
-                    logger.warning(
-                        f"JWKS fetch attempt {attempt + 1}/3 failed for {self.base_url}: {type(e).__name__}: {e}"
-                    )
-                    if attempt < 2:
-                        await _asyncio.sleep(1)
+            try:
+                return await self._try_fetch_jwks_once(cache_key)
+            except Exception as e:
+                logger.warning(
+                    f"JWKS fetch attempt {attempt + 1}/3 failed for {self.base_url}: {type(e).__name__}: {e}"
+                )
+                if attempt < 2:
+                    await _asyncio.sleep(1)
         logger.error(f"JWKS fetch failed after 3 attempts for {self.base_url}")
         return {}
 

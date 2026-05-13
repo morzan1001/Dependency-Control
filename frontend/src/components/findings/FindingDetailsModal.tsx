@@ -49,14 +49,21 @@ function MatchedSymbolsList({ symbols }: { symbols: string[] }) {
     )
 }
 
+function getAliasLink(alias: string): string | null {
+    if (alias.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${alias}`;
+    if (alias.startsWith('GHSA-')) return `https://github.com/advisories/${alias}`;
+    return null;
+}
+
+function getExploitMaturityClass(maturity: string | null | undefined): string {
+    if (maturity === 'high') return 'text-severity-critical font-medium';
+    if (maturity === 'functional') return 'text-severity-high';
+    if (maturity === 'poc') return 'text-severity-medium';
+    return '';
+}
+
 function AliasLink({ alias }: { alias: string }) {
-    const isCve = alias.startsWith('CVE-');
-    const isGhsa = alias.startsWith('GHSA-');
-    const link = isCve
-        ? `https://nvd.nist.gov/vuln/detail/${alias}`
-        : isGhsa
-            ? `https://github.com/advisories/${alias}`
-            : null;
+    const link = getAliasLink(alias);
 
     if (link) {
         return (
@@ -517,11 +524,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                             {(vuln.exploit_maturity || finding.details?.exploit_maturity) && (
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="font-medium text-muted-foreground">Exploit:</span>
-                                                                    <span className={`${
-                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'high' ? 'text-severity-critical font-medium' :
-                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'functional' ? 'text-severity-high' :
-                                                                        (vuln.exploit_maturity || finding.details?.exploit_maturity) === 'poc' ? 'text-severity-medium' : ''
-                                                                    }`}>{vuln.exploit_maturity || finding.details?.exploit_maturity}</span>
+                                                                    <span className={getExploitMaturityClass(vuln.exploit_maturity || finding.details?.exploit_maturity)}>{vuln.exploit_maturity || finding.details?.exploit_maturity}</span>
                                                                 </div>
                                                             )}
                                                             {(vuln.details?.published_date || finding.details?.published_date) && (

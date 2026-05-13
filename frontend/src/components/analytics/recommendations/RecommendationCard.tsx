@@ -183,8 +183,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   )}
                   {recommendation.action.commands && recommendation.action.commands.length > 0 && (
                     <div className="mt-2 space-y-1 font-mono text-xs">
-                      {recommendation.action.commands.map((cmd, i) => (
-                        <div key={i} className="text-muted-foreground">{cmd}</div>
+                      {recommendation.action.commands.map((cmd) => (
+                        <div key={cmd} className="text-muted-foreground">{cmd}</div>
                       ))}
                     </div>
                   )}
@@ -205,8 +205,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   </div>
                   {recommendation.action.suggestions && (
                     <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s, i) => (
-                        <li key={i}>{s}</li>
+                      {recommendation.action.suggestions.map((s) => (
+                        <li key={s}>{s}</li>
                       ))}
                     </ul>
                   )}
@@ -221,8 +221,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   Options
                 </h5>
                 <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                  {recommendation.action.options?.map((opt, i) => (
-                    <li key={i}>{opt}</li>
+                  {recommendation.action.options?.map((opt) => (
+                    <li key={opt}>{opt}</li>
                   ))}
                 </ul>
               </div>
@@ -272,8 +272,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                     <div>
                       <span className="text-muted-foreground">Affected Files:</span>
                       <ul className="list-disc list-inside mt-1">
-                        {recommendation.action.files.slice(0, 5).map((file, i) => (
-                          <li key={i} className="font-mono text-xs">{file}</li>
+                        {recommendation.action.files.slice(0, 5).map((file) => (
+                          <li key={file} className="font-mono text-xs">{file}</li>
                         ))}
                         {recommendation.action.files.length > 5 && (
                           <li className="text-muted-foreground">...and {recommendation.action.files.length - 5} more</li>
@@ -285,8 +285,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                     <div className="mt-2">
                       <span className="text-muted-foreground">Rules: </span>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {recommendation.action.rule_ids.map((rule, i) => (
-                          <Badge key={i} variant="outline">{rule}</Badge>
+                        {recommendation.action.rule_ids.map((rule) => (
+                          <Badge key={rule} variant="outline">{rule}</Badge>
                         ))}
                       </div>
                     </div>
@@ -318,8 +318,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                     <div className="mt-2">
                       <span className="text-muted-foreground">Affected Files:</span>
                       <ul className="list-disc list-inside mt-1 font-mono text-xs">
-                        {recommendation.action.files.slice(0, 5).map((file, i) => (
-                          <li key={i}>{file}</li>
+                        {recommendation.action.files.slice(0, 5).map((file) => (
+                          <li key={file}>{file}</li>
                         ))}
                         {recommendation.action.files.length > 5 && (
                           <li className="text-muted-foreground">...and {recommendation.action.files.length - 5} more</li>
@@ -349,8 +349,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                     <div className="mt-2">
                       <span className="text-muted-foreground">Components:</span>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {recommendation.action.components.map((comp, i) => (
-                          <Badge key={i} variant="secondary">{comp}</Badge>
+                        {recommendation.action.components.map((comp) => (
+                          <Badge key={comp} variant="secondary">{comp}</Badge>
                         ))}
                       </div>
                     </div>
@@ -394,8 +394,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   Outdated Packages
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.packages.map((pkg, i) => (
-                    <div key={i} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
+                  {recommendation.action.packages.map((pkg) => (
+                    <div key={pkg.name} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
                       <div>
                         <span className="font-medium">{pkg.name}</span>
                         <span className="text-muted-foreground"> v{pkg.current}</span>
@@ -416,8 +416,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   Version Fragmentation
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-3 max-h-[300px] overflow-y-auto">
-                  {recommendation.action.packages.map((pkg, i) => (
-                    <div key={i} className="border-b last:border-0 pb-2 last:pb-0">
+                  {recommendation.action.packages.map((pkg) => (
+                    <div key={pkg.name} className="border-b last:border-0 pb-2 last:pb-0">
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{pkg.name}</span>
                         <Badge variant="secondary" className="text-xs">
@@ -438,8 +438,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
                 {recommendation.action.commands && (
                   <div className="mt-3 p-2 bg-muted/50 rounded font-mono text-xs text-muted-foreground">
-                    {recommendation.action.commands.map((cmd, i) => (
-                      <div key={i}>{cmd}</div>
+                    {recommendation.action.commands.map((cmd) => (
+                      <div key={cmd}>{cmd}</div>
                     ))}
                   </div>
                 )}
@@ -458,8 +458,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                     <div>
                       <span className="text-muted-foreground">New Critical CVEs: </span>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {recommendation.action.new_critical_cves.map((cve, i) => (
-                          <Badge key={i} variant="destructive">{cve}</Badge>
+                        {recommendation.action.new_critical_cves.map((cve) => (
+                          <Badge key={cve} variant="destructive">{cve}</Badge>
                         ))}
                       </div>
                     </div>
@@ -483,17 +483,17 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                     <div>
                       <span className="text-muted-foreground">Recurring CVEs: </span>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {recommendation.action.cves.map((cve, i) => {
+                        {recommendation.action.cves.map((cve) => {
                           const cveStr = typeof cve === 'string' ? cve : cve.cve
-                          return <Badge key={i} variant="outline">{cveStr}</Badge>
+                          return <Badge key={cveStr} variant="outline">{cveStr}</Badge>
                         })}
                       </div>
                     </div>
                   )}
                   {recommendation.action.suggestions && (
                     <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s, i) => (
-                        <li key={i}>{s}</li>
+                      {recommendation.action.suggestions.map((s) => (
+                        <li key={s}>{s}</li>
                       ))}
                     </ul>
                   )}
@@ -509,8 +509,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   Deep Dependency Chains
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.deepest_chains.map((chain, i) => (
-                    <div key={i} className="border-b last:border-0 pb-2 last:pb-0">
+                  {recommendation.action.deepest_chains.map((chain) => (
+                    <div key={chain.package} className="border-b last:border-0 pb-2 last:pb-0">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{chain.package}</span>
                         <Badge variant="secondary">Depth: {chain.depth}</Badge>
@@ -524,8 +524,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   ))}
                   {recommendation.action.suggestions && (
                     <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s, i) => (
-                        <li key={i}>{s}</li>
+                      {recommendation.action.suggestions.map((s) => (
+                        <li key={s}>{s}</li>
                       ))}
                     </ul>
                   )}
@@ -541,12 +541,12 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   Duplicate Functionality
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-3">
-                  {recommendation.action.duplicates.map((dup, i) => (
-                    <div key={i} className="border-b last:border-0 pb-2 last:pb-0">
+                  {recommendation.action.duplicates.map((dup) => (
+                    <div key={dup.category} className="border-b last:border-0 pb-2 last:pb-0">
                       <div className="font-medium text-amber-500">{dup.category}</div>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {dup.found.map((pkg, j) => (
-                          <Badge key={j} variant="secondary">{pkg}</Badge>
+                        {dup.found.map((pkg) => (
+                          <Badge key={pkg} variant="secondary">{pkg}</Badge>
                         ))}
                       </div>
                       <div className="text-xs text-muted-foreground mt-1">{dup.suggestion}</div>
@@ -564,8 +564,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   Cross-Project Vulnerabilities
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {(recommendation.action.cves as CrossProjectCve[]).map((cve, i) => (
-                    <div key={i} className="border-b last:border-0 pb-2 last:pb-0">
+                  {(recommendation.action.cves as CrossProjectCve[]).map((cve) => (
+                    <div key={cve.cve} className="border-b last:border-0 pb-2 last:pb-0">
                       <div className="flex items-center gap-2">
                         <Badge variant="destructive">{cve.cve}</Badge>
                         <span className="text-muted-foreground">affects {cve.total_affected} projects</span>
@@ -594,8 +594,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   Priority Projects
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.priority_projects.map((proj, i) => (
-                    <div key={i} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
+                  {recommendation.action.priority_projects.map((proj) => (
+                    <div key={proj.name} className="flex items-center justify-between border-b last:border-0 pb-2 last:pb-0">
                       <span className="font-medium">{proj.name}</span>
                       <div className="flex gap-2">
                         <Badge variant="destructive">{proj.critical} Critical</Badge>
@@ -615,8 +615,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   Version Standardization Across Projects
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-3">
-                  {recommendation.action.packages.map((pkg, i) => (
-                    <div key={i} className="border-b last:border-0 pb-2 last:pb-0">
+                  {recommendation.action.packages.map((pkg) => (
+                    <div key={pkg.name} className="border-b last:border-0 pb-2 last:pb-0">
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{pkg.name}</span>
                         {pkg.project_count && (
@@ -637,8 +637,8 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                   ))}
                   {recommendation.action.suggestions && (
                     <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2 text-xs">
-                      {recommendation.action.suggestions.map((s, i) => (
-                        <li key={i}>{s}</li>
+                      {recommendation.action.suggestions.map((s) => (
+                        <li key={s}>{s}</li>
                       ))}
                     </ul>
                   )}
@@ -651,19 +651,18 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
               <div className="space-y-2">
                 <h5 className="text-sm font-medium">Related Vulnerabilities</h5>
                 <div className="flex flex-wrap gap-1">
-                  {recommendation.action.cves.map((cveItem, idx) => {
+                  {recommendation.action.cves.map((cveItem) => {
                     const cve = typeof cveItem === 'string' ? cveItem : cveItem.cve
-                    const isCve = cve.startsWith('CVE-');
-                    const isGhsa = cve.startsWith('GHSA-');
-                    const link = isCve
-                      ? `https://nvd.nist.gov/vuln/detail/${cve}`
-                      : isGhsa
-                        ? `https://github.com/advisories/${cve}`
-                        : null;
+                    let link: string | null = null
+                    if (cve.startsWith('CVE-')) {
+                      link = `https://nvd.nist.gov/vuln/detail/${cve}`
+                    } else if (cve.startsWith('GHSA-')) {
+                      link = `https://github.com/advisories/${cve}`
+                    }
 
                     return link ? (
                       <a
-                        key={`${cve}-${idx}`}
+                        key={cve}
                         href={link}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -676,7 +675,7 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                         </Badge>
                       </a>
                     ) : (
-                      <Badge key={`${cve}-${idx}`} variant="outline">{cve}</Badge>
+                      <Badge key={cve} variant="outline">{cve}</Badge>
                     );
                   })}
                 </div>

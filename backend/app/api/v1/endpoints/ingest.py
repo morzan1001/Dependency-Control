@@ -226,6 +226,56 @@ async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_i
 _DEP_CHUNK_SIZE = 500
 
 
+async def _insert_dependencies_chunked(
+    parsed_sbom: Any,
+    project_id: str,
+    scan_id: str,
+    dep_repo: "DependencyRepository",
+) -> int:
+    """Insert parsed dependencies in chunks. Returns total inserted."""
+    total_inserted = 0
+    chunk: List[Dict[str, Any]] = []
+    for parsed_dep in parsed_sbom.dependencies:
+        dep = _parsed_dep_to_dependency(parsed_dep, project_id, scan_id)
+        chunk.append(dep.model_dump(by_alias=True))
+        if len(chunk) >= _DEP_CHUNK_SIZE:
+            total_inserted += await dep_repo.create_many_raw(chunk)
+            chunk.clear()
+    if chunk:
+        total_inserted += await dep_repo.create_many_raw(chunk)
+        chunk.clear()
+    return total_inserted
+
+
+async def _parse_and_store_sbom_deps(
+    sbom: Any,
+    project_id: str,
+    scan_id: str,
+    dep_repo: "DependencyRepository",
+    old_deps_deleted: bool,
+) -> tuple[int, bool]:
+    """Parse one SBOM, ensure old deps are deleted once, insert new deps in chunks.
+
+    Returns (deps_inserted, old_deps_deleted_after).
+    """
+    parsed_sbom = parse_sbom(sbom)
+    logger.info(
+        f"Parsed SBOM: format={parsed_sbom.format.value}, "
+        f"total={parsed_sbom.total_components}, "
+        f"parsed={parsed_sbom.parsed_components}, "
+        f"skipped={parsed_sbom.skipped_components}"
+    )
+
+    if not old_deps_deleted:
+        deleted_count = await dep_repo.delete_by_scan(scan_id)
+        if deleted_count:
+            logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
+        old_deps_deleted = True
+
+    inserted = await _insert_dependencies_chunked(parsed_sbom, project_id, scan_id, dep_repo)
+    return inserted, old_deps_deleted
+
+
 async def _process_sboms(
     sboms: List[Any],
     fs: AsyncIOMotorGridFSBucket,
@@ -258,33 +308,10 @@ async def _process_sboms(
             continue
 
         try:
-            parsed_sbom = parse_sbom(sbom)
-            logger.info(
-                f"Parsed SBOM: format={parsed_sbom.format.value}, "
-                f"total={parsed_sbom.total_components}, "
-                f"parsed={parsed_sbom.parsed_components}, "
-                f"skipped={parsed_sbom.skipped_components}"
+            inserted, old_deps_deleted = await _parse_and_store_sbom_deps(
+                sbom, project_id, scan_id, dep_repo, old_deps_deleted
             )
-
-            # Delete old dependencies once before the first insert
-            if not old_deps_deleted:
-                deleted_count = await dep_repo.delete_by_scan(scan_id)
-                if deleted_count:
-                    logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
-                old_deps_deleted = True
-
-            # Insert dependencies in chunks instead of accumulating all in memory
-            chunk: List[Dict[str, Any]] = []
-            for parsed_dep in parsed_sbom.dependencies:
-                dep = _parsed_dep_to_dependency(parsed_dep, project_id, scan_id)
-                chunk.append(dep.model_dump(by_alias=True))
-                if len(chunk) >= _DEP_CHUNK_SIZE:
-                    total_deps_inserted += await dep_repo.create_many_raw(chunk)
-                    chunk.clear()
-            if chunk:
-                total_deps_inserted += await dep_repo.create_many_raw(chunk)
-                chunk.clear()
-
+            total_deps_inserted += inserted
             sboms_processed += 1
         except Exception as e:
             sboms_failed += 1

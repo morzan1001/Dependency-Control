@@ -309,7 +309,6 @@ async def _handle_gitlab_oidc(
 async def _handle_github_oidc(
     oidc_token: str,
     github_instance: Any,
-    db: AsyncIOMotorDatabase,
     project_repo: ProjectRepository,
     user_repo: UserRepository,
     default_analyzers: list,
@@ -425,7 +424,6 @@ async def get_project_for_ingest(
             return await _handle_github_oidc(
                 oidc_token,
                 github_instance,
-                db,
                 project_repo,
                 user_repo,
                 settings.default_active_analyzers,

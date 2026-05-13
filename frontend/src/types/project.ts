@@ -19,6 +19,8 @@ export interface ProjectMember {
   inherited_from?: string;
 }
 
+export type RetentionAction = 'delete' | 'archive' | 'none';
+
 export interface Project {
   id: string;
   name: string;
@@ -28,7 +30,7 @@ export interface Project {
   members?: ProjectMember[];
   active_analyzers?: string[];
   retention_days?: number;
-  retention_action?: 'delete' | 'archive' | 'none';
+  retention_action?: RetentionAction;
   license_policy?: LicensePolicy;
   analyzer_settings?: Record<string, Record<string, unknown>>;
   default_branch?: string;
@@ -56,7 +58,7 @@ export interface ProjectCreate {
   team_id?: string;
   active_analyzers?: string[];
   retention_days?: number;
-  retention_action?: 'delete' | 'archive' | 'none';
+  retention_action?: RetentionAction;
   license_policy?: LicensePolicy;
 }
 
@@ -65,7 +67,7 @@ export interface ProjectUpdate {
   team_id?: string | null;
   active_analyzers?: string[];
   retention_days?: number;
-  retention_action?: 'delete' | 'archive' | 'none';
+  retention_action?: RetentionAction;
   license_policy?: LicensePolicy;
   analyzer_settings?: Record<string, Record<string, unknown>>;
   enforce_notification_settings?: boolean;

@@ -49,7 +49,7 @@ def safe_severity(
             return default
 
 
-def normalize_list(value: Optional[Union[str, List[str]]]) -> List[str]:
+def normalize_list(value: str | List[str] | None) -> List[str]:
     """
     Normalize a value that could be a string or list to always be a list.
 
@@ -66,7 +66,7 @@ def normalize_list(value: Optional[Union[str, List[str]]]) -> List[str]:
     return [value]
 
 
-def normalize_cwe_list(cwe: Optional[Union[str, List[str]]]) -> List[str]:
+def normalize_cwe_list(cwe: str | List[str] | None) -> List[str]:
     """
     Normalize CWE references to a list of CWE IDs (just the numbers).
 

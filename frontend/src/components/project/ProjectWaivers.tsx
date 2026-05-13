@@ -137,8 +137,8 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                 </CardHeader>
                 <CardContent>
                     <div className="space-y-2">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                            <Skeleton key={i} className="h-12 w-full" />
+                        {['s1', 's2', 's3', 's4', 's5'].map((skeletonId) => (
+                            <Skeleton key={skeletonId} className="h-12 w-full" />
                         ))}
                     </div>
                 </CardContent>

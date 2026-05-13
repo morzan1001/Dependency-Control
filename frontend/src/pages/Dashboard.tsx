@@ -13,6 +13,22 @@ import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-con
 import { formatDate } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 
+const DASHBOARD_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4']
+const DASHBOARD_ACTIVITY_SKELETON_IDS = ['da1', 'da2', 'da3', 'da4', 'da5']
+const DASHBOARD_PROJECTS_SKELETON_IDS = ['dp1', 'dp2', 'dp3', 'dp4', 'dp5']
+
+function getProjectStatusClassName(hasCritical: boolean, hasHigh: boolean): string {
+  if (hasCritical) return 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
+  if (hasHigh) return 'bg-severity-high text-severity-high-foreground hover:bg-severity-high/80'
+  return 'bg-success text-success-foreground hover:bg-success/80'
+}
+
+function getProjectStatusLabel(hasCritical: boolean, hasHigh: boolean): string {
+  if (hasCritical) return 'Critical'
+  if (hasHigh) return 'High Risk'
+  return 'Secure'
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const [page, setPage] = useState(1)
@@ -113,8 +129,8 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {isLoadingStats ? (
-          new Array(4).fill(0).map((_, i) => (
-            <Skeleton key={i} className="h-32 rounded-xl" />
+          DASHBOARD_STATS_SKELETON_IDS.map((id) => (
+            <Skeleton key={id} className="h-32 rounded-xl" />
           ))
         ) : (
           stats.map((stat) => {
@@ -212,8 +228,8 @@ export default function Dashboard() {
             <CardContent>
                 <div className="space-y-6 max-h-[300px] overflow-y-auto pr-2">
                     {isLoadingScans ? (
-                        Array.from({ length: 5 }).map((_, i) => (
-                            <div key={i} className="flex items-center">
+                        DASHBOARD_ACTIVITY_SKELETON_IDS.map((id) => (
+                            <div key={id} className="flex items-center">
                                 <div className="space-y-1 w-full">
                                     <Skeleton className="h-4 w-[200px]" />
                                     <Skeleton className="h-3 w-[150px]" />
@@ -277,8 +293,8 @@ export default function Dashboard() {
                     </thead>
                     <tbody className="[&_tr:last-child]:border-0">
                         {isLoadingProjects ? (
-                            Array.from({ length: 5 }).map((_, i) => (
-                                <tr key={i} className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                            DASHBOARD_PROJECTS_SKELETON_IDS.map((id) => (
+                                <tr key={id} className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
                                     <td className="p-4 align-middle"><Skeleton className="h-4 w-[150px]" /></td>
                                     <td className="p-4 align-middle"><Skeleton className="h-4 w-[100px]" /></td>
                                     <td className="p-4 align-middle"><Skeleton className="h-4 w-[100px]" /></td>
@@ -313,12 +329,8 @@ export default function Dashboard() {
                                                 {(() => {
                                                     const hasCritical = (project.stats?.critical || 0) > 0
                                                     const hasHigh = (project.stats?.high || 0) > 0
-                                                    const statusClassName = hasCritical
-                                                        ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
-                                                        : hasHigh
-                                                        ? 'bg-severity-high text-severity-high-foreground hover:bg-severity-high/80'
-                                                        : 'bg-success text-success-foreground hover:bg-success/80'
-                                                    const statusLabel = hasCritical ? 'Critical' : hasHigh ? 'High Risk' : 'Secure'
+                                                    const statusClassName = getProjectStatusClassName(hasCritical, hasHigh)
+                                                    const statusLabel = getProjectStatusLabel(hasCritical, hasHigh)
                                                     return (
                                                         <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${statusClassName}`}>
                                                             {statusLabel}

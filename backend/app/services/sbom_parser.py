@@ -402,7 +402,6 @@ class SBOMParser:
         purl: str,
         pkg_type: str,
         layer_digest: Optional[str],
-        locations: List[str],
         global_source_type: Optional[str],
     ) -> Optional[str]:
         """
@@ -581,7 +580,6 @@ class SBOMParser:
             purl=purl,
             pkg_type=component_type,
             layer_digest=layer_digest,
-            locations=locations,
             global_source_type=global_source_type,
         )
 
@@ -928,7 +926,6 @@ class SBOMParser:
             purl=purl,
             pkg_type=pkg_type,
             layer_digest=layer_digest,
-            locations=locations,
             global_source_type=source_type,
         )
 
@@ -1236,7 +1233,6 @@ class SBOMParser:
             purl=purl,
             pkg_type=pkg_type,
             layer_digest=None,  # SPDX doesn't have layer info
-            locations=[],
             global_source_type=None,
         )
 

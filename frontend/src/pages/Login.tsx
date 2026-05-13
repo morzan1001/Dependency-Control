@@ -169,7 +169,11 @@ export default function Login() {
               )
             )}
             <Button type="submit" disabled={isLoading} className={!showOTP && !signupEnabled ? "ml-auto" : ""}>
-              {isLoading ? "Logging in..." : (showOTP ? "Verify" : "Login")}
+              {(() => {
+                if (isLoading) return "Logging in..."
+                if (showOTP) return "Verify"
+                return "Login"
+              })()}
             </Button>
           </CardFooter>
         </form>

@@ -76,7 +76,7 @@ def _verify_token(token: str, expected_type: str) -> Optional[str]:
 
 
 def create_access_token(
-    subject: Union[str, Any],
+    subject: str | Any,
     permissions: Optional[list[str]] = None,
     expires_delta: Optional[timedelta] = None,
 ) -> str:
@@ -97,7 +97,7 @@ def create_access_token(
     )
 
 
-def create_refresh_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+def create_refresh_token(subject: str | Any, expires_delta: Optional[timedelta] = None) -> str:
     """Create a refresh token."""
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta

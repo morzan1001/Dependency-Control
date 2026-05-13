@@ -107,7 +107,8 @@ class CacheKeys:
 
     @staticmethod
     def osv(purl: str) -> str:
-        purl_hash = hashlib.md5(purl.encode()).hexdigest()[:16]
+        # MD5 used only as a fast non-cryptographic shortener for the cache key.
+        purl_hash = hashlib.md5(purl.encode(), usedforsecurity=False).hexdigest()[:16]
         return f"osv:{purl_hash}"
 
     @staticmethod
@@ -410,17 +411,15 @@ class CacheService:
     ) -> Any:
         """Cache-through: return cached value, otherwise call fetch_fn and cache the result."""
         cached = await self.get(key)
-        if cached is not None:
-            return cached
-
-        try:
-            data = await fetch_fn()
-            if data is not None:
-                await self.set(key, data, ttl_seconds)
-            return data
-        except Exception as e:
-            logger.warning(f"Fetch function failed for {key}: {e}")
-            raise
+        if cached is None:
+            try:
+                cached = await fetch_fn()
+            except Exception as e:
+                logger.warning(f"Fetch function failed for {key}: {e}")
+                raise
+            if cached is not None:
+                await self.set(key, cached, ttl_seconds)
+        return cached
 
     async def get_or_fetch_with_lock(
         self,
