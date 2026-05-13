@@ -1,5 +1,7 @@
+import type { DeltaCategory } from "@/types/scanDelta";
+
 interface Props {
-  readonly category: "findings" | "components" | "crypto";
+  readonly category: DeltaCategory;
 }
 
 export function DeltaError({ category }: Props) {

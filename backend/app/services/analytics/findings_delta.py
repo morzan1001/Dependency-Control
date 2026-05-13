@@ -34,8 +34,18 @@ _SEVERITY_RANK = {
 }
 
 
+def _first_id(details: Dict[str, Any], *keys: str) -> str:
+    """Return the first truthy value among ``details[k]`` for the given keys,
+    stringified. Empty when none of the keys carry a usable identifier."""
+    for key in keys:
+        value = details.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
 def _sast_identifier(details: Dict[str, Any]) -> str:
-    rule = str(details.get("rule_id") or "")
+    rule = _first_id(details, "rule_id")
     line = details.get("line")
     return f"{rule}:{line}" if line is not None else rule
 
@@ -43,14 +53,14 @@ def _sast_identifier(details: Dict[str, Any]) -> str:
 # Each entry returns the type-specific identifier or "" when no stable id
 # is present (callers fall back to the description+found_in hash).
 _FINDING_TYPE_IDENTIFIER: Dict[str, Callable[[Dict[str, Any]], str]] = {
-    "vulnerability": lambda d: str(d.get("cve_id") or d.get("vuln_id") or ""),
-    "secret": lambda d: str(d.get("pattern_hash") or d.get("rule_id") or ""),
+    "vulnerability": lambda d: _first_id(d, "cve_id", "vuln_id"),
+    "secret": lambda d: _first_id(d, "pattern_hash", "rule_id"),
     "sast": _sast_identifier,
-    "iac": lambda d: str(d.get("rule_id") or ""),
-    "license": lambda d: str(d.get("license_id") or d.get("license") or ""),
-    "malware": lambda d: str(d.get("signature") or d.get("rule_id") or ""),
-    "eol": lambda d: str(d.get("eol_date") or d.get("version") or ""),
-    "outdated": lambda d: str(d.get("latest_version") or ""),
+    "iac": lambda d: _first_id(d, "rule_id"),
+    "license": lambda d: _first_id(d, "license_id", "license"),
+    "malware": lambda d: _first_id(d, "signature", "rule_id"),
+    "eol": lambda d: _first_id(d, "eol_date", "version"),
+    "outdated": lambda d: _first_id(d, "latest_version"),
 }
 
 

@@ -2,21 +2,26 @@
  * Shared per-tab query hook for the scan-delta modal.
  *
  * The three category tabs (Findings, Components, Crypto) share an identical
- * "fetch + report total to parent + paginate" lifecycle. Centralising it here
- * avoids three slightly-different copies of the same useQuery + useEffect
- * pattern and keeps the queryKey shape consistent.
+ * useQuery + page-state lifecycle. Centralising it here keeps the queryKey
+ * shape consistent and removes one of the three near-duplicate copies of
+ * the same `useQuery({ queryKey, queryFn, enabled })` block.
+ *
+ * The badge-count effect lives in each tab (`useEffect` on `query.data`)
+ * because each tab maps totals to a count differently. Parents are
+ * expected to pass a stable `onCountLoaded` (the modal already wraps it
+ * in `useCallback`); the tabs depend on it directly.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { getScanDelta, type GetScanDeltaArgs } from "@/api/scanDelta";
 import type { DeltaCategory, ScanDeltaResponse } from "@/types/scanDelta";
 
 export interface DeltaTabProps {
-  projectId: string;
-  fromScanId: string;
-  toScanId: string;
-  onCountLoaded: (totalChanges: number) => void;
+  readonly projectId: string;
+  readonly fromScanId: string;
+  readonly toScanId: string;
+  readonly onCountLoaded: (totalChanges: number) => void;
 }
 
 interface UseDeltaTabQueryArgs {
@@ -24,12 +29,13 @@ interface UseDeltaTabQueryArgs {
   projectId: string;
   fromScanId: string;
   toScanId: string;
-  /** Additional fetch args appended to every request (filters, change toggle). */
-  extra?: Omit<GetScanDeltaArgs, "projectId" | "fromScanId" | "toScanId" | "category" | "page" | "pageSize">;
-  /** Anything in this array becomes part of the queryKey so the cache splits per filter combo. */
+  /** Extra request args (filters, change toggle). */
+  extra?: Omit<
+    GetScanDeltaArgs,
+    "projectId" | "fromScanId" | "toScanId" | "category" | "page" | "pageSize"
+  >;
+  /** Entries become part of the queryKey so the cache splits per filter combo. */
   filterKey?: ReadonlyArray<unknown>;
-  /** Called once whenever new data arrives. Caller is responsible for memoising. */
-  onCountLoaded: (totals: ScanDeltaResponse["totals"]) => void;
 }
 
 interface UseDeltaTabQueryResult {
@@ -47,7 +53,6 @@ export function useDeltaTabQuery({
   toScanId,
   extra,
   filterKey = [],
-  onCountLoaded,
 }: UseDeltaTabQueryArgs): UseDeltaTabQueryResult {
   const [page, setPage] = useState(1);
 
@@ -65,11 +70,6 @@ export function useDeltaTabQuery({
       }),
     enabled: !!(projectId && fromScanId && toScanId),
   });
-
-  const { data } = query;
-  useEffect(() => {
-    if (data) onCountLoaded(data.totals);
-  }, [data, onCountLoaded]);
 
   return { query, page, setPage };
 }

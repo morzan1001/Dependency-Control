@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FindingDeltaItem } from "@/types/scanDelta";
 import { Button } from "@/components/ui/button";
 import { DeltaError } from "../shared/DeltaError";
@@ -25,11 +25,6 @@ export function FindingsDeltaTab({
   const [types, setTypes] = useState<string[]>([]);
   const [change, setChange] = useState<FindingsChangeFilter>("all");
 
-  const reportCount = useCallback(
-    (totals: { added: number; removed: number }) => onCountLoaded(totals.added + totals.removed),
-    [onCountLoaded],
-  );
-
   const { query, setPage } = useDeltaTabQuery({
     category: "findings",
     projectId,
@@ -41,9 +36,12 @@ export function FindingsDeltaTab({
       findingType: types.length ? types : undefined,
     },
     filterKey: [severity, types, change],
-    onCountLoaded: reportCount,
   });
   const { data, isLoading, isError } = query;
+
+  useEffect(() => {
+    if (data) onCountLoaded(data.totals.added + data.totals.removed);
+  }, [data, onCountLoaded]);
 
   if (isError) return <DeltaError category="findings" />;
 

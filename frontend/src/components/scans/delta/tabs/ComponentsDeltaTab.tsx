@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ComponentDeltaItem } from "@/types/scanDelta";
 import { Button } from "@/components/ui/button";
 import { DeltaError } from "../shared/DeltaError";
@@ -31,12 +31,6 @@ export function ComponentsDeltaTab({
 }: DeltaTabProps) {
   const [change, setChange] = useState<ComponentChangeFilter>("all");
 
-  const reportCount = useCallback(
-    (totals: { added: number; removed: number; changed: number }) =>
-      onCountLoaded(totals.added + totals.removed + totals.changed),
-    [onCountLoaded],
-  );
-
   const { query, setPage } = useDeltaTabQuery({
     category: "components",
     projectId,
@@ -44,9 +38,12 @@ export function ComponentsDeltaTab({
     toScanId,
     extra: { change },
     filterKey: [change],
-    onCountLoaded: reportCount,
   });
   const { data, isLoading, isError } = query;
+
+  useEffect(() => {
+    if (data) onCountLoaded(data.totals.added + data.totals.removed + data.totals.changed);
+  }, [data, onCountLoaded]);
 
   if (isError) return <DeltaError category="components" />;
 

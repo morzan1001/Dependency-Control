@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useEffect } from "react";
 import type { CryptoDeltaItem } from "@/types/scanDelta";
 import { DeltaError } from "../shared/DeltaError";
 import { DeltaList } from "../shared/DeltaList";
@@ -7,19 +7,17 @@ import { DeltaSummary } from "../shared/DeltaSummary";
 import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
 export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onCountLoaded }: DeltaTabProps) {
-  const reportCount = useCallback(
-    (totals: { added: number; removed: number }) => onCountLoaded(totals.added + totals.removed),
-    [onCountLoaded],
-  );
-
   const { query, setPage } = useDeltaTabQuery({
     category: "crypto",
     projectId,
     fromScanId,
     toScanId,
-    onCountLoaded: reportCount,
   });
   const { data, isLoading, isError } = query;
+
+  useEffect(() => {
+    if (data) onCountLoaded(data.totals.added + data.totals.removed);
+  }, [data, onCountLoaded]);
 
   if (isError) return <DeltaError category="crypto" />;
 
