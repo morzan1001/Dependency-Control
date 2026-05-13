@@ -1,90 +1,40 @@
 name: SonarCloud
 
-# Triggered after Backend CI or Frontend CI completes successfully.
-# Each CI uploads its coverage as an artifact; this workflow downloads both
-# (the current run's artifact, plus the latest from the other CI on the same
-# branch/PR) and runs only the SonarCloud scan — no test re-execution.
+# Reusable workflow — invoked by ci.yml after backend + frontend tests finish.
+# Artifacts uploaded by the child workflows in the same orchestrated run are
+# available here via actions/download-artifact (no run-id needed — same run
+# context), so no tests are re-executed and no workflow_run plumbing is needed.
 on:
-  workflow_run:
-    workflows: ["Backend CI", "Frontend CI"]
-    types: [completed]
-
-# A PR that touches both backend and frontend triggers this workflow twice
-# (once per CI). The concurrency group keeps only the latest run alive per
-# commit, so SonarCloud isn't scanned redundantly for the same SHA.
-concurrency:
-  group: sonarcloud-${{ github.event.workflow_run.head_sha }}
-  cancel-in-progress: true
+  workflow_call:
 
 jobs:
-  sonarcloud:
+  scan:
     name: Analysis
     runs-on: ubuntu-latest
-    # Run only when the triggering CI succeeded AND the commit originates from this
-    # repository — workflow_run on a fork would otherwise check out untrusted code
-    # while holding SONAR_TOKEN, a known token-exfiltration vector ("pwn_request").
-    # Fork PRs simply skip SonarCloud; their CI still runs in the standard PR context.
+    # Skip on fork PRs — GitHub doesn't pass SONAR_TOKEN to them anyway, and
+    # explicitly opting out documents the token-exfiltration mitigation.
     if: >-
       ${{
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.head_repository.full_name == github.repository
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.full_name == github.repository
       }}
-    permissions:
-      contents: read
-      actions: read  # Required to list artifacts from sibling workflow runs.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # Check out the commit that the triggering CI ran against so Sonar
-          # analyses the same code that was tested.
-          ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Download backend coverage (this run)
-        if: ${{ github.event.workflow_run.name == 'Backend CI' }}
+      - name: Download backend coverage
         uses: actions/download-artifact@v4
         with:
           name: backend-coverage
           path: backend
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Download frontend coverage (this run)
-        if: ${{ github.event.workflow_run.name == 'Frontend CI' }}
+      - name: Download frontend coverage
         uses: actions/download-artifact@v4
         with:
           name: frontend-coverage
           path: frontend/coverage
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-
-      # When Backend CI triggered us, pull the most recent Frontend CI coverage
-      # for the same branch (and vice versa). This keeps SonarCloud's view of
-      # the codebase complete even when only one half changed in a PR.
-      - name: Find sibling Frontend CI coverage
-        if: ${{ github.event.workflow_run.name == 'Backend CI' }}
-        id: sibling-fe
-        uses: dawidd6/action-download-artifact@v11
-        continue-on-error: true
-        with:
-          workflow: ci-frontend.yml
-          name: frontend-coverage
-          path: frontend/coverage
-          branch: ${{ github.event.workflow_run.head_branch }}
-          if_no_artifact_found: warn
-
-      - name: Find sibling Backend CI coverage
-        if: ${{ github.event.workflow_run.name == 'Frontend CI' }}
-        id: sibling-be
-        uses: dawidd6/action-download-artifact@v11
-        continue-on-error: true
-        with:
-          workflow: ci-backend.yml
-          name: backend-coverage
-          path: backend
-          branch: ${{ github.event.workflow_run.head_branch }}
-          if_no_artifact_found: warn
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v8

@@ -1,0 +1,28 @@
+name: CI
+
+# Master workflow: orchestrates backend, frontend, and SonarCloud as reusable
+# child workflows. Each child file lives standalone (workflow_call only) so it
+# can be reused or invoked manually, but the cross-workflow ordering — Sonar
+# waits for both test jobs and downloads their coverage artifacts — is defined
+# here in one place.
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  backend:
+    name: Backend
+    uses: ./.github/workflows/ci-backend.yml
+
+  frontend:
+    name: Frontend
+    uses: ./.github/workflows/ci-frontend.yml
+
+  sonarcloud:
+    name: SonarCloud
+    needs: [backend, frontend]
+    uses: ./.github/workflows/sonarcloud.yml
+    secrets: inherit

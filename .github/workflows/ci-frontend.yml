@@ -1,15 +1,9 @@
 name: Frontend CI
 
+# Reusable workflow — invoked by ci.yml. Standalone push/pull_request triggers
+# are intentionally absent; the master orchestrator is the single entry point.
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/ci-frontend.yml'
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - 'frontend/**'
+  workflow_call:
 
 jobs:
   lint:
