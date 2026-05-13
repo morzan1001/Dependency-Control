@@ -98,9 +98,7 @@ class OutdatedAnalyzer(Analyzer):
         if not parsed or not parsed.registry_system:
             return None
 
-        withdrawn_versions = await self._get_withdrawn_versions(
-            client, parsed.registry_system, parsed.deps_dev_name
-        )
+        withdrawn_versions = await self._get_withdrawn_versions(client, parsed.registry_system, parsed.deps_dev_name)
         if withdrawn_versions is None:
             return None
 

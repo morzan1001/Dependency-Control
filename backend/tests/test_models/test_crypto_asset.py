@@ -33,5 +33,3 @@ def test_crypto_asset_populate_by_name_alias():
     assert a.id == "deadbeef"
     dumped = a.model_dump(by_alias=True)
     assert dumped["_id"] == "deadbeef"
-
-

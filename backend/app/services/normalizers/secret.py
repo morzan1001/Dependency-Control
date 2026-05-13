@@ -35,11 +35,7 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any],
         # Create a unique ID based on detector, file path, and a non-cryptographic hash of the
         # secret (avoids storing the raw value in the finding key).
         raw_secret = finding.get("Raw") or ""
-        secret_hash = (
-            hashlib.md5(raw_secret.encode(), usedforsecurity=False).hexdigest()
-            if raw_secret
-            else "nohash"
-        )
+        secret_hash = hashlib.md5(raw_secret.encode(), usedforsecurity=False).hexdigest() if raw_secret else "nohash"
 
         finding_id = build_finding_id("SECRET", detector, secret_hash[:8])
 

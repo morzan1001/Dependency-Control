@@ -425,7 +425,13 @@ async def _notify_advisory_admins(
     if not payload.dry_run:
         for data in user_notification_map.values():
             _queue_advisory_for_user(
-                data, payload, background_tasks, message_html, frontend_url, db, forced_channels,
+                data,
+                payload,
+                background_tasks,
+                message_html,
+                frontend_url,
+                db,
+                forced_channels,
             )
 
     return len(user_notification_map)

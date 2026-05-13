@@ -128,9 +128,7 @@ class TestEvaluationSemantics:
     @pytest.mark.asyncio
     async def test_fixed_findings_excluded_from_sla(self):
         framework = CveRemediationSlaFramework()
-        result = await framework.evaluate_async(
-            _eval_input([_vuln(Severity.CRITICAL, days_ago=30, status="fixed")])
-        )
+        result = await framework.evaluate_async(_eval_input([_vuln(Severity.CRITICAL, days_ago=30, status="fixed")]))
         critical = next(c for c in result.controls if c.severity == Severity.CRITICAL)
         assert critical.status == "passed"
 
@@ -138,9 +136,7 @@ class TestEvaluationSemantics:
     async def test_waived_overdue_marks_control_waived_with_reason(self):
         framework = CveRemediationSlaFramework()
         result = await framework.evaluate_async(
-            _eval_input(
-                [_vuln(Severity.HIGH, days_ago=60, waived=True, waiver_reason="compensating control")]
-            )
+            _eval_input([_vuln(Severity.HIGH, days_ago=60, waived=True, waiver_reason="compensating control")])
         )
         high = next(c for c in result.controls if c.severity == Severity.HIGH)
         assert high.status == "waived"

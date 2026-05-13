@@ -40,9 +40,15 @@ LICENSE_INCOMPATIBILITIES: Dict[tuple, str] = {
     (SPDX_GPL_2_0_ONLY, SPDX_GPL_3_0): f"{SPDX_GPL_2_0_ONLY} cannot be combined with {SPDX_GPL_3_0} code.",
     (SPDX_GPL_2_0_ONLY, SPDX_AGPL_3_0): f"{SPDX_GPL_2_0_ONLY} is not compatible with {SPDX_AGPL_3_0}.",
     (SPDX_GPL_2_0_ONLY, SPDX_AGPL_3_0_ONLY): f"{SPDX_GPL_2_0_ONLY} is not compatible with {SPDX_AGPL_3_0_ONLY}.",
-    (SPDX_CDDL_1_0, SPDX_GPL_2_0): f"{SPDX_CDDL_1_0} and {SPDX_GPL_2_0} are incompatible due to conflicting copyleft terms.",
+    (
+        SPDX_CDDL_1_0,
+        SPDX_GPL_2_0,
+    ): f"{SPDX_CDDL_1_0} and {SPDX_GPL_2_0} are incompatible due to conflicting copyleft terms.",
     (SPDX_CDDL_1_0, SPDX_GPL_2_0_ONLY): f"{SPDX_CDDL_1_0} and {SPDX_GPL_2_0_ONLY} are incompatible.",
-    (SPDX_CDDL_1_0, SPDX_GPL_3_0): f"{SPDX_CDDL_1_0} and {SPDX_GPL_3_0} are incompatible due to conflicting copyleft terms.",
+    (
+        SPDX_CDDL_1_0,
+        SPDX_GPL_3_0,
+    ): f"{SPDX_CDDL_1_0} and {SPDX_GPL_3_0} are incompatible due to conflicting copyleft terms.",
     (SPDX_CDDL_1_0, SPDX_GPL_3_0_ONLY): f"{SPDX_CDDL_1_0} and {SPDX_GPL_3_0_ONLY} are incompatible.",
     (SPDX_EPL_1_0, SPDX_GPL_2_0): f"{SPDX_EPL_1_0} is not compatible with {SPDX_GPL_2_0}.",
     (SPDX_EPL_1_0, SPDX_GPL_2_0_ONLY): f"{SPDX_EPL_1_0} is not compatible with {SPDX_GPL_2_0_ONLY}.",

@@ -240,4 +240,3 @@ class LicenseAnalyzer(Analyzer):
                 best_issue = worst_issue
 
         return best_issue
-

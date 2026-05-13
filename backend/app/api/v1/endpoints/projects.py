@@ -602,9 +602,7 @@ async def _audit_license_policy_change(
             comment=None,
         )
     except Exception:  # pragma: no cover - defensive
-        logging.getLogger(__name__).exception(
-            "License-policy audit for project %s failed (non-blocking)", project_id
-        )
+        logging.getLogger(__name__).exception("License-policy audit for project %s failed (non-blocking)", project_id)
 
 
 @router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_404)
@@ -645,9 +643,7 @@ async def update_project(
     if not updated_project:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
-    await _audit_license_policy_change(
-        db, project_id, old_license_policy, updated_project, current_user
-    )
+    await _audit_license_policy_change(db, project_id, old_license_policy, updated_project, current_user)
     return updated_project
 
 
@@ -1401,11 +1397,7 @@ async def _assert_not_demoting_last_admin(
 ) -> None:
     """Refuse to demote the final admin across direct and team membership."""
     current_member = project.members[member_index]
-    is_demotion = (
-        current_member.role == "admin"
-        and member_in.role
-        and member_in.role != "admin"
-    )
+    is_demotion = current_member.role == "admin" and member_in.role and member_in.role != "admin"
     if not is_demotion:
         return
     direct_admin_count = sum(1 for m in project.members if m.role == "admin")
@@ -1426,9 +1418,7 @@ def _build_member_update_fields(
     if member_in.role:
         update_fields[f"members.{member_index}.role"] = member_in.role
     if member_in.notification_preferences:
-        update_fields[f"members.{member_index}.notification_preferences"] = (
-            member_in.notification_preferences
-        )
+        update_fields[f"members.{member_index}.notification_preferences"] = member_in.notification_preferences
     return update_fields
 
 
