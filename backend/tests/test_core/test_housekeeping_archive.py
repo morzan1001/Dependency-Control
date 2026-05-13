@@ -7,6 +7,8 @@ _handle_retention_action, and run_housekeeping with archive mode.
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.core.housekeeping import (
     _archive_scans_and_delete,
     _handle_retention_action,
@@ -293,13 +295,9 @@ class TestRunHousekeepingArchive:
 # ---------------------------------------------------------------------------
 
 
-import pytest
-
-
 @pytest.mark.asyncio
 async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
     """Global retention cursor must exclude scans with status pending/processing."""
-    from datetime import datetime, timezone
     from app.core.housekeeping import run_housekeeping
 
     captured_queries: list[dict] = []

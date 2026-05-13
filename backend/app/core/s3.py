@@ -2,7 +2,7 @@
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, AsyncIterator, Optional
+from typing import Any, AsyncGenerator, AsyncIterator, Optional, cast
 
 from aiobotocore.session import AioSession, get_session  # type: ignore[import-untyped]
 
@@ -76,7 +76,7 @@ async def download_bytes(key: str, *, bucket: Optional[str] = None) -> bytes:
     async with get_s3_client() as s3:
         response = await s3.get_object(Bucket=_bucket(bucket), Key=key)
         async with response["Body"] as stream:
-            return await stream.read()
+            return cast(bytes, await stream.read())
 
 
 async def upload_stream(
@@ -167,4 +167,4 @@ async def list_objects(prefix: str = "", *, bucket: Optional[str] = None) -> lis
     """List S3 objects under a prefix. Returns the raw Contents entries (Key, Size, LastModified, ...)."""
     async with get_s3_client() as s3:
         response = await s3.list_objects_v2(Bucket=_bucket(bucket), Prefix=prefix)
-        return response.get("Contents", [])
+        return cast(list[dict[str, Any]], response.get("Contents", []))

@@ -1,7 +1,7 @@
 """In-memory fake aiobotocore S3 client for archive tests."""
 
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List
 
 
 class FakeS3StreamingBody:

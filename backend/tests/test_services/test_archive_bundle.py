@@ -1,5 +1,5 @@
 import json
-from typing import Any, AsyncIterator, Dict, List
+from typing import Dict, List
 
 import pytest
 

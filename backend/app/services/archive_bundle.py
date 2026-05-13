@@ -140,7 +140,7 @@ async def read_bundle_frames(source: AsyncIterator[bytes]) -> AsyncIterator[Dict
     current_collection: str | None = None
     header_seen = False
 
-    async def _iter_lines():
+    async def _iter_lines() -> AsyncIterator[bytes]:
         nonlocal buffer
         async for chunk in source:
             buffer.extend(chunk)

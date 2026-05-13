@@ -325,7 +325,6 @@ async def test_restore_scan_returns_none_when_no_metadata(archive_env):
 @pytest.mark.asyncio
 async def test_replay_labels_mongo_error_not_as_s3_error():
     """A PyMongoError during replay must produce reason=UNKNOWN, not S3_ERROR."""
-    import json
 
     from pymongo.errors import OperationFailure
 
