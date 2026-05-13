@@ -1,59 +1,90 @@
 name: SonarCloud
 
+# Triggered after Backend CI or Frontend CI completes successfully.
+# Each CI uploads its coverage as an artifact; this workflow downloads both
+# (the current run's artifact, plus the latest from the other CI on the same
+# branch/PR) and runs only the SonarCloud scan — no test re-execution.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_run:
+    workflows: ["Backend CI", "Frontend CI"]
+    types: [completed]
+
+# A PR that touches both backend and frontend triggers this workflow twice
+# (once per CI). The concurrency group keeps only the latest run alive per
+# commit, so SonarCloud isn't scanned redundantly for the same SHA.
+concurrency:
+  group: sonarcloud-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
 
 jobs:
   sonarcloud:
     name: Analysis
     runs-on: ubuntu-latest
+    # Run only when the triggering CI succeeded AND the commit originates from this
+    # repository — workflow_run on a fork would otherwise check out untrusted code
+    # while holding SONAR_TOKEN, a known token-exfiltration vector ("pwn_request").
+    # Fork PRs simply skip SonarCloud; their CI still runs in the standard PR context.
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      }}
+    permissions:
+      contents: read
+      actions: read  # Required to list artifacts from sibling workflow runs.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Check out the commit that the triggering CI ran against so Sonar
+          # analyses the same code that was tested.
+          ref: ${{ github.event.workflow_run.head_sha }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Download backend coverage (this run)
+        if: ${{ github.event.workflow_run.name == 'Backend CI' }}
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.13'
+          name: backend-coverage
+          path: backend
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Install backend dependencies
-        run: |
-          pip install poetry
-          cd backend
-          poetry install --no-interaction
-
-      - name: Run backend tests with coverage
-        run: |
-          cd backend
-          poetry run pytest --cov=app --cov-branch --cov-report=xml:coverage.xml --tb=short -q
-          sed -i 's|<source>app</source>|<source>backend/app</source>|g' coverage.xml
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
+      - name: Download frontend coverage (this run)
+        if: ${{ github.event.workflow_run.name == 'Frontend CI' }}
+        uses: actions/download-artifact@v4
         with:
-          version: 10
+          name: frontend-coverage
+          path: frontend/coverage
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      # When Backend CI triggered us, pull the most recent Frontend CI coverage
+      # for the same branch (and vice versa). This keeps SonarCloud's view of
+      # the codebase complete even when only one half changed in a PR.
+      - name: Find sibling Frontend CI coverage
+        if: ${{ github.event.workflow_run.name == 'Backend CI' }}
+        id: sibling-fe
+        uses: dawidd6/action-download-artifact@v11
+        continue-on-error: true
         with:
-          node-version: '22'
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          workflow: ci-frontend.yml
+          name: frontend-coverage
+          path: frontend/coverage
+          branch: ${{ github.event.workflow_run.head_branch }}
+          if_no_artifact_found: warn
 
-      - name: Install frontend dependencies
-        run: |
-          cd frontend
-          pnpm install --frozen-lockfile
-
-      - name: Run frontend tests with coverage
-        run: |
-          cd frontend
-          pnpm test:coverage
+      - name: Find sibling Backend CI coverage
+        if: ${{ github.event.workflow_run.name == 'Frontend CI' }}
+        id: sibling-be
+        uses: dawidd6/action-download-artifact@v11
+        continue-on-error: true
+        with:
+          workflow: ci-backend.yml
+          name: backend-coverage
+          path: backend
+          branch: ${{ github.event.workflow_run.head_branch }}
+          if_no_artifact_found: warn
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v8

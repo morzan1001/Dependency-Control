@@ -38,25 +38,6 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    services:
-      mongodb:
-        image: mongo:7
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' | grep -q 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -72,10 +53,18 @@ jobs:
           cd backend
           poetry install --no-interaction
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
           cd backend
-          poetry run pytest --tb=short -q
+          poetry run pytest --cov=app --cov-branch --cov-report=xml:coverage.xml --tb=short -q
+          sed -i 's|<source>app</source>|<source>backend/app</source>|g' coverage.xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          retention-days: 7
 
   typecheck:
     name: Type Check
