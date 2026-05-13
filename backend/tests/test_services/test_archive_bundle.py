@@ -71,6 +71,51 @@ async def test_write_then_read_roundtrip():
 
 
 @pytest.mark.asyncio
+async def test_write_includes_crypto_assets_in_bundle_and_stats():
+    """crypto_assets must round-trip through the bundle and bump the stats counter."""
+    from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
+
+    stats = BundleStats()
+    scan_doc = {"_id": "scan-cb", "project_id": "p1"}
+
+    async def gen():
+        async for chunk in BundleFrames.write(
+            scan_doc=scan_doc,
+            collections={
+                "crypto_assets": _async_iter(
+                    [
+                        {"_id": "ca1", "name": "MD5", "primitive": "hash"},
+                        {"_id": "ca2", "name": "SHA-256", "primitive": "hash"},
+                    ]
+                ),
+            },
+            stats=stats,
+        ):
+            yield chunk
+
+    raw = await _collect(gen())
+
+    assert stats.crypto_assets == 2
+
+    rows_by_coll: Dict[str, List[dict]] = {}
+    footer = None
+
+    async def source():
+        yield raw
+
+    async for event in read_bundle_frames(source()):
+        if event["type"] == "doc":
+            rows_by_coll.setdefault(event["collection"], []).append(event["data"])
+        elif event["type"] == "footer":
+            footer = event["data"]
+
+    assert len(rows_by_coll["crypto_assets"]) == 2
+    assert rows_by_coll["crypto_assets"][0]["name"] == "MD5"
+    assert footer is not None
+    assert footer["stats"]["crypto_assets"] == 2
+
+
+@pytest.mark.asyncio
 async def test_read_rejects_unknown_version():
     from app.services.archive_bundle import read_bundle_frames
 

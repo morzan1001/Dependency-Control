@@ -176,6 +176,7 @@ def _build_archive_payload(
             "dependencies": _stream_collection(db.dependencies, scan_id),
             "analysis_results": _stream_collection(db.analysis_results, scan_id),
             "callgraphs": _stream_collection(db.callgraphs, scan_id),
+            "crypto_assets": _stream_collection(db.crypto_assets, scan_id),
             "gridfs_sboms": _stream_gridfs_sboms(db, scan_doc),
         },
         stats=stats,
@@ -475,6 +476,7 @@ async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
             "dependencies",
             "analysis_results",
             "callgraphs",
+            "crypto_assets",
         ):
             await getattr(db, coll).delete_many({"scan_id": scan_id})
     except Exception as e:

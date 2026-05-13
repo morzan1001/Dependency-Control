@@ -32,6 +32,7 @@ class BundleStats:
     dependencies: int = 0
     analysis_results: int = 0
     callgraphs: int = 0
+    crypto_assets: int = 0
     critical_findings: int = 0
     high_findings: int = 0
 
@@ -115,6 +116,7 @@ class BundleFrames:
                 "dependencies": stats.dependencies,
                 "analysis_results": stats.analysis_results,
                 "callgraphs": stats.callgraphs,
+                "crypto_assets": stats.crypto_assets,
                 "critical_findings": stats.critical_findings,
                 "high_findings": stats.high_findings,
             },

@@ -11,6 +11,7 @@ import pytest
 
 from app.core.housekeeping import (
     _archive_scans_and_delete,
+    _delete_scans_and_related_data,
     _handle_retention_action,
 )
 from app.models.archive import ArchiveMetadata
@@ -546,3 +547,34 @@ async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
     await _reap_orphan_s3_objects(db)
 
     assert call_order == ["stale_metadata", "list_objects"]
+
+
+# ---------------------------------------------------------------------------
+# _delete_scans_and_related_data — verify every per-scan collection is purged
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_scans_purges_crypto_assets():
+    """Retention/delete must wipe crypto_assets too; otherwise CBOM rows orphan."""
+    db = MagicMock()
+    db.analysis_results.delete_many = AsyncMock()
+    db.findings.delete_many = AsyncMock()
+    db.finding_records.delete_many = AsyncMock()
+    db.dependencies.delete_many = AsyncMock()
+    db.callgraphs.delete_many = AsyncMock()
+    db.crypto_assets.delete_many = AsyncMock()
+    db.scans.delete_many = AsyncMock(return_value=MagicMock(deleted_count=2))
+
+    with patch(f"{MODULE}._collect_gridfs_ids", new=AsyncMock(return_value=[])):
+        with patch(f"{MODULE}._cleanup_gridfs_files", new=AsyncMock()):
+            count = await _delete_scans_and_related_data(db, ["s1", "s2"], label="test")
+
+    assert count == 2
+    db.crypto_assets.delete_many.assert_awaited_once_with({"scan_id": {"$in": ["s1", "s2"]}})
+    # Sanity: the other 5 collections are still being deleted.
+    db.findings.delete_many.assert_awaited_once()
+    db.finding_records.delete_many.assert_awaited_once()
+    db.dependencies.delete_many.assert_awaited_once()
+    db.analysis_results.delete_many.assert_awaited_once()
+    db.callgraphs.delete_many.assert_awaited_once()

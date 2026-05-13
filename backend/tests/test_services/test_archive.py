@@ -74,6 +74,7 @@ def _make_mock_db(
     dependencies=None,
     analysis_results=None,
     callgraphs=None,
+    crypto_assets=None,
 ):
     db = MagicMock()
     db.scans.find_one = AsyncMock(return_value=scan_doc)
@@ -89,6 +90,8 @@ def _make_mock_db(
     db.analysis_results.insert_many = AsyncMock()
     db.callgraphs.find = MagicMock(return_value=_AsyncCursorMock(callgraphs or []))
     db.callgraphs.insert_many = AsyncMock()
+    db.crypto_assets.find = MagicMock(return_value=_AsyncCursorMock(crypto_assets or []))
+    db.crypto_assets.insert_many = AsyncMock()
     return db
 
 
@@ -162,6 +165,26 @@ async def test_archive_scan_uploads_and_inserts_metadata(archive_env):
     assert key.endswith(".bundle")
     # Metadata was created
     RepoCls.return_value.create.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_archive_scan_includes_crypto_assets(archive_env):
+    """crypto_assets must be streamed into the bundle alongside findings/deps."""
+    scan_doc = _make_scan_doc()
+    crypto_assets = [
+        {"_id": "ca1", "scan_id": "scan-1", "name": "MD5", "primitive": "hash"},
+        {"_id": "ca2", "scan_id": "scan-1", "name": "SHA-256", "primitive": "hash"},
+    ]
+    db = _make_mock_db(scan_doc=scan_doc, crypto_assets=crypto_assets)
+
+    with _patch_repos()() as (_, _):
+        result = await archive_scan(db, "scan-1")
+
+    assert result is not None
+    # The collection was queried by archive_scan with the scan_id filter
+    db.crypto_assets.find.assert_called_once()
+    call = db.crypto_assets.find.call_args
+    assert call.args[0] == {"scan_id": "scan-1"}
 
 
 @pytest.mark.asyncio

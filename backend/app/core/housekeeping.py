@@ -121,6 +121,7 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: st
     await db.finding_records.delete_many({"scan_id": {"$in": scan_ids}})
     await db.dependencies.delete_many({"scan_id": {"$in": scan_ids}})
     await db.callgraphs.delete_many({"scan_id": {"$in": scan_ids}})
+    await db.crypto_assets.delete_many({"scan_id": {"$in": scan_ids}})
     result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
 
     # Clean up GridFS files
