@@ -52,10 +52,7 @@ def _reject_unknown(
     else:
         unknown = [v for v in values if v not in allowed]
     if unknown:
-        raise InvalidDeltaQuery(
-            f"unknown {label} values: {', '.join(unknown)} "
-            f"(valid: {', '.join(sorted(allowed))})"
-        )
+        raise InvalidDeltaQuery(f"unknown {label} values: {', '.join(unknown)} (valid: {', '.join(sorted(allowed))})")
 
 
 def _validate_query(
