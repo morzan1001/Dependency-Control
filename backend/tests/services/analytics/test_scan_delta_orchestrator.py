@@ -155,6 +155,47 @@ async def test_dispatch_rejects_unknown_severity():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_rejects_unknown_severity_preserves_user_casing():
+    """Error message should echo the user-typed value, not the lowercased
+    canonical form, so typos like ?severity=CRITICLA round-trip readably."""
+    with pytest.raises(InvalidDeltaQuery, match="CRITICLA"):
+        await compute_scan_delta_dispatch(
+            db=None,
+            project_id="p1",
+            category="findings",
+            from_scan="a",
+            to_scan="b",
+            page=1,
+            page_size=50,
+            change=None,
+            severity=["CRITICLA"],
+            finding_type=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_accepts_uppercase_severity():
+    """severity=['CRITICAL'] must pass validation (case-insensitive)."""
+    with patch(
+        "app.services.analytics.scan_delta.compute_findings_delta",
+        new=AsyncMock(return_value="findings-result"),
+    ):
+        result = await compute_scan_delta_dispatch(
+            db=None,
+            project_id="p1",
+            category="findings",
+            from_scan="a",
+            to_scan="b",
+            page=1,
+            page_size=50,
+            change=None,
+            severity=["CRITICAL"],
+            finding_type=None,
+        )
+        assert result == "findings-result"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_finding_type():
     with pytest.raises(InvalidDeltaQuery, match="unknown finding_type"):
         await compute_scan_delta_dispatch(
