@@ -6,7 +6,7 @@ across all scanner result normalizers.
 """
 
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.constants import SEVERITY_ALIASES
 from app.models.finding import Severity

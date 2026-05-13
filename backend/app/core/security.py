@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from jose import ExpiredSignatureError, JWTError, jwt
 from passlib.context import CryptContext
