@@ -11,7 +11,6 @@ import {
 import type {
   CryptoRule, Severity, CryptoFindingType, CryptoPolicySource,
 } from "@/types/cryptoPolicy";
-import type { CryptoPrimitive } from "@/types/crypto";
 
 interface Props {
   /**
@@ -55,12 +54,6 @@ const FINDING_TYPES: { value: CryptoFindingType; label: string }[] = [
 ];
 const SOURCES: CryptoPolicySource[] = [
   "nist-sp-800-131a", "bsi-tr-02102", "cnsa-2.0", "nist-pqc", "custom",
-];
-// Reserved for AddRuleDialog primitive selection; exported so future call sites
-// can import it without re-declaring the canonical primitive list.
-export const PRIMITIVES: CryptoPrimitive[] = [
-  "block-cipher", "stream-cipher", "hash", "mac", "pke", "signature",
-  "kem", "kdf", "drbg", "other",
 ];
 
 function emptyRule(): CryptoRule {
