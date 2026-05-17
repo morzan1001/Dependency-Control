@@ -15,7 +15,10 @@ class TeamsFormatter:
     ) -> dict:
         card: dict = {
             "type": "AdaptiveCard",
-            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            # Fixed schema identifier defined by the Microsoft Teams Adaptive
+            # Cards specification — must be used as-is regardless of transport
+            # (the URI is an identifier, not fetched at runtime).
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",  # NOSONAR
             "version": "1.5",
             "summary": summary,
             "msteams": {"width": "Full"},

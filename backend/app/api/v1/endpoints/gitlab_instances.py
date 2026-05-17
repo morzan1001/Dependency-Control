@@ -153,7 +153,7 @@ async def create_instance(
                         detail=f"Failed to connect to GitLab instance: HTTP {response.status_code}",
                     )
         except Exception as e:
-            logger.error(f"Connection test failed for {instance_data.url}: {e}")
+            logger.exception("Connection test failed for %s: %s", instance_data.url, e)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {str(e)}"
             )
@@ -347,7 +347,7 @@ async def test_connection(
                     url=instance.url,
                 )
     except Exception as e:
-        logger.error(f"Connection test failed for instance '{instance.name}': {e}")
+        logger.exception("Connection test failed for instance '%s': %s", instance.name, e)
         return GitLabInstanceTestConnectionResponse(
             success=False,
             message=f"Connection failed: {str(e)}",

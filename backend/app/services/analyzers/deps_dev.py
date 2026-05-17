@@ -55,6 +55,61 @@ class DepsDevAnalyzer(Analyzer):
     # Maximum concurrent requests to avoid rate limiting
     MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("deps_dev", 10)
 
+    def _resolve_scorecard_threshold(self, settings: Optional[Dict[str, Any]]) -> float:
+        """Resolve the configured scorecard threshold, validating range."""
+        threshold = SCORECARD_UNMAINTAINED_THRESHOLD
+        if not settings or "scorecard_threshold" not in settings:
+            return threshold
+        try:
+            custom_threshold = float(settings["scorecard_threshold"])
+            if 0 <= custom_threshold <= 10:
+                return custom_threshold
+        except (ValueError, TypeError):
+            pass
+        return threshold
+
+    def _collect_cached(
+        self,
+        cached_results: Dict[str, Any],
+        threshold: float,
+        package_metadata: Dict[str, Any],
+        scorecard_issues: List[Any],
+    ) -> None:
+        """Apply cached deps.dev results to outputs, re-checking the threshold."""
+        for key, data in cached_results.items():
+            if not data:
+                continue
+            package_metadata[key] = data.get("metadata")
+            scorecard_issue = data.get("scorecard_issue")
+            if not scorecard_issue:
+                continue
+            score = scorecard_issue.get("scorecard", {}).get("overallScore", 10)
+            if score < threshold:
+                scorecard_issues.append(scorecard_issue)
+
+    def _collect_live_result(self, result: Any, package_metadata: Dict[str, Any], scorecard_issues: List[Any]) -> None:
+        """Apply a single live fetch result to outputs."""
+        if isinstance(result, Exception):
+            logger.warning(f"deps_dev check failed: {result}")
+            return
+        if not result:
+            return
+        if result.get("scorecard_issue"):
+            scorecard_issues.append(result["scorecard_issue"])
+        if result.get("metadata"):
+            key = f"{result['metadata']['name']}@{result['metadata']['version']}"
+            package_metadata[key] = result["metadata"]
+
+    async def _fetch_uncached(self, uncached_components: List[Dict[str, Any]], threshold: float) -> List[Any]:
+        """Fetch deps.dev data for uncached components with bounded concurrency."""
+        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
+        timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
+
+        async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
+            tasks = [self._check_component_with_limit(semaphore, client, c, threshold) for c in uncached_components]
+            results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+            return results
+
     async def analyze(
         self,
         sbom: Dict[str, Any],
@@ -62,65 +117,25 @@ class DepsDevAnalyzer(Analyzer):
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
-        scorecard_issues = []
-        package_metadata = {}  # component@version -> metadata
+        scorecard_issues: List[Any] = []
+        package_metadata: Dict[str, Any] = {}
 
-        # Apply custom threshold from settings if provided
-        threshold = SCORECARD_UNMAINTAINED_THRESHOLD
-        if settings and "scorecard_threshold" in settings:
-            try:
-                custom_threshold = float(settings["scorecard_threshold"])
-                if 0 <= custom_threshold <= 10:
-                    threshold = custom_threshold
-            except (ValueError, TypeError):
-                pass
-
-        # Configurable severity thresholds (defaults preserve existing behavior)
+        threshold = self._resolve_scorecard_threshold(settings)
         self._severity_thresholds = {
             "high": _validated_threshold(settings, "scorecard_high_threshold", 2.0),
             "medium": _validated_threshold(settings, "scorecard_medium_threshold", 4.0),
             "low": _validated_threshold(settings, "scorecard_low_threshold", 5.0),
         }
 
-        # First, check Redis cache for all components
         cached_results, uncached_components = await self._get_cached_components(components)
-
-        # Add cached results to metadata
-        for key, data in cached_results.items():
-            if data:
-                package_metadata[key] = data.get("metadata")
-                if data.get("scorecard_issue"):
-                    # Re-check threshold in case settings changed
-                    score = data["scorecard_issue"].get("scorecard", {}).get("overallScore", 10)
-                    if score < threshold:
-                        scorecard_issues.append(data["scorecard_issue"])
+        self._collect_cached(cached_results, threshold, package_metadata, scorecard_issues)
 
         logger.debug(f"deps_dev: {len(cached_results)} from cache, {len(uncached_components)} to fetch")
 
-        # Use semaphore to limit concurrent requests for uncached components
-        # Distributed locking in _check_component_with_limit prevents cache stampede
         if uncached_components:
-            semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
-            timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
-
-            async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-                tasks = []
-                for component in uncached_components:
-                    tasks.append(self._check_component_with_limit(semaphore, client, component, threshold))
-
-                component_results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
-
-                for component, result in zip(uncached_components, component_results):
-                    if isinstance(result, Exception):
-                        logger.warning(f"deps_dev check failed: {result}")
-                        continue
-                    if result:
-                        # Separate scorecard issues from package metadata
-                        if result.get("scorecard_issue"):
-                            scorecard_issues.append(result["scorecard_issue"])
-                        if result.get("metadata"):
-                            key = f"{result['metadata']['name']}@{result['metadata']['version']}"
-                            package_metadata[key] = result["metadata"]
+            component_results = await self._fetch_uncached(uncached_components, threshold)
+            for result in component_results:
+                self._collect_live_result(result, package_metadata, scorecard_issues)
 
         return {
             "scorecard_issues": scorecard_issues,
@@ -203,6 +218,91 @@ class DepsDevAnalyzer(Analyzer):
             ttl_seconds=CacheTTL.DEPS_DEV_METADATA,
         )
 
+    @staticmethod
+    def _select_project_id(related_projects: List[Dict[str, Any]]) -> Optional[str]:
+        """Pick the best project id: prefer SOURCE_REPO, fall back to any GitHub project."""
+        project_id: Optional[str] = None
+        for project in related_projects:
+            project_key = project.get("projectKey", {})
+            pid = str(project_key.get("id", ""))
+            relation_type = project.get("relationType", "")
+            if relation_type == "SOURCE_REPO":
+                return pid
+            if pid.startswith("github.com/") and project_id is None:
+                project_id = pid
+        return project_id
+
+    async def _enrich_with_project(
+        self,
+        client: InstrumentedAsyncClient,
+        project_id: str,
+        metadata: Dict[str, Any],
+        result: Dict[str, Any],
+        name: str,
+        version: str,
+        purl: str,
+        threshold: float,
+    ) -> None:
+        """Fetch project info and scorecard for the resolved project_id."""
+        encoded_project_id = quote(project_id, safe="")
+        project_url = f"{self.base_url}/projects/{encoded_project_id}"
+
+        proj_response = await client.get(project_url)
+        if proj_response.status_code != 200:
+            return
+
+        proj_data = proj_response.json()
+        metadata["project"] = {
+            "id": project_id,
+            "url": f"https://{project_id}",
+            "stars": proj_data.get("starsCount"),
+            "forks": proj_data.get("forksCount"),
+            "open_issues": proj_data.get("openIssuesCount"),
+            "description": proj_data.get("description"),
+            "homepage": proj_data.get("homepage"),
+            "license": proj_data.get("license"),
+        }
+
+        scorecard = proj_data.get("scorecard")
+        if not scorecard:
+            return
+
+        overall_score = scorecard.get("overallScore", 0)
+        metadata["scorecard"] = {
+            "overall_score": overall_score,
+            "date": scorecard.get("date"),
+            "checks_count": len(scorecard.get("checks", [])),
+        }
+
+        if overall_score < threshold:
+            result["scorecard_issue"] = self._create_scorecard_issue(name, version, purl, project_id, scorecard)
+
+    async def _enrich_with_dependents(
+        self,
+        client: InstrumentedAsyncClient,
+        metadata: Dict[str, Any],
+        system: str,
+        encoded_name: str,
+        encoded_version: str,
+        name: str,
+        version: str,
+    ) -> None:
+        """Fetch dependent counts and add them to metadata."""
+        try:
+            dependents_url = (
+                f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}:dependents"
+            )
+            dep_response = await client.get(dependents_url)
+            if dep_response.status_code == 200:
+                dep_data = dep_response.json()
+                metadata["dependents"] = {
+                    "total": dep_data.get("dependentCount", 0),
+                    "direct": dep_data.get("directDependentCount", 0),
+                    "indirect": dep_data.get("indirectDependentCount", 0),
+                }
+        except Exception as e:
+            logger.debug(f"Could not fetch dependents for {name}@{version}: {e}")
+
     async def _check_component(
         self, client: InstrumentedAsyncClient, component: Dict[str, Any], threshold: float
     ) -> Optional[Dict[str, Any]]:
@@ -216,106 +316,32 @@ class DepsDevAnalyzer(Analyzer):
             return None
 
         system = parsed.registry_system
-        # Use specific name format for lookup
         lookup_name = parsed.deps_dev_name
-
         if not system or not lookup_name or not version:
             return None
 
-        # URL-encode the package name (handles scoped packages like @scope/pkg)
         encoded_name = quote(lookup_name, safe="")
         encoded_version = quote(version, safe="")
-
         version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
 
         result: Dict[str, Any | None] = {"metadata": None, "scorecard_issue": None}
 
         try:
-            # Step 1: Get version info
             response = await client.get(version_url)
-
             if response.status_code == 404:
-                # Package not found in deps.dev - this is normal for many packages
                 return None
-
             if response.status_code != 200:
                 logger.debug(f"deps.dev API returned {response.status_code} for {name}@{version}")
                 return None
 
             data = response.json()
-
-            # Extract package metadata
             metadata = self._extract_metadata(data, name, version, system, purl)
 
-            # Step 2: Find related project (source repository)
-            related_projects = data.get("relatedProjects", [])
-            project_id = None
-
-            for project in related_projects:
-                project_key = project.get("projectKey", {})
-                pid = project_key.get("id", "")
-                relation_type = project.get("relationType", "")
-
-                # Prefer SOURCE_REPO, fall back to any GitHub project
-                if relation_type == "SOURCE_REPO" or pid.startswith("github.com/"):
-                    project_id = pid
-                    if relation_type == "SOURCE_REPO":
-                        break  # Found the preferred one
-
-            # Step 3: Fetch project details including Scorecard
+            project_id = self._select_project_id(data.get("relatedProjects", []))
             if project_id:
-                encoded_project_id = quote(project_id, safe="")
-                project_url = f"{self.base_url}/projects/{encoded_project_id}"
+                await self._enrich_with_project(client, project_id, metadata, result, name, version, purl, threshold)
 
-                proj_response = await client.get(project_url)
-                if proj_response.status_code == 200:
-                    proj_data = proj_response.json()
-
-                    # Add project info to metadata
-                    metadata["project"] = {
-                        "id": project_id,
-                        "url": f"https://{project_id}",
-                        "stars": proj_data.get("starsCount"),
-                        "forks": proj_data.get("forksCount"),
-                        "open_issues": proj_data.get("openIssuesCount"),
-                        "description": proj_data.get("description"),
-                        "homepage": proj_data.get("homepage"),
-                        "license": proj_data.get("license"),
-                    }
-
-                    # Check scorecard
-                    scorecard = proj_data.get("scorecard")
-                    if scorecard:
-                        overall_score = scorecard.get("overallScore", 0)
-
-                        # Add scorecard summary to metadata (always)
-                        metadata["scorecard"] = {
-                            "overall_score": overall_score,
-                            "date": scorecard.get("date"),
-                            "checks_count": len(scorecard.get("checks", [])),
-                        }
-
-                        # Only create a scorecard issue if score is below threshold
-                        if overall_score < threshold:
-                            result["scorecard_issue"] = self._create_scorecard_issue(
-                                name, version, purl, project_id, scorecard
-                            )
-
-            # Step 4: Fetch dependent count (popularity indicator)
-            try:
-                dependents_url = (
-                    f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}:dependents"
-                )
-                dep_response = await client.get(dependents_url)
-                if dep_response.status_code == 200:
-                    dep_data = dep_response.json()
-                    metadata["dependents"] = {
-                        "total": dep_data.get("dependentCount", 0),
-                        "direct": dep_data.get("directDependentCount", 0),
-                        "indirect": dep_data.get("indirectDependentCount", 0),
-                    }
-            except Exception as e:
-                logger.debug(f"Could not fetch dependents for {name}@{version}: {e}")
+            await self._enrich_with_dependents(client, metadata, system, encoded_name, encoded_version, name, version)
 
             result["metadata"] = metadata
             return result

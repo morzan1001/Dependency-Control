@@ -148,7 +148,7 @@ async def create_instance(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"JWKS connectivity test failed for {instance_data.url}: {e}")
+        logger.exception("JWKS connectivity test failed for %s: %s", instance_data.url, e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to reach OIDC endpoint: {str(e)}",
@@ -314,7 +314,7 @@ async def test_connection(
                 url=instance.url,
             )
     except Exception as e:
-        logger.error(f"Connection test failed for GitHub instance '{instance.name}': {e}")
+        logger.exception("Connection test failed for GitHub instance '%s': %s", instance.name, e)
         return GitHubInstanceTestConnectionResponse(
             success=False,
             message=f"Connection failed: {str(e)}",

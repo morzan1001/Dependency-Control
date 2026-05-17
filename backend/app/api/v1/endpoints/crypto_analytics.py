@@ -9,6 +9,7 @@ from fastapi import HTTPException, Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.responses import RESP_400_403, RESP_403, RESP_404
 from app.schemas.analytics import HotspotResponse, TrendSeries
 from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
 from app.services.analytics.crypto_trends import Bucket, CryptoTrendService, Metric
@@ -24,7 +25,7 @@ router = CustomAPIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"])
 _SCOPE_PATTERN = "^(project|team|global|user)$"
 
 
-@router.get("/hotspots", response_model=HotspotResponse)
+@router.get("/hotspots", response_model=HotspotResponse, responses=RESP_403)
 async def get_hotspots(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -49,7 +50,7 @@ async def get_hotspots(
     )
 
 
-@router.get("/hotspots/{key}/locations")
+@router.get("/hotspots/{key}/locations", responses={**RESP_403, **RESP_404})
 async def get_hotspot_locations(
     key: str,
     current_user: CurrentUserDep,
@@ -76,7 +77,7 @@ async def get_hotspot_locations(
     return matches[0]
 
 
-@router.get("/trends", response_model=TrendSeries)
+@router.get("/trends", response_model=TrendSeries, responses=RESP_400_403)
 async def get_trends(
     current_user: CurrentUserDep,
     db: DatabaseDep,

@@ -153,7 +153,7 @@ class CLIAnalyzer(Analyzer):
         except asyncio.TimeoutError:
             process.kill()
             await process.wait()
-            logger.error(f"{self.name} timed out after {self.cli_timeout}s")
+            logger.exception("%s timed out after %ss", self.name, self.cli_timeout)
             return b"", f"{self.name} timed out after {self.cli_timeout} seconds".encode(), 1
         return stdout, stderr, process.returncode or 0
 

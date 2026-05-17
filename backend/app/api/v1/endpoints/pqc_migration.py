@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_active_user, get_database
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.responses import RESP_403
 from app.core.constants import WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED
 from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 
 
-@router.get("/pqc-migration", response_model=MigrationPlanResponse)
+@router.get("/pqc-migration", response_model=MigrationPlanResponse, responses=RESP_403)
 async def get_pqc_migration_plan(
     background_tasks: BackgroundTasks,
     scope: Literal["project", "team", "global", "user"] = Query(..., pattern="^(project|team|global|user)$"),

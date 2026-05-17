@@ -56,7 +56,15 @@ def _status_str(value: Any) -> str:
     return str(value.value) if hasattr(value, "value") else str(value)
 
 
-@router.post("/reports", response_model=ReportAck, status_code=202)
+@router.post(
+    "/reports",
+    response_model=ReportAck,
+    status_code=202,
+    responses={
+        403: {"description": "Forbidden"},
+        429: {"description": "Too many pending reports"},
+    },
+)
 async def create_report(
     req: ReportRequest,
     background_tasks: BackgroundTasks,
@@ -192,7 +200,10 @@ async def list_reports(
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
 
-@router.get("/reports/{report_id}")
+@router.get(
+    "/reports/{report_id}",
+    responses={404: {"description": "Report not found"}},
+)
 async def get_report(
     report_id: str,
     current_user: CurrentUserDep,
@@ -207,7 +218,15 @@ async def get_report(
     return r.model_dump(by_alias=True)
 
 
-@router.get("/reports/{report_id}/download")
+@router.get(
+    "/reports/{report_id}/download",
+    responses={
+        403: {"description": "Forbidden"},
+        404: {"description": "Report not found"},
+        409: {"description": "Report not ready"},
+        410: {"description": "Artifact expired or unavailable"},
+    },
+)
 async def download_report(
     report_id: str,
     current_user: CurrentUserDep,
@@ -258,7 +277,14 @@ async def download_report(
     )
 
 
-@router.delete("/reports/{report_id}", status_code=204)
+@router.delete(
+    "/reports/{report_id}",
+    status_code=204,
+    responses={
+        403: {"description": "Forbidden"},
+        404: {"description": "Report not found"},
+    },
+)
 async def delete_report(
     report_id: str,
     current_user: CurrentUserDep,

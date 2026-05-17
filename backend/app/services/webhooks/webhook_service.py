@@ -213,7 +213,7 @@ class WebhookService:
                     )
 
         except Exception as e:
-            logger.error(f"Failed to update webhook status for {webhook_id}: {e}")
+            logger.exception("Failed to update webhook status for %s: %s", webhook_id, e)
 
     async def _log_webhook_delivery(
         self,
@@ -247,7 +247,7 @@ class WebhookService:
             )
 
         except Exception as e:
-            logger.error(f"Failed to log webhook delivery: {e}")
+            logger.exception("Failed to log webhook delivery: %s", e)
 
     def _format_payload(
         self,
@@ -376,7 +376,7 @@ class WebhookService:
                 logger.warning(f"Webhook {webhook.id} request failed for {event_type}: {e} (attempt {retry_count + 1})")
                 last_error = str(e)
             except Exception as e:
-                logger.error(f"Unexpected error sending webhook {webhook.id} for {event_type}: {e}")
+                logger.exception("Unexpected error sending webhook %s for %s: %s", webhook.id, event_type, e)
                 last_error = str(e)
 
             retry_count += 1
@@ -411,7 +411,7 @@ class WebhookService:
             try:
                 results.append(Webhook(**webhook_data))
             except Exception as e:
-                logger.error(f"Failed to parse {label} webhook data: {e}")
+                logger.exception("Failed to parse %s webhook data: %s", label, e)
         return results
 
     async def _get_webhooks_for_event(
@@ -449,7 +449,7 @@ class WebhookService:
                         await self._fetch_webhooks_by_query(db, {**base_conditions, "team_id": team_id}, "team")
                     )
             except Exception as e:
-                logger.error(f"Failed to look up team webhooks for project {project_id}: {e}")
+                logger.exception("Failed to look up team webhooks for project %s: %s", project_id, e)
 
         webhooks.extend(
             await self._fetch_webhooks_by_query(db, {**base_conditions, "project_id": None, "team_id": None}, "global")
@@ -521,7 +521,7 @@ class WebhookService:
             )
 
         except Exception as e:
-            logger.error(f"Error triggering webhooks for {event_type}: {e}")
+            logger.exception("Error triggering webhooks for %s: %s", event_type, e)
 
     async def trigger_scan_completed(
         self,

@@ -99,6 +99,59 @@ async def _check_rate_limit(key: str, max_attempts: int = 5, window_seconds: int
     await cache_service.set(cache_key, (attempts or 0) + 1, ttl_seconds=window_seconds)
 
 
+async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> Optional[dict]:
+    """Try username then email lookup."""
+    user = await user_repo.get_raw_by_username(username)
+    if not user:
+        user = await user_repo.get_raw_by_email(username)
+    return user
+
+
+def _verify_totp_or_raise(user: dict, otp: Optional[str]) -> None:
+    """Verify TOTP code. Raises HTTPException on failure."""
+    if not otp:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="2FA required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    totp_secret = user.get("totp_secret")
+    if not totp_secret:
+        logger.error(f"User {user.get('username')} has totp_enabled=True but no totp_secret")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="2FA configuration error. Please contact support.",
+        )
+
+    totp = pyotp.TOTP(totp_secret)
+    if not totp.verify(otp, valid_window=TOTP_VALID_WINDOW):
+        if auth_2fa_verifications_total:
+            auth_2fa_verifications_total.labels(result="failed").inc()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid OTP code",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if auth_2fa_verifications_total:
+        auth_2fa_verifications_total.labels(result="success").inc()
+
+
+def _resolve_login_permissions(user: dict, otp: Optional[str], system_config: SystemSettings) -> list:
+    """Resolve permissions based on 2FA status. Verifies OTP when 2FA is enabled."""
+    if user.get("totp_enabled", False):
+        _verify_totp_or_raise(user, otp)
+        return list(user.get("permissions", []))
+
+    auth_provider = user.get("auth_provider")
+    is_local = not auth_provider or auth_provider == "local"
+    if system_config.enforce_2fa and is_local:
+        # User has no 2FA but it is enforced -> Issue limited token for setup (local users only)
+        return ["auth:setup_2fa"]
+
+    return list(user.get("permissions", []))
+
+
 @router.post(
     "/login/access-token",
     response_model=Token,
@@ -119,10 +172,7 @@ async def login_access_token(
     """
     await _check_rate_limit(f"login:{form_data.username}")
     user_repo = UserRepository(db)
-    # Try username first, then email as fallback
-    user = await user_repo.get_raw_by_username(form_data.username)
-    if not user:
-        user = await user_repo.get_raw_by_email(form_data.username)
+    user = await _lookup_user_for_login(user_repo, form_data.username)
 
     if not user or not security.verify_password(form_data.password, user.get("hashed_password")):
         if auth_login_attempts_total:
@@ -156,40 +206,7 @@ async def login_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Check 2FA
-    if user.get("totp_enabled", False):
-        if not otp:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="2FA required",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        totp_secret = user.get("totp_secret")
-        if not totp_secret:
-            logger.error(f"User {user.get('username')} has totp_enabled=True but no totp_secret")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="2FA configuration error. Please contact support.",
-            )
-
-        totp = pyotp.TOTP(totp_secret)
-        if not totp.verify(otp, valid_window=TOTP_VALID_WINDOW):
-            if auth_2fa_verifications_total:
-                auth_2fa_verifications_total.labels(result="failed").inc()
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid OTP code",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        if auth_2fa_verifications_total:
-            auth_2fa_verifications_total.labels(result="success").inc()
-        permissions = user.get("permissions", [])
-    elif system_config.enforce_2fa and (not user.get("auth_provider") or user.get("auth_provider") == "local"):
-        # User has no 2FA but it is enforced -> Issue limited token for setup (local users only)
-        permissions = ["auth:setup_2fa"]
-    else:
-        permissions = user.get("permissions", [])
+    permissions = _resolve_login_permissions(user, otp, system_config)
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
@@ -541,6 +558,183 @@ async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectRes
     return RedirectResponse(url)
 
 
+async def _validate_oidc_state(state: Optional[str]) -> None:
+    """Validate and atomically consume the OIDC state token."""
+    if not state:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing state parameter")
+
+    state_key = f"oidc_state:{state}"
+    cached_state = await cache_service.get(state_key)
+    if not cached_state or not cached_state.get("valid"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired state parameter",
+        )
+    await cache_service.delete(state_key)
+
+
+def _resolve_oidc_redirect_uri(request: Request) -> str:
+    """Build the callback redirect URI used for token exchange."""
+    if settings.FRONTEND_BASE_URL and not settings.FRONTEND_BASE_URL.startswith("http://localhost"):
+        return f"{settings.FRONTEND_BASE_URL.rstrip('/')}/api/v1/login/oidc/callback"
+    return str(request.url_for("login_oidc_callback"))
+
+
+async def _oidc_exchange_code_for_token(
+    client: InstrumentedAsyncClient, system_config: SystemSettings, token_data: dict
+) -> str:
+    """Exchange OIDC code for token. Returns access_token string."""
+    # OIDC routes validate this upstream; assert for the type checker.
+    assert system_config.oidc_token_endpoint
+    try:
+        response = await client.post(system_config.oidc_token_endpoint, data=token_data)
+    except httpx.TimeoutException:
+        logger.exception("Timeout while requesting OIDC token from %s", system_config.oidc_token_endpoint)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="OIDC provider request timed out. Please try again.",
+        )
+    except httpx.RequestError as exc:
+        logger.exception("An error occurred while requesting %r: %s", exc.request.url, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. "
+                "Please check your system configuration."
+            ),
+        )
+
+    if response.status_code != 200:
+        logger.error(f"OIDC Token Error: {response.text}")
+        if auth_oidc_logins_total:
+            auth_oidc_logins_total.labels(status="token_error").inc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to retrieve token from provider",
+        )
+
+    return str(response.json().get("access_token"))
+
+
+async def _oidc_fetch_user_info(
+    client: InstrumentedAsyncClient, system_config: SystemSettings, access_token: str
+) -> dict:
+    """Fetch and validate user info from OIDC provider."""
+    assert system_config.oidc_userinfo_endpoint
+    try:
+        user_info_response = await client.get(
+            system_config.oidc_userinfo_endpoint,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+    except httpx.TimeoutException:
+        logger.exception("Timeout while requesting user info from %s", system_config.oidc_userinfo_endpoint)
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="OIDC provider request timed out. Please try again.",
+        )
+    except httpx.RequestError as exc:
+        logger.exception("An error occurred while requesting user info %r: %s", exc.request.url, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}."
+            ),
+        )
+
+    if user_info_response.status_code != 200:
+        logger.error(f"OIDC User Info Error: {user_info_response.text}")
+        if auth_oidc_logins_total:
+            auth_oidc_logins_total.labels(status="userinfo_error").inc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to retrieve user info",
+        )
+
+    user_info = user_info_response.json()
+    if not isinstance(user_info, dict):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Invalid user info response",
+        )
+    return user_info
+
+
+async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: dict, email: str) -> str:
+    """Generate a unique username for a new OIDC user."""
+    base_username = str(user_info.get("preferred_username", email.split("@")[0]))
+    username = base_username
+    suffix = 0
+    while await user_repo.exists_by_username(username):
+        suffix += 1
+        username = f"{base_username}{suffix}"
+        if suffix > 100:  # Safety limit
+            username = f"{email.split('@')[0]}_{secrets.token_hex(4)}"
+            break
+    return username
+
+
+async def _create_oidc_user(
+    db: Any, user_repo: UserRepository, user_info: dict, email: str, system_config: SystemSettings
+) -> dict:
+    """Create a new OIDC user, return the persisted user dict."""
+    username = await _generate_unique_oidc_username(user_repo, user_info, email)
+    new_user = User(
+        email=email,
+        username=username,
+        is_active=True,
+        is_verified=True,  # Trusted provider
+        auth_provider=system_config.oidc_provider_name,
+        permissions=[],
+    )
+
+    await user_repo.create(new_user)
+    from pymongo import ReadPreference
+
+    users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
+    user = await users_primary.find_one({"_id": new_user.id})
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create user",
+        )
+    return dict(user)
+
+
+def _validate_existing_oidc_user(user: dict, email: str) -> None:
+    """Verify an existing user can use OIDC and is active."""
+    existing_auth_provider = user.get("auth_provider", "local")
+    if existing_auth_provider == "local" or existing_auth_provider is None:
+        if auth_oidc_logins_total:
+            auth_oidc_logins_total.labels(status="local_user_blocked").inc()
+        logger.warning(f"OIDC login attempt blocked for local user: {email}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account uses local authentication. Please login with your password.",
+        )
+
+    if not user.get("is_active", True):
+        if auth_oidc_logins_total:
+            auth_oidc_logins_total.labels(status="inactive_user").inc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_MSG_USER_INACTIVE,
+        )
+
+
+async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redirect_uri: str) -> dict:
+    """Run the full OIDC token-exchange + user-info HTTP flow."""
+    token_data = {
+        "client_id": system_config.oidc_client_id,
+        "client_secret": system_config.oidc_client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    }
+    async with InstrumentedAsyncClient("OIDC Provider", timeout=OIDC_HTTP_TIMEOUT_SECONDS) as client:
+        access_token = await _oidc_exchange_code_for_token(client, system_config, token_data)
+        return await _oidc_fetch_user_info(client, system_config, access_token)
+
+
 @router.get(
     "/login/oidc/callback",
     summary="OIDC callback",
@@ -567,107 +761,10 @@ async def login_oidc_callback(
             detail="OIDC endpoints not configured",
         )
 
-    # Validate OIDC state to prevent CSRF attacks
-    if not state:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing state parameter")
+    await _validate_oidc_state(state)
 
-    # If two requests arrive with same state, only one succeeds
-    state_key = f"oidc_state:{state}"
-    cached_state = await cache_service.get(state_key)
-
-    if not cached_state or not cached_state.get("valid"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired state parameter",
-        )
-
-    # Atomically consume the state by deleting it.
-    # Only the first request to delete it will proceed; subsequent requests
-    # will find the state missing and be rejected above (cached_state check).
-    await cache_service.delete(state_key)
-
-    # Use same redirect_uri logic as authorize endpoint
-    if settings.FRONTEND_BASE_URL and not settings.FRONTEND_BASE_URL.startswith("http://localhost"):
-        redirect_uri = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/api/v1/login/oidc/callback"
-    else:
-        redirect_uri = str(request.url_for("login_oidc_callback"))
-
-    token_data = {
-        "client_id": system_config.oidc_client_id,
-        "client_secret": system_config.oidc_client_secret,
-        "code": code,
-        "grant_type": "authorization_code",
-        "redirect_uri": redirect_uri,
-    }
-
-    async with InstrumentedAsyncClient("OIDC Provider", timeout=OIDC_HTTP_TIMEOUT_SECONDS) as client:
-        # Exchange code for token
-        try:
-            response = await client.post(system_config.oidc_token_endpoint, data=token_data)
-        except httpx.TimeoutException:
-            logger.error(f"Timeout while requesting OIDC token from {system_config.oidc_token_endpoint}")
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="OIDC provider request timed out. Please try again.",
-            )
-        except httpx.RequestError as exc:
-            logger.error(f"An error occurred while requesting {exc.request.url!r}: {exc}")
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=(
-                    f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. "
-                    "Please check your system configuration."
-                ),
-            )
-
-        if response.status_code != 200:
-            logger.error(f"OIDC Token Error: {response.text}")
-            if auth_oidc_logins_total:
-                auth_oidc_logins_total.labels(status="token_error").inc()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to retrieve token from provider",
-            )
-
-        tokens = response.json()
-        access_token = tokens.get("access_token")
-
-        # Get user info
-        try:
-            user_info_response = await client.get(
-                system_config.oidc_userinfo_endpoint,
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-        except httpx.TimeoutException:
-            logger.error(f"Timeout while requesting user info from {system_config.oidc_userinfo_endpoint}")
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="OIDC provider request timed out. Please try again.",
-            )
-        except httpx.RequestError as exc:
-            logger.error(f"An error occurred while requesting user info {exc.request.url!r}: {exc}")
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=(
-                    f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}."
-                ),
-            )
-
-        if user_info_response.status_code != 200:
-            logger.error(f"OIDC User Info Error: {user_info_response.text}")
-            if auth_oidc_logins_total:
-                auth_oidc_logins_total.labels(status="userinfo_error").inc()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to retrieve user info",
-            )
-
-        user_info = user_info_response.json()
-        if not isinstance(user_info, dict):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Invalid user info response",
-            )
+    redirect_uri = _resolve_oidc_redirect_uri(request)
+    user_info = await _fetch_oidc_user_info(system_config, code, redirect_uri)
 
     email = user_info.get("email")
     if not email:
@@ -682,63 +779,9 @@ async def login_oidc_callback(
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
     if not user:
-        # Generate unique username - try preferred_username first, then email prefix
-        base_username = user_info.get("preferred_username", email.split("@")[0])
-        username = base_username
-
-        # Check for username conflicts and generate unique suffix if needed
-        suffix = 0
-        while await user_repo.exists_by_username(username):
-            suffix += 1
-            username = f"{base_username}{suffix}"
-            if suffix > 100:  # Safety limit
-                # Fall back to email-based username with random suffix
-                username = f"{email.split('@')[0]}_{secrets.token_hex(4)}"
-                break
-
-        # Create new user using the User model
-        new_user = User(
-            email=email,
-            username=username,
-            is_active=True,
-            is_verified=True,  # Trusted provider
-            auth_provider=system_config.oidc_provider_name,
-            permissions=[],
-        )
-
-        await user_repo.create(new_user)
-        # Read back from PRIMARY to avoid replication lag with secondaryPreferred
-        from pymongo import ReadPreference
-
-        # pymongo's ReadPreference.PRIMARY is typed as _ServerMode (Primary), but
-        # motor's .with_options() stub only accepts Optional[ReadPreference].
-        users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-        user = await users_primary.find_one({"_id": new_user.id})
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create user",
-            )
+        user = await _create_oidc_user(db, user_repo, user_info, email, system_config)
     else:
-        # Check if existing user is a local auth user - they cannot use OIDC
-        existing_auth_provider = user.get("auth_provider", "local")
-        if existing_auth_provider == "local" or existing_auth_provider is None:
-            if auth_oidc_logins_total:
-                auth_oidc_logins_total.labels(status="local_user_blocked").inc()
-            logger.warning(f"OIDC login attempt blocked for local user: {email}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This account uses local authentication. Please login with your password.",
-            )
-
-        # Check if existing user is active
-        if not user.get("is_active", True):
-            if auth_oidc_logins_total:
-                auth_oidc_logins_total.labels(status="inactive_user").inc()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=_MSG_USER_INACTIVE,
-            )
+        _validate_existing_oidc_user(user, email)
 
     # OIDC users are exempt from 2FA enforcement — we trust the OIDC provider
     permissions = user.get("permissions", [])

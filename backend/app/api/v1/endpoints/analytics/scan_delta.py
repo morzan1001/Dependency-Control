@@ -21,6 +21,7 @@ from fastapi import HTTPException, Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.responses import RESP_400_403
 from app.schemas.scan_delta import ScanDeltaResponse
 from app.services.analytics.scan_delta import (
     InvalidDeltaQuery,
@@ -37,7 +38,7 @@ def _csv_to_list(value: Optional[str]) -> Optional[List[str]]:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
-@router.get("/scan-delta", response_model=ScanDeltaResponse)
+@router.get("/scan-delta", response_model=ScanDeltaResponse, responses=RESP_400_403)
 async def get_scan_delta(
     current_user: CurrentUserDep,
     db: DatabaseDep,

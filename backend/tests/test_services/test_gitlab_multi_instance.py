@@ -631,10 +631,9 @@ class TestTeamSyncSilentReturnsAreLogged:
             )
 
         assert result is None
-        assert any(
-            "999" in r.message and "project details" in r.message.lower()
-            for r in caplog.records
-        ), f"Expected warning naming project_id 999 and 'project details'. Got: {[r.message for r in caplog.records]}"
+        assert any("999" in r.message and "project details" in r.message.lower() for r in caplog.records), (
+            f"Expected warning naming project_id 999 and 'project details'. Got: {[r.message for r in caplog.records]}"
+        )
 
     def test_logs_when_namespace_is_user(self, gitlab_instance_a, caplog):
         service = GitLabService(gitlab_instance_a)
@@ -654,10 +653,9 @@ class TestTeamSyncSilentReturnsAreLogged:
             )
 
         assert result is None
-        assert any(
-            "777" in r.message and "user namespace" in r.message.lower()
-            for r in caplog.records
-        ), f"Expected info naming project_id 777 and 'user namespace'. Got: {[r.message for r in caplog.records]}"
+        assert any("777" in r.message and "user namespace" in r.message.lower() for r in caplog.records), (
+            f"Expected info naming project_id 777 and 'user namespace'. Got: {[r.message for r in caplog.records]}"
+        )
 
     def test_logs_when_group_members_empty_and_no_existing_team(self, gitlab_instance_a, caplog):
         service = GitLabService(gitlab_instance_a)

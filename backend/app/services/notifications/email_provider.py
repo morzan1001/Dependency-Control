@@ -29,7 +29,7 @@ except ImportError:
 try:
     import aiosmtplib
 except ImportError as e:
-    logger.error("aiosmtplib is required for async SMTP. Install with: poetry install")
+    logger.exception("aiosmtplib is required for async SMTP. Install with: poetry install")
     raise ImportError("aiosmtplib is required") from e
 
 
@@ -120,7 +120,7 @@ class EmailProvider(NotificationProvider):
                 await smtp.send_message(msg)
 
         except Exception as e:
-            logger.error(f"Async SMTP send failed: {e}")
+            logger.exception("Async SMTP send failed: %s", e)
             raise
 
     async def send(  # type: ignore[override]
@@ -187,7 +187,7 @@ class EmailProvider(NotificationProvider):
                 notifications_sent_total.labels(type="email").inc()
             return True
         except Exception as e:
-            logger.error(f"Failed to send email to {destination}: {e}")
+            logger.exception("Failed to send email to %s: %s", destination, e)
             if notifications_failed_total:
                 notifications_failed_total.labels(type="email").inc()
             return False

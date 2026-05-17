@@ -15,6 +15,15 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
+from app.api.v1.helpers.responses import (
+    RESP_400,
+    RESP_400_403,
+    RESP_400_403_404,
+    RESP_400_404,
+    RESP_403,
+    RESP_403_404,
+    RESP_404,
+)
 from app.core.config import settings
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
@@ -32,7 +41,7 @@ router = CustomAPIRouter(tags=["policy-audit"])
 # ---------- SYSTEM SCOPE ----------
 
 
-@router.get("/crypto-policies/system/audit")
+@router.get("/crypto-policies/system/audit", responses=RESP_403)
 async def list_system_audit(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -48,7 +57,7 @@ async def list_system_audit(
     return {"entries": [e.model_dump(by_alias=True) for e in entries]}
 
 
-@router.get("/crypto-policies/system/audit/{version}")
+@router.get("/crypto-policies/system/audit/{version}", responses=RESP_403_404)
 async def get_system_audit_entry(
     version: int,
     current_user: CurrentUserDep,
@@ -65,7 +74,13 @@ async def get_system_audit_entry(
     return entry.model_dump(by_alias=True)
 
 
-@router.post("/crypto-policies/system/revert")
+@router.post(
+    "/crypto-policies/system/revert",
+    responses={
+        **RESP_400_403_404,
+        500: {"description": "Reverted policy not found"},
+    },
+)
 async def revert_system_policy(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -91,7 +106,7 @@ async def revert_system_policy(
     return policy.model_dump(by_alias=True)
 
 
-@router.delete("/crypto-policies/system/audit")
+@router.delete("/crypto-policies/system/audit", responses=RESP_400_403)
 async def prune_system_audit(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -129,7 +144,7 @@ async def list_project_audit(
     return {"entries": [e.model_dump(by_alias=True) for e in entries]}
 
 
-@router.get("/projects/{project_id}/crypto-policy/audit/{version}")
+@router.get("/projects/{project_id}/crypto-policy/audit/{version}", responses=RESP_404)
 async def get_project_audit_entry(
     project_id: str,
     version: int,
@@ -147,7 +162,7 @@ async def get_project_audit_entry(
     return entry.model_dump(by_alias=True)
 
 
-@router.post("/projects/{project_id}/crypto-policy/revert")
+@router.post("/projects/{project_id}/crypto-policy/revert", responses=RESP_400_404)
 async def revert_project_policy(
     project_id: str,
     current_user: CurrentUserDep,
@@ -174,7 +189,7 @@ async def revert_project_policy(
     return policy.model_dump(by_alias=True) if policy else {}
 
 
-@router.delete("/projects/{project_id}/crypto-policy/audit")
+@router.delete("/projects/{project_id}/crypto-policy/audit", responses=RESP_400)
 async def prune_project_audit(
     project_id: str,
     current_user: CurrentUserDep,
@@ -216,7 +231,7 @@ async def list_project_license_audit(
     return {"entries": [e.model_dump(by_alias=True) for e in entries]}
 
 
-@router.get("/projects/{project_id}/license-policy/audit/{version}")
+@router.get("/projects/{project_id}/license-policy/audit/{version}", responses=RESP_404)
 async def get_project_license_audit_entry(
     project_id: str,
     version: int,

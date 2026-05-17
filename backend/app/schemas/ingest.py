@@ -2,6 +2,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+_DESC_SCAN_ID = "Unique identifier of the scan"
+
 
 class BaseIngest(BaseModel):
     """Base schema for all ingest payloads."""
@@ -26,7 +28,7 @@ class BaseIngest(BaseModel):
 class ScanContext(BaseModel):
     """Context returned after finding or creating a scan."""
 
-    scan_id: str = Field(..., description="Unique identifier of the scan")
+    scan_id: str = Field(..., description=_DESC_SCAN_ID)
     is_new: bool = Field(..., description="Whether this is a newly created scan")
     pipeline_url: Optional[str] = Field(None, description="URL to the pipeline")
 
@@ -51,7 +53,7 @@ class ScanStatsResponse(BaseModel):
 class FindingsIngestResponse(BaseModel):
     """Response for findings-based ingest endpoints (TruffleHog, OpenGrep, KICS, Bearer)."""
 
-    scan_id: str = Field(..., description="Unique identifier of the scan")
+    scan_id: str = Field(..., description=_DESC_SCAN_ID)
     findings_count: int = Field(..., description="Number of findings processed")
     waived_count: int = Field(0, description="Number of findings waived")
     stats: ScanStatsResponse = Field(default_factory=ScanStatsResponse, description="Statistics breakdown")
@@ -61,7 +63,7 @@ class SecretScanResponse(BaseModel):
     """Response for secret scanning (TruffleHog) - includes failure status."""
 
     status: str = Field(..., description="'failed' if secrets found, 'success' otherwise")
-    scan_id: str = Field(..., description="Unique identifier of the scan")
+    scan_id: str = Field(..., description=_DESC_SCAN_ID)
     findings_count: int = Field(..., description="Number of secrets found")
     waived_count: int = Field(0, description="Number of findings waived")
     message: str = Field(..., description="Human-readable summary")
@@ -71,7 +73,7 @@ class SBOMIngestResponse(BaseModel):
     """Response for SBOM ingest endpoint."""
 
     status: str = Field(..., description="'queued' when successfully submitted")
-    scan_id: str = Field(..., description="Unique identifier of the scan")
+    scan_id: str = Field(..., description=_DESC_SCAN_ID)
     message: str = Field(..., description="Human-readable status message")
     sboms_processed: int = Field(0, description="Number of SBOMs successfully processed")
     sboms_failed: int = Field(0, description="Number of SBOMs that failed to process")

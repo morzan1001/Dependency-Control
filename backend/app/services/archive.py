@@ -312,7 +312,7 @@ async def _upload_archive_bundle(
     try:
         total = await upload_stream(s3_key, payload, content_type=content_type)
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Failed to upload archive",
             extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
         )
@@ -483,25 +483,25 @@ async def _replay_bundle(
                     await _flush_batch(db, coll, batch_by_collection, collections_restored)
                 break
     except ValueError as e:
-        logger.error(
+        logger.exception(
             "Restore parse error",
             extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
         )
         return _parse_error_reason(e), collections_restored, gridfs_entries
     except PyMongoError as e:
-        logger.error(
+        logger.exception(
             "Restore MongoDB error",
             extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
         )
         return ArchiveFailureReason.UNKNOWN, collections_restored, gridfs_entries
     except InvalidTag as e:
-        logger.error(
+        logger.exception(
             "Restore decryption error",
             extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
         )
         return ArchiveFailureReason.ENCRYPTION, collections_restored, gridfs_entries
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Restore stream error",
             extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
         )
@@ -534,7 +534,7 @@ async def _restore_gridfs(
                 json.dumps(entry["data"]).encode("utf-8"),
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "GridFS restore failed",
                 extra={
                     "gridfs_id": _sanitize_for_log(entry.get("gridfs_id")),

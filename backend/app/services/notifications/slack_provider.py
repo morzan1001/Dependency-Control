@@ -120,7 +120,7 @@ class SlackProvider(NotificationProvider):
                 return access_token
 
         except Exception as e:
-            logger.error(f"Error refreshing Slack token: {e}")
+            logger.exception("Error refreshing Slack token: %s", e)
             return None
 
     async def send(
@@ -253,7 +253,7 @@ class SlackProvider(NotificationProvider):
                         notifications_failed_total.labels(type="slack").inc()
                     return False
         except Exception as e:
-            logger.error(f"Error sending Slack message: {e}")
+            logger.exception("Error sending Slack message: %s", e)
             if notifications_failed_total:
                 notifications_failed_total.labels(type="slack").inc()
             return False

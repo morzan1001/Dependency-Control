@@ -97,6 +97,22 @@ def _clip_value(value: Any) -> Any:
     return value
 
 
+def _flatten_primary_vuln(out: Dict[str, Any], vulns: List[Dict[str, Any]]) -> None:
+    """Mutate `out` with fields lifted from the first nested CVE."""
+    if not vulns:
+        return
+    primary = vulns[0]
+    if primary.get("id"):
+        out["cve"] = primary["id"]
+    for k in ("cvss_score", "fixed_version", "epss_score"):
+        if primary.get(k) is not None and k not in out:
+            out[k] = primary[k]
+    refs = primary.get("references") or []
+    if refs:
+        out["references"] = refs[:3]
+    out["cve_count"] = len(vulns)
+
+
 def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Compact LLM projection: flattens `details` and the first CVE from
     `details.vulnerabilities` so CVE ID + fix + EPSS sit at the top level."""
@@ -113,19 +129,7 @@ def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
         if details.get(key) is not None:
             out[key] = _clip_value(details[key])
 
-    vulns = details.get("vulnerabilities") or []
-    if vulns:
-        # Surface first CVE as a concrete handle; remaining count via cve_count.
-        primary = vulns[0]
-        if primary.get("id"):
-            out["cve"] = primary["id"]
-        for k in ("cvss_score", "fixed_version", "epss_score"):
-            if primary.get(k) is not None and k not in out:
-                out[k] = primary[k]
-        refs = primary.get("references") or []
-        if refs:
-            out["references"] = refs[:3]
-        out["cve_count"] = len(vulns)
+    _flatten_primary_vuln(out, details.get("vulnerabilities") or [])
     return out
 
 

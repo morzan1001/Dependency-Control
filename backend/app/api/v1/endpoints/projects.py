@@ -1028,7 +1028,7 @@ async def invite_user(
             system_settings=system_config,
         )
     except Exception as e:
-        logger.error(f"Failed to send project member notification email: {e}")
+        logger.exception("Failed to send project member notification email: %s", e)
 
     return {"message": f"User added to project as {invite_in.role}"}
 

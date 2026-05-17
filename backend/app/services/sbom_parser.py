@@ -219,33 +219,67 @@ class SBOMParser:
                 try:
                     format_handler(sbom, result)
                 except Exception as e:
-                    logger.error(f"Error parsing {format_type.value} SBOM: {e}")
+                    logger.exception("Error parsing %s SBOM: %s", format_type.value, e)
 
         result.total_components = len(result.dependencies) + result.skipped_components
         result.parsed_components = len(result.dependencies)
 
         return result
 
+    @staticmethod
+    def _extract_cyclonedx_tool(tools: Any) -> Tuple[Optional[str], Optional[str]]:
+        """Extract tool name/version from CycloneDX metadata.tools (list or object form)."""
+        if not tools:
+            return None, None
+        if isinstance(tools, list) and tools:
+            first_tool = tools[0]
+            if isinstance(first_tool, dict):
+                return first_tool.get("name") or first_tool.get("vendor"), first_tool.get("version")
+            return None, None
+        if isinstance(tools, dict):
+            # CycloneDX 1.5+ tools object
+            components = tools.get("components", [])
+            if components:
+                return components[0].get("name"), components[0].get("version")
+        return None, None
+
+    @staticmethod
+    def _build_cyclonedx_deps_graph(
+        dependencies_map: List[Dict[str, Any]],
+    ) -> Tuple[Dict[str, list], Dict[str, list], set]:
+        """Build forward/reverse cyclonedx dep graphs and the transitive ref set."""
+        deps_graph: Dict[str, list] = {}
+        reverse_deps_graph: Dict[str, list] = {}
+        all_transitive_refs: set = set()
+
+        for dep_entry in dependencies_map:
+            ref = dep_entry.get("ref", "")
+            depends_on = dep_entry.get("dependsOn", [])
+            deps_graph[ref] = depends_on
+            for transitive_ref in depends_on:
+                all_transitive_refs.add(transitive_ref)
+                reverse_deps_graph.setdefault(transitive_ref, []).append(ref)
+
+        return deps_graph, reverse_deps_graph, all_transitive_refs
+
+    @staticmethod
+    def _resolve_cyclonedx_direct_refs(
+        deps_graph: Dict[str, list], all_transitive_refs: set, main_bom_ref: Optional[str]
+    ) -> set:
+        """Resolve the set of direct refs given the dep graph and main component."""
+        if main_bom_ref and main_bom_ref in deps_graph:
+            return set(deps_graph[main_bom_ref])
+        return {ref for ref in deps_graph if ref not in all_transitive_refs and ref != main_bom_ref}
+
     def _parse_cyclonedx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
 
-        # Extract metadata
         metadata = sbom.get("metadata", {})
-
-        # Tool info
-        tools = metadata.get("tools", [])
-        if tools:
-            if isinstance(tools, list) and len(tools) > 0:
-                first_tool = tools[0]
-                if isinstance(first_tool, dict):
-                    result.tool_name = first_tool.get("name") or first_tool.get("vendor")
-                    result.tool_version = first_tool.get("version")
-            elif isinstance(tools, dict):
-                # CycloneDX 1.5+ tools object
-                components = tools.get("components", [])
-                if components:
-                    result.tool_name = components[0].get("name")
-                    result.tool_version = components[0].get("version")
+        tool_name, tool_version = self._extract_cyclonedx_tool(metadata.get("tools", []))
+        if tool_name is not None:
+            result.tool_name = tool_name
+        if tool_version is not None:
+            result.tool_version = tool_version
 
         result.created_at = metadata.get("timestamp")
 
@@ -255,60 +289,24 @@ class SBOMParser:
         result.source_target = source_target
 
         # Get the main component bom-ref (root of dependency tree)
-        main_component = metadata.get("component", {})
-        main_bom_ref = main_component.get("bom-ref")
+        main_bom_ref = metadata.get("component", {}).get("bom-ref")
 
         # Parse the dependencies array to build dependency graph
         dependencies_map = sbom.get("dependencies", [])
-        direct_refs: set = set()  # Components that are direct dependencies
-        all_transitive_refs: set = set()  # All refs that appear in any dependsOn array
+        deps_graph, reverse_deps_graph, all_transitive_refs = self._build_cyclonedx_deps_graph(dependencies_map)
+        direct_refs = self._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, main_bom_ref)
 
-        # Build a map of ref -> dependsOn for easier lookup
-        deps_graph: Dict[str, list] = {}
-        # Build reverse map: child -> list of parents (for parent_components)
-        reverse_deps_graph: Dict[str, list] = {}
-
-        for dep_entry in dependencies_map:
-            ref = dep_entry.get("ref", "")
-            depends_on = dep_entry.get("dependsOn", [])
-            deps_graph[ref] = depends_on
-            # All items in dependsOn are transitive (dependencies of something)
-            for transitive_ref in depends_on:
-                all_transitive_refs.add(transitive_ref)
-                # Build reverse mapping: child -> parents
-                if transitive_ref not in reverse_deps_graph:
-                    reverse_deps_graph[transitive_ref] = []
-                reverse_deps_graph[transitive_ref].append(ref)
-
-        # Direct dependencies are those that:
-        # 1. Appear in the main component's dependsOn list, OR
-        # 2. Have their own entry in dependencies but are NOT in any other component's dependsOn
-        if main_bom_ref and main_bom_ref in deps_graph:
-            # Use the main component's dependsOn as direct dependencies
-            direct_refs = set(deps_graph[main_bom_ref])
-        else:
-            # Fallback: components that have deps_graph entry but are not transitively required
-            for ref in deps_graph.keys():
-                if ref not in all_transitive_refs and ref != main_bom_ref:
-                    direct_refs.add(ref)
-
-        # Log dependency graph info for debugging
-        has_dependency_info = bool(dependencies_map)
         logger.debug(
-            f"CycloneDX dependency analysis: has_graph={has_dependency_info}, "
+            f"CycloneDX dependency analysis: has_graph={bool(dependencies_map)}, "
             f"main_bom_ref={main_bom_ref}, "
             f"direct_refs={len(direct_refs)}, transitive_refs={len(all_transitive_refs)}, "
             f"reverse_deps_entries={len(reverse_deps_graph)}"
         )
 
-        # Parse components
         components = sbom.get("components", [])
-
-        # Extract cryptographic-asset components into crypto_assets
         result.crypto_assets = parse_crypto_components(components)
 
         for comp in components:
-            # cryptographic-asset components are handled separately above
             if comp.get("type") == "cryptographic-asset":
                 continue
             parsed = self._parse_cyclonedx_component(
@@ -454,6 +452,101 @@ class SBOMParser:
         else:
             return f"pkg:{purl_type}/{name}@{version}"
 
+    @staticmethod
+    def _resolve_cyclonedx_directness(
+        check_ref: Optional[str],
+        direct_refs: Optional[set],
+        all_transitive_refs: Optional[set],
+    ) -> Tuple[bool, bool]:
+        """Return (direct, direct_inferred) for a cyclonedx component."""
+        has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
+        if not (has_dependency_graph and direct_refs is not None and all_transitive_refs is not None):
+            # No dependency graph - assume top-level direct, mark as inferred
+            return True, True
+        if check_ref in direct_refs or (check_ref not in all_transitive_refs and direct_refs):
+            return True, False
+        return False, False
+
+    _LAYER_DIGEST_PROPS = ("trivy:LayerDigest", "aquasecurity:trivy:LayerDigest")
+    _LAYER_DIFFID_PROP = "aquasecurity:trivy:LayerDiffID"
+    _FOUND_BY_PROP = "syft:package:foundBy"
+
+    @classmethod
+    def _classify_cyclonedx_property(
+        cls,
+        prop_name: str,
+        prop_value: str,
+        current_layer: Optional[str],
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Return (layer_digest_update, found_by_update, location_update) for a single property.
+
+        Each item is either None (no update) or the new value to record.
+        Caller is responsible for honouring "first wins" semantics where applicable.
+        """
+        if prop_name in cls._LAYER_DIGEST_PROPS:
+            return prop_value, None, None
+        if prop_name == cls._LAYER_DIFFID_PROP:
+            return (prop_value if not current_layer else None), None, None
+        if prop_name == cls._FOUND_BY_PROP:
+            return None, prop_value, None
+        lower = prop_name.lower()
+        if ("location" in lower or "path" in lower) and prop_value:
+            return None, None, prop_value
+        return None, None, None
+
+    @classmethod
+    def _extract_cyclonedx_properties(
+        cls,
+        comp: Dict[str, Any],
+    ) -> Tuple[Optional[str], Optional[str], List[str], Dict[str, str]]:
+        """Extract (layer_digest, found_by, locations, properties) from comp."""
+        layer_digest: Optional[str] = None
+        found_by: Optional[str] = None
+        locations: List[str] = []
+        properties: Dict[str, str] = {}
+
+        for prop in comp.get("properties", []):
+            prop_name = prop.get("name", "")
+            prop_value = prop.get("value", "")
+            if prop_name and prop_value:
+                properties[prop_name] = prop_value
+
+            new_layer, new_found_by, new_location = cls._classify_cyclonedx_property(
+                prop_name, prop_value, layer_digest
+            )
+            if new_layer is not None:
+                layer_digest = new_layer
+            if new_found_by is not None:
+                found_by = new_found_by
+            if new_location is not None:
+                locations.append(new_location)
+
+        for occ in comp.get("evidence", {}).get("occurrences", []):
+            loc = occ.get("location")
+            if loc and loc not in locations:
+                locations.append(loc)
+
+        return layer_digest, found_by, locations, properties
+
+    @staticmethod
+    def _extract_cyclonedx_external_refs(
+        external_refs: List[Dict[str, Any]],
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Return (homepage, repository_url, download_url) from externalReferences."""
+        homepage: Optional[str] = None
+        repository_url: Optional[str] = None
+        download_url: Optional[str] = None
+        for ref in external_refs:
+            ref_type = ref.get("type", "").lower()
+            ref_url = ref.get("url", "")
+            if ref_type == "website" and not homepage:
+                homepage = ref_url
+            elif ref_type in ("vcs", "git") and not repository_url:
+                repository_url = ref_url
+            elif ref_type in ("distribution", "download") and not download_url:
+                download_url = ref_url
+        return homepage, repository_url, download_url
+
     def _parse_cyclonedx_component(
         self,
         comp: Dict[str, Any],
@@ -472,109 +565,37 @@ class SBOMParser:
         component_type = comp.get("type", "library")
         group = comp.get("group")
 
-        # Skip components without identifiable info
         if not name:
             return None
 
-        # If no purl, construct one from available metadata
         if not purl:
             purl = self._construct_purl(component_type, name, version, group)
             logger.debug(f"Constructed PURL for {name}@{version}: {purl}")
 
-        # Determine if this is a direct dependency
-        direct = False
-        direct_inferred = False
-        parent_components = []
         check_ref = bom_ref or purl
+        direct, direct_inferred = self._resolve_cyclonedx_directness(check_ref, direct_refs, all_transitive_refs)
 
-        # Only determine direct status if we have dependency relationship info
-        has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
-
-        if has_dependency_graph and direct_refs is not None and all_transitive_refs is not None:
-            # Use bom-ref or purl to check:
-            # A component is direct if it's explicitly listed in direct_refs,
-            # or if it's not in anyone's dependsOn (isolated/root-level dependency)
-            if check_ref in direct_refs or (check_ref not in all_transitive_refs and direct_refs):
-                direct = True
-        else:
-            # No dependency graph - mark as inferred
-            direct_inferred = True
-            # Assume top-level components are direct when we can't determine relationship
-            direct = True
-
-        # Get parent components from reverse dependency graph
+        parent_components = []
         if reverse_deps_graph and check_ref in reverse_deps_graph:
             parent_components = reverse_deps_graph[check_ref]
 
-        # Extract license
-        licenses = comp.get("licenses", [])
-        license_str, license_url = self._extract_cyclonedx_licenses_full(licenses)
+        license_str, license_url = self._extract_cyclonedx_licenses_full(comp.get("licenses", []))
 
-        # Extract properties
-        layer_digest = None
-        found_by = None
-        locations = []
-        properties = {}
+        layer_digest, found_by, locations, properties = self._extract_cyclonedx_properties(comp)
 
-        for prop in comp.get("properties", []):
-            prop_name = prop.get("name", "")
-            prop_value = prop.get("value", "")
-
-            # Store all properties
-            if prop_name and prop_value:
-                properties[prop_name] = prop_value
-
-            # Layer info (Trivy)
-            if prop_name in ["trivy:LayerDigest", "aquasecurity:trivy:LayerDigest"]:
-                layer_digest = prop_value
-            elif prop_name == "aquasecurity:trivy:LayerDiffID":
-                if not layer_digest:
-                    layer_digest = prop_value
-
-            # Cataloger (Syft)
-            elif prop_name == "syft:package:foundBy":
-                found_by = prop_value
-
-            # Locations
-            elif "location" in prop_name.lower() or "path" in prop_name.lower():
-                if prop_value:
-                    locations.append(prop_value)
-
-        # Check evidence for locations
-        evidence = comp.get("evidence", {})
-        for occ in evidence.get("occurrences", []):
-            loc = occ.get("location")
-            if loc and loc not in locations:
-                locations.append(loc)
-
-        # Extract CPEs
         cpes = [c.get("cpe") for c in comp.get("cpes", []) if c.get("cpe")]
 
-        # Extract hashes
-        hashes = {}
+        hashes: Dict[str, str] = {}
         for h in comp.get("hashes", []):
             alg = h.get("alg", "").lower()
             content = h.get("content", "")
             if alg and content:
                 hashes[alg] = content
 
-        # Extract external references
-        homepage = None
-        repository_url = None
-        download_url = None
+        homepage, repository_url, download_url = self._extract_cyclonedx_external_refs(
+            comp.get("externalReferences", [])
+        )
 
-        for ref in comp.get("externalReferences", []):
-            ref_type = ref.get("type", "").lower()
-            ref_url = ref.get("url", "")
-
-            if ref_type == "website" and not homepage:
-                homepage = ref_url
-            elif ref_type in ["vcs", "git"] and not repository_url:
-                repository_url = ref_url
-            elif ref_type in ["distribution", "download"] and not download_url:
-                download_url = ref_url
-
-        # Determine the component-specific source type
         component_type = comp.get("type", "library")
         determined_source_type = self._determine_component_source(
             purl=purl,
@@ -611,79 +632,69 @@ class SBOMParser:
             properties=properties,
         )
 
+    @staticmethod
+    def _classify_license_value(
+        value: str, current_url: Optional[str], fallback_url: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Classify a license value, returning (name_or_extracted, new_url_or_None).
+
+        Handles whether the value is a URL (try to extract SPDX id) or a plain name.
+        If a plain name has a separate fallback_url, returns that as the URL when no
+        current URL is set.
+        """
+        if is_url(value):
+            new_url = current_url or value
+            extracted = extract_license_from_url(value)
+            return extracted, new_url
+        if not current_url and fallback_url:
+            return value, fallback_url
+        return value, None
+
+    def _handle_cyclonedx_license_dict(
+        self, lic: Dict[str, Any], license_names: List[str], license_url: Optional[str]
+    ) -> Optional[str]:
+        """Handle a single CycloneDX license-dict entry; returns possibly updated url."""
+        # Could be license object or expression
+        if "license" in lic:
+            inner = lic["license"]
+            if isinstance(inner, dict):
+                name_or_id = inner.get("id") or inner.get("name", "")
+                name, new_url = self._classify_license_value(name_or_id, license_url, inner.get("url"))
+                if name:
+                    license_names.append(name)
+                if new_url and not license_url:
+                    license_url = new_url
+            return license_url
+
+        for key in ("expression", "id", "name"):
+            if key in lic:
+                value = lic[key]
+                fallback = lic.get("url") if key in ("id", "name") else None
+                name, new_url = self._classify_license_value(value, license_url, fallback)
+                if name:
+                    license_names.append(name)
+                if new_url and not license_url:
+                    license_url = new_url
+                return license_url
+        return license_url
+
     def _extract_cyclonedx_licenses_full(self, licenses: List[Any]) -> Tuple[str, Optional[str]]:
         """Extract license string and URL from CycloneDX license array."""
         if not licenses:
             return "", None
 
-        license_names = []
-        license_url = None
+        license_names: List[str] = []
+        license_url: Optional[str] = None
 
         for lic in licenses:
             if isinstance(lic, dict):
-                # Could be license object or expression
-                if "license" in lic:
-                    inner = lic["license"]
-                    if isinstance(inner, dict):
-                        name_or_id = inner.get("id") or inner.get("name", "")
-                        url = inner.get("url")
-
-                        # Check if name is actually a URL
-                        if is_url(name_or_id):
-                            if not license_url:
-                                license_url = name_or_id
-                            # Try to extract SPDX ID from URL
-                            extracted = extract_license_from_url(name_or_id)
-                            if extracted:
-                                license_names.append(extracted)
-                        else:
-                            license_names.append(name_or_id)
-                            if not license_url and url:
-                                license_url = url
-                elif "expression" in lic:
-                    expr = lic["expression"]
-                    if is_url(expr):
-                        if not license_url:
-                            license_url = expr
-                        extracted = extract_license_from_url(expr)
-                        if extracted:
-                            license_names.append(extracted)
-                    else:
-                        license_names.append(expr)
-                elif "id" in lic:
-                    lid = lic["id"]
-                    if is_url(lid):
-                        if not license_url:
-                            license_url = lid
-                        extracted = extract_license_from_url(lid)
-                        if extracted:
-                            license_names.append(extracted)
-                    else:
-                        license_names.append(lid)
-                        if not license_url:
-                            license_url = lic.get("url")
-                elif "name" in lic:
-                    lname = lic["name"]
-                    if is_url(lname):
-                        if not license_url:
-                            license_url = lname
-                        extracted = extract_license_from_url(lname)
-                        if extracted:
-                            license_names.append(extracted)
-                    else:
-                        license_names.append(lname)
-                        if not license_url:
-                            license_url = lic.get("url")
+                license_url = self._handle_cyclonedx_license_dict(lic, license_names, license_url)
             elif isinstance(lic, str):
-                # Check if the string is a URL
-                if is_url(lic):
-                    if not license_url:
-                        license_url = lic
-                    extracted = extract_license_from_url(lic)
-                    if extracted:
-                        license_names.append(extracted)
-                else:
-                    license_names.append(lic)
+                name, new_url = self._classify_license_value(lic, license_url)
+                if name:
+                    license_names.append(name)
+                if new_url and not license_url:
+                    license_url = new_url
 
         return ", ".join(filter(None, license_names)), license_url
 
@@ -692,112 +703,102 @@ class SBOMParser:
         license_str, _ = self._extract_cyclonedx_licenses_full(licenses)
         return license_str
 
-    def _parse_syft(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
-        """Parse Syft JSON format SBOM."""
+    _SYFT_APP_PACKAGE_TYPES = (
+        "npm",
+        "python",
+        "go-module",
+        "gem",
+        "cargo",
+        "composer",
+        "maven",
+        "gradle",
+        "nuget",
+        "pub",
+    )
+    _SYFT_KNOWN_SOURCE_TYPES = (
+        SOURCE_TYPE_IMAGE,
+        SOURCE_TYPE_DIRECTORY,
+        SOURCE_TYPE_FILE,
+        SOURCE_TYPE_FILE_SYSTEM,
+    )
 
-        # Extract descriptor (tool info)
-        descriptor = sbom.get("descriptor", {})
-        result.tool_name = descriptor.get("name", "syft")
-        result.tool_version = descriptor.get("version")
-
-        # Extract source info
-        source = sbom.get("source", {})
+    @classmethod
+    def _resolve_syft_source(cls, source: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+        """Return (source_type, source_target) parsed from a syft source dict."""
         source_type_raw = source.get("type", "")
-        source_id = source.get("id", "")
-
+        if source_type_raw not in cls._SYFT_KNOWN_SOURCE_TYPES:
+            return None, None
         if source_type_raw == SOURCE_TYPE_IMAGE:
-            result.source_type = SOURCE_TYPE_IMAGE
-            # Get image name from various locations
-            result.source_target = (
-                source.get("target", "")
-                or source.get("metadata", {}).get("userInput", "")
-                or source.get("metadata", {}).get("imageID", "")
-            )
-        elif source_type_raw == SOURCE_TYPE_DIRECTORY:
-            result.source_type = SOURCE_TYPE_DIRECTORY
-            result.source_target = source.get("target", "")
-        elif source_type_raw == SOURCE_TYPE_FILE:
-            result.source_type = SOURCE_TYPE_FILE
-            result.source_target = source.get("target", "")
-        elif source_type_raw == SOURCE_TYPE_FILE_SYSTEM:
-            result.source_type = SOURCE_TYPE_FILE_SYSTEM
-            result.source_target = source.get("target", "")
+            metadata = source.get("metadata", {})
+            target = source.get("target", "") or metadata.get("userInput", "") or metadata.get("imageID", "")
+            return SOURCE_TYPE_IMAGE, target
+        return source_type_raw, source.get("target", "")
 
-        # Get artifacts list for relationship analysis
-        artifacts = sbom.get("artifacts", [])
-
-        # Analyze artifactRelationships to determine direct vs transitive
-        # Direct dependencies are those directly referenced by the source (root)
-        # or by application-level packages (not OS packages)
-        relationships = sbom.get("artifactRelationships", [])
-
-        # Find direct artifact IDs - artifacts that the source directly contains/depends on
-        direct_artifact_ids = set()
-        all_child_ids = set()  # All artifacts that are children of something
-
-        # Build reverse dependency graph: child -> list of parents
+    @staticmethod
+    def _build_syft_relationship_graph(
+        relationships: List[Dict[str, Any]], source_id: str
+    ) -> Tuple[set, set, Dict[str, list]]:
+        """Build (direct_artifact_ids, all_child_ids, reverse_deps_graph) for syft."""
+        direct_artifact_ids: set = set()
+        all_child_ids: set = set()
         reverse_deps_graph: Dict[str, list] = {}
+        direct_rel_types = ("contains", "dependency-of", "depends-on")
 
         for rel in relationships:
             parent = rel.get("parent", "")
             child = rel.get("child", "")
             rel_type = rel.get("type", "")
 
-            # Track all child relationships and build reverse graph
             if child:
                 all_child_ids.add(child)
-                # Build reverse mapping: child -> parents
-                if child not in reverse_deps_graph:
-                    reverse_deps_graph[child] = []
-                if parent and parent != source_id:  # Don't include source as parent
+                reverse_deps_graph.setdefault(child, [])
+                if parent and parent != source_id:
                     reverse_deps_graph[child].append(parent)
 
-            # Direct dependencies: artifacts directly connected to the source
-            if parent == source_id:
-                if rel_type in ("contains", "dependency-of", "depends-on"):
-                    direct_artifact_ids.add(child)
+            if parent == source_id and rel_type in direct_rel_types:
+                direct_artifact_ids.add(child)
 
-        # For container images, we need a different heuristic:
-        # - Application packages (npm, pip, go, etc.) that are in the top layer are typically direct
-        # - OS packages are usually considered as "base image" dependencies (transitive from app perspective)
-        # If no explicit relationships from source, use heuristics based on package type
+        return direct_artifact_ids, all_child_ids, reverse_deps_graph
+
+    @classmethod
+    def _syft_image_fallback_direct_ids(cls, artifacts: List[Dict[str, Any]]) -> set:
+        """Heuristic: treat application-level package artifacts as direct in images."""
+        return {artifact.get("id") for artifact in artifacts if artifact.get("type", "") in cls._SYFT_APP_PACKAGE_TYPES}
+
+    def _parse_syft(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
+        """Parse Syft JSON format SBOM."""
+
+        descriptor = sbom.get("descriptor", {})
+        result.tool_name = descriptor.get("name", "syft")
+        result.tool_version = descriptor.get("version")
+
+        source = sbom.get("source", {})
+        source_id = source.get("id", "")
+        source_type, source_target = self._resolve_syft_source(source)
+        if source_type is not None:
+            result.source_type = source_type
+            result.source_target = source_target
+
+        artifacts = sbom.get("artifacts", [])
+        relationships = sbom.get("artifactRelationships", [])
+
+        direct_artifact_ids, all_child_ids, reverse_deps_graph = self._build_syft_relationship_graph(
+            relationships, source_id
+        )
 
         if not direct_artifact_ids and result.source_type == SOURCE_TYPE_IMAGE:
-            # Fallback heuristic for images without clear relationship graph:
-            # Consider application-level packages as potentially direct
-            for artifact in artifacts:
-                artifact_type = artifact.get("type", "")
-                # These types are typically application dependencies, not OS packages
-                if artifact_type in (
-                    "npm",
-                    "python",
-                    "go-module",
-                    "gem",
-                    "cargo",
-                    "composer",
-                    "maven",
-                    "gradle",
-                    "nuget",
-                    "pub",
-                ):
-                    direct_artifact_ids.add(artifact.get("id"))
+            direct_artifact_ids = self._syft_image_fallback_direct_ids(artifacts)
 
         logger.debug(
             f"Syft relationship analysis: {len(direct_artifact_ids)} direct, "
             f"{len(all_child_ids)} total children from {len(relationships)} relationships"
         )
 
-        # Determine if we have a dependency graph
-        has_dependency_graph = bool(relationships)
-        inferred = not has_dependency_graph
+        inferred = not bool(relationships)
 
-        # Parse artifacts with direct/transitive info
         for artifact in artifacts:
             artifact_id = artifact.get("id", "")
-            is_direct = artifact_id in direct_artifact_ids
-            # If no dependency graph, assume all are direct (inferred)
-            if inferred:
-                is_direct = True
+            is_direct = inferred or (artifact_id in direct_artifact_ids)
             parent_components = reverse_deps_graph.get(artifact_id, [])
 
             parsed = self._parse_syft_artifact(
@@ -812,6 +813,57 @@ class SBOMParser:
                 result.dependencies.append(parsed)
             else:
                 result.skipped_components += 1
+
+    @staticmethod
+    def _extract_syft_locations(
+        location_entries: List[Dict[str, Any]],
+    ) -> Tuple[List[str], Optional[str]]:
+        """Return (locations, first_layer_digest) from a syft location list."""
+        locations: List[str] = []
+        layer_digest: Optional[str] = None
+        for loc in location_entries:
+            path = loc.get("path", "")
+            access_path = loc.get("accessPath", "")
+            effective_path = access_path if access_path and access_path != path else path
+            if effective_path and effective_path not in locations:
+                locations.append(effective_path)
+            layer_id = loc.get("layerID", "")
+            if layer_id and not layer_digest:
+                layer_digest = layer_id
+        return locations, layer_digest
+
+    @staticmethod
+    def _extract_syft_author(metadata: Dict[str, Any]) -> Optional[str]:
+        """Extract author/maintainer string from syft metadata."""
+        authors = metadata.get("authors")
+        if authors:
+            if isinstance(authors, list):
+                return ", ".join(authors)
+            return str(authors)
+        return metadata.get("author") or metadata.get("maintainer")
+
+    @staticmethod
+    def _extract_syft_hashes(metadata: Dict[str, Any]) -> Dict[str, str]:
+        """Extract hashes from syft metadata (direct fields + digests array)."""
+        hashes: Dict[str, str] = {}
+        for hash_type in ("md5", "sha1", "sha256", "sha512"):
+            if metadata.get(hash_type):
+                hashes[hash_type] = metadata[hash_type]
+        for digest in metadata.get("digests", []):
+            alg = digest.get("algorithm", "").lower()
+            value = digest.get("value", "")
+            if alg and value:
+                hashes[alg] = value
+        return hashes
+
+    @staticmethod
+    def _resolve_syft_direct(is_direct: bool, metadata: Dict[str, Any]) -> bool:
+        """Combine relationship-based and metadata-flag directness."""
+        if is_direct:
+            return True
+        if metadata and (metadata.get("directDependency") or metadata.get("direct")):
+            return True
+        return False
 
     def _parse_syft_artifact(
         self,
@@ -832,94 +884,32 @@ class SBOMParser:
         if parent_components is None:
             parent_components = []
 
-        # Skip artifacts without identifiable info
         if not name:
             return None
 
-        # If no purl, construct one from available metadata
         if not purl:
             purl = self._construct_purl(pkg_type, name, version)
             logger.debug(f"Constructed PURL for Syft artifact {name}@{version}: {purl}")
 
-        # Extract license
-        licenses = artifact.get("licenses", [])
-        license_str, license_url = self._extract_syft_licenses_full(licenses)
-
-        # Extract locations and layer info
-        locations = []
-        layer_digest = None
-
-        for loc in artifact.get("locations", []):
-            path = loc.get("path", "")
-            layer_id = loc.get("layerID", "")
-            access_path = loc.get("accessPath", "")
-
-            # Use accessPath if different from path
-            effective_path = access_path if access_path and access_path != path else path
-
-            if effective_path and effective_path not in locations:
-                locations.append(effective_path)
-
-            # Get layer digest from first location with layerID
-            if layer_id and not layer_digest:
-                layer_digest = layer_id
-
-        # Extract CPEs
+        license_str, license_url = self._extract_syft_licenses_full(artifact.get("licenses", []))
+        locations, layer_digest = self._extract_syft_locations(artifact.get("locations", []))
         cpes = [c.get("cpe") for c in artifact.get("cpes", []) if c.get("cpe")]
-
-        # Get foundBy (cataloger)
         found_by = artifact.get("foundBy")
-
-        # Determine package type from artifact type
         pkg_type = artifact.get("type", "unknown")
 
-        # Extract metadata for additional fields
         metadata = artifact.get("metadata", {})
-
-        # Use the is_direct parameter passed from relationship analysis
-        # Also check metadata for explicit direct indicators as fallback
-        direct = is_direct
-        if not direct and metadata:
-            # Some package types have direct indicators in metadata
-            if metadata.get("directDependency") or metadata.get("direct"):
-                direct = True
-
-        # Extract description from metadata
+        direct = self._resolve_syft_direct(is_direct, metadata)
         description = metadata.get("description") or metadata.get("summary")
-
-        # Extract author/maintainer info
-        author = None
-        if metadata.get("authors"):
-            if isinstance(metadata["authors"], list):
-                author = ", ".join(metadata["authors"])
-            else:
-                author = str(metadata["authors"])
-        elif metadata.get("author"):
-            author = metadata["author"]
-        elif metadata.get("maintainer"):
-            author = metadata["maintainer"]
-
-        # Extract homepage and repository from metadata
+        author = self._extract_syft_author(metadata)
         homepage = metadata.get("homepage") or metadata.get("url")
         repository_url = metadata.get("source") or metadata.get("repository")
+        hashes = self._extract_syft_hashes(metadata)
 
-        # Extract hashes from metadata if available
-        hashes = {}
-        for hash_type in ["md5", "sha1", "sha256", "sha512"]:
-            if metadata.get(hash_type):
-                hashes[hash_type] = metadata[hash_type]
-        # Also check for digests array
-        for digest in metadata.get("digests", []):
-            alg = digest.get("algorithm", "").lower()
-            value = digest.get("value", "")
-            if alg and value:
-                hashes[alg] = value
-
-        # Store relevant metadata as properties
-        properties = {}
-        for key in ["language", "origin", "architecture", "filesAnalyzed"]:
-            if metadata.get(key):
-                properties[key] = str(metadata[key])
+        properties = {
+            key: str(metadata[key])
+            for key in ("language", "origin", "architecture", "filesAnalyzed")
+            if metadata.get(key)
+        }
 
         # Determine component-specific source type
         determined_source_type = self._determine_component_source(
@@ -957,54 +947,57 @@ class SBOMParser:
             properties=properties,
         )
 
+    @staticmethod
+    def _syft_license_dict_url(lic: Dict[str, Any]) -> Optional[str]:
+        """Extract a dedicated license URL from a syft license dict ('url'/'urls')."""
+        for url_key in ("url", "urls"):
+            url_val = lic.get(url_key)
+            if not url_val:
+                continue
+            if isinstance(url_val, list):
+                return str(url_val[0]) if url_val else None
+            return str(url_val) if url_val else None
+        return None
+
+    def _handle_syft_license_dict(
+        self, lic: Dict[str, Any], license_names: List[str], license_url: Optional[str]
+    ) -> Optional[str]:
+        """Handle a single syft license-dict entry; returns possibly updated url."""
+        value = lic.get("value") or lic.get("spdxExpression") or lic.get("type", "")
+        if value:
+            name, new_url = self._classify_license_value(value, license_url)
+            if name:
+                license_names.append(name)
+            if new_url and not license_url:
+                license_url = new_url
+
+        if not license_url:
+            dedicated_url = self._syft_license_dict_url(lic)
+            if dedicated_url:
+                license_url = dedicated_url
+        return license_url
+
     def _extract_syft_licenses_full(self, licenses: List[Any]) -> Tuple[str, Optional[str]]:
         """Extract license string and URL from Syft license array."""
         if not licenses:
             return "", None
 
-        license_names = []
-        license_url = None
+        license_names: List[str] = []
+        license_url: Optional[str] = None
 
         for lic in licenses:
             if isinstance(lic, dict):
-                # Syft license object
-                value = lic.get("value") or lic.get("spdxExpression") or lic.get("type", "")
-                if value:
-                    # Check if value is a URL
-                    if is_url(value):
-                        if not license_url:
-                            license_url = value
-                        # Try to extract SPDX ID from URL
-                        extracted = extract_license_from_url(value)
-                        if extracted:
-                            license_names.append(extracted)
-                    else:
-                        license_names.append(value)
-
-                # Check for license URL in dedicated fields
-                if not license_url:
-                    for url_key in ["url", "urls"]:
-                        url_val = lic.get(url_key)
-                        if url_val:
-                            if isinstance(url_val, list) and url_val:
-                                license_url = url_val[0]
-                            else:
-                                license_url = url_val
-                            break
+                license_url = self._handle_syft_license_dict(lic, license_names, license_url)
             elif isinstance(lic, str):
-                # Check if string is a URL
-                if is_url(lic):
-                    if not license_url:
-                        license_url = lic
-                    extracted = extract_license_from_url(lic)
-                    if extracted:
-                        license_names.append(extracted)
-                else:
-                    license_names.append(lic)
+                name, new_url = self._classify_license_value(lic, license_url)
+                if name:
+                    license_names.append(name)
+                if new_url and not license_url:
+                    license_url = new_url
 
         # Deduplicate while preserving order
-        seen = set()
-        unique = []
+        seen: set = set()
+        unique: List[str] = []
         for lic in license_names:
             if lic not in seen:
                 seen.add(lic)
@@ -1084,6 +1077,126 @@ class SBOMParser:
             else:
                 result.skipped_components += 1
 
+    _SPDX_DOWNLOAD_LOC_TYPE_MAP = (
+        (("npmjs.org", "registry.npmjs"), "npm"),
+        (("pypi.org", "pypi.python.org"), "pypi"),
+        (("maven", "mvnrepository"), "maven"),
+        (("crates.io",), "cargo"),
+        (("rubygems",), "gem"),
+    )
+
+    _SPDX_PURL_PREFIX_TYPE_MAP = {
+        "pkg:npm/": "npm",
+        "pkg:pypi/": "python",
+        "pkg:maven/": "java",
+        "pkg:golang/": "go-module",
+        "pkg:deb/": "deb",
+        "pkg:rpm/": "rpm",
+        "pkg:apk/": "apk",
+        "pkg:cargo/": "cargo",
+        "pkg:nuget/": "nuget",
+        "pkg:gem/": "gem",
+    }
+
+    @staticmethod
+    def _extract_spdx_external_refs(
+        external_refs: List[Dict[str, Any]],
+    ) -> Tuple[Optional[str], List[str]]:
+        """Return (purl, cpes) from an SPDX externalRefs list."""
+        purl: Optional[str] = None
+        cpes: List[str] = []
+        for ref in external_refs:
+            ref_type = ref.get("referenceType", "")
+            locator = ref.get("referenceLocator", "")
+            if ref_type == "purl" and not purl:
+                purl = locator
+            elif ref_type in ("cpe22Type", "cpe23Type") and locator:
+                cpes.append(locator)
+        return purl, cpes
+
+    @classmethod
+    def _infer_spdx_pkg_type_from_download(cls, download_loc: str) -> str:
+        """Infer a package type from an SPDX downloadLocation hint."""
+        for needles, pkg_type in cls._SPDX_DOWNLOAD_LOC_TYPE_MAP:
+            if any(n in download_loc for n in needles):
+                return pkg_type
+        return "generic"
+
+    @classmethod
+    def _spdx_pkg_type_from_purl(cls, purl: Optional[str]) -> str:
+        """Map an SPDX-derived PURL to a normalized pkg_type."""
+        if not purl:
+            return "unknown"
+        for prefix, pkg_type in cls._SPDX_PURL_PREFIX_TYPE_MAP.items():
+            if purl.startswith(prefix):
+                return pkg_type
+        return "unknown"
+
+    @staticmethod
+    def _resolve_spdx_license(pkg: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+        """Extract (license_str, license_url) from SPDX licenseConcluded/Declared."""
+        license_concluded = pkg.get("licenseConcluded", "")
+        license_declared = pkg.get("licenseDeclared", "")
+        license_str = license_concluded if license_concluded != "NOASSERTION" else license_declared
+        if license_str == "NOASSERTION":
+            license_str = ""
+
+        license_url: Optional[str] = None
+        if is_url(license_str):
+            license_url = license_str
+            extracted = extract_license_from_url(license_str)
+            license_str = extracted if extracted else ""
+        return license_str, license_url
+
+    @staticmethod
+    def _resolve_spdx_originator(
+        pkg: Dict[str, Any],
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Extract (author, publisher) from SPDX originator/supplier fields."""
+        author: Optional[str] = None
+        publisher: Optional[str] = None
+
+        originator = pkg.get("originator")
+        if originator and originator != "NOASSERTION":
+            if originator.startswith(SPDX_ORGANIZATION_PREFIX):
+                publisher = originator.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
+            elif originator.startswith("Person:"):
+                author = originator.replace("Person:", "").strip()
+            else:
+                author = originator
+
+        supplier = pkg.get("supplier")
+        if supplier and supplier != "NOASSERTION" and not publisher:
+            if supplier.startswith(SPDX_ORGANIZATION_PREFIX):
+                publisher = supplier.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
+        return author, publisher
+
+    @staticmethod
+    def _build_spdx_properties(pkg: Dict[str, Any]) -> Dict[str, str]:
+        """Build the SPDX-specific 'properties' dict."""
+        properties: Dict[str, str] = {}
+        if pkg.get("filesAnalyzed") is not None:
+            properties["filesAnalyzed"] = str(pkg["filesAnalyzed"])
+        if pkg.get("packageFileName"):
+            properties["packageFileName"] = pkg["packageFileName"]
+        if pkg.get("sourceInfo"):
+            properties["sourceInfo"] = pkg["sourceInfo"]
+        copyright_text = pkg.get("copyrightText")
+        if copyright_text and copyright_text != "NOASSERTION":
+            properties["copyright"] = copyright_text
+        return properties
+
+    @staticmethod
+    def _extract_spdx_hashes(pkg: Dict[str, Any]) -> Dict[str, str]:
+        """Extract a hash map from an SPDX package's checksums array."""
+        hashes: Dict[str, str] = {}
+        for checksum in pkg.get("checksums", []):
+            alg = checksum.get("algorithm", "").lower()
+            value = checksum.get("checksumValue", "")
+            if alg and value:
+                hashes[alg] = value
+        return hashes
+
     def _parse_spdx_package(
         self,
         pkg: Dict[str, Any],
@@ -1102,131 +1215,27 @@ class SBOMParser:
         if parent_components is None:
             parent_components = []
 
-        # SPDX external refs can contain PURL and CPE
-        purl = None
-        cpes = []
+        purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs", []))
 
-        for ref in pkg.get("externalRefs", []):
-            ref_type = ref.get("referenceType", "")
-            locator = ref.get("referenceLocator", "")
-
-            if ref_type == "purl" and not purl:
-                purl = locator
-            elif ref_type in ("cpe22Type", "cpe23Type") and locator:
-                cpes.append(locator)
-
-        # If no PURL, construct one from available metadata
         if not purl:
-            # Try to infer type from download location or supplier
-            download_loc = pkg.get("downloadLocation", "")
-            pkg_type = "generic"
-
-            # Try to infer type from download location
-            if "npmjs.org" in download_loc or "registry.npmjs" in download_loc:
-                pkg_type = "npm"
-            elif "pypi.org" in download_loc or "pypi.python.org" in download_loc:
-                pkg_type = "pypi"
-            elif "maven" in download_loc or "mvnrepository" in download_loc:
-                pkg_type = "maven"
-            elif "crates.io" in download_loc:
-                pkg_type = "cargo"
-            elif "rubygems" in download_loc:
-                pkg_type = "gem"
-
-            purl = self._construct_purl(pkg_type, name, version)
+            inferred_type = self._infer_spdx_pkg_type_from_download(pkg.get("downloadLocation", ""))
+            purl = self._construct_purl(inferred_type, name, version)
             logger.debug(f"Constructed PURL for SPDX package {name}@{version}: {purl}")
 
-        # Extract license
-        license_concluded = pkg.get("licenseConcluded", "")
-        license_declared = pkg.get("licenseDeclared", "")
-        license_str = license_concluded if license_concluded != "NOASSERTION" else license_declared
-        if license_str == "NOASSERTION":
-            license_str = ""
+        license_str, license_url = self._resolve_spdx_license(pkg)
+        pkg_type = self._spdx_pkg_type_from_purl(purl)
+        hashes = self._extract_spdx_hashes(pkg)
 
-        # Check if license is a URL and try to extract SPDX ID
-        license_url = None
-        if is_url(license_str):
-            license_url = license_str
-            extracted = extract_license_from_url(license_str)
-            if extracted:
-                license_str = extracted
-            else:
-                license_str = ""  # Clear URL from license field
-
-        # Try to determine type from PURL
-        pkg_type = "unknown"
-        if purl:
-            if purl.startswith("pkg:npm/"):
-                pkg_type = "npm"
-            elif purl.startswith("pkg:pypi/"):
-                pkg_type = "python"
-            elif purl.startswith("pkg:maven/"):
-                pkg_type = "java"
-            elif purl.startswith("pkg:golang/"):
-                pkg_type = "go-module"
-            elif purl.startswith("pkg:deb/"):
-                pkg_type = "deb"
-            elif purl.startswith("pkg:rpm/"):
-                pkg_type = "rpm"
-            elif purl.startswith("pkg:apk/"):
-                pkg_type = "apk"
-            elif purl.startswith("pkg:cargo/"):
-                pkg_type = "cargo"
-            elif purl.startswith("pkg:nuget/"):
-                pkg_type = "nuget"
-            elif purl.startswith("pkg:gem/"):
-                pkg_type = "gem"
-
-        # Extract checksums/hashes
-        hashes = {}
-        for checksum in pkg.get("checksums", []):
-            alg = checksum.get("algorithm", "").lower()
-            value = checksum.get("checksumValue", "")
-            if alg and value:
-                hashes[alg] = value
-
-        # Extract homepage from homepage field or external refs
         homepage = pkg.get("homepage")
         if homepage == "NOASSERTION":
             homepage = None
 
         download_url = pkg.get("downloadLocation")
-        if download_url == "NOASSERTION" or download_url == "NONE":
+        if download_url in ("NOASSERTION", "NONE"):
             download_url = None
 
-        # Extract originator (author/publisher)
-        author = None
-        publisher = None
-
-        originator = pkg.get("originator")
-        if originator and originator != "NOASSERTION":
-            if originator.startswith(SPDX_ORGANIZATION_PREFIX):
-                publisher = originator.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
-            elif originator.startswith("Person:"):
-                author = originator.replace("Person:", "").strip()
-            else:
-                author = originator
-
-        supplier = pkg.get("supplier")
-        if supplier and supplier != "NOASSERTION" and not publisher:
-            if supplier.startswith(SPDX_ORGANIZATION_PREFIX):
-                publisher = supplier.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
-
-        # Store additional SPDX-specific info as properties
-        properties = {}
-
-        if pkg.get("filesAnalyzed") is not None:
-            properties["filesAnalyzed"] = str(pkg["filesAnalyzed"])
-
-        if pkg.get("packageFileName"):
-            properties["packageFileName"] = pkg["packageFileName"]
-
-        if pkg.get("sourceInfo"):
-            properties["sourceInfo"] = pkg["sourceInfo"]
-
-        copyright_text = pkg.get("copyrightText")
-        if copyright_text and copyright_text != "NOASSERTION":
-            properties["copyright"] = copyright_text
+        author, publisher = self._resolve_spdx_originator(pkg)
+        properties = self._build_spdx_properties(pkg)
 
         # Determine source type based on package type
         determined_source_type = self._determine_component_source(

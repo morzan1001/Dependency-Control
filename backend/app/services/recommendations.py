@@ -53,7 +53,7 @@ def _safe_extend(
             recommendations.extend(result)
             logger.debug(f"{module_name}: generated {len(result)} recommendations")
     except Exception as e:
-        logger.error(f"Error in {module_name}: {e}", exc_info=True)
+        logger.exception("Error in %s: %s", module_name, e)
 
 
 def _deduplicate_recommendations(

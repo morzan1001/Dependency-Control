@@ -134,6 +134,121 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: st
     return count
 
 
+def _resolve_rescan_interval(project: Project, system_settings: Any) -> Optional[int]:
+    """Return effective rescan interval hours, or None if rescans are disabled."""
+    enabled = project.rescan_enabled
+    if enabled is None:
+        enabled = system_settings.global_rescan_enabled
+    if not enabled:
+        return None
+
+    interval_hours = project.rescan_interval
+    if interval_hours is None:
+        interval_hours = system_settings.global_rescan_interval
+
+    if not interval_hours or interval_hours <= 0:
+        return None
+    return interval_hours
+
+
+def _is_rescan_due(project: Project, interval_hours: int) -> bool:
+    """Whether the project's last scan is older than interval_hours."""
+    if not project.last_scan_at:
+        return False
+    last_scan_aware = ensure_utc(project.last_scan_at)
+    if not last_scan_aware:
+        return False
+    next_scan_due = last_scan_aware + timedelta(hours=interval_hours)
+    return datetime.now(timezone.utc) >= next_scan_due
+
+
+def _build_rescan(project: Project, source_scan: dict) -> Scan:
+    return Scan(
+        project_id=project.id,
+        branch=source_scan.get("branch", "unknown"),
+        commit_hash=source_scan.get("commit_hash"),
+        pipeline_id=None,
+        pipeline_iid=source_scan.get("pipeline_iid"),
+        project_url=source_scan.get("project_url"),
+        pipeline_url=source_scan.get("pipeline_url"),
+        job_id=source_scan.get("job_id"),
+        job_started_at=source_scan.get("job_started_at"),
+        project_name=source_scan.get("project_name"),
+        commit_message=source_scan.get("commit_message"),
+        commit_tag=source_scan.get("commit_tag"),
+        sbom_refs=source_scan.get("sbom_refs", []),
+        status="pending",
+        created_at=datetime.now(timezone.utc),
+        is_rescan=True,
+        original_scan_id=str(source_scan["_id"]),
+    )
+
+
+async def _create_rescan_for_project(
+    project: Project, source_scan: dict, db: Any, worker_manager: "WorkerManager"
+) -> None:
+    """Atomically create a rescan after acquiring the distributed lock."""
+    from app.repositories import DistributedLocksRepository
+    import os
+
+    lock_repo = DistributedLocksRepository(db)
+    lock_name = f"rescan_create:{project.id}"
+    holder_id = f"housekeeping-{os.getenv('HOSTNAME', 'unknown')}"
+
+    if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=60):
+        logger.debug(f"Could not acquire lock for rescanning {project.name}. Another pod is creating rescan.")
+        return
+
+    try:
+        # TOCTOU re-check inside lock — strong read.
+        scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
+        active_scan = await scans_primary.find_one(
+            {"project_id": project.id, "status": {"$in": ["pending", "processing"]}}
+        )
+        if active_scan:
+            logger.debug(f"Project {project.name} already has active scan")
+            return
+
+        logger.info(f"Triggering re-scan for project {project.name} (Last scan: {project.last_scan_at})")
+        new_scan = _build_rescan(project, source_scan)
+
+        await db.scans.insert_one(new_scan.model_dump(by_alias=True))
+        await db.scans.update_one(
+            {"_id": str(source_scan["_id"])},
+            {"$set": {"latest_rescan_id": new_scan.id}},
+        )
+        await worker_manager.add_job(new_scan.id)
+        logger.info(f"Rescan {new_scan.id} created for project {project.name}")
+    finally:
+        await lock_repo.release_lock(lock_name)
+
+
+async def _process_project_rescan(
+    project_data: dict, system_settings: Any, db: Any, worker_manager: "WorkerManager"
+) -> None:
+    """Evaluate a single project and create a rescan if due."""
+    project = Project(**project_data)
+    interval_hours = _resolve_rescan_interval(project, system_settings)
+    if interval_hours is None:
+        return
+    if not _is_rescan_due(project, interval_hours):
+        return
+
+    latest_valid_scan = await db.scans.find_one(
+        {
+            "project_id": project.id,
+            "status": "completed",
+            "sbom_refs": {"$exists": True, "$ne": []},
+        },
+        sort=[("created_at", -1)],
+    )
+    if not latest_valid_scan:
+        logger.info(f"Project {project.name} due for re-scan, but no valid previous scan with SBOMs found.")
+        return
+
+    await _create_rescan_for_project(project, latest_valid_scan, db, worker_manager)
+
+
 async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
     """
     Checks for projects that need a periodic re-scan.
@@ -145,130 +260,18 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
     try:
         db = await get_database()
 
-        # Get System Settings
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
-        # Pre-filter to projects that have been scanned at least once. Anything
-        # else can't be rescanned and would just waste an iteration loading
-        # the full project document and constructing a Project model.
+        # Pre-filter to projects that have been scanned at least once.
         async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}):
             try:
-                project = Project(**project_data)
-
-                # Determine if enabled (project setting overrides global)
-                enabled = project.rescan_enabled
-                if enabled is None:
-                    enabled = system_settings.global_rescan_enabled
-
-                if not enabled:
-                    continue
-
-                # Determine interval (project setting overrides global)
-                interval_hours = project.rescan_interval
-                if interval_hours is None:
-                    interval_hours = system_settings.global_rescan_interval
-
-                if not interval_hours or interval_hours <= 0:
-                    continue
-
-                # Check last scan time
-                if not project.last_scan_at:
-                    # If never scanned, we can't re-scan
-                    continue
-
-                # Check if time to scan
-                last_scan_aware = ensure_utc(project.last_scan_at)
-                if not last_scan_aware:
-                    continue
-                next_scan_due = last_scan_aware + timedelta(hours=interval_hours)
-                if datetime.now(timezone.utc) < next_scan_due:
-                    continue
-
-                # Find the latest SUCCESSFUL scan with SBOMs
-                latest_valid_scan = await db.scans.find_one(
-                    {
-                        "project_id": project.id,
-                        "status": "completed",
-                        "sbom_refs": {"$exists": True, "$ne": []},
-                    },
-                    sort=[("created_at", -1)],
-                )
-
-                if not latest_valid_scan:
-                    logger.info(f"Project {project.name} due for re-scan, but no valid previous scan with SBOMs found.")
-                    continue
-
-                # Acquire distributed lock to prevent duplicate rescans
-                from app.repositories import DistributedLocksRepository
-                import os
-
-                lock_repo = DistributedLocksRepository(db)
-                lock_name = f"rescan_create:{project.id}"
-                holder_id = f"housekeeping-{os.getenv('HOSTNAME', 'unknown')}"
-
-                if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=60):
-                    logger.debug(
-                        f"Could not acquire lock for rescanning {project.name}. Another pod is creating rescan."
-                    )
-                    continue
-
-                try:
-                    # TOCTOU re-check inside lock — strong read.
-                    scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-                    active_scan = await scans_primary.find_one(
-                        {
-                            "project_id": project.id,
-                            "status": {"$in": ["pending", "processing"]},
-                        }
-                    )
-
-                    if active_scan:
-                        logger.debug(f"Project {project.name} already has active scan")
-                        continue
-
-                    # Create rescan
-                    logger.info(f"Triggering re-scan for project {project.name} (Last scan: {project.last_scan_at})")
-
-                    new_scan = Scan(
-                        project_id=project.id,
-                        branch=latest_valid_scan.get("branch", "unknown"),
-                        commit_hash=latest_valid_scan.get("commit_hash"),
-                        pipeline_id=None,
-                        pipeline_iid=latest_valid_scan.get("pipeline_iid"),
-                        project_url=latest_valid_scan.get("project_url"),
-                        pipeline_url=latest_valid_scan.get("pipeline_url"),
-                        job_id=latest_valid_scan.get("job_id"),
-                        job_started_at=latest_valid_scan.get("job_started_at"),
-                        project_name=latest_valid_scan.get("project_name"),
-                        commit_message=latest_valid_scan.get("commit_message"),
-                        commit_tag=latest_valid_scan.get("commit_tag"),
-                        sbom_refs=latest_valid_scan.get("sbom_refs", []),
-                        status="pending",
-                        created_at=datetime.now(timezone.utc),
-                        is_rescan=True,
-                        original_scan_id=str(latest_valid_scan["_id"]),
-                    )
-
-                    await db.scans.insert_one(new_scan.model_dump(by_alias=True))
-
-                    # Update source scan to track new rescan (preserves completed status)
-                    await db.scans.update_one(
-                        {"_id": str(latest_valid_scan["_id"])},
-                        {"$set": {"latest_rescan_id": new_scan.id}},
-                    )
-
-                    await worker_manager.add_job(new_scan.id)
-                    logger.info(f"Rescan {new_scan.id} created for project {project.name}")
-
-                finally:
-                    # Always release lock
-                    await lock_repo.release_lock(lock_name)
+                await _process_project_rescan(project_data, system_settings, db, worker_manager)
             except Exception as e:
-                logger.error(f"Error processing project {project_data.get('name')}: {e}")
+                logger.exception("Error processing project %s: %s", project_data.get("name"), e)
 
     except Exception as e:
-        logger.error(f"Scheduled re-scan check failed: {e}")
+        logger.exception("Scheduled re-scan check failed: %s", e)
 
 
 async def _reap_stale_metadata(db: Any) -> int:
@@ -372,7 +375,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
                 failed_ids.append(scan_id)
                 archive_housekeeping_scans_processed.labels(status="failed").inc()
         except Exception as e:
-            logger.error(f"Failed to archive scan {scan_id}: {e}")
+            logger.exception("Failed to archive scan %s: %s", scan_id, e)
             failed_ids.append(scan_id)
             archive_housekeeping_scans_processed.labels(status="failed").inc()
 
@@ -520,21 +523,21 @@ async def run_housekeeping() -> None:
         try:
             await prune_old_audit_entries(db)
         except Exception as e:
-            logger.error(f"Housekeeping: policy audit retention failed: {e}")
+            logger.exception("Housekeeping: policy audit retention failed: %s", e)
 
         try:
             await sweep_expired_compliance_reports(db)
         except Exception as e:
-            logger.error(f"Housekeeping: compliance report sweep failed: {e}")
+            logger.exception("Housekeeping: compliance report sweep failed: %s", e)
 
         # Orphan-reaper: delete S3 archive objects with no matching metadata
         try:
             await _reap_orphan_s3_objects(db)
         except Exception as e:
-            logger.error(f"Orphan reaper failed: {e}")
+            logger.exception("Orphan reaper failed: %s", e)
 
     except Exception as e:
-        logger.error(f"Housekeeping task failed: {e}")
+        logger.exception("Housekeeping task failed: %s", e)
 
 
 async def trigger_stale_pending_scans(
@@ -589,7 +592,7 @@ async def trigger_stale_pending_scans(
             logger.info(f"Triggered aggregation for {count} stale pending scans.")
 
     except Exception as e:
-        logger.error(f"Stale pending scan check failed: {e}")
+        logger.exception("Stale pending scan check failed: %s", e)
 
 
 async def recover_stuck_scans(
@@ -658,7 +661,86 @@ async def recover_stuck_scans(
                 )
 
     except Exception as e:
-        logger.error(f"Stuck scan recovery failed: {e}")
+        logger.exception("Stuck scan recovery failed: %s", e)
+
+
+async def _fetch_gitlab_branches(db: Any, instance_id: str, project_id: str) -> Optional[list]:
+    from app.repositories.gitlab_instances import GitLabInstanceRepository
+    from app.services.gitlab import GitLabService
+
+    instance = await GitLabInstanceRepository(db).get_by_id(instance_id)
+    if not instance or not instance.access_token:
+        return None
+    try:
+        numeric_project_id = int(project_id)
+    except (TypeError, ValueError):
+        return None
+    return await GitLabService(instance).list_branches(numeric_project_id)
+
+
+async def _fetch_github_branches(db: Any, instance_id: str, repo_path: str) -> Optional[list]:
+    from app.repositories.github_instances import GitHubInstanceRepository
+    from app.services.github import GitHubService
+
+    gh_instance = await GitHubInstanceRepository(db).get_by_id(instance_id)
+    if not gh_instance or not gh_instance.access_token:
+        return None
+    parts = repo_path.split("/", 1)
+    if len(parts) != 2:
+        return None
+    return await GitHubService(gh_instance).list_branches(parts[0], parts[1])
+
+
+async def _fetch_vcs_branches(project_data: dict, db: Any) -> Optional[list]:
+    """Resolve the VCS provider and return its branch list, or None if unavailable."""
+    gitlab_instance_id = project_data.get("gitlab_instance_id")
+    gitlab_project_id = project_data.get("gitlab_project_id")
+    if gitlab_instance_id and gitlab_project_id:
+        return await _fetch_gitlab_branches(db, gitlab_instance_id, gitlab_project_id)
+
+    github_instance_id = project_data.get("github_instance_id")
+    github_repo_path = project_data.get("github_repository_path")
+    if github_instance_id and github_repo_path:
+        return await _fetch_github_branches(db, github_instance_id, github_repo_path)
+
+    return None
+
+
+async def _resolve_latest_scan_after_branch_deletion(
+    project_data: dict, deleted: list, db: Any, project_name: str
+) -> dict:
+    """If the project's latest scan is on a deleted branch, find a replacement.
+
+    Returns a dict of update fields (may be empty).
+    """
+    current_scan_id = project_data.get("latest_scan_id")
+    if not current_scan_id:
+        return {}
+    scan_doc = await db.scans.find_one({"_id": current_scan_id}, {"branch": 1})
+    if not scan_doc or scan_doc.get("branch") not in deleted:
+        return {}
+
+    project_id = project_data["_id"]
+    active_scan = await db.scans.find_one(
+        {
+            "project_id": project_id,
+            "branch": {"$nin": deleted},
+            "status": "completed",
+        },
+        sort=[("created_at", -1)],
+    )
+    if active_scan:
+        updates: dict = {
+            "latest_scan_id": active_scan["_id"],
+            "last_scan_at": ensure_utc(active_scan.get("created_at")),
+        }
+        if active_scan.get("stats"):
+            updates["stats"] = active_scan["stats"]
+        logger.info(f"Project {project_name}: updated latest_scan_id to active branch '{active_scan.get('branch')}'")
+        return updates
+
+    logger.info(f"Project {project_name}: no active branch scans, cleared stats")
+    return {"latest_scan_id": None, "stats": None}
 
 
 async def sync_project_branches(project_data: dict, db: Any) -> None:
@@ -666,44 +748,13 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
     project_id = project_data["_id"]
     project_name = project_data.get("name", project_id)
 
-    # Determine VCS provider
-    gitlab_instance_id = project_data.get("gitlab_instance_id")
-    gitlab_project_id = project_data.get("gitlab_project_id")
-    github_instance_id = project_data.get("github_instance_id")
-    github_repo_path = project_data.get("github_repository_path")
-
-    vcs_branches: Optional[list] = None
-
     try:
-        if gitlab_instance_id and gitlab_project_id:
-            from app.repositories.gitlab_instances import GitLabInstanceRepository
-            from app.services.gitlab import GitLabService
-
-            instance_repo = GitLabInstanceRepository(db)
-            instance = await instance_repo.get_by_id(gitlab_instance_id)
-            if instance and instance.access_token:
-                service = GitLabService(instance)
-                vcs_branches = await service.list_branches(gitlab_project_id)
-
-        elif github_instance_id and github_repo_path:
-            from app.repositories.github_instances import GitHubInstanceRepository
-            from app.services.github import GitHubService
-
-            gh_instance_repo = GitHubInstanceRepository(db)
-            gh_instance = await gh_instance_repo.get_by_id(github_instance_id)
-            if gh_instance and gh_instance.access_token:
-                gh_service = GitHubService(gh_instance)
-                parts = github_repo_path.split("/", 1)
-                if len(parts) == 2:
-                    vcs_branches = await gh_service.list_branches(parts[0], parts[1])
-
+        vcs_branches = await _fetch_vcs_branches(project_data, db)
         if not vcs_branches:
             return
 
-        # Get branches we know from scans
         our_branches = await db.scans.distinct("branch", {"project_id": project_id})
         vcs_set = set(vcs_branches)
-
         deleted = sorted(b for b in our_branches if b not in vcs_set)
 
         update_fields: dict = {
@@ -711,36 +762,10 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
             "branches_checked_at": datetime.now(timezone.utc),
         }
 
-        # If deleted branches changed, check if latest_scan_id is on a deleted branch
         if deleted:
-            current_scan_id = project_data.get("latest_scan_id")
-            if current_scan_id:
-                scan_doc = await db.scans.find_one({"_id": current_scan_id}, {"branch": 1})
-                if scan_doc and scan_doc.get("branch") in deleted:
-                    # Find latest completed scan on an active branch
-                    active_scan = await db.scans.find_one(
-                        {
-                            "project_id": project_id,
-                            "branch": {"$nin": deleted},
-                            "status": "completed",
-                        },
-                        sort=[("created_at", -1)],
-                    )
-                    if active_scan:
-                        update_fields["latest_scan_id"] = active_scan["_id"]
-                        update_fields["last_scan_at"] = ensure_utc(active_scan.get("created_at"))
-                        # Update project stats from the active scan
-                        if active_scan.get("stats"):
-                            update_fields["stats"] = active_scan["stats"]
-                        logger.info(
-                            f"Project {project_name}: updated latest_scan_id to "
-                            f"active branch '{active_scan.get('branch')}'"
-                        )
-                    else:
-                        # No active scans at all — clear stats
-                        update_fields["latest_scan_id"] = None
-                        update_fields["stats"] = None
-                        logger.info(f"Project {project_name}: no active branch scans, cleared stats")
+            update_fields.update(
+                await _resolve_latest_scan_after_branch_deletion(project_data, deleted, db, project_name)
+            )
 
         await db.projects.update_one({"_id": project_id}, {"$set": update_fields})
 
@@ -748,7 +773,7 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
             logger.info(f"Project {project_name}: {len(deleted)} deleted branch(es) detected")
 
     except Exception as e:
-        logger.error(f"Branch sync failed for project {project_name}: {e}")
+        logger.exception("Branch sync failed for project %s: %s", project_name, e)
 
 
 async def sync_branch_status() -> None:
@@ -783,7 +808,7 @@ async def sync_branch_status() -> None:
 
         logger.info(f"Branch status sync completed for {count} project(s)")
     except Exception as e:
-        logger.error(f"Branch status sync failed: {e}")
+        logger.exception("Branch status sync failed: %s", e)
 
 
 async def stale_scan_loop(
@@ -797,7 +822,7 @@ async def stale_scan_loop(
         try:
             await trigger_stale_pending_scans(worker_manager)
         except Exception as e:
-            logger.error(f"Stale scan loop failed: {e}")
+            logger.exception("Stale scan loop failed: %s", e)
 
         await asyncio.sleep(HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS)
 
@@ -832,20 +857,20 @@ async def housekeeping_loop(
             db = await get_database()
             await update_db_stats(db)
         except Exception as e:
-            logger.error(f"Failed to update database statistics: {e}")
+            logger.exception("Failed to update database statistics: %s", e)
 
         # Update archive statistics metrics
         try:
             db = await get_database()
             await update_archive_stats(db)
         except Exception as e:
-            logger.error(f"Failed to update archive statistics: {e}")
+            logger.exception("Failed to update archive statistics: %s", e)
 
         # Update cache statistics metrics
         try:
             await update_cache_stats()
         except Exception as e:
-            logger.error(f"Failed to update cache statistics: {e}")
+            logger.exception("Failed to update cache statistics: %s", e)
 
         # Run retention cleanup if interval has passed (fixed 24h interval)
         if (datetime.now(timezone.utc) - last_retention_run) > timedelta(

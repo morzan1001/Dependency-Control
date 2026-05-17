@@ -94,9 +94,7 @@ class TestGitlabTeamSyncUpdate:
         project = _project(team_id="t-old-gitlab")
         svc = _service_returning("t-new-gitlab")
         with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(
-                return_value={"_id": "t-old-gitlab", "gitlab_group_id": 875}
-            )
+            TR.return_value.get_raw_by_id = AsyncMock(return_value={"_id": "t-old-gitlab", "gitlab_group_id": 875})
             result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
         assert result == {"team_id": "t-new-gitlab"}
 

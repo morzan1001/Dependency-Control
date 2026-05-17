@@ -77,8 +77,10 @@ class Settings(BaseSettings):
     # Archive Encryption (empty = archives not encrypted)
     ARCHIVE_ENCRYPTION_KEY: str = ""
 
-    # Ollama / LLM
-    OLLAMA_BASE_URL: str = "http://ollama:11434"
+    # Ollama / LLM — default points to the in-cluster Kubernetes service
+    # (`ollama.<namespace>.svc.cluster.local`); cluster traffic is mesh-encrypted
+    # so plain http here is intentional. Override via env var for external hosts.
+    OLLAMA_BASE_URL: str = "http://ollama:11434"  # NOSONAR
     OLLAMA_MODEL: str = "gemma4:26b"
     OLLAMA_TIMEOUT_SECONDS: int = 120
     OLLAMA_NUM_CTX: int = 16384

@@ -519,7 +519,7 @@ async def broadcast_message(
         }
         unique_types = {pkg.type for pkg in payload.packages if pkg.type}
         if len(unique_types) == 1:
-            match_query["type"] = list(unique_types)[0]
+            match_query["type"] = next(iter(unique_types))
 
         # Stream dependencies and find affected projects
         dep_count = 0

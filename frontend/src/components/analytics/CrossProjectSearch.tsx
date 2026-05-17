@@ -339,6 +339,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                             <div
                               key={`${result.project_id}-${result.package}-${result.version}-${virtualRow.index}`}
                               className="flex items-center border-b cursor-pointer hover:bg-muted transition-colors"
+                              role="button"
                               tabIndex={0}
                               style={{
                                 position: 'absolute',

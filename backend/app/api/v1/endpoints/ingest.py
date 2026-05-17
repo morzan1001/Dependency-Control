@@ -304,7 +304,7 @@ async def _process_sboms(
         except Exception as e:
             sboms_failed += 1
             warnings.append(f"SBOM {idx + 1}: Failed to upload to storage")
-            logger.error(f"Failed to upload SBOM to GridFS: {e}")
+            logger.exception("Failed to upload SBOM to GridFS: %s", e)
             continue
 
         try:
@@ -316,7 +316,7 @@ async def _process_sboms(
         except Exception as e:
             sboms_failed += 1
             warnings.append(f"SBOM {idx + 1}: Failed to parse dependencies")
-            logger.error(f"Failed to extract dependencies from SBOM: {e}", exc_info=True)
+            logger.exception("Failed to extract dependencies from SBOM: %s", e)
 
     return sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted
 
@@ -354,7 +354,7 @@ async def ingest_sbom(
             data.sboms, fs, str(project.id), scan_id, dep_repo
         )
     except Exception as e:
-        logger.error(f"Failed to process SBOMs: {e}", exc_info=True)
+        logger.exception("Failed to process SBOMs: %s", e)
         raise HTTPException(
             status_code=500,
             detail="Failed to store dependencies. Please try again.",

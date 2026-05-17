@@ -254,6 +254,18 @@ def _build_direct_vuln_result(
     )
 
 
+def _nested_vuln_aliases(vuln: Dict[str, Any], finding: Any) -> List[str]:
+    if vuln.get("id") != finding.finding_id:
+        return [finding.finding_id]
+    return finding.aliases or []
+
+
+def _nested_vuln_waived(vuln: Dict[str, Any], finding: Any) -> bool:
+    if vuln.get("waived", False):
+        return True
+    return finding.waived if finding.waived is not None else False
+
+
 def _build_nested_vuln_result(
     vuln: Dict[str, Any],
     finding: Any,
@@ -263,9 +275,10 @@ def _build_nested_vuln_result(
     kev_due_date: Any,
     project_name_map: Dict[str, str],
 ) -> VulnerabilitySearchResult:
+    project_id = finding.project_id or ""
     return VulnerabilitySearchResult(
         vulnerability_id=(vuln.get("id") or vuln.get("resolved_cve") or finding.finding_id),
-        aliases=([finding.finding_id] if vuln.get("id") != finding.finding_id else finding.aliases or []),
+        aliases=_nested_vuln_aliases(vuln, finding),
         severity=(vuln.get("severity") or finding.severity or "UNKNOWN"),
         cvss_score=(vuln.get("cvss_score") or details.get("cvss_score")),
         epss_score=(vuln.get("epss_score") or details.get("epss_score")),
@@ -277,16 +290,87 @@ def _build_nested_vuln_result(
         version=finding.version or "",
         component_type=details.get("type"),
         purl=details.get("purl"),
-        project_id=finding.project_id or "",
-        project_name=project_name_map.get(finding.project_id or "", "Unknown"),
+        project_id=project_id,
+        project_name=project_name_map.get(project_id, "Unknown"),
         scan_id=finding.scan_id,
         finding_id=finding.finding_id,
         finding_type=finding.type or "vulnerability",
         description=_get_description(vuln, finding),
         fixed_version=(vuln.get("fixed_version") or details.get("fixed_version")),
-        waived=vuln.get("waived", False) or (finding.waived if finding.waived is not None else False),
+        waived=_nested_vuln_waived(vuln, finding),
         waiver_reason=(vuln.get("waiver_reason") or finding.waiver_reason),
     )
+
+
+def _build_vuln_query(
+    scan_ids: List[str],
+    q: str,
+    severity: Optional[str],
+    finding_type: Optional[str],
+    include_waived: bool,
+) -> Dict[str, Any]:
+    search_regex = {"$regex": re.escape(q), "$options": "i"}
+    query: Dict[str, Any] = {
+        "scan_id": {"$in": scan_ids},
+        "$or": [
+            {"id": search_regex},
+            {"aliases": search_regex},
+            {"description": search_regex},
+            {"details.vulnerabilities.id": search_regex},
+            {"details.vulnerabilities.resolved_cve": search_regex},
+        ],
+    }
+    if severity:
+        query["severity"] = severity.upper()
+    if finding_type:
+        query["type"] = finding_type
+    if not include_waived:
+        query["waived"] = {"$ne": True}
+    return query
+
+
+_VULN_SORT_FIELD_MAP = {
+    "severity": "severity",
+    "cvss": "details.cvss_score",
+    "epss": "details.epss_score",
+    "component": "component",
+    "project_name": "project_id",
+}
+
+
+def _vuln_results_for_finding(
+    finding: Any,
+    query_lower: str,
+    in_kev: Optional[bool],
+    has_fix: Optional[bool],
+    project_name_map: Dict[str, str],
+) -> List[VulnerabilitySearchResult]:
+    """Build VulnerabilitySearchResult entries for one finding, applying KEV/fix filters."""
+    details = finding.details
+    nested_vulns = details.get("vulnerabilities", [])
+
+    in_kev_status, kev_ransomware, kev_due_date = _aggregate_kev_status(details, nested_vulns)
+    if in_kev is not None and in_kev != in_kev_status:
+        return []
+
+    has_fix_status = _check_fix_availability(details, nested_vulns)
+    if has_fix is not None and has_fix != has_fix_status:
+        return []
+
+    matched_vulns = [
+        vuln
+        for vuln in nested_vulns
+        if query_lower in vuln.get("id", "").lower() or query_lower in vuln.get("resolved_cve", "").lower()
+    ]
+
+    if not matched_vulns:
+        return [
+            _build_direct_vuln_result(finding, details, in_kev_status, kev_ransomware, kev_due_date, project_name_map)
+        ]
+    return [
+        _build_nested_vuln_result(vuln, finding, details, in_kev_status, kev_ransomware, kev_due_date, project_name_map)
+        for vuln in matched_vulns
+    ]
 
 
 @router.get("/vulnerability-search", responses=RESP_AUTH)
@@ -335,38 +419,11 @@ async def search_vulnerabilities(
     if not scan_ids:
         return VulnerabilitySearchResponse(items=[], total=0, page=0, size=limit)
 
-    search_regex = {"$regex": re.escape(q), "$options": "i"}
-
-    query = {
-        "scan_id": {"$in": scan_ids},
-        "$or": [
-            {"id": search_regex},
-            {"aliases": search_regex},
-            {"description": search_regex},
-            {"details.vulnerabilities.id": search_regex},
-            {"details.vulnerabilities.resolved_cve": search_regex},
-        ],
-    }
-
-    if severity:
-        query["severity"] = severity.upper()
-
-    if finding_type:
-        query["type"] = finding_type
-
-    if not include_waived:
-        query["waived"] = {"$ne": True}
+    query = _build_vuln_query(scan_ids, q, severity, finding_type, include_waived)
 
     total_count = await finding_repo.count(query)
 
-    sort_field_map = {
-        "severity": "severity",
-        "cvss": "details.cvss_score",
-        "epss": "details.epss_score",
-        "component": "component",
-        "project_name": "project_id",
-    }
-    mongo_sort_field = sort_field_map.get(sort_by, "severity")
+    mongo_sort_field = _VULN_SORT_FIELD_MAP.get(sort_by, "severity")
     sort_direction = -1 if sort_order == "desc" else 1
 
     findings = await finding_repo.find_many(
@@ -377,41 +434,10 @@ async def search_vulnerabilities(
         sort_order=sort_direction,
     )
 
-    results = []
     query_lower = q.lower()
-
+    results: List[VulnerabilitySearchResult] = []
     for finding in findings:
-        details = finding.details
-        nested_vulns = details.get("vulnerabilities", [])
-
-        in_kev_status, kev_ransomware, kev_due_date = _aggregate_kev_status(details, nested_vulns)
-
-        if in_kev is not None and in_kev != in_kev_status:
-            continue
-
-        has_fix_status = _check_fix_availability(details, nested_vulns)
-        if has_fix is not None and has_fix != has_fix_status:
-            continue
-
-        matched_vulns = [
-            vuln
-            for vuln in nested_vulns
-            if query_lower in vuln.get("id", "").lower() or query_lower in vuln.get("resolved_cve", "").lower()
-        ]
-
-        if not matched_vulns:
-            results.append(
-                _build_direct_vuln_result(
-                    finding, details, in_kev_status, kev_ransomware, kev_due_date, project_name_map
-                )
-            )
-        else:
-            for vuln in matched_vulns:
-                results.append(
-                    _build_nested_vuln_result(
-                        vuln, finding, details, in_kev_status, kev_ransomware, kev_due_date, project_name_map
-                    )
-                )
+        results.extend(_vuln_results_for_finding(finding, query_lower, in_kev, has_fix, project_name_map))
 
     # MongoDB can't sort by severity order, so resort in Python with the rank map.
     if sort_by == "severity":

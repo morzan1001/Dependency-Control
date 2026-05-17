@@ -1,5 +1,6 @@
 """CVE Remediation SLA: one control per severity bucket; FAILED when overdue."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -64,6 +65,11 @@ class CveRemediationSlaFramework:
         raise RuntimeError("CveRemediationSlaFramework is async-only; callers must dispatch via evaluate_async()")
 
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
+        # The framework is purely computational, but the engine's dispatcher
+        # always awaits this call — yielding once keeps the coroutine signature
+        # honest and lets other tasks make progress when many frameworks run in
+        # the same scope.
+        await asyncio.sleep(0)
         findings = data.findings or []
         now = datetime.now(timezone.utc)
 

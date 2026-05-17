@@ -26,6 +26,8 @@ from app.services.chat.service import ChatService
 
 logger = logging.getLogger(__name__)
 
+_MSG_CONVERSATION_NOT_FOUND = "Conversation not found"
+
 router = CustomAPIRouter()
 
 
@@ -116,7 +118,7 @@ async def get_conversation(
     service = ChatService(db)
     conv = await service.get_conversation(conversation_id, current_user)
     if not conv:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
     messages = await service.get_messages(conversation_id, current_user)
     return ConversationDetailResponse(
@@ -145,7 +147,7 @@ async def delete_conversation(
     service = ChatService(db)
     deleted = await service.delete_conversation(conversation_id, current_user)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
     return {"detail": "Conversation deleted"}
 
@@ -184,7 +186,7 @@ async def send_message(
     service = ChatService(db)
     conv = await service.get_conversation(conversation_id, current_user)
     if not conv:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+        raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
     return StreamingResponse(
         service.send_message(conversation_id, current_user, body.content, body.images),

@@ -69,7 +69,7 @@ class GitHubService:
                     params=params,
                 )
         except Exception as e:
-            logger.error(f"GitHub API GET {endpoint} failed: {e}")
+            logger.exception("GitHub API GET %s failed: %s", endpoint, e)
             return None
 
     async def _api_get_paginated(
@@ -118,7 +118,7 @@ class GitHubService:
                     page += 1
 
         except Exception as e:
-            logger.error(f"GitHub API paginated GET {endpoint} failed: {e}")
+            logger.exception("GitHub API paginated GET %s failed: %s", endpoint, e)
             return None
 
         return all_items
@@ -191,7 +191,7 @@ class GitHubService:
 
                 logger.error("Failed to fetch GitHub JWKS")
             except Exception as e:
-                logger.error(f"Error fetching GitHub JWKS: {e}")
+                logger.exception("Error fetching GitHub JWKS: %s", e)
         return {}
 
     async def _invalidate_jwks_cache(self) -> None:

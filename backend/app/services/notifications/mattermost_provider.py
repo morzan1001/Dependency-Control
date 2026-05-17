@@ -47,7 +47,7 @@ class MattermostProvider(NotificationProvider):
                     logger.error(f"Failed to get Mattermost bot ID: {response.text}")
                     return None
             except Exception as e:
-                logger.error(f"Error getting Mattermost bot ID: {e}")
+                logger.exception("Error getting Mattermost bot ID: %s", e)
                 return None
 
     async def _get_user_id_by_username(
@@ -64,7 +64,7 @@ class MattermostProvider(NotificationProvider):
                 logger.warning(f"Mattermost user '{username}' not found: {response.text}")
                 return None
         except Exception as e:
-            logger.error(f"Error getting Mattermost user ID for {username}: {e}")
+            logger.exception("Error getting Mattermost user ID for %s: %s", username, e)
             return None
 
     async def _create_dm_channel(
@@ -84,7 +84,7 @@ class MattermostProvider(NotificationProvider):
                 logger.error(f"Failed to create Mattermost DM channel: {response.text}")
                 return None
         except Exception as e:
-            logger.error(f"Error creating Mattermost DM channel: {e}")
+            logger.exception("Error creating Mattermost DM channel: %s", e)
             return None
 
     async def _get_channel_id_by_name(
@@ -116,7 +116,7 @@ class MattermostProvider(NotificationProvider):
             return None
 
         except Exception as e:
-            logger.error(f"Error resolving Mattermost channel {channel_name}: {e}")
+            logger.exception("Error resolving Mattermost channel %s: %s", channel_name, e)
             return None
 
     async def send(
@@ -207,7 +207,7 @@ class MattermostProvider(NotificationProvider):
                     return False
 
         except Exception as e:
-            logger.error(f"Error sending Mattermost notification: {e}")
+            logger.exception("Error sending Mattermost notification: %s", e)
             if notifications_failed_total:
                 notifications_failed_total.labels(type="mattermost").inc()
             return False

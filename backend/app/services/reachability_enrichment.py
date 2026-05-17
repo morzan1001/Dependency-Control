@@ -572,7 +572,7 @@ async def run_pending_reachability_for_scan(
 
     except Exception as e:
         result["error"] = str(e)
-        logger.error(f"[reachability] Failed to process scan {scan_id}: {e}")
+        logger.exception("[reachability] Failed to process scan %s: %s", scan_id, e)
 
     return result
 

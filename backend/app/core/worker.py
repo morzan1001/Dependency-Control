@@ -86,7 +86,7 @@ class AnalysisWorkerManager:
                         f"They will be picked up by housekeeping."
                     )
         except Exception as e:
-            logger.error(f"Failed to recover pending jobs: {e}")
+            logger.exception("Failed to recover pending jobs: %s", e)
 
     def _cancel_background_tasks(self) -> None:
         if self.housekeeping_task:
@@ -310,7 +310,7 @@ class AnalysisWorkerManager:
                         worker_job_duration_seconds.observe(job_duration)
 
                 except Exception as e:
-                    logger.error(f"Error processing scan {scan_id}: {e}")
+                    logger.exception("Error processing scan %s: %s", scan_id, e)
                     await db.scans.update_one(
                         {"_id": scan_id},
                         {"$set": {"status": "failed", "error": str(e)}},
@@ -339,7 +339,7 @@ class AnalysisWorkerManager:
                                 context="worker.analysis_failed",
                             )
                     except Exception as webhook_err:
-                        logger.error(f"Failed to trigger analysis_failed webhook: {webhook_err}")
+                        logger.exception("Failed to trigger analysis_failed webhook: %s", webhook_err)
 
                 self._active_scans.discard(scan_id)
                 self.queue.task_done()
@@ -349,7 +349,7 @@ class AnalysisWorkerManager:
                 logger.info(f"Worker {worker_id} cancelled during shutdown")
                 raise
             except Exception as e:
-                logger.error(f"Worker {worker_id} crashed: {e}")
+                logger.exception("Worker %s crashed: %s", worker_id, e)
                 await asyncio.sleep(1)  # Prevents tight loop on persistent failure.
 
 

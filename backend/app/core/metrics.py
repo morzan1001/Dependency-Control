@@ -27,6 +27,8 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
+_ID_PLACEHOLDER = "/{id}"
+
 
 class ArchiveFailureReason:
     """String constants for the `reason` label on archive_failures_total."""
@@ -627,16 +629,16 @@ class PrometheusMiddleware:
         # Replace UUIDs
         path = re.sub(
             r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-            "/{id}",
+            _ID_PLACEHOLDER,
             path,
             flags=re.IGNORECASE,
         )
 
         # Replace numeric IDs
-        path = re.sub(r"/\d+", "/{id}", path)
+        path = re.sub(r"/\d+", _ID_PLACEHOLDER, path)
 
         # Replace MongoDB ObjectIds (24 hex chars)
-        path = re.sub(r"/[0-9a-f]{24}", "/{id}", path, flags=re.IGNORECASE)
+        path = re.sub(r"/[0-9a-f]{24}", _ID_PLACEHOLDER, path, flags=re.IGNORECASE)
 
         return path
 

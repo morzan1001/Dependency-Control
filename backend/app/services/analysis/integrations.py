@@ -148,10 +148,21 @@ async def decorate_gitlab_mr(
                     scan_id=scan_id,
                 )
             except Exception as mr_err:
-                logger.error(f"Failed to decorate MR !{mr.iid} for project {project.id}, scan {scan_id}: {mr_err}")
+                logger.exception(
+                    "Failed to decorate MR !%s for project %s, scan %s: %s",
+                    mr.iid,
+                    project.id,
+                    scan_id,
+                    mr_err,
+                )
 
     except Exception as e:
-        logger.error(f"Failed to decorate GitLab MR for project {project.id}, scan {scan_id}: {e}")
+        logger.exception(
+            "Failed to decorate GitLab MR for project %s, scan %s: %s",
+            project.id,
+            scan_id,
+            e,
+        )
 
 
 async def _update_or_create_mr_comment(

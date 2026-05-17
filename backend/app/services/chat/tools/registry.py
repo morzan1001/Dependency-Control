@@ -47,6 +47,15 @@ from .definitions import TOOL_DEFINITIONS, TOOL_PERMISSIONS
 
 logger = logging.getLogger(__name__)
 
+_ERR_PROJECT_NOT_FOUND = "Project not found or access denied"
+_ERR_SCAN_NOT_FOUND_IN_PROJECT = "Scan not found in this project"
+_ERR_FINDING_NOT_FOUND = "Finding not found"
+_ERR_TEAM_NOT_FOUND = "Team not found"
+_ERR_ACCESS_DENIED = "Access denied"
+_ERR_NO_SCAN_DATA = "No scan data available"
+_FIELD_VULN_ID = "details.vulnerabilities.id"
+_FIELD_EPSS_SCORE = "details.epss_score"
+
 
 class ChatToolRegistry:
     def get_available_tool_names(self, user_permissions: List[str]) -> set[str]:
@@ -125,19 +134,19 @@ class ChatToolRegistry:
         if tool_name == "get_project_details":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return {"project": _serialize_doc(project)}
 
         if tool_name == "get_project_members":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return {"members": project.get("members", [])}
 
         if tool_name == "get_project_settings":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return {
                 "settings": _serialize_doc(
                     project,
@@ -155,7 +164,7 @@ class ChatToolRegistry:
         if tool_name == "get_scan_history":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             limit = _clamp_limit(args.get("limit"), 10)
             cursor = db["scans"].find({"project_id": args["project_id"]}, sort=[("created_at", -1)], limit=limit)
             scans = await cursor.to_list(length=limit)
@@ -169,7 +178,7 @@ class ChatToolRegistry:
         if tool_name == "get_scan_details":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             scan = await db["scans"].find_one({"_id": args["scan_id"], "project_id": args["project_id"]})
             if not scan:
                 return {"error": "Scan not found"}
@@ -178,10 +187,10 @@ class ChatToolRegistry:
         if tool_name == "get_scan_findings":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             scan = await db["scans"].find_one({"_id": args["scan_id"], "project_id": args["project_id"]})
             if not scan:
-                return {"error": "Scan not found in this project"}
+                return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
             query = {"scan_id": args["scan_id"], "project_id": args["project_id"]}
             if args.get("severity"):
                 query["severity"] = args["severity"].upper()
@@ -198,7 +207,7 @@ class ChatToolRegistry:
         if tool_name == "get_project_findings":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             latest_scan_id = project.get("latest_scan_id")
             if not latest_scan_id:
                 return {"findings": [], "count": 0, "message": "No scans found for this project"}
@@ -219,10 +228,10 @@ class ChatToolRegistry:
         if tool_name == "get_vulnerability_details":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             finding = await db["findings"].find_one({"_id": args["finding_id"], "project_id": args["project_id"]})
             if not finding:
-                return {"error": "Finding not found"}
+                return {"error": _ERR_FINDING_NOT_FOUND}
             slim = _serialize_finding_for_llm(finding)
             slim["project_name"] = project.get("name", "")
             details = finding.get("details") or {}
@@ -252,7 +261,7 @@ class ChatToolRegistry:
                     {"finding_id": {"$regex": escaped_search_query, "$options": "i"}},
                     {"description": {"$regex": escaped_search_query, "$options": "i"}},
                     {"component": {"$regex": escaped_search_query, "$options": "i"}},
-                    {"details.vulnerabilities.id": {"$regex": escaped_search_query, "$options": "i"}},
+                    {_FIELD_VULN_ID: {"$regex": escaped_search_query, "$options": "i"}},
                 ],
             }
             if args.get("severity"):
@@ -273,7 +282,7 @@ class ChatToolRegistry:
         if tool_name == "get_findings_by_severity":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             latest_scan_id = project.get("latest_scan_id")
             if not latest_scan_id:
                 return {"breakdown": {}}
@@ -287,7 +296,7 @@ class ChatToolRegistry:
         if tool_name == "get_findings_by_type":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             latest_scan_id = project.get("latest_scan_id")
             if not latest_scan_id:
                 return {"breakdown": {}}
@@ -354,7 +363,7 @@ class ChatToolRegistry:
             match_query: Dict[str, Any] = {"project_id": {"$in": project_ids}, "created_at": {"$gte": cutoff}}
             if args.get("project_id"):
                 if args["project_id"] not in project_ids:
-                    return {"error": "Project not found or access denied"}
+                    return {"error": _ERR_PROJECT_NOT_FOUND}
                 match_query["project_id"] = args["project_id"]
             pipeline = [
                 {"$match": match_query},
@@ -367,7 +376,7 @@ class ChatToolRegistry:
         if tool_name == "get_dependency_tree":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             latest_scan_id = project.get("latest_scan_id")
             if not latest_scan_id:
                 return {"dependencies": []}
@@ -419,10 +428,10 @@ class ChatToolRegistry:
         if tool_name == "get_team_details":
             team = await team_repo.get_by_id(args["team_id"])
             if not team:
-                return {"error": "Team not found"}
+                return {"error": _ERR_TEAM_NOT_FOUND}
             if not await team_repo.is_member(args["team_id"], str(user.id)):
                 if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
-                    return {"error": "Access denied"}
+                    return {"error": _ERR_ACCESS_DENIED}
             return {
                 "team": {
                     "id": team.id,
@@ -435,10 +444,10 @@ class ChatToolRegistry:
         if tool_name == "get_team_projects":
             team = await team_repo.get_by_id(args["team_id"])
             if not team:
-                return {"error": "Team not found"}
+                return {"error": _ERR_TEAM_NOT_FOUND}
             if not await team_repo.is_member(args["team_id"], str(user.id)):
                 if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
-                    return {"error": "Access denied"}
+                    return {"error": _ERR_ACCESS_DENIED}
             query = {**user_project_query, "team_id": args["team_id"]}
             cursor = db["projects"].find(query, limit=50)
             projects = await cursor.to_list(length=50)
@@ -447,7 +456,7 @@ class ChatToolRegistry:
         if tool_name == "get_waiver_status":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             now = datetime.now(timezone.utc)
             waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": args["project_id"]})
             scope: Optional[str] = None
@@ -469,7 +478,7 @@ class ChatToolRegistry:
         if tool_name == "list_project_waivers":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             now = datetime.now(timezone.utc)
             cursor = db["waivers"].find({"project_id": args["project_id"]}, limit=100)
             waivers = await cursor.to_list(length=100)
@@ -487,7 +496,7 @@ class ChatToolRegistry:
             if args.get("project_id"):
                 proj = await self._get_authorized_project(args["project_id"], user_project_query, db)
                 if not proj:
-                    return {"error": "Project not found or access denied"}
+                    return {"error": _ERR_PROJECT_NOT_FOUND}
                 latest_scan_id = proj.get("latest_scan_id")
                 if not latest_scan_id:
                     return {"findings": [], "message": "No scan data available for this project"}
@@ -542,10 +551,10 @@ class ChatToolRegistry:
         if tool_name == "generate_remediation_plan":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             latest_scan_id = project.get("latest_scan_id")
             if not latest_scan_id:
-                return {"plan": [], "message": "No scan data available"}
+                return {"plan": [], "message": _ERR_NO_SCAN_DATA}
 
             max_steps = _clamp_limit(args.get("max_steps"), 10, maximum=25)
 
@@ -696,7 +705,7 @@ class ChatToolRegistry:
         if tool_name == "get_auto_fixable_findings":
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
-                return {"findings": [], "message": "No scan data available"}
+                return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
             cursor = db["findings"].find(
                 {
@@ -705,7 +714,7 @@ class ChatToolRegistry:
                     "details.fixed_version": {"$exists": True, "$ne": None},
                     "waived": {"$ne": True},
                 },
-                sort=[("severity", -1), ("details.epss_score", -1)],
+                sort=[("severity", -1), (_FIELD_EPSS_SCORE, -1)],
                 limit=limit,
             )
             rows = await cursor.to_list(length=limit)
@@ -724,12 +733,12 @@ class ChatToolRegistry:
         if tool_name == "suggest_waiver_for_finding":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             finding = await db["findings"].find_one(
                 {"finding_id": args["finding_id"], "project_id": args["project_id"]}
             )
             if not finding:
-                return {"error": "Finding not found"}
+                return {"error": _ERR_FINDING_NOT_FOUND}
             details = finding.get("details") or {}
             sev = (finding.get("severity") or "").upper()
             maturity = details.get("exploit_maturity")
@@ -777,7 +786,7 @@ class ChatToolRegistry:
         if tool_name == "compare_scans":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             scan_a_id = args.get("scan_id_a")
             scan_b_id = args.get("scan_id_b")
             if not scan_a_id or not scan_b_id:
@@ -798,7 +807,7 @@ class ChatToolRegistry:
             scan_a = await db["scans"].find_one({"_id": scan_a_id, "project_id": args["project_id"]})
             scan_b = await db["scans"].find_one({"_id": scan_b_id, "project_id": args["project_id"]})
             if not scan_a or not scan_b:
-                return {"error": "Scan not found in this project"}
+                return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
 
             findings_response = await compute_findings_delta(
                 db,
@@ -816,7 +825,7 @@ class ChatToolRegistry:
         if tool_name == "get_kev_findings":
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
-                return {"findings": [], "message": "No scan data available"}
+                return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
             cursor = db["findings"].find(
                 {
@@ -824,7 +833,7 @@ class ChatToolRegistry:
                     "details.exploit_maturity": {"$in": list(KEV_EQUIVALENT_MATURITY)},
                     "waived": {"$ne": True},
                 },
-                sort=[("severity", -1), ("details.epss_score", -1)],
+                sort=[("severity", -1), (_FIELD_EPSS_SCORE, -1)],
                 limit=limit,
             )
             rows = await cursor.to_list(length=limit)
@@ -878,11 +887,11 @@ class ChatToolRegistry:
             cve = args["cve_id"].strip().upper()
             latest = await self._latest_scan_ids_for_user(user_project_query, None, db)
             if not latest:
-                return {"findings": [], "message": "No scan data available"}
+                return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             cursor = db["findings"].find(
                 {
                     "scan_id": {"$in": list(latest.values())},
-                    "details.vulnerabilities.id": cve,
+                    _FIELD_VULN_ID: cve,
                 },
                 limit=25,
             )
@@ -915,7 +924,7 @@ class ChatToolRegistry:
             finding = await db["findings"].find_one(
                 {
                     "project_id": {"$in": project_ids},
-                    "details.vulnerabilities.id": cve,
+                    _FIELD_VULN_ID: cve,
                 }
             )
             if not finding:
@@ -952,7 +961,7 @@ class ChatToolRegistry:
             ]
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
-                return {"findings": [], "message": "No scan data available"}
+                return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             cutoff = _dt.now(_tz.utc) - _td(days=days)
             project_ids = list(latest.keys())
             old_keys: set = set()
@@ -966,7 +975,7 @@ class ChatToolRegistry:
                 return {"findings": [], "message": f"No findings older than {days} days"}
             cursor = db["findings"].find(
                 {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
-                sort=[("severity", -1), ("details.epss_score", -1)],
+                sort=[("severity", -1), (_FIELD_EPSS_SCORE, -1)],
             )
             stale = []
             async for f in cursor:
@@ -994,7 +1003,7 @@ class ChatToolRegistry:
         if tool_name == "get_license_violations":
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
-                return {"findings": [], "message": "No scan data available"}
+                return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
             cursor = db["findings"].find(
                 {"scan_id": {"$in": list(latest.values())}, "type": "license"},
@@ -1049,10 +1058,10 @@ class ChatToolRegistry:
         if tool_name == "get_team_risk_overview":
             team = await team_repo.get_by_id(args["team_id"])
             if not team:
-                return {"error": "Team not found"}
+                return {"error": _ERR_TEAM_NOT_FOUND}
             if not await team_repo.is_member(args["team_id"], str(user.id)):
                 if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
-                    return {"error": "Access denied"}
+                    return {"error": _ERR_ACCESS_DENIED}
             cursor = db["projects"].find(
                 {"team_id": args["team_id"]}, {"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1}
             )
@@ -1116,14 +1125,14 @@ class ChatToolRegistry:
         if tool_name in ("get_callgraph", "check_reachability"):
             project = await self._get_authorized_project(args.get("project_id", ""), user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             if tool_name == "get_callgraph":
                 doc = await db["callgraph"].find_one({"project_id": args["project_id"]})
                 return {"callgraph": _serialize_doc(doc) if doc else None}
             if tool_name == "check_reachability":
                 finding = await db["findings"].find_one({"_id": args["finding_id"], "project_id": args["project_id"]})
                 if not finding:
-                    return {"error": "Finding not found"}
+                    return {"error": _ERR_FINDING_NOT_FOUND}
                 return {"reachable": finding.get("reachable", "unknown"), "finding_id": args["finding_id"]}
 
         if tool_name == "list_archives":
@@ -1131,7 +1140,7 @@ class ChatToolRegistry:
             if args.get("project_id"):
                 project = await self._get_authorized_project(args["project_id"], user_project_query, db)
                 if not project:
-                    return {"error": "Project not found or access denied"}
+                    return {"error": _ERR_PROJECT_NOT_FOUND}
                 query["project_id"] = args["project_id"]
             elif not has_permission(user.permissions, Permissions.ARCHIVE_READ_ALL):
                 project_ids = await self._get_authorized_project_ids(user_project_query, db)
@@ -1154,7 +1163,7 @@ class ChatToolRegistry:
         if tool_name == "list_project_webhooks":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             cursor = db["webhooks"].find({"project_id": args["project_id"]}, limit=20)
             webhooks = await cursor.to_list(length=20)
             return {"webhooks": [_serialize_doc(w) for w in webhooks]}
@@ -1165,7 +1174,7 @@ class ChatToolRegistry:
                 return {"error": "Webhook not found"}
             project = await self._get_authorized_project(webhook.get("project_id", ""), user_project_query, db)
             if not project:
-                return {"error": "Access denied"}
+                return {"error": _ERR_ACCESS_DENIED}
             cursor = db["webhook_deliveries"].find(
                 {"webhook_id": args["webhook_id"]}, sort=[("timestamp", -1)], limit=20
             )
@@ -1185,7 +1194,7 @@ class ChatToolRegistry:
         if tool_name == "list_crypto_assets":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return await list_crypto_assets(
                 db,
                 project_id=args["project_id"],
@@ -1200,32 +1209,32 @@ class ChatToolRegistry:
         if tool_name == "get_crypto_asset_details":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             result = await get_crypto_asset_details(db, project_id=args["project_id"], asset_id=args["asset_id"])
             return result if result is not None else {"error": "Crypto asset not found"}
 
         if tool_name == "get_crypto_summary":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return await get_crypto_summary(db, project_id=args["project_id"], scan_id=args["scan_id"])
 
         if tool_name == "get_project_crypto_policy":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return await get_project_crypto_policy(db, project_id=args["project_id"])
 
         if tool_name == "suggest_crypto_policy_override":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return await suggest_crypto_policy_override(db, project_id=args["project_id"], scan_id=args["scan_id"])
 
         if tool_name == "get_crypto_hotspots":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return await get_crypto_hotspots(
                 db,
                 project_id=args["project_id"],
@@ -1236,7 +1245,7 @@ class ChatToolRegistry:
         if tool_name == "get_crypto_trends":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return await get_crypto_trends(
                 db,
                 project_id=args["project_id"],
@@ -1247,13 +1256,13 @@ class ChatToolRegistry:
         if tool_name == "get_scan_delta":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             from_scan_id = args["from_scan_id"]
             to_scan_id = args["to_scan_id"]
             scan_a = await db["scans"].find_one({"_id": from_scan_id, "project_id": args["project_id"]})
             scan_b = await db["scans"].find_one({"_id": to_scan_id, "project_id": args["project_id"]})
             if not scan_a or not scan_b:
-                return {"error": "Scan not found in this project"}
+                return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
             crypto_response = await compute_crypto_delta_envelope(
                 db,
                 project_id=args["project_id"],
@@ -1268,7 +1277,7 @@ class ChatToolRegistry:
         if tool_name == "generate_pqc_migration_plan":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
-                return {"error": "Project not found or access denied"}
+                return {"error": _ERR_PROJECT_NOT_FOUND}
             return await generate_pqc_migration_plan(
                 db,
                 user=user,
@@ -1281,7 +1290,7 @@ class ChatToolRegistry:
             if project_id:
                 project = await self._get_authorized_project(project_id, user_project_query, db)
                 if not project:
-                    return {"error": "Project not found or access denied"}
+                    return {"error": _ERR_PROJECT_NOT_FOUND}
             return await list_compliance_reports(
                 db,
                 project_id=project_id,
@@ -1294,7 +1303,7 @@ class ChatToolRegistry:
             if project_id:
                 project = await self._get_authorized_project(project_id, user_project_query, db)
                 if not project:
-                    return {"error": "Project not found or access denied"}
+                    return {"error": _ERR_PROJECT_NOT_FOUND}
             return await list_policy_audit_entries(
                 db,
                 policy_scope=args["policy_scope"],
@@ -1308,7 +1317,7 @@ class ChatToolRegistry:
             if scope == "project" and scope_id:
                 project = await self._get_authorized_project(scope_id, user_project_query, db)
                 if not project:
-                    return {"error": "Project not found or access denied"}
+                    return {"error": _ERR_PROJECT_NOT_FOUND}
             return await get_framework_evaluation_summary(
                 db,
                 user=user,

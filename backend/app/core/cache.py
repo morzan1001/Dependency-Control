@@ -372,15 +372,14 @@ class CacheService:
 
     async def mset(self, mapping: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
         """Batch set with shared TTL."""
-        if not mapping:
-            return False
-        if not await self._ensure_available():
+        if not mapping or not await self._ensure_available():
             return False
 
         if ttl_seconds is None:
             ttl_seconds = settings.CACHE_DEFAULT_TTL_HOURS * 3600
 
         _start = time.time()
+        success = False
         try:
             client = await self.get_client()
             pipe = client.pipeline()
@@ -390,18 +389,17 @@ class CacheService:
                 pipe.setex(self._make_key(key), ttl_seconds, serialized)
 
             await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
-            return True
+            success = True
         except (redis.ConnectionError, asyncio.TimeoutError):
             self._mark_unavailable()
-            return False
         except Exception as e:
             logger.warning(f"Cache mset error: {e}")
-            return False
         finally:
             if cache_operations_total:
                 cache_operations_total.labels(operation="mset").inc()
             if cache_operation_duration_seconds:
                 cache_operation_duration_seconds.labels(operation="mset").observe(time.time() - _start)
+        return success
 
     async def get_or_fetch(
         self,

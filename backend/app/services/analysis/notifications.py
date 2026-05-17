@@ -209,7 +209,7 @@ async def send_scan_notifications(
             mattermost_props=mm_props,
         )
     except Exception as e:
-        logger.error(f"Failed to send analysis_completed notification: {e}")
+        logger.exception("Failed to send analysis_completed notification: %s", e)
 
     # Trigger scan_completed webhook
     try:
@@ -225,7 +225,7 @@ async def send_scan_notifications(
                 stats=stats,
             )
     except Exception as e:
-        logger.error(f"Failed to trigger scan_completed webhook: {e}")
+        logger.exception("Failed to trigger scan_completed webhook: %s", e)
 
     # Check for critical vulnerabilities and send vulnerability_found notification
     try:
@@ -322,7 +322,7 @@ async def send_scan_notifications(
                 top_vulnerabilities=top_vulns,
             )
         except Exception as e:
-            logger.error(f"Failed to trigger vulnerability_found webhook: {e}")
+            logger.exception("Failed to trigger vulnerability_found webhook: %s", e)
 
     except Exception as e:
-        logger.error(f"Failed to process vulnerability notifications: {e}")
+        logger.exception("Failed to process vulnerability notifications: %s", e)

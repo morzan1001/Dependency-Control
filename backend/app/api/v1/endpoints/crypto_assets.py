@@ -6,6 +6,7 @@ from fastapi import HTTPException, Query
 
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
+from app.api.v1.helpers.responses import RESP_404
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
@@ -50,7 +51,7 @@ async def list_crypto_assets(
     }
 
 
-@router.get("/projects/{project_id}/crypto-assets/{asset_id}")
+@router.get("/projects/{project_id}/crypto-assets/{asset_id}", responses=RESP_404)
 async def get_crypto_asset(
     project_id: str,
     asset_id: str,

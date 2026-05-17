@@ -93,7 +93,7 @@ class GitLabService:
                     params=params,
                 )
         except Exception as e:
-            logger.error(f"GitLab API GET {endpoint} failed: {type(e).__name__}: {e}")
+            logger.exception("GitLab API GET %s failed: %s: %s", endpoint, type(e).__name__, e)
             return None
 
     async def _api_post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
@@ -118,7 +118,7 @@ class GitLabService:
                     json=json_data,
                 )
         except Exception as e:
-            logger.error(f"GitLab API POST {endpoint} failed: {type(e).__name__}: {e}")
+            logger.exception("GitLab API POST %s failed: %s: %s", endpoint, type(e).__name__, e)
             return None
 
     async def _api_put(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
@@ -143,7 +143,7 @@ class GitLabService:
                     json=json_data,
                 )
         except Exception as e:
-            logger.error(f"GitLab API PUT {endpoint} failed: {type(e).__name__}: {e}")
+            logger.exception("GitLab API PUT %s failed: %s: %s", endpoint, type(e).__name__, e)
             return None
 
     async def _api_get_paginated(
@@ -208,7 +208,7 @@ class GitLabService:
                     page += 1
 
         except Exception as e:
-            logger.error(f"GitLab API paginated GET {endpoint} failed: {type(e).__name__}: {e}")
+            logger.exception("GitLab API paginated GET %s failed: %s: %s", endpoint, type(e).__name__, e)
             return None
 
         return all_items
@@ -573,9 +573,7 @@ class GitLabService:
         user_repo = UserRepository(db)
 
         try:
-            target = await self._resolve_sync_target_group(
-                gitlab_project_id, gitlab_project_path, gitlab_project_data
-            )
+            target = await self._resolve_sync_target_group(gitlab_project_id, gitlab_project_path, gitlab_project_data)
             if target is None:
                 return None
             group_id, group_path = target
@@ -609,8 +607,11 @@ class GitLabService:
             )
 
         except Exception as e:
-            logger.error(
-                f"Error syncing GitLab teams for project_id={gitlab_project_id} ({gitlab_project_path}): "
-                f"{type(e).__name__}: {e}"
+            logger.exception(
+                "Error syncing GitLab teams for project_id=%s (%s): %s: %s",
+                gitlab_project_id,
+                gitlab_project_path,
+                type(e).__name__,
+                e,
             )
             return None

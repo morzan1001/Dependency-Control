@@ -4,6 +4,11 @@ from typing import Any, Dict, List
 
 from app.core.permissions import Permissions
 
+_DESC_PROJECT_ID = "The project ID"
+_DESC_SCAN_ID = "The scan ID"
+_DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
+_DESC_MAX_FINDINGS_10_25 = "Max findings (default 10, max 25)."
+
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "type": "function",
@@ -36,7 +41,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -50,7 +55,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -64,7 +69,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -78,7 +83,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                     "limit": {"type": "integer", "description": "Max number of scans to return (default 10)"},
                 },
                 "required": ["project_id"],
@@ -93,8 +98,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scan_id": {"type": "string", "description": "The scan ID"},
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["scan_id", "project_id"],
             },
@@ -108,8 +113,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scan_id": {"type": "string", "description": "The scan ID"},
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                     "severity": {
                         "type": "string",
                         "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO",
@@ -132,7 +137,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                     "severity": {
                         "type": "string",
                         "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO",
@@ -156,7 +161,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "finding_id": {"type": "string", "description": "The finding ID"},
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["finding_id", "project_id"],
             },
@@ -190,7 +195,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -204,7 +209,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -250,7 +255,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -333,7 +338,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "finding_id": {"type": "string", "description": "The finding ID"},
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["finding_id", "project_id"],
             },
@@ -347,7 +352,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -386,7 +391,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                     },
                     "project_id": {
                         "type": "string",
-                        "description": "Optional: restrict to a single project.",
+                        "description": _DESC_OPTIONAL_SINGLE_PROJECT,
                     },
                 },
                 "required": [],
@@ -407,7 +412,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                     "max_steps": {
                         "type": "integer",
                         "description": "Maximum number of plan steps to return (default 10, max 25).",
@@ -430,7 +435,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "Optional: restrict to a single project."},
+                    "project_id": {"type": "string", "description": _DESC_OPTIONAL_SINGLE_PROJECT},
                     "limit": {"type": "integer", "description": "Max findings to return (default 10, max 25)."},
                 },
                 "required": [],
@@ -519,8 +524,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "Optional: restrict to a single project."},
-                    "limit": {"type": "integer", "description": "Max findings (default 10, max 25)."},
+                    "project_id": {"type": "string", "description": _DESC_OPTIONAL_SINGLE_PROJECT},
+                    "limit": {"type": "integer", "description": _DESC_MAX_FINDINGS_10_25},
                 },
                 "required": [],
             },
@@ -607,7 +612,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "Min severity, one of CRITICAL/HIGH/MEDIUM/LOW (default HIGH).",
                     },
-                    "limit": {"type": "integer", "description": "Max findings (default 10, max 25)."},
+                    "limit": {"type": "integer", "description": _DESC_MAX_FINDINGS_10_25},
                 },
                 "required": [],
             },
@@ -626,7 +631,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": "Optional: one project."},
-                    "limit": {"type": "integer", "description": "Max findings (default 10, max 25)."},
+                    "limit": {"type": "integer", "description": _DESC_MAX_FINDINGS_10_25},
                 },
                 "required": [],
             },
@@ -695,7 +700,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -710,7 +715,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "finding_id": {"type": "string", "description": "The finding/vulnerability ID"},
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["finding_id", "project_id"],
             },
@@ -753,7 +758,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -784,8 +789,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
-                    "scan_id": {"type": "string", "description": "The scan ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
+                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
                     "asset_type": {"type": "string", "description": "Optional filter by asset type (e.g. 'algorithm')"},
                     "primitive": {"type": "string", "description": "Optional filter by primitive (e.g. 'hash')"},
                     "name_search": {"type": "string", "description": "Optional substring filter on asset name"},
@@ -804,7 +809,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                     "asset_id": {"type": "string", "description": "The crypto asset ID"},
                 },
                 "required": ["project_id", "asset_id"],
@@ -819,8 +824,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
-                    "scan_id": {"type": "string", "description": "The scan ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
+                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
                 },
                 "required": ["project_id", "scan_id"],
             },
@@ -837,7 +842,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["project_id"],
             },
@@ -855,8 +860,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "project_id": {"type": "string", "description": "The project ID"},
-                    "scan_id": {"type": "string", "description": "The scan ID"},
+                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
+                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
                 },
                 "required": ["project_id", "scan_id"],
             },

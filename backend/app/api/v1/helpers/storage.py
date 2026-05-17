@@ -34,7 +34,7 @@ async def load_from_gridfs(
         content: bytes = await grid_out.read()
         return json.loads(content)
     except Exception as e:
-        logger.error(f"Failed to load file from GridFS: {e}")
+        logger.exception("Failed to load file from GridFS: %s", e)
         return None
 
 
@@ -75,7 +75,7 @@ async def resolve_sbom_refs(
                         }
                     )
                 except Exception as e:
-                    logger.error(f"Failed to load SBOM from GridFS: {e}")
+                    logger.exception("Failed to load SBOM from GridFS: %s", e)
                     resolved_sboms.append(
                         {
                             "index": index,

@@ -106,5 +106,5 @@ async def validate_oidc_token(
         return payload_model(**payload)
 
     except Exception as e:
-        logger.error(f"{provider_name} OIDC Token validation error: {e}")
+        logger.exception("%s OIDC Token validation error: %s", provider_name, e)
         return None

@@ -10,6 +10,7 @@ Async-only — the evaluator loads findings from MongoDB via EvaluationInput.
 Callers must dispatch on ``hasattr(framework, 'evaluate_async')``.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -72,6 +73,10 @@ class LicenseAuditFramework:
         raise RuntimeError("LicenseAuditFramework is async-only; callers must dispatch via evaluate_async()")
 
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
+        # Yield once so the dispatcher's `await` stays meaningful even though
+        # the body is purely computational; lets sibling framework tasks
+        # progress when several run for the same scope.
+        await asyncio.sleep(0)
         policy = _extract_license_policy(data)
         findings = data.findings or []
 

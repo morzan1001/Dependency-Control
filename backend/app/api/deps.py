@@ -53,6 +53,52 @@ async def get_system_settings(
     return await repo.get(auto_init=auto_init)
 
 
+def _decode_user_token(token: str, credentials_exception: HTTPException) -> tuple[dict, TokenPayload]:
+    """Decode JWT and return (payload, token_data). Raises credentials_exception on failure."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username = payload.get("sub")
+        permissions: list[str] = payload.get("permissions", [])
+        if username is None:
+            raise credentials_exception
+        token_data = TokenPayload(sub=username, permissions=permissions)
+    except (JWTError, ValidationError) as exc:
+        if auth_token_validations_total:
+            auth_token_validations_total.labels(result="invalid").inc()
+        raise credentials_exception from exc
+    return payload, token_data
+
+
+async def _ensure_token_not_blacklisted(jti: Optional[str], db: AsyncIOMotorDatabase) -> None:
+    if not jti:
+        return
+    from app.repositories import TokenBlacklistRepository
+
+    blacklist_repo = TokenBlacklistRepository(db)
+    if await blacklist_repo.is_blacklisted(jti):
+        if auth_token_validations_total:
+            auth_token_validations_total.labels(result="blacklisted").inc()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def _check_logout_invalidation(user: dict, payload: dict, credentials_exception: HTTPException) -> None:
+    """Raise credentials_exception if the token was issued before the user's last logout."""
+    last_logout_at = user.get("last_logout_at")
+    if not last_logout_at:
+        return
+    iat = payload.get("iat")
+    if not iat:
+        return
+    if iat < last_logout_at.timestamp():
+        if auth_token_validations_total:
+            auth_token_validations_total.labels(result="revoked").inc()
+        raise credentials_exception
+
+
 async def get_current_user(
     db: AsyncIOMotorDatabase = Depends(get_database),
     token: str = Depends(oauth2_scheme),
@@ -62,33 +108,10 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username = payload.get("sub")
-        permissions: list[str] = payload.get("permissions", [])
-        jti = payload.get("jti")  # JWT ID for blacklist check
 
-        if username is None:
-            raise credentials_exception
-        token_data = TokenPayload(sub=username, permissions=permissions)
-    except (JWTError, ValidationError) as exc:
-        if auth_token_validations_total:
-            auth_token_validations_total.labels(result="invalid").inc()
-        raise credentials_exception from exc
+    payload, token_data = _decode_user_token(token, credentials_exception)
 
-    # Check if token is blacklisted (logout invalidation)
-    if jti:
-        from app.repositories import TokenBlacklistRepository
-
-        blacklist_repo = TokenBlacklistRepository(db)
-        if await blacklist_repo.is_blacklisted(jti):
-            if auth_token_validations_total:
-                auth_token_validations_total.labels(result="blacklisted").inc()
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has been revoked",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    await _ensure_token_not_blacklisted(payload.get("jti"), db)
 
     user_repo = UserRepository(db)
     if not token_data.sub:
@@ -99,16 +122,7 @@ async def get_current_user(
             auth_token_validations_total.labels(result="user_not_found").inc()
         raise credentials_exception
 
-    # Check if token was issued before last logout
-    if "last_logout_at" in user and user["last_logout_at"]:
-        iat = payload.get("iat")
-        if iat:
-            # iat is unix timestamp, last_logout_at is datetime
-            last_logout_ts = user["last_logout_at"].timestamp()
-            if iat < last_logout_ts:
-                if auth_token_validations_total:
-                    auth_token_validations_total.labels(result="revoked").inc()
-                raise credentials_exception
+    _check_logout_invalidation(user, payload, credentials_exception)
 
     if auth_token_validations_total:
         auth_token_validations_total.labels(result="valid").inc()
@@ -302,9 +316,7 @@ async def _handle_gitlab_oidc(
 
         if gitlab_instance.sync_teams:
             extra_updates.update(
-                await _gitlab_team_sync_update(
-                    project, gitlab_project_id, gitlab_project_path, gitlab_service, db
-                )
+                await _gitlab_team_sync_update(project, gitlab_project_id, gitlab_project_path, gitlab_service, db)
             )
 
         return await _sync_project_name(
@@ -409,76 +421,92 @@ async def _handle_github_oidc(
     return project
 
 
+async def _authenticate_via_api_key(x_api_key: str, project_repo: ProjectRepository) -> "Project":
+    from app.models.project import Project
+
+    if "." not in x_api_key:
+        raise HTTPException(status_code=403, detail="Invalid API Key format")
+    project_id, secret = x_api_key.split(".", 1)
+    project_data = await project_repo.get_raw_by_id(project_id)
+    if not project_data or not project_data.get("api_key_hash"):
+        raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
+    if not security.verify_password(secret, project_data["api_key_hash"]):
+        raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
+    return Project(**project_data)
+
+
+def _extract_oidc_issuer(oidc_token: str) -> str:
+    if len(oidc_token.split(".")) != 3:
+        raise HTTPException(status_code=403, detail="Invalid Token format. Expected a JWT (OIDC) token.")
+
+    from jose import jwt as jose_jwt
+
+    try:
+        unverified_payload = jose_jwt.get_unverified_claims(oidc_token)
+        issuer = unverified_payload.get("iss")
+    except Exception as e:
+        logger.exception("Failed to decode OIDC token: %s", e)
+        raise HTTPException(status_code=403, detail="Invalid OIDC token format")
+
+    if not issuer:
+        raise HTTPException(status_code=403, detail="OIDC token missing issuer (iss) claim")
+    return str(issuer)
+
+
+async def _authenticate_via_oidc(
+    oidc_token: str,
+    db: AsyncIOMotorDatabase,
+    project_repo: ProjectRepository,
+    user_repo: UserRepository,
+    default_active_analyzers: List[str],
+) -> "Project":
+    from app.repositories.gitlab_instances import GitLabInstanceRepository
+    from app.repositories.github_instances import GitHubInstanceRepository
+
+    issuer = _extract_oidc_issuer(oidc_token)
+
+    gitlab_instance = await GitLabInstanceRepository(db).get_by_url(issuer)
+    if gitlab_instance:
+        return await _handle_gitlab_oidc(
+            oidc_token,
+            gitlab_instance,
+            db,
+            project_repo,
+            user_repo,
+            default_active_analyzers,
+        )
+
+    github_instance = await GitHubInstanceRepository(db).get_by_url(issuer)
+    if github_instance:
+        return await _handle_github_oidc(
+            oidc_token,
+            github_instance,
+            project_repo,
+            user_repo,
+            default_active_analyzers,
+        )
+
+    raise HTTPException(
+        status_code=403,
+        detail=f"No CI/CD instance configured for OIDC issuer: {issuer}. "
+        "Configure a GitLab or GitHub instance with this issuer URL.",
+    )
+
+
 async def get_project_for_ingest(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     oidc_token: Optional[str] = Header(None, alias="Job-Token"),
     db: AsyncIOMotorDatabase = Depends(get_database),
     settings: SystemSettings = Depends(get_system_settings),
 ) -> Project:
-    from app.models.project import Project
-
     project_repo = ProjectRepository(db)
     user_repo = UserRepository(db)
 
-    # 1. Try API Key
     if x_api_key:
-        if "." not in x_api_key:
-            raise HTTPException(status_code=403, detail="Invalid API Key format")
-        project_id, secret = x_api_key.split(".", 1)
-        project_data = await project_repo.get_raw_by_id(project_id)
-        if not project_data or not project_data.get("api_key_hash"):
-            raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
-        if not security.verify_password(secret, project_data["api_key_hash"]):
-            raise HTTPException(status_code=403, detail=_MSG_INVALID_API_KEY)
-        return Project(**project_data)
+        return await _authenticate_via_api_key(x_api_key, project_repo)
 
-    # 2. Try OIDC Token (GitLab or GitHub)
     if oidc_token:
-        if len(oidc_token.split(".")) != 3:
-            raise HTTPException(status_code=403, detail="Invalid Token format. Expected a JWT (OIDC) token.")
-
-        from jose import jwt as jose_jwt
-        from app.repositories.gitlab_instances import GitLabInstanceRepository
-        from app.repositories.github_instances import GitHubInstanceRepository
-
-        try:
-            unverified_payload = jose_jwt.get_unverified_claims(oidc_token)
-            issuer = unverified_payload.get("iss")
-        except Exception as e:
-            logger.error(f"Failed to decode OIDC token: {e}")
-            raise HTTPException(status_code=403, detail="Invalid OIDC token format")
-
-        if not issuer:
-            raise HTTPException(status_code=403, detail="OIDC token missing issuer (iss) claim")
-
-        # Try GitLab
-        gitlab_instance = await GitLabInstanceRepository(db).get_by_url(issuer)
-        if gitlab_instance:
-            return await _handle_gitlab_oidc(
-                oidc_token,
-                gitlab_instance,
-                db,
-                project_repo,
-                user_repo,
-                settings.default_active_analyzers,
-            )
-
-        # Try GitHub
-        github_instance = await GitHubInstanceRepository(db).get_by_url(issuer)
-        if github_instance:
-            return await _handle_github_oidc(
-                oidc_token,
-                github_instance,
-                project_repo,
-                user_repo,
-                settings.default_active_analyzers,
-            )
-
-        raise HTTPException(
-            status_code=403,
-            detail=f"No CI/CD instance configured for OIDC issuer: {issuer}. "
-            "Configure a GitLab or GitHub instance with this issuer URL.",
-        )
+        return await _authenticate_via_oidc(oidc_token, db, project_repo, user_repo, settings.default_active_analyzers)
 
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 

@@ -132,10 +132,10 @@ async def startup_event() -> None:
                 logger.info(f"Retrying in {retry_interval} seconds...")
                 await asyncio.sleep(retry_interval)
             else:
-                logger.error("Could not connect to database after multiple attempts.")
+                logger.exception("Could not connect to database after multiple attempts.")
                 raise e
         except (OSError, RuntimeError) as e:
-            logger.error(f"Unexpected error during startup: {e}")
+            logger.exception("Unexpected error during startup: %s", e)
             raise e
 
 

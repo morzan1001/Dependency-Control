@@ -88,21 +88,21 @@ async def exchange_slack_code_for_token(
             return result_data
 
     except httpx.TimeoutException as e:
-        logger.error(f"Slack OAuth timeout: {e}")
+        logger.exception("Slack OAuth timeout: %s", e)
         raise SlackOAuthError(
             "Request to Slack timed out",
             error_code="timeout",
         ) from e
 
     except httpx.ConnectError as e:
-        logger.error(f"Slack OAuth connection error: {e}")
+        logger.exception("Slack OAuth connection error: %s", e)
         raise SlackOAuthError(
             "Could not connect to Slack",
             error_code="connection_error",
         ) from e
 
     except httpx.RequestError as e:
-        logger.error(f"Slack OAuth request error: {e}")
+        logger.exception("Slack OAuth request error: %s", e)
         raise SlackOAuthError(
             f"Request error: {str(e)}",
             error_code="request_error",

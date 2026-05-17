@@ -64,7 +64,7 @@ async def safe_http_request(
     except Exception as e:
         external_api_errors_total.labels(service=service_name).inc()
         msg = f"Unexpected error during {operation} on {service_name}: {e}"
-        logger.error(msg)
+        logger.exception(msg)
         if not suppress_errors:
             raise HTTPRequestError(msg)
 
@@ -137,7 +137,7 @@ async def post_json(
         return None
     except Exception as e:
         external_api_errors_total.labels(service=service_name).inc()
-        logger.error(f"Error posting to {service_name}: {e}")
+        logger.exception("Error posting to %s: %s", service_name, e)
         return None
 
 
@@ -285,7 +285,7 @@ def with_http_error_handling(
                 return default_return
             except Exception as e:
                 external_api_errors_total.labels(service=service_name).inc()
-                logger.error(f"Error in {func.__name__} ({service_name}): {e}")
+                logger.exception("Error in %s (%s): %s", func.__name__, service_name, e)
                 return default_return
 
         return wrapper

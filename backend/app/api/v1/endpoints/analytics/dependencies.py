@@ -145,6 +145,38 @@ async def get_component_findings(
     return results
 
 
+def _build_dep_query(
+    scan_ids: List[str], component: str, version: Optional[str], type: Optional[str]
+) -> Dict[str, Any]:
+    dep_query: Dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": component}
+    if version:
+        dep_query["version"] = version
+    if type:
+        dep_query["type"] = type
+    return dep_query
+
+
+def _collect_affected_projects(dependencies: List[Any], project_name_map: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
+    affected_projects: Dict[str, Dict[str, Any]] = {}
+    for dep in dependencies:
+        proj_id = get_attr(dep, "project_id")
+        if proj_id and proj_id not in affected_projects:
+            affected_projects[proj_id] = {
+                "id": proj_id,
+                "name": project_name_map.get(proj_id, "Unknown"),
+                "direct": get_attr(dep, "direct", False),
+            }
+    return affected_projects
+
+
+def _first_dep_value(dependencies: List[Any], key: str) -> Optional[Any]:
+    for dep in dependencies:
+        val = get_attr(dep, key)
+        if val:
+            return val
+    return None
+
+
 @router.get("/dependency-metadata", responses=RESP_AUTH)
 async def get_dependency_metadata_endpoint(
     current_user: CurrentUserDep,
@@ -158,12 +190,10 @@ async def get_dependency_metadata_endpoint(
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     project_ids = await get_user_project_ids(current_user, db)
-
     if not project_ids:
         return None
 
     scan_ids = await get_latest_scan_ids(project_ids, db)
-
     if not scan_ids:
         return None
 
@@ -172,14 +202,8 @@ async def get_dependency_metadata_endpoint(
     project_repo = ProjectRepository(db)
     enrichment_repo = DependencyEnrichmentRepository(db)
 
-    dep_query = {"scan_id": {"$in": scan_ids}, "name": component}
-    if version:
-        dep_query["version"] = version
-    if type:
-        dep_query["type"] = type
-
+    dep_query = _build_dep_query(scan_ids, component, version, type)
     dependencies = await dep_repo.find_many(dep_query, limit=100)
-
     if not dependencies:
         return None
 
@@ -190,26 +214,10 @@ async def get_dependency_metadata_endpoint(
     project_name_map = {p.id: p.name for p in projects}
 
     first_dep = dependencies[0]
-
-    affected_projects = {}
-    for dep in dependencies:
-        proj_id = get_attr(dep, "project_id")
-        if proj_id and proj_id not in affected_projects:
-            affected_projects[proj_id] = {
-                "id": proj_id,
-                "name": project_name_map.get(proj_id, "Unknown"),
-                "direct": get_attr(dep, "direct", False),
-            }
+    affected_projects = _collect_affected_projects(dependencies, project_name_map)
 
     dep_purl = get_attr(first_dep, "purl")
     enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
-
-    def first_value(key: str) -> Optional[Any]:
-        for dep in dependencies:
-            val = get_attr(dep, key)
-            if val:
-                return val
-        return None
 
     finding_query: Dict[str, Any] = {"scan_id": {"$in": scan_ids}, "component": component}
     if version:
@@ -223,15 +231,15 @@ async def get_dependency_metadata_endpoint(
         version=get_attr(first_dep, "version", version or "unknown"),
         type=get_attr(first_dep, "type", "unknown"),
         purl=dep_purl,
-        description=first_value("description"),
-        author=first_value("author"),
-        publisher=first_value("publisher"),
-        homepage=first_value("homepage"),
-        repository_url=first_value("repository_url"),
-        download_url=first_value("download_url"),
-        group=first_value("group"),
-        license=first_value("license"),
-        license_url=first_value("license_url"),
+        description=_first_dep_value(dependencies, "description"),
+        author=_first_dep_value(dependencies, "author"),
+        publisher=_first_dep_value(dependencies, "publisher"),
+        homepage=_first_dep_value(dependencies, "homepage"),
+        repository_url=_first_dep_value(dependencies, "repository_url"),
+        download_url=_first_dep_value(dependencies, "download_url"),
+        group=_first_dep_value(dependencies, "group"),
+        license=_first_dep_value(dependencies, "license"),
+        license_url=_first_dep_value(dependencies, "license_url"),
         license_category=enrichment_info["license_category"],
         license_risks=enrichment_info["license_risks"],
         license_obligations=enrichment_info["license_obligations"],

@@ -9,6 +9,7 @@ from fastapi import Body, Depends, HTTPException, status
 from app.api.deps import CurrentUserDep, DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
+from app.api.v1.helpers.responses import RESP_500
 from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
@@ -26,7 +27,7 @@ router = CustomAPIRouter(tags=["crypto-policies"])
 AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]
 
 
-@router.get("/crypto-policies/system")
+@router.get("/crypto-policies/system", responses=RESP_500)
 async def get_system_policy(
     current_user: AdminUserDep,
     db: DatabaseDep,

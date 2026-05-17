@@ -85,7 +85,7 @@ async def create_system_invitation(
         )
     except Exception as e:
         email_sent = False
-        logger.error(f"Failed to send invitation email: {e}")
+        logger.exception("Failed to send invitation email: %s", e)
 
     response = {"message": "Invitation created", "link": link}
     if not email_sent:

@@ -116,7 +116,9 @@ def parse_spdx_expression(expr: str) -> List[List[str]]:
         "MIT OR (GPL-2.0 AND Classpath)" → [["MIT"], ["GPL-2.0", "Classpath"]]
     """
     # WITH modifies the preceding license but doesn't add a new one.
-    expr = re.sub(r"\s+WITH\s+\S+", "", expr)
+    # Bound the whitespace match to spaces/tabs (SPDX expressions are single-line)
+    # so the substitution is linear in input length — no backtracking on \s+.
+    expr = re.sub(r"[ \t]+WITH[ \t]+\S+", "", expr)
 
     # OR has the lowest precedence in SPDX.
     or_parts = SPDX_OR_SPLIT.split(expr)

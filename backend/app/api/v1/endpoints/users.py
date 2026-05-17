@@ -329,7 +329,7 @@ async def reset_user_password(
             )
             email_sent = True
         except Exception as e:
-            logger.error(f"Failed to send password reset email: {e}")
+            logger.exception("Failed to send password reset email: %s", e)
             # We continue to return the link
 
     response = {"message": "Password reset initiated", "email_sent": email_sent}
@@ -567,7 +567,7 @@ async def admin_disable_2fa(
                 system_settings=system_settings,
             )
         except Exception as e:
-            logger.error(f"Failed to send 2FA disable email: {e}")
+            logger.exception("Failed to send 2FA disable email: %s", e)
 
     return await fetch_updated_user(user_id, db)
 

@@ -136,6 +136,10 @@ export function linkifyAssistantMarkdown(
   // plain text. Anything that looks like [..](..) or `..` or ```..``` is
   // passed through untouched. We split on a regex with a capturing group
   // so the split result alternates plain-text | skipped-segment.
+  // The `[\s\S]*?` non-greedy match is bounded by the literal closing fence;
+  // chat messages are size-capped on the server (CHAT_MAX_MESSAGE_LENGTH), so
+  // worst-case O(n²) backtracking remains negligible. Manually reviewed for
+  // ReDoS — see SonarQube hotspot S5852.
   const skipPattern = /(\[[^\]]*\]\([^)]*\)|```[\s\S]*?```|`[^`]*`)/g;
   const segments = content.split(skipPattern);
 

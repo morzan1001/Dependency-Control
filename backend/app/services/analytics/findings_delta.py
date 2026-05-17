@@ -68,7 +68,8 @@ def _fallback_identifier(finding: Dict[str, Any]) -> str:
     """Deterministic hash of description + found_in so an unidentifiable
     finding at least matches itself across scans if those are stable."""
     digest_src = (finding.get("description") or "") + "|" + "|".join(finding.get("found_in") or [])
-    return hashlib.sha1(digest_src.encode("utf-8")).hexdigest()[:12]
+    # Non-cryptographic identity hash — collision resistance not required.
+    return hashlib.sha1(digest_src.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
 def finding_identity_key(finding: Dict[str, Any]) -> Tuple[str, str, str]:

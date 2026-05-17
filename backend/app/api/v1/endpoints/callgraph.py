@@ -143,7 +143,7 @@ async def upload_callgraph(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to parse callgraph: {e}")
+        logger.exception("Failed to parse callgraph: %s", e)
         raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {str(e)}")
 
     scan_id = _resolve_scan_id(request.scan_id, project_id, request.pipeline_id, request.commit_hash)

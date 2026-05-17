@@ -86,7 +86,7 @@ async def connect_to_mongo() -> None:
         if db_connections_active:
             db_connections_active.set(1)
     except Exception as e:
-        logger.error(f"Failed to connect to MongoDB: {e}")
+        logger.exception("Failed to connect to MongoDB: %s", e)
         db.client = None
         raise
 

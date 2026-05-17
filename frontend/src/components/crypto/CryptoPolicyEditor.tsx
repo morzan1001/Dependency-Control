@@ -56,13 +56,12 @@ const FINDING_TYPES: { value: CryptoFindingType; label: string }[] = [
 const SOURCES: CryptoPolicySource[] = [
   "nist-sp-800-131a", "bsi-tr-02102", "cnsa-2.0", "nist-pqc", "custom",
 ];
-const PRIMITIVES: CryptoPrimitive[] = [
+// Reserved for AddRuleDialog primitive selection; exported so future call sites
+// can import it without re-declaring the canonical primitive list.
+export const PRIMITIVES: CryptoPrimitive[] = [
   "block-cipher", "stream-cipher", "hash", "mac", "pke", "signature",
   "kem", "kdf", "drbg", "other",
 ];
-
-// Reserved for AddRuleDialog primitive selection.
-void PRIMITIVES;
 
 function emptyRule(): CryptoRule {
   return {

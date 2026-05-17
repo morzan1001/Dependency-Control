@@ -219,6 +219,7 @@ def build_script_info(script_name: str, version: Optional[str] = None) -> Script
     summary="Get Script Hash",
     responses={
         200: {"description": "Script hash and version information"},
+        400: {"description": "Invalid version format"},
         404: {"description": "Script not found"},
         500: {"description": "Internal server error"},
     },
@@ -251,7 +252,7 @@ async def get_script_hash(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting script hash for {script_name}: {e}")
+        logger.exception("Error getting script hash for %s: %s", script_name, e)
         raise HTTPException(
             status_code=500,
             detail="Error reading script file",
@@ -346,7 +347,7 @@ async def get_script(
             },
         )
     except FileNotFoundError:
-        logger.error(f"Script file not found: {script_name} (version={v or 'latest'})")
+        logger.exception("Script file not found: %s (version=%s)", script_name, v or "latest")
         raise HTTPException(
             status_code=404,
             detail=f"Script '{script_name}' (version={v or 'latest'}) not found on server",
@@ -356,7 +357,7 @@ async def get_script(
         # propagate without converting to 500.
         raise
     except Exception as e:
-        logger.error(f"Error reading script {script_name}: {e}")
+        logger.exception("Error reading script %s: %s", script_name, e)
         raise HTTPException(
             status_code=500,
             detail="Error reading script file",
@@ -397,14 +398,14 @@ async def list_scripts() -> ScriptManifest:
         try:
             scripts.append(build_script_info(script_name))
         except Exception as e:
-            logger.error(f"Error getting {script_name} info: {e}")
+            logger.exception("Error getting %s info: %s", script_name, e)
             errors.append(script_name)
 
         for version in list_available_versions(script_name):
             try:
                 scripts.append(build_script_info(script_name, version=version))
             except Exception as e:
-                logger.error(f"Error getting {script_name} v{version} info: {e}")
+                logger.exception("Error getting %s v%s info: %s", script_name, version, e)
                 errors.append(f"{script_name}@{version}")
 
     # Log warning if some scripts couldn't be loaded
