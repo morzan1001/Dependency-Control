@@ -11,6 +11,35 @@ class GrypeAnalyzer(CLIAnalyzer):
     cli_command = "grype"
     empty_result_key = "matches"
 
+    # Grype occasionally fails on large SBOMs or while its vulnerability DB is
+    # being refreshed in the background. Without retries the failure surfaces as
+    # a SCAN-ERROR-grype system warning even when a second attempt would have
+    # succeeded — observed repeatedly on a single large Java project where the
+    # rest of the pipeline (trivy, osv) ran cleanly. Match trivy's retry policy.
+    max_retries = 3
+    retry_delay = 3.0
+    # Large Java SBOMs (~600+ deps) can legitimately need more than the 5-min
+    # CLIAnalyzer default; the successful baseline scans on the affected project
+    # ran up to ~10 min, so cap at 600 s before declaring the run dead.
+    cli_timeout = 600
+
+    _RETRYABLE_PATTERNS = (
+        "database does not exist",
+        "failed to update vulnerability database",
+        "database integrity check failed",
+        "no such file or directory",  # grype-db filesystem race during sweep
+        "context deadline exceeded",
+        "connection refused",
+        "connection reset",
+        "i/o timeout",
+        "eof",
+        "timed out after",  # the cli_base timeout wrapper's own stderr string
+    )
+
+    def _is_retryable_error(self, stderr: bytes) -> bool:
+        msg = stderr.decode(errors="replace").lower()
+        return any(p in msg for p in self._RETRYABLE_PATTERNS)
+
     def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
         """Build Grype command arguments.
 
