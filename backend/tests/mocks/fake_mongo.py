@@ -103,12 +103,30 @@ def _match_doc(doc: dict, query: dict) -> bool:
                 field_present = _resolve_dotted(doc, key) is not None or key in doc
                 if bool(condition["$exists"]) != field_present:
                     return False
-            if "$in" in condition and value not in condition["$in"]:
-                return False
-            if "$nin" in condition and value in condition["$nin"]:
-                return False
-            if "$ne" in condition and value == condition["$ne"]:
-                return False
+            # For $in/$nin/$ne, when the dotted path landed on a list (array of
+            # sub-docs flattened by _resolve_dotted), Mongo treats it as
+            # "any element matches" — broadcast the operator across the list.
+            if "$in" in condition:
+                allowed = condition["$in"]
+                if isinstance(value, list):
+                    if not any(v in allowed for v in value):
+                        return False
+                elif value not in allowed:
+                    return False
+            if "$nin" in condition:
+                disallowed = condition["$nin"]
+                if isinstance(value, list):
+                    if any(v in disallowed for v in value):
+                        return False
+                elif value in disallowed:
+                    return False
+            if "$ne" in condition:
+                ne_val = condition["$ne"]
+                if isinstance(value, list):
+                    if ne_val in value:
+                        return False
+                elif value == ne_val:
+                    return False
             if "$regex" in condition:
                 flags = _re.IGNORECASE if condition.get("$options") == "i" else 0
                 if not _re.search(condition["$regex"], str(value or ""), flags):

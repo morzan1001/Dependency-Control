@@ -85,16 +85,55 @@ async def _collect_gridfs_ids(db: Any, scan_ids: List[str]) -> List[str]:
     return gridfs_ids
 
 
-async def _cleanup_gridfs_files(db: Any, gridfs_ids: List[str]) -> None:
-    """Delete GridFS files by their IDs, ignoring already-deleted files."""
+async def _cleanup_gridfs_files(db: Any, gridfs_ids: List[str], deleted_scan_ids: Optional[List[str]] = None) -> None:
+    """Delete GridFS files that no surviving scan still references.
+
+    Rescans copy ``sbom_refs`` (and therefore the ``gridfs_id``) from their
+    source scan, so multiple scans can share a single GridFS file. Deleting
+    the file when only one of those scans is removed would orphan every
+    other reference — the surviving rescans would then fail to load their
+    SBOM and crash the worker with
+    ``Failed to load SBOM from GridFS: no file in gridfs collection``.
+
+    ``deleted_scan_ids`` lists the scans currently being purged; their own
+    references must be excluded from the surviving-reference check.
+    """
     if not gridfs_ids:
         return
+
+    surviving = await _surviving_gridfs_references(db, gridfs_ids, deleted_scan_ids or [])
+
     fs = AsyncIOMotorGridFSBucket(db)
     for gid in gridfs_ids:
+        if gid in surviving:
+            continue
         try:
             await fs.delete(ObjectId(gid))
         except Exception:
             pass  # File may already be deleted
+
+
+async def _surviving_gridfs_references(
+    db: Any, gridfs_ids: List[str], excluded_scan_ids: List[str]
+) -> set[str]:
+    """Return the subset of ``gridfs_ids`` that is still referenced by at
+    least one scan outside ``excluded_scan_ids``.
+    """
+    if not gridfs_ids:
+        return set()
+    surviving: set[str] = set()
+    cursor = db.scans.find(
+        {
+            "_id": {"$nin": excluded_scan_ids},
+            "sbom_refs.gridfs_id": {"$in": gridfs_ids},
+        },
+        {"sbom_refs": 1},
+    )
+    async for doc in cursor:
+        for gid in _extract_gridfs_ids_from_refs(doc.get("sbom_refs", [])):
+            if gid in gridfs_ids:
+                surviving.add(gid)
+    return surviving
 
 
 async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: str = "") -> int:
@@ -124,8 +163,11 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: st
     await db.crypto_assets.delete_many({"scan_id": {"$in": scan_ids}})
     result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
 
-    # Clean up GridFS files
-    await _cleanup_gridfs_files(db, gridfs_ids)
+    # Clean up GridFS files — but only those no surviving scan still references.
+    # Rescans share gridfs_ids with their source scans; deleting unconditionally
+    # would break the chain. Pass the just-deleted scan IDs so the ref check
+    # ignores them when looking for surviving references.
+    await _cleanup_gridfs_files(db, gridfs_ids, deleted_scan_ids=scan_ids)
 
     if label:
         logger.info(f"{label}: Deleted {result.deleted_count} scans ({len(gridfs_ids)} GridFS files).")
