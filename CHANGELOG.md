@@ -1,4 +1,45 @@
-# Release 1.7.0
+# Release 1.7.1
+
+## 🚀 Features
+
+- feat(archive): bump bundle/encryption versions, add streaming constants (#0)
+- feat(archive): add reason-labeled failure metric (#0)
+- feat(archive): replace single-block AES-GCM with chunked streaming format (#0)
+- feat(archive): add streaming multipart upload/download for S3 (#0)
+- feat(archive): add NDJSON bundle v2 reader/writer (#0)
+- feat(housekeeping): add orphan S3 object reaper (#0)
+- feat(archive): pre-deploy guard against v1 bundle data (#0)
+- feat(scan-delta): add unified response schemas (#0)
+- feat(scan-delta): add findings identity-key helper (#0)
+- feat(scan-delta): compute findings delta with filters and pagination (#0)
+- feat(scan-delta): add components identity-key helper (#0)
+- feat(scan-delta): compute components delta with version+license diff (#0)
+- feat(scan-delta): add crypto delta envelope adapter (#0)
+- feat(scan-delta): orchestrator with category dispatch and validation (#0)
+- feat(scan-delta): unified REST endpoint with auth and cross-project guard (#0)
+- feat(scan-delta): frontend API client for unified scan delta (#0)
+- feat(scan-delta): shared list/pagination/badge components (#0)
+- feat(scan-delta): crypto delta tab (migrated from ScanDeltaView) (#0)
+- feat(scan-delta): findings delta tab with severity/type/change filters (#0)
+- feat(scan-delta): components delta tab with added/removed/version/license (#0)
+- feat(scan-delta): multi-tab modal with lazy-loaded tabs and badge counts (#0)
+- feat(scan-delta): wire ScanDeltaModal in ProjectScans, remove old crypto view (#0)
+- feat(mcp): advertise new params + envelope shape in compare_scans/get_scan_delta definitions (#0)
+
+## 🐛 Fixes
+
+- fix(housekeeping): skip in-progress scans during retention archive (#0)
+- fix(archive): plug 5 data-integrity gaps from follow-up review (#0)
+- fix(archive): close remaining ghost-scan and stale-metadata gaps (#0)
+- fix(scan-delta): add finding_id tiebreaker for deterministic pagination (#0)
+
+## 🧪 Tests
+
+- test(archive): add FakeS3Client helper for streaming tests (#0)
+
+
+
+# Release 1.7.1
 
 
 
