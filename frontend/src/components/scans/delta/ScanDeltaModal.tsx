@@ -36,8 +36,8 @@ export function ScanDeltaModal({ projectId, fromScanId, toScanId, onClose }: Pro
         if (!o) onClose();
       }}
     >
-      <DialogContent className="max-w-4xl">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Scan delta</DialogTitle>
           <DialogDescription>
             Added, removed, and changed entries between the two selected scans.
@@ -86,13 +86,13 @@ function ScanDeltaBody({ projectId, fromScanId, toScanId }: BodyProps) {
   }, []);
 
   return (
-    <>
-      <div className="text-xs text-muted-foreground pb-2">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="shrink-0 pb-2 text-xs text-muted-foreground">
         From <span className="font-mono">{fromScanId}</span> to{" "}
         <span className="font-mono">{toScanId}</span>
       </div>
-      <Tabs value={active} onValueChange={onTabChange}>
-        <TabsList>
+      <Tabs value={active} onValueChange={onTabChange} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <TabsList className="shrink-0">
           <TabsTrigger value="findings">
             Findings <DeltaBadge count={counts.findings} />
           </TabsTrigger>
@@ -103,7 +103,7 @@ function ScanDeltaBody({ projectId, fromScanId, toScanId }: BodyProps) {
             Crypto <DeltaBadge count={counts.crypto} />
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="findings">
+        <TabsContent value="findings" className="min-h-0 flex-1 overflow-y-auto">
           {visited.has("findings") && (
             <FindingsDeltaTab
               projectId={projectId}
@@ -113,7 +113,7 @@ function ScanDeltaBody({ projectId, fromScanId, toScanId }: BodyProps) {
             />
           )}
         </TabsContent>
-        <TabsContent value="components">
+        <TabsContent value="components" className="min-h-0 flex-1 overflow-y-auto">
           {visited.has("components") && (
             <ComponentsDeltaTab
               projectId={projectId}
@@ -123,7 +123,7 @@ function ScanDeltaBody({ projectId, fromScanId, toScanId }: BodyProps) {
             />
           )}
         </TabsContent>
-        <TabsContent value="crypto">
+        <TabsContent value="crypto" className="min-h-0 flex-1 overflow-y-auto">
           {visited.has("crypto") && (
             <CryptoDeltaTab
               projectId={projectId}
@@ -134,6 +134,6 @@ function ScanDeltaBody({ projectId, fromScanId, toScanId }: BodyProps) {
           )}
         </TabsContent>
       </Tabs>
-    </>
+    </div>
   );
 }
