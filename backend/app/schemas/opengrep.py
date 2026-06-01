@@ -16,6 +16,8 @@ class OpenGrepExtra(BaseModel):
     message: Optional[str] = None
     severity: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    fingerprint: Optional[str] = None
+    lines: Optional[str] = None
 
 
 class OpenGrepFinding(BaseModel):

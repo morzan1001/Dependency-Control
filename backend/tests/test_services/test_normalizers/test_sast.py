@@ -158,6 +158,33 @@ class TestNormalizeOpengrep:
         assert f.details["start"] == {"line": 10, "column": 5}
         assert f.details["end"] == {"line": 15, "column": 20}
 
+    def test_fingerprint_and_lines_survive_ingest(self):
+        """extra.fingerprint and extra.lines must reach details (regression: schema dropped them)."""
+        from app.schemas.opengrep import OpenGrepFinding
+
+        raw = {
+            "check_id": "rules.python.weak-rng",
+            "path": "app/util.py",
+            "start": {"line": 10, "col": 5},
+            "end": {"line": 10, "col": 20},
+            "extra": {
+                "severity": "WARNING",
+                "message": "weak rng",
+                "metadata": {},
+                "fingerprint": "abc123def456",
+                "lines": "random.random()",
+            },
+        }
+        dumped = OpenGrepFinding(**raw).model_dump()
+        assert dumped["extra"]["fingerprint"] == "abc123def456"
+        assert dumped["extra"]["lines"] == "random.random()"
+
+        self.agg.aggregate("opengrep", {"results": [raw]})
+        f = self.agg.get_findings()[0]
+        entry = f.details["sast_findings"][0]["details"]
+        assert entry["fingerprint"] == "abc123def456"
+        assert entry["code_extract"] == "random.random()"
+
 
 class TestNormalizeBearer:
     """Tests for normalize_bearer - Bearer SAST normalization."""
