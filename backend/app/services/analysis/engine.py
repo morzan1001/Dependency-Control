@@ -980,6 +980,14 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     )
 
     del aggregated_findings
+
+    # Authoritative waiver re-apply + re-anchor + lapsed-flag computation.
+    # The engine's _apply_waivers above is a best-effort pass; recalculate_project_stats
+    # is the single source of truth for signature-based matching (Pass-1 + Pass-2 re-anchor).
+    if project_id:
+        from app.services.stats import recalculate_project_stats
+        await recalculate_project_stats(project_id, db)
+
     _release_memory_to_os()
 
     return True

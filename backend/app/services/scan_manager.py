@@ -152,38 +152,17 @@ class ScanManager:
 
         return self._waivers_cache
 
-    @staticmethod
-    def _finding_id_matches(finding: Finding, waiver: Waiver) -> bool:
-        """Check if a finding's ID matches a waiver's finding_id considering scope."""
-        from app.services.stats import _extract_rule_prefix, _strip_line_number
-
-        if not waiver.finding_id or not finding.id:
-            return False
-
-        scope = waiver.scope or "finding"
-        if scope == "rule":
-            waiver_rule = _extract_rule_prefix(waiver.finding_id, waiver.package_name or "")
-            finding_rule = _extract_rule_prefix(finding.id, finding.component)
-            return bool(waiver_rule and finding_rule and waiver_rule == finding_rule)
-        if scope == "file":
-            prefix = _strip_line_number(waiver.finding_id)
-            finding_prefix = _strip_line_number(finding.id)
-            return bool(prefix and finding_prefix and prefix == finding_prefix)
-        return waiver.finding_id == finding.id
-
     def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
-        """Check if a finding matches a waiver."""
-        if self._finding_id_matches(finding, waiver):
-            return True
-
-        # Match by finding type
+        """Best-effort exact match at ingest. Location-based findings use the strong-anchor
+        signature (no re-anchoring here — the recalc is authoritative for that)."""
+        if finding.match is not None and getattr(waiver, "match", None) is not None:
+            from app.services.waivers.matching import waiver_strong_match
+            return waiver_strong_match(finding.match, waiver.match, waiver.status or "false_positive")
+        # Legacy path for non-location findings (license/eol/vuln-by-type/component)
         if waiver.finding_type and waiver.finding_type == finding.type:
             return True
-
-        # Match by component/package name
         if waiver.package_name and waiver.package_name == finding.component:
             return True
-
         return False
 
     async def apply_waivers(self, findings: List[Finding]) -> Tuple[List[Finding], int]:
