@@ -210,6 +210,9 @@ class GitHubService:
             get_jwks=self.get_jwks,
             invalidate_cache=self._invalidate_jwks_cache,
             issuer=self.base_url,
+            # `or None` is intentional: normalizes "" -> None so the fail-closed
+            # audience guard in _validate_oidc_token rejects unconfigured instances
+            # (Finding 7 / W1.1). Do not remove.
             audience=self.instance.oidc_audience or None,
             payload_model=GitHubOIDCPayload,
             provider_name="GitHub",

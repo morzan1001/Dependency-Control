@@ -3,17 +3,25 @@ from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas._oidc_audience import (
+    validate_audience_not_blank,
+    validate_optional_audience_not_blank,
+)
+
 
 class GitLabInstanceBase(BaseModel):
     """Base schema for GitLab instance.
 
-    SECURITY (Finding 7 / W1.1): ``oidc_audience`` is hard-required. OIDC
-    tokens are verified with mandatory, fail-closed audience checking, so an
-    instance without an audience could never authenticate a token anyway.
-    Creating/updating an instance with an empty/missing audience is rejected
-    with HTTP 422. The configured audience must match the CI pipeline's
-    requested ``aud`` (GitLab ``id_tokens[].aud`` / GitHub Actions request
-    ``audience``).
+    SECURITY (Finding 7 / W1.1): ``oidc_audience`` is hard-required on
+    create/update. OIDC tokens are verified with mandatory, fail-closed
+    audience checking, so an instance without an audience could never
+    authenticate a token anyway. Creating/updating an instance with an
+    empty/missing audience is rejected with HTTP 422. The configured audience
+    must match the CI pipeline's requested ``aud`` (GitLab ``id_tokens[].aud``).
+
+    Note: the audience field and its blank-check live on the Create/Update
+    schemas, NOT here — the Response schema must still serialize legacy
+    instances whose audience is null (see ``GitLabInstanceResponse``).
     """
 
     name: str = Field(..., description="Human-readable name (e.g. 'GitLab.com', 'Internal GitLab')")
@@ -21,28 +29,22 @@ class GitLabInstanceBase(BaseModel):
     description: Optional[str] = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
     is_default: bool = Field(False, description="Whether this is the default instance")
+    auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
+    sync_teams: bool = Field(False, description="Sync GitLab group members to local teams")
+
+
+class GitLabInstanceCreate(GitLabInstanceBase):
+    """Schema for creating a new GitLab instance."""
+
     oidc_audience: str = Field(
         ...,
         min_length=1,
         description="REQUIRED expected 'aud' claim for OIDC tokens from this instance. "
         "Must match the CI pipeline's requested audience (GitLab id_tokens[].aud).",
     )
-    auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
-    sync_teams: bool = Field(False, description="Sync GitLab group members to local teams")
-
-    @field_validator("oidc_audience")
-    @classmethod
-    def _audience_not_blank(cls, value: str) -> str:
-        """Reject whitespace-only audiences (fail-closed, Finding 7 / W1.1)."""
-        if not value or not value.strip():
-            raise ValueError("oidc_audience is required and must not be empty")
-        return value
-
-
-class GitLabInstanceCreate(GitLabInstanceBase):
-    """Schema for creating a new GitLab instance."""
-
     access_token: Optional[str] = Field(None, description="Personal or Group Access Token with 'api' scope")
+
+    _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
 
     @model_validator(mode="after")
     def validate_token_dependent_features(self) -> "GitLabInstanceCreate":
@@ -66,22 +68,17 @@ class GitLabInstanceUpdate(BaseModel):
     auto_create_projects: Optional[bool] = Field(None, description="Automatically create projects from OIDC tokens")
     sync_teams: Optional[bool] = Field(None, description="Sync GitLab group members to local teams")
 
-    @field_validator("oidc_audience")
-    @classmethod
-    def _audience_not_blank(cls, value: Optional[str]) -> Optional[str]:
-        """Disallow clearing the audience to an empty value (fail-closed, Finding 7 / W1.1)."""
-        if value is not None and not value.strip():
-            raise ValueError("oidc_audience must not be empty")
-        return value
+    _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
 
 
 class GitLabInstanceResponse(GitLabInstanceBase):
     """Schema for GitLab instance response (without access_token)."""
 
     # Responses must be able to represent legacy instances created before
-    # oidc_audience became required, so admins can see (and fix) them.
-    # The create/update validation — not the response — enforces the requirement.
-    oidc_audience: Optional[str] = Field(  # type: ignore[assignment]
+    # oidc_audience became required, so admins can see (and fix) them. There is
+    # deliberately NO blank-check validator here — the create/update validation
+    # enforces the requirement; the response reflects stored state verbatim.
+    oidc_audience: Optional[str] = Field(
         None, description="Expected 'aud' claim for OIDC tokens. Null means not yet configured (will 403 on ingest)."
     )
 
@@ -89,12 +86,6 @@ class GitLabInstanceResponse(GitLabInstanceBase):
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="User ID who created this instance")
     last_modified_at: Optional[datetime] = Field(None, description="Last modification timestamp")
-
-    @field_validator("oidc_audience")
-    @classmethod
-    def _audience_response_passthrough(cls, value: Optional[str]) -> Optional[str]:
-        # Responses reflect stored state verbatim; no blank-check here.
-        return value
 
     # Additional info (not in base)
     token_configured: bool = Field(

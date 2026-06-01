@@ -13,6 +13,8 @@ A token with a matching ``aud`` is accepted (regression guard).
 """
 
 import asyncio
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -24,8 +26,16 @@ from jose.constants import ALGORITHMS
 from pydantic import ValidationError
 
 from app.models.gitlab_api import OIDCPayload
-from app.schemas.github_instance import GitHubInstanceCreate, GitHubInstanceUpdate
-from app.schemas.gitlab_instance import GitLabInstanceCreate, GitLabInstanceUpdate
+from app.schemas.github_instance import (
+    GitHubInstanceCreate,
+    GitHubInstanceResponse,
+    GitHubInstanceUpdate,
+)
+from app.schemas.gitlab_instance import (
+    GitLabInstanceCreate,
+    GitLabInstanceResponse,
+    GitLabInstanceUpdate,
+)
 from app.services.oidc_utils import validate_oidc_token
 
 ISSUER = "https://gitlab.example.com"
@@ -226,3 +236,58 @@ class TestGitHubInstanceSchemaRequiresAudience:
     def test_update_omitting_audience_allowed(self):
         update = GitHubInstanceUpdate(name="Renamed")
         assert update.oidc_audience is None
+
+
+class TestInstanceResponseAllowsNullAudience:
+    """Response schemas MUST serialize legacy instances whose oidc_audience is
+    null (created before the field became required), so admins can see and fix
+    them. The blank-check belongs only on Create/Update — never on the Response.
+    """
+
+    def test_gitlab_response_allows_explicit_null_audience(self):
+        response = GitLabInstanceResponse(
+            id="abc123",
+            name="Legacy GitLab",
+            url="https://gitlab.com",
+            oidc_audience=None,
+            created_at=datetime.now(timezone.utc),
+            created_by="user-1",
+            token_configured=False,
+        )
+        assert response.oidc_audience is None
+
+    def test_github_response_allows_explicit_null_audience(self):
+        response = GitHubInstanceResponse(
+            id="abc123",
+            name="Legacy GitHub",
+            url="https://token.actions.githubusercontent.com",
+            oidc_audience=None,
+            created_at=datetime.now(timezone.utc),
+            created_by="user-1",
+        )
+        assert response.oidc_audience is None
+
+    def test_gitlab_to_response_helper_serializes_legacy_null_audience(self):
+        """Exercise the real GET-endpoint helper for a legacy instance with a
+        null audience: it must build a Response, not raise (which would 500)."""
+        from app.api.v1.endpoints.gitlab_instances import _to_response
+
+        legacy = SimpleNamespace(
+            id="abc123",
+            name="Legacy GitLab",
+            url="https://gitlab.com",
+            description=None,
+            is_active=True,
+            is_default=False,
+            oidc_audience=None,
+            auto_create_projects=False,
+            sync_teams=False,
+            created_at=datetime.now(timezone.utc),
+            created_by="user-1",
+            last_modified_at=None,
+            access_token=None,
+        )
+
+        response = _to_response(legacy)
+
+        assert response.oidc_audience is None
