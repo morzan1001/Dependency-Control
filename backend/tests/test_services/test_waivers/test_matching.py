@@ -120,3 +120,15 @@ class TestOrchestrator:
         w = _W("w1", "false_positive", sig())
         res = apply_waivers_to_findings(findings, [w])
         assert res.waived == {}
+
+    def test_finding_not_both_waived_and_lapsed(self):
+        # An accepted_risk waiver (content changed -> would lapse) and a false_positive waiver
+        # (same content -> re-anchors/waives) targeting the same group + candidate. Regardless of
+        # waiver order, the finding must not appear in BOTH waived and lapsed.
+        findings = [mf("f1", anchor="cur", kind="scanner_fp", ch="c1", line=20)]
+        w_lapse = _W("wB", "accepted_risk", sig(anchor="old", kind="scanner_fp", ch="cX", line=10))
+        w_follow = _W("wA", "false_positive", sig(anchor="old2", kind="scanner_fp", ch="c1", line=10))
+        for order in ([w_lapse, w_follow], [w_follow, w_lapse]):
+            res = apply_waivers_to_findings(findings, order)
+            overlap = set(res.waived) & set(res.lapsed)
+            assert not overlap, f"finding in both waived and lapsed for order {[w.id for w in order]}"

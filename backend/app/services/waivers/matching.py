@@ -77,6 +77,12 @@ def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequenc
 
     _pass1_strong_exact(app, waivers_with_sig, by_group, claimed, matched_waivers)
     _pass2_reanchor(app, waivers_with_sig, by_group, claimed, matched_waivers)
+
+    # A finding waived by some waiver must never also be reported as lapsed (waived wins).
+    for fid in list(app.lapsed):
+        if fid in app.waived:
+            del app.lapsed[fid]
+
     return app
 
 
