@@ -175,6 +175,17 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
     from app.services.waivers.matching import MatchFinding, apply_waivers_to_findings
 
     docs = await finding_repo.find_location_findings(scan_id)
+
+    # Lazy back-fill: legacy finding-scope waivers without a stored signature inherit the
+    # signature of the finding they currently match by exact finding_id.
+    docs_by_legacy_id = {d.get("finding_id") or d["_id"]: d for d in docs}
+    for w in waivers:
+        if getattr(w, "match", None) is None:
+            legacy_doc = docs_by_legacy_id.get(getattr(w, "finding_id", None))
+            if legacy_doc and legacy_doc.get("match"):
+                w.match = MatchSignature(**legacy_doc["match"])
+                await waiver_repo.update(w.id, {"match": legacy_doc["match"]})
+
     findings = [
         MatchFinding(id=d["_id"], sig=MatchSignature(**d["match"]) if d.get("match") else None)
         for d in docs

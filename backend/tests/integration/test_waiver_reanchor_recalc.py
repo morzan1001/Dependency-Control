@@ -69,3 +69,16 @@ async def test_content_change_accepted_risk_lapses():
     await _apply_waivers_signature(repo, wrepo, scan, [w])
     assert "f1" not in repo.waived
     assert repo.lapsed.get("f1") == "w1"
+
+
+@pytest.mark.asyncio
+async def test_backfill_waiver_without_match_from_current_finding():
+    scan = "s1"
+    repo = _Repo([_finding_doc(scan, "f1", "fpA", "c1", 10)])
+    wrepo = _WRepo()
+    # legacy waiver: no match signature, only legacy finding_id equal to the finding
+    w = _Waiver("w1", "false_positive", None)
+    w.finding_id = "f1"
+    await _apply_waivers_signature(repo, wrepo, scan, [w])
+    assert "f1" in repo.waived
+    assert "w1" in wrepo.updates  # signature back-filled and persisted
