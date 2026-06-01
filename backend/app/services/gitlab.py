@@ -546,7 +546,7 @@ class GitLabService:
             if current_name.startswith("GitLab Group:") and current_name != team_name:
                 update_data["name"] = team_name
                 update_data["description"] = description
-            # Backfill gitlab IDs for legacy teams found by name
+            # Defensive: stamp gitlab IDs if a matched team somehow lacks them.
             if not existing_team.get("gitlab_group_id"):
                 update_data["gitlab_instance_id"] = instance_id
                 update_data["gitlab_group_id"] = group_id
@@ -590,9 +590,12 @@ class GitLabService:
                     f"Failed to fetch members for group '{team_name}' (group_id={group_id}) "
                     f"while syncing project_id={gitlab_project_id}. Skipping member sync."
                 )
-                team = await team_repo.get_raw_by_gitlab_group(
-                    instance_id, group_id
-                ) or await team_repo.get_raw_by_name(team_name)
+                # Match ONLY by the (instance, group) composite key. A name-based
+                # fallback is unsafe: two GitLab instances owning a group with the
+                # same path produce the same team_name and would collide cross-tenant
+                # (Finding 8). Legacy synced teams are reconciled by the one-time
+                # backfill in init_db, not at runtime.
+                team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
                 if team:
                     return str(team["_id"])
                 logger.warning(
@@ -601,9 +604,9 @@ class GitLabService:
                 )
                 return None
 
-            existing_team = await team_repo.get_raw_by_gitlab_group(
-                instance_id, group_id
-            ) or await team_repo.get_raw_by_name(team_name)
+            # Match ONLY by the (instance, group) composite key (Finding 8). See the
+            # comment in the no-members branch above for why the name fallback is gone.
+            existing_team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
             team_members = await self._build_team_members(members, user_repo)
             return await self._upsert_team_with_members(
                 team_repo, existing_team, team_name, description, instance_id, group_id, team_members

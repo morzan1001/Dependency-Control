@@ -759,3 +759,110 @@ class TestTeamSyncResolveGroupFallback:
                     f"If gitlab_group_id is the deep namespace.id (42), the team name must reflect "
                     f"the deep path, not the unresolvable truncated path. Got name={team_data['name']!r}"
                 )
+
+
+class _StatefulTeamsCollection:
+    """In-memory teams collection that mimics MongoDB find_one/insert_one/update_one
+    filter semantics, so cross-instance collisions are observable the same way they
+    would be against a real database."""
+
+    def __init__(self):
+        self.docs: list[dict] = []
+
+    @staticmethod
+    def _matches(doc: dict, query: dict) -> bool:
+        return all(doc.get(k) == v for k, v in query.items())
+
+    async def find_one(self, query, *args, **kwargs):
+        for doc in self.docs:
+            if self._matches(doc, query):
+                return dict(doc)
+        return None
+
+    async def insert_one(self, doc):
+        self.docs.append(dict(doc))
+        return MagicMock(inserted_id=doc.get("_id", "mock-id"))
+
+    async def update_one(self, query, update, *args, **kwargs):
+        for doc in self.docs:
+            if self._matches(doc, query):
+                doc.update(update.get("$set", {}))
+                return MagicMock(modified_count=1)
+        return MagicMock(modified_count=0)
+
+
+class TestTeamSyncInstanceScoping:
+    """Finding 8: GitLab team matching must be scoped to the (instance, group)
+    composite key. Two instances owning a group with the SAME path must NOT collide."""
+
+    def _sync(self, instance, teams_coll, group_id, group_path):
+        service = GitLabService(instance)
+        members = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
+        user_doc = {"_id": "uid", "username": "dev"}
+        users_coll = create_mock_collection(find_one=user_doc)
+        db = create_mock_db({"teams": teams_coll, "users": users_coll})
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.return_value = members
+            return asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path=f"{group_path}/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group",
+                        namespace_id=group_id,
+                        namespace_path=group_path,
+                    ),
+                )
+            )
+
+    def test_same_group_path_across_instances_does_not_collide(self):
+        """Instance A and instance B both own a group at path 'shared-grp' (same
+        gitlab_group_id number, different instances). Syncing B must create a NEW
+        team and must NOT adopt/mutate instance A's team."""
+        instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
+        instance_b = make_gitlab_instance(id="inst-b", name="B", url="https://b.com")
+        teams = _StatefulTeamsCollection()
+
+        team_a_id = self._sync(instance_a, teams, group_id=7, group_path="shared-grp")
+        team_b_id = self._sync(instance_b, teams, group_id=7, group_path="shared-grp")
+
+        assert team_a_id is not None
+        assert team_b_id is not None
+        # The two instances must own DISTINCT teams.
+        assert team_a_id != team_b_id, (
+            "Instance B adopted instance A's team via the unscoped name fallback — "
+            "this is the cross-tenant collision (Finding 8)."
+        )
+        # Two separate team documents must exist, each tagged to its own instance.
+        assert len(teams.docs) == 2
+        by_instance = {d["gitlab_instance_id"]: d for d in teams.docs}
+        assert set(by_instance) == {"inst-a", "inst-b"}
+
+    def test_instance_a_members_not_mutated_by_instance_b_sync(self):
+        """Instance A's team and its member list must be untouched after B syncs."""
+        instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
+        instance_b = make_gitlab_instance(id="inst-b", name="B", url="https://b.com")
+        teams = _StatefulTeamsCollection()
+
+        team_a_id = self._sync(instance_a, teams, group_id=7, group_path="shared-grp")
+        team_a_before = next(d for d in teams.docs if d["_id"] == team_a_id)
+        members_before = [dict(m) for m in team_a_before["members"]]
+
+        self._sync(instance_b, teams, group_id=7, group_path="shared-grp")
+
+        team_a_after = next(d for d in teams.docs if d["_id"] == team_a_id)
+        assert team_a_after["gitlab_instance_id"] == "inst-a"
+        assert team_a_after["members"] == members_before
+
+    def test_repeated_sync_same_instance_group_reuses_team(self):
+        """Composite-key match: re-syncing the SAME (instance, group) must re-use the
+        same team, not create a duplicate."""
+        instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
+        teams = _StatefulTeamsCollection()
+
+        first_id = self._sync(instance_a, teams, group_id=7, group_path="shared-grp")
+        second_id = self._sync(instance_a, teams, group_id=7, group_path="shared-grp")
+
+        assert first_id == second_id
+        assert len(teams.docs) == 1
