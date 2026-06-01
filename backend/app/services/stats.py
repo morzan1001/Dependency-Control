@@ -153,6 +153,18 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver])
             )
 
 
+def _is_signature_waiver(waiver: Any) -> bool:
+    """True if a waiver should be applied via the signature orchestrator rather than the
+    legacy finding_id query: it already carries a MatchSignature, or it explicitly targets a
+    location-based finding type. Untyped / non-location waivers stay on the legacy path so they
+    are never silently dropped."""
+    from app.repositories.findings import FindingRepository
+
+    if getattr(waiver, "match", None) is not None:
+        return True
+    return waiver.finding_type in FindingRepository._LOCATION_TYPES
+
+
 async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id: str, waivers: List) -> None:
     """Apply non-vulnerability waivers to a scan's location-based findings via signature matching.
 
@@ -311,12 +323,9 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
                     waived=True, waiver_reason=waiver.reason,
                 )
         non_vuln = [w for w in waivers if not w.vulnerability_id]
-        from app.repositories.findings import FindingRepository as _FR
-        # Legacy path: non-location typed waivers (license/eol/etc.) have no match signature.
-        legacy = [w for w in non_vuln if w.finding_type and w.finding_type not in _FR._LOCATION_TYPES]
+        legacy = [w for w in non_vuln if not _is_signature_waiver(w)]
+        loc_waivers = [w for w in non_vuln if _is_signature_waiver(w)]
         await _apply_waivers(finding_repo, scan_id, legacy)
-        # Signature-match path: location-typed waivers and untyped waivers.
-        loc_waivers = [w for w in non_vuln if not w.finding_type or w.finding_type in _FR._LOCATION_TYPES]
         await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
 
         # 3. Calculate stats (read from PRIMARY for consistency after waiver updates)
