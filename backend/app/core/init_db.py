@@ -348,30 +348,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["findings"].create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
     await database["findings"].create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
 
-    # Findings: partial indexes for waiver signature matching (location-based findings only).
-    # These cover Pass-1 (anchor) and Pass-2 (group) lookup paths in the recalc/drift-matching
-    # path. The partialFilterExpression restricts the index to documents where `match` exists,
-    # keeping index size small — vulnerability/license findings (no `match`) are excluded.
-    await database["findings"].create_index(
-        [
-            ("scan_id", pymongo.ASCENDING),
-            ("match.rule_key", pymongo.ASCENDING),
-            ("match.file_key", pymongo.ASCENDING),
-            ("match.anchor", pymongo.ASCENDING),
-        ],
-        name="findings_match_anchor",
-        partialFilterExpression={"match": {"$exists": True}},
-    )
-    await database["findings"].create_index(
-        [
-            ("scan_id", pymongo.ASCENDING),
-            ("match.rule_key", pymongo.ASCENDING),
-            ("match.file_key", pymongo.ASCENDING),
-        ],
-        name="findings_match_group",
-        partialFilterExpression={"match": {"$exists": True}},
-    )
-
     logger.info("Database indexes created successfully.")
 
 
