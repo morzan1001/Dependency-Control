@@ -31,14 +31,14 @@ class TeamRepository:
         """Get raw team document by ID."""
         return await self.collection.find_one({"_id": team_id})
 
+    # WARNING (Finding 8): do NOT use name-based lookup to match synced GitLab teams.
+    # Team names are not unique across GitLab instances and caused a cross-tenant
+    # collision. Use get_raw_by_gitlab_group (instance-scoped composite key) instead.
     async def get_by_name(self, name: str) -> Optional[Team]:
         data = await self.collection.find_one({"name": name})
         if data:
             return Team(**data)
         return None
-
-    async def get_raw_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        return await self.collection.find_one({"name": name})
 
     async def get_raw_by_gitlab_group(self, gitlab_instance_id: str, gitlab_group_id: int) -> Optional[Dict[str, Any]]:
         """Get raw team document by GitLab instance + group ID."""

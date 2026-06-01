@@ -110,6 +110,43 @@ class TestBackfillSyncedTeamIds:
 
         assert first == second
 
+    def test_per_team_failure_is_isolated_and_loop_continues(self, caplog):
+        """A failure on one team must not abort the loop (Fix 2, availability gap).
+
+        The backfill runs before index creation in init_db; an unhandled raise here
+        propagates through create_indexes and crashes startup, blocking the migration
+        and every subsequent index build. One bad team must be skipped, not fatal.
+        """
+        db = FakeDatabase()
+        # "bad" sorts before "good" so the failure happens first; the loop must still
+        # reach and stamp the good team afterwards.
+        _seed_team(db, "team-bad", "GitLab Group: bad")
+        _seed_project(db, "p-bad", "team-bad", gitlab_instance_id="inst-bad", gitlab_project_id=1)
+        _seed_team(db, "team-good", "GitLab Group: good")
+        _seed_project(db, "p-good", "team-good", gitlab_instance_id="inst-good", gitlab_project_id=2)
+
+        original_update_one = db.teams.update_one
+
+        async def failing_update_one(query, update, **kwargs):
+            if query.get("_id") == "team-bad":
+                raise RuntimeError("simulated write failure on team-bad")
+            return await original_update_one(query, update, **kwargs)
+
+        db.teams.update_one = failing_update_one  # type: ignore[method-assign]
+
+        with caplog.at_level("ERROR", logger="app.core.init_db"):
+            # Must NOT raise — the failure has to be swallowed and logged.
+            asyncio.run(_backfill_synced_team_gitlab_ids(db))
+
+        # The good team must still have been processed despite the earlier failure.
+        assert db.teams._docs["team-good"]["gitlab_instance_id"] == "inst-good"
+        # The failing team must remain untouched.
+        assert db.teams._docs["team-bad"].get("gitlab_instance_id") is None
+        # The failure must be surfaced in the logs.
+        assert any("team-bad" in r.message for r in caplog.records), (
+            f"Per-team failure must be logged. Got: {[r.message for r in caplog.records]}"
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

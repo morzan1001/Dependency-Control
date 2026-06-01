@@ -79,49 +79,64 @@ async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) 
 
     stamped = 0
     skipped = 0
+    failed = 0
     for team in legacy_teams:
-        # Idempotency: anything already tagged with an instance is left alone.
-        if team.get("gitlab_instance_id"):
-            continue
+        team_id = team.get("_id")
+        # Isolate per-team failures: a single bad team (e.g. a write error) must not
+        # abort the loop, which runs before index creation in init_db. Aborting here
+        # would propagate up through create_indexes and crash startup, blocking both
+        # the migration and every subsequent index build for all other teams.
+        try:
+            # Idempotency: anything already tagged with an instance is left alone.
+            if team.get("gitlab_instance_id"):
+                continue
 
-        team_id = team["_id"]
-        linked = await projects.find(
-            {"team_id": team_id}, {"gitlab_instance_id": 1}
-        ).to_list(None)
-        instance_ids = {
-            p.get("gitlab_instance_id") for p in linked if p.get("gitlab_instance_id")
-        }
+            linked = await projects.find(
+                {"team_id": team_id}, {"gitlab_instance_id": 1}
+            ).to_list(None)
+            instance_ids = {
+                p.get("gitlab_instance_id") for p in linked if p.get("gitlab_instance_id")
+            }
 
-        if len(instance_ids) != 1:
-            skipped += 1
-            logger.warning(
-                "Backfill: legacy synced team %s (%r) is ambiguous — linked projects "
-                "resolve to %d distinct GitLab instances (%s). Leaving it untouched; it "
-                "will be re-tagged on the next live sync or must be reconciled manually.",
+            if len(instance_ids) != 1:
+                skipped += 1
+                logger.warning(
+                    "Backfill: legacy synced team %s (%r) is ambiguous — linked projects "
+                    "resolve to %d distinct GitLab instances (%s). Leaving it untouched; it "
+                    "will be re-tagged on the next live sync or must be reconciled manually.",
+                    team_id,
+                    team.get("name"),
+                    len(instance_ids),
+                    sorted(instance_ids) or "none",
+                )
+                continue
+
+            (instance_id,) = tuple(instance_ids)
+            await teams.update_one({"_id": team_id}, {"$set": {"gitlab_instance_id": instance_id}})
+            stamped += 1
+            logger.info(
+                "Backfill: stamped gitlab_instance_id=%s onto legacy synced team %s (%r). "
+                "gitlab_group_id remains unset and will be filled by the next live sync.",
+                instance_id,
                 team_id,
                 team.get("name"),
-                len(instance_ids),
-                sorted(instance_ids) or "none",
+            )
+        except Exception:
+            failed += 1
+            logger.exception(
+                "Backfill: failed to process legacy synced team %s; skipping it and "
+                "continuing with the rest. It can be reconciled on the next live sync.",
+                team_id,
             )
             continue
-
-        (instance_id,) = tuple(instance_ids)
-        await teams.update_one({"_id": team_id}, {"$set": {"gitlab_instance_id": instance_id}})
-        stamped += 1
-        logger.info(
-            "Backfill: stamped gitlab_instance_id=%s onto legacy synced team %s (%r). "
-            "gitlab_group_id remains unset and will be filled by the next live sync.",
-            instance_id,
-            team_id,
-            team.get("name"),
-        )
 
     if legacy_teams:
         logger.info(
             "Backfill complete: %d legacy synced team(s) stamped with an instance id, "
-            "%d left for live re-sync.",
+            "%d left for live re-sync, %d failed and skipped.",
             stamped,
             skipped,
+            failed,
         )
 
 
