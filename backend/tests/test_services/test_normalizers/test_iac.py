@@ -143,3 +143,30 @@ class TestNormalizeKics:
         self.agg.aggregate("kics", result)
         f = list(self.agg.findings.values())[0]
         assert f.details["cwe_ids"] == ["250"]
+
+    def test_similarity_id_stored_in_details(self):
+        agg = ResultAggregator()
+        result = {
+            "queries": [
+                {
+                    "query_name": "S3 public",
+                    "query_id": "q-123",
+                    "severity": "HIGH",
+                    "files": [
+                        {
+                            "file_name": "main.tf",
+                            "line": 5,
+                            "similarity_id": "sim-abc-123",
+                            "search_key": "resource.aws_s3_bucket[b].acl",
+                            "actual_value": "public-read",
+                            "expected_value": "private",
+                        }
+                    ],
+                }
+            ]
+        }
+        agg.aggregate("kics", result)
+        f = list(agg.findings.values())[0]
+        assert f.details["similarity_id"] == "sim-abc-123"
+        assert f.details["search_key"] == "resource.aws_s3_bucket[b].acl"
+        assert f.details["actual_value"] == "public-read"

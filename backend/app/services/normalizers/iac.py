@@ -46,6 +46,7 @@ def _process_kics_file(
         "actual_value": f.get("actual_value"),
         "expected_value": f.get("expected_value"),
         "search_key": f.get("search_key"),
+        "similarity_id": f.get("similarity_id"),
         # Code context
         "code_extract": f.get("code_sample") or f.get("line_content"),
         # CWE if available
