@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.match_signature import MatchSignature
+
 
 class Severity(str, Enum):
     CRITICAL = "CRITICAL"
@@ -64,5 +66,10 @@ class Finding(BaseModel):
     # Status fields
     waived: bool = False
     waiver_reason: Optional[str] = None
+
+    # Waiver matching signature (location-based findings only; None otherwise)
+    match: Optional[MatchSignature] = None
+    waiver_lapsed: bool = False
+    lapsed_waiver_id: Optional[str] = None
 
     model_config = ConfigDict(use_enum_values=True)

@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field, computed_field
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
 from app.models.base import CreatedAtModel
 from app.models.finding import FindingType
+from app.models.match_signature import MatchSignature
 from app.models.types import PyObjectId
 
 
@@ -41,6 +42,7 @@ class Waiver(CreatedAtModel):
     vulnerability_id: Optional[str] = None  # e.g. "CVE-2021-23337"
     scope: str = "finding"  # "finding" = exact, "file" = same rule+file, "rule" = same rule project-wide
     rule_id: Optional[str] = None  # e.g. "javascript_lang_insufficiently_random_values"
+    match: Optional[MatchSignature] = None  # snapshot of the matched finding's signature
 
     reason: str
     status: str = WAIVER_STATUS_ACCEPTED_RISK
