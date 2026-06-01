@@ -457,22 +457,29 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
+            latest_scan_id = project.get("latest_scan_id")
+            finding = None
+            if latest_scan_id:
+                finding = await db["findings"].find_one(
+                    {"scan_id": latest_scan_id, "finding_id": args["finding_id"]},
+                    {"waived": 1, "waiver_reason": 1, "waiver_lapsed": 1, "lapsed_waiver_id": 1},
+                )
+            if finding is not None:
+                resp: Dict[str, Any] = {"waived": bool(finding.get("waived"))}
+                if finding.get("waiver_reason"):
+                    resp["waiver_reason"] = finding["waiver_reason"]
+                if finding.get("waiver_lapsed"):
+                    resp["lapsed"] = True
+                    resp["lapsed_waiver_id"] = finding.get("lapsed_waiver_id")
+                return resp
+            # Fallback: no finding doc (e.g. finding fixed) — report the waiver record if any.
             now = datetime.now(timezone.utc)
-            waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": args["project_id"]})
-            scope: Optional[str] = None
-            if not waiver:
-                waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
-                if waiver:
-                    scope = "global"
+            waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": args["project_id"]}) \
+                or await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
             if not waiver:
                 return {"waived": False}
             if _waiver_is_active(waiver, now):
-                response: Dict[str, Any] = {"waived": True, "waiver": _serialize_doc(waiver)}
-                if scope:
-                    response["scope"] = scope
-                return response
-            # Waiver exists but is expired — surface it explicitly so the caller
-            # can renew it instead of believing nothing was ever waived.
+                return {"waived": True, "waiver": _serialize_doc(waiver)}
             return {"waived": False, "expired_waiver": _serialize_doc(waiver)}
 
         if tool_name == "list_project_waivers":

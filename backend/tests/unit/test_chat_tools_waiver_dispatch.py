@@ -104,6 +104,45 @@ class TestGetWaiverStatusExpiry:
         assert result["waived"] is True
 
 
+class TestGetWaiverStatusFindingFlags:
+    @pytest.mark.asyncio
+    async def test_reports_waived_from_finding_flag(self, db, admin_user):
+        # finding waived in latest scan by recalc; waiver may have a different/old finding_id
+        await db["findings"].insert_one({
+            "_id": "x", "scan_id": "scan1", "finding_id": "OPENGREP-r-a.py-99",
+            "project_id": "p1", "type": "sast", "waived": True, "waiver_reason": "fp",
+        })
+        db.projects._docs["p1"] = {"_id": "p1", "name": "test", "team_id": None, "latest_scan_id": "scan1"}
+
+        result = await ChatToolRegistry()._dispatch(
+            "get_waiver_status",
+            {"project_id": "p1", "finding_id": "OPENGREP-r-a.py-99"},
+            admin_user,
+            db,
+        )
+
+        assert result["waived"] is True
+
+    @pytest.mark.asyncio
+    async def test_reports_lapsed(self, db, admin_user):
+        await db["findings"].insert_one({
+            "_id": "y", "scan_id": "scan1", "finding_id": "OPENGREP-r-a.py-10",
+            "project_id": "p1", "type": "sast", "waived": False, "waiver_lapsed": True,
+            "lapsed_waiver_id": "w1",
+        })
+        db.projects._docs["p1"] = {"_id": "p1", "name": "test", "team_id": None, "latest_scan_id": "scan1"}
+
+        result = await ChatToolRegistry()._dispatch(
+            "get_waiver_status",
+            {"project_id": "p1", "finding_id": "OPENGREP-r-a.py-10"},
+            admin_user,
+            db,
+        )
+
+        assert result["waived"] is False
+        assert result.get("lapsed") is True
+
+
 class TestListProjectWaiversIsActive:
     @pytest.mark.asyncio
     async def test_active_and_expired_waivers_get_is_active_flag(self, db, admin_user):
