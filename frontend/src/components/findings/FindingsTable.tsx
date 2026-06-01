@@ -15,6 +15,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { Badge } from '@/components/ui/badge'
 import { SeverityBadge } from './SeverityBadge'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { getSourceInfo } from '@/lib/finding-utils'
@@ -416,7 +417,17 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                         <SourceCell finding={finding} sourceInfo={sourceInfo} />
                                     </TableCell>
                                     <TableCell className="p-4 align-middle">
-                                        <TypeBadges finding={finding} />
+                                        <div className="flex flex-col gap-1">
+                                            <TypeBadges finding={finding} />
+                                            {finding.waiver_lapsed && (
+                                                <Badge
+                                                    variant="outline"
+                                                    className="text-[10px] border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-600 w-fit"
+                                                >
+                                                    Previously waived — code changed
+                                                </Badge>
+                                            )}
+                                        </div>
                                     </TableCell>
                                     <TableCell className="p-4 align-middle text-sm text-muted-foreground">
                                         {finding.scanners?.join(', ') || 'Unknown'}

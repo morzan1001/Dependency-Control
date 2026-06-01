@@ -315,6 +315,8 @@ export interface Finding {
   purl?: string;
   direct?: boolean;
   direct_inferred?: boolean;
+  waiver_lapsed?: boolean;
+  lapsed_waiver_id?: string;
 }
 
 export interface ThreatIntelligenceStats {

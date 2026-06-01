@@ -1,4 +1,4 @@
-import { useMutation, useInfiniteQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useInfiniteQuery, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { waiverApi } from '@/api/waivers';
 import { WaiverUpdate } from '@/types/waiver';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
@@ -88,6 +88,17 @@ export const useProjectWaivers = (
         enabled: !!projectId,
     });
 }
+
+export const useWaiverById = (waiverId: string | undefined) => {
+    return useQuery({
+        queryKey: ['waivers', 'by-id', waiverId],
+        queryFn: () => {
+            if (!waiverId) throw new Error('waiverId is required');
+            return waiverApi.getById(waiverId);
+        },
+        enabled: !!waiverId,
+    });
+};
 
 export const useGlobalWaivers = (
     options?: {

@@ -9,6 +9,7 @@ import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
 import { useProject } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
+import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
@@ -115,7 +116,12 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
     const canCreateWaiver = project && currentUser
         ? canCreateProjectWaiver(project, currentUser.id, permissions)
         : hasPermission('waiver:manage')
-    
+
+    // Fetch the lapsed waiver so we can prefill the re-waive form with its
+    // previous reason/status/expiration when the user opens a waiver form for
+    // a lapsed finding.
+    const { data: lapsedWaiver } = useWaiverById(finding?.lapsed_waiver_id)
+
     if (!finding) return null
 
     const handleWaive = (vulnId?: string) => {
@@ -160,15 +166,18 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
 
                 <div className="flex-1 overflow-y-auto pr-4">
                     {showWaiverForm ? (
-                        <WaiverForm 
-                            finding={finding} 
+                        <WaiverForm
+                            finding={finding}
                             vulnId={selectedVulnId}
-                            projectId={projectId} 
-                            onCancel={() => setShowWaiverForm(false)} 
+                            projectId={projectId}
+                            onCancel={() => setShowWaiverForm(false)}
                             onSuccess={() => {
                                 setShowWaiverForm(false)
                                 onClose()
                             }}
+                            initialReason={lapsedWaiver?.reason}
+                            initialStatus={lapsedWaiver?.status}
+                            initialExpiration={lapsedWaiver?.expiration_date}
                         />
                     ) : (
                       <div className="space-y-6 pt-2 pb-4">
