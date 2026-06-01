@@ -155,11 +155,15 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver])
 
 def _is_signature_waiver(waiver: Any) -> bool:
     """True if a waiver should be applied via the signature orchestrator rather than the
-    legacy finding_id query: it already carries a MatchSignature, or it explicitly targets a
-    location-based finding type. Untyped / non-location waivers stay on the legacy path so they
-    are never silently dropped."""
+    legacy finding_id query. Only instance-precise (scope="finding") waivers qualify: file/rule
+    scope keep their broad semantics via the legacy _build_waiver_query path. Within finding
+    scope, a waiver qualifies if it already carries a MatchSignature, or it explicitly targets a
+    location-based finding type (so the back-fill can give it one). Untyped / non-location
+    finding-scope waivers stay on the legacy path so they are never silently dropped."""
     from app.repositories.findings import FindingRepository
 
+    if getattr(waiver, "scope", "finding") != "finding":
+        return False
     if getattr(waiver, "match", None) is not None:
         return True
     return waiver.finding_type in FindingRepository._LOCATION_TYPES

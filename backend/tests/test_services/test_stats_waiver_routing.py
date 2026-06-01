@@ -3,8 +3,8 @@ from app.models.waiver import Waiver
 from app.services.stats import _is_signature_waiver
 
 
-def _waiver(finding_type=None, match=None):
-    return Waiver(reason="r", created_by="u", finding_type=finding_type, match=match)
+def _waiver(finding_type=None, match=None, scope="finding"):
+    return Waiver(reason="r", created_by="u", finding_type=finding_type, match=match, scope=scope)
 
 
 class TestIsSignatureWaiver:
@@ -22,3 +22,13 @@ class TestIsSignatureWaiver:
     def test_waiver_with_match_goes_signature(self):
         sig = MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fp1", anchor_kind="scanner_fp")
         assert _is_signature_waiver(_waiver(finding_type=None, match=sig)) is True
+
+    def test_file_scope_location_waiver_goes_legacy(self):
+        # file/rule scope keep broad legacy semantics even for location types
+        assert _is_signature_waiver(_waiver(finding_type="sast", scope="file")) is False
+
+    def test_rule_scope_location_waiver_goes_legacy(self):
+        assert _is_signature_waiver(_waiver(finding_type="sast", scope="rule")) is False
+
+    def test_finding_scope_location_waiver_goes_signature(self):
+        assert _is_signature_waiver(_waiver(finding_type="sast", scope="finding")) is True
