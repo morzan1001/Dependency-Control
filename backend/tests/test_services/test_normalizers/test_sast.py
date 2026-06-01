@@ -185,6 +185,25 @@ class TestNormalizeOpengrep:
         assert entry["fingerprint"] == "abc123def456"
         assert entry["code_extract"] == "random.random()"
 
+    def test_get_findings_sets_match_signature(self):
+        result = self._opengrep_result(
+            [
+                {
+                    "check_id": "rules.python.weak-rng",
+                    "path": "app/util.py",
+                    "start": {"line": 10, "col": 5},
+                    "end": {"line": 10, "col": 20},
+                    "extra": {"severity": "WARNING", "message": "m", "metadata": {},
+                              "fingerprint": "fp-xyz", "lines": "random.random()"},
+                }
+            ]
+        )
+        self.agg.aggregate("opengrep", result)
+        f = self.agg.get_findings()[0]
+        assert f.match is not None
+        assert f.match.anchor == "fp-xyz"
+        assert f.match.anchor_kind == "scanner_fp"
+
 
 class TestNormalizeBearer:
     """Tests for normalize_bearer - Bearer SAST normalization."""

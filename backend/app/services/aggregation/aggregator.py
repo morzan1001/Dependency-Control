@@ -338,6 +338,11 @@ class ResultAggregator:
         self._link_related_findings_by_component(final_findings)
         enrich_with_scorecard(final_findings, self._scorecard_cache)
 
+        from app.services.waivers.signature import compute_match_signature
+
+        for f in final_findings:
+            f.match = compute_match_signature(f)
+
         return final_findings
 
     @staticmethod
