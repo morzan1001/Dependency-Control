@@ -45,7 +45,7 @@ _MSG_NO_MATCHING_FINDING = (
 )
 
 
-async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> None:
+async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> Optional[dict]:
     """Reject finding-scope project waivers whose criteria do not match any
     finding in the project's latest scan.
 
@@ -53,6 +53,10 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
     or finding_type produces a stored waiver that will never be applied — a
     "zombie waiver". The user assumes findings are silenced; the scanner keeps
     re-reporting them. This helper closes that gap at write time.
+
+    Returns the matched finding doc (with ``match``, ``type``, ``component``
+    fields) so the caller can snapshot the finding's MatchSignature onto the
+    new waiver.  Returns None for all skipped cases (see below).
 
     Skipped for:
       - Global waivers (project_id is None) — no single project to validate against.
@@ -62,28 +66,29 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
       - Projects without a latest scan — nothing to validate against yet.
     """
     if not waiver_in.project_id:
-        return
+        return None
     if waiver_in.scope != "finding":
-        return
+        return None
     if waiver_in.vulnerability_id:
-        return
+        return None
 
     project = await db.projects.find_one({"_id": waiver_in.project_id}, {"latest_scan_id": 1})
     if not project:
-        return
+        return None
     latest_scan_id = project.get("latest_scan_id")
     if not latest_scan_id:
-        return
+        return None
 
     probe = Waiver(**waiver_in.model_dump(), created_by="__validation__")
     finding_query = _build_waiver_query(probe)
     if not finding_query:
-        return  # nothing concrete to validate against
+        return None  # nothing concrete to validate against
 
     finding_query["scan_id"] = latest_scan_id
-    matches = await db.findings.count_documents(finding_query)
-    if matches == 0:
+    finding = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
+    if finding is None:
         raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)
+    return finding
 
 
 router = CustomAPIRouter()
@@ -112,7 +117,7 @@ async def create_waiver(
 
     # Reject zombie waivers (no current finding matches) early, before we
     # consume a write and trigger stats recalculation.
-    await _ensure_waiver_matches_finding(waiver_in, db)
+    matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
 
     # Auto-populate rule_id for rule-scope waivers
     if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:
@@ -126,6 +131,10 @@ async def create_waiver(
 
     waiver_repo = WaiverRepository(db)
     waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
+    if matched_finding and matched_finding.get("match"):
+        from app.models.match_signature import MatchSignature
+
+        waiver.match = MatchSignature(**matched_finding["match"])
 
     await waiver_repo.create(waiver)
     _invalidate_analytics_cache()

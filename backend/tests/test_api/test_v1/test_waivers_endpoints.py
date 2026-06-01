@@ -108,7 +108,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         db = self._mock_db_with_latest_scan()
-        db.findings.count_documents = AsyncMock(return_value=0)
+        db.findings.find_one = AsyncMock(return_value=None)
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -146,7 +146,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         db = self._mock_db_with_latest_scan()
-        db.findings.count_documents = AsyncMock(return_value=1)
+        db.findings.find_one = AsyncMock(return_value={"_id": "fid1", "type": "quality", "component": None})
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -178,7 +178,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         db = self._mock_db_with_latest_scan()
-        db.findings.count_documents = AsyncMock(return_value=0)
+        db.findings.find_one = AsyncMock(return_value=None)
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -210,7 +210,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         db = self._mock_db_with_latest_scan()
-        db.findings.count_documents = AsyncMock(return_value=0)
+        db.findings.find_one = AsyncMock(return_value=None)
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -243,7 +243,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         db = MagicMock()
         # If the validator wrongly tried to look up findings, this AsyncMock would be hit.
-        db.findings.count_documents = AsyncMock(return_value=0)
+        db.findings.find_one = AsyncMock(return_value=None)
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -279,7 +279,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         db = MagicMock()
         db.projects.find_one = _project_find_one
-        db.findings.count_documents = AsyncMock(return_value=0)
+        db.findings.find_one = AsyncMock(return_value=None)
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -304,7 +304,7 @@ class TestCreateWaiverValidatesFindingMatch:
                     )
 
         mock_repo.create.assert_called_once()
-        db.findings.count_documents.assert_not_called()
+        db.findings.find_one.assert_not_called()
 
     def test_vulnerability_id_scoped_waiver_skips_finding_id_check(self, admin_user):
         """Waivers targeted at a specific CVE go through apply_vulnerability_waiver,
@@ -314,7 +314,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         db = self._mock_db_with_latest_scan()
-        db.findings.count_documents = AsyncMock(return_value=0)
+        db.findings.find_one = AsyncMock(return_value=None)
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -339,6 +339,61 @@ class TestCreateWaiverValidatesFindingMatch:
                         )
                     )
 
+        mock_repo.create.assert_called_once()
+
+    def test_create_waiver_copies_match_signature(self, admin_user):
+        """A finding-scope project waiver should snapshot the matched finding's
+        MatchSignature so it can be used for line-drift matching later."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        finding_doc = {
+            "_id": "fid",
+            "type": "sast",
+            "component": "a.py",
+            "match": {
+                "rule_key": "opengrep:r",
+                "file_key": "a.py",
+                "anchor": "fp1",
+                "anchor_kind": "scanner_fp",
+                "content_hash": "c1",
+                "last_line": 10,
+            },
+        }
+
+        db = self._mock_db_with_latest_scan()
+        db.findings.find_one = AsyncMock(return_value=finding_doc)
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+        bg_tasks = BackgroundTasks()
+
+        with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+                with patch(f"{MODULE}.recalculate_project_stats"):
+                    created = asyncio.run(
+                        create_waiver(
+                            waiver_in=WaiverCreate(
+                                project_id="proj-1",
+                                finding_id="OPENGREP-r-a.py-10",
+                                finding_type="sast",
+                                package_name="a.py",
+                                scope="finding",
+                                reason="test match snapshot",
+                            ),
+                            background_tasks=bg_tasks,
+                            current_user=admin_user,
+                            db=db,
+                        )
+                    )
+
+        assert created.match is not None
+        assert created.match.anchor == "fp1"
+        assert created.match.rule_key == "opengrep:r"
+        assert created.match.file_key == "a.py"
+        assert created.match.anchor_kind == "scanner_fp"
+        assert created.match.content_hash == "c1"
+        assert created.match.last_line == 10
         mock_repo.create.assert_called_once()
 
 
