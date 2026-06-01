@@ -220,6 +220,8 @@ class ScanFindingItem(BaseModel):
     # Status fields
     waived: bool = Field(default=False, description="Whether this finding is waived")
     waiver_reason: Optional[str] = Field(None, description="Reason for waiver")
+    waiver_lapsed: bool = Field(default=False, description="Whether the matched waiver has lapsed")
+    lapsed_waiver_id: Optional[str] = Field(None, description="ID of the lapsed waiver, if any")
 
     # Metadata
     found_in: List[str] = Field(default_factory=list, description="Files where found")
