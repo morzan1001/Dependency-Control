@@ -237,6 +237,8 @@ class TestCreateInstance:
             "name": "New GL",
             "url": "https://new-gitlab.com",
             "access_token": "glpat-new-token",
+            # oidc_audience is now required (Finding 7 / W1.1).
+            "oidc_audience": "https://app.example.com",
         }
         defaults.update(overrides)
         return GitLabInstanceCreate(**defaults)

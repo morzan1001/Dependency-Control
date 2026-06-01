@@ -1,19 +1,40 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class GitHubInstanceBase(BaseModel):
-    """Base schema for GitHub instance."""
+    """Base schema for GitHub instance.
+
+    SECURITY (Finding 7 / W1.1): ``oidc_audience`` is hard-required. OIDC
+    tokens are verified with mandatory, fail-closed audience checking, so an
+    instance without an audience could never authenticate a token anyway.
+    Creating/updating an instance with an empty/missing audience is rejected
+    with HTTP 422. The configured audience must match the GitHub Actions OIDC
+    token request ``audience``.
+    """
 
     name: str = Field(..., description="Human-readable name (e.g. 'GitHub.com', 'GitHub Enterprise')")
     url: str = Field(..., description="OIDC issuer URL (e.g. 'https://token.actions.githubusercontent.com')")
     github_url: Optional[str] = Field(None, description="GitHub web URL (e.g. 'https://github.com')")
     description: Optional[str] = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
-    oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens")
+    oidc_audience: str = Field(
+        ...,
+        min_length=1,
+        description="REQUIRED expected 'aud' claim for OIDC tokens. "
+        "Must match the GitHub Actions token request 'audience'.",
+    )
     auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
+
+    @field_validator("oidc_audience")
+    @classmethod
+    def _audience_not_blank(cls, value: str) -> str:
+        """Reject whitespace-only audiences (fail-closed, Finding 7 / W1.1)."""
+        if not value or not value.strip():
+            raise ValueError("oidc_audience is required and must not be empty")
+        return value
 
 
 class GitHubInstanceCreate(GitHubInstanceBase):
@@ -30,19 +51,42 @@ class GitHubInstanceUpdate(BaseModel):
     github_url: Optional[str] = Field(None, description="GitHub web URL")
     description: Optional[str] = Field(None, description="Optional description")
     is_active: Optional[bool] = Field(None, description="Whether this instance is active")
-    oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens")
+    oidc_audience: Optional[str] = Field(
+        None, description="Expected 'aud' claim for OIDC tokens. If provided, must not be empty."
+    )
     auto_create_projects: Optional[bool] = Field(None, description="Automatically create projects from OIDC tokens")
     access_token: Optional[str] = Field(None, description="Personal Access Token for GitHub API operations")
+
+    @field_validator("oidc_audience")
+    @classmethod
+    def _audience_not_blank(cls, value: Optional[str]) -> Optional[str]:
+        """Disallow clearing the audience to an empty value (fail-closed, Finding 7 / W1.1)."""
+        if value is not None and not value.strip():
+            raise ValueError("oidc_audience must not be empty")
+        return value
 
 
 class GitHubInstanceResponse(GitHubInstanceBase):
     """Schema for GitHub instance response."""
+
+    # Responses must be able to represent legacy instances created before
+    # oidc_audience became required, so admins can see (and fix) them.
+    # The create/update validation — not the response — enforces the requirement.
+    oidc_audience: Optional[str] = Field(  # type: ignore[assignment]
+        None, description="Expected 'aud' claim for OIDC tokens. Null means not yet configured (will 403 on ingest)."
+    )
 
     id: str = Field(..., description="Unique identifier")
     has_access_token: bool = Field(False, description="Whether an API access token is configured")
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="User ID who created this instance")
     last_modified_at: Optional[datetime] = Field(None, description="Last modification timestamp")
+
+    @field_validator("oidc_audience")
+    @classmethod
+    def _audience_response_passthrough(cls, value: Optional[str]) -> Optional[str]:
+        # Responses reflect stored state verbatim; no blank-check here.
+        return value
 
     model_config = ConfigDict(from_attributes=True)
 

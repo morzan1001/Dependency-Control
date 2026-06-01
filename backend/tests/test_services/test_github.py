@@ -72,7 +72,9 @@ class TestGitHubServiceOIDC:
                     assert call_kwargs["issuer"] == "https://token.actions.githubusercontent.com"
                     assert call_kwargs["audience"] == "dependency-control"
 
-    def test_audience_none_when_not_configured(self):
+    def test_rejected_when_no_audience_configured(self):
+        """SECURITY (Finding 7 / W1.1): an instance without a configured
+        oidc_audience must reject any token (fail closed), never decode it."""
         instance = make_github_instance(oidc_audience=None)
         service = GitHubService(instance)
 
@@ -88,10 +90,11 @@ class TestGitHubServiceOIDC:
                         "actor": "user",
                     }
 
-                    asyncio.run(service.validate_oidc_token("fake.jwt.token"))
+                    result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
 
-                    call_kwargs = mock_decode.call_args.kwargs
-                    assert call_kwargs["audience"] is None
+                    # Token rejected, and decode is never attempted.
+                    assert result is None
+                    mock_decode.assert_not_called()
 
     def test_missing_kid_returns_none(self):
         instance = github_instance_a()

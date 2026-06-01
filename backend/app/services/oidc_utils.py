@@ -75,14 +75,44 @@ async def validate_oidc_token(
         get_jwks: Async function that returns the JWKS dict
         invalidate_cache: Async function that invalidates the JWKS cache
         issuer: Expected token issuer
-        audience: Expected audience (or None to skip verification)
+        audience: Expected audience. SECURITY: this is hard-required. If it is
+            unset (None / empty), the token is rejected (fail closed) — see note
+            below.
         payload_model: Pydantic model class to parse the payload into
         provider_name: Name for log messages
 
     Returns:
         Parsed payload model instance, or None if validation fails
+
+    SECURITY (Finding 7 / W1.1) — fail-closed audience verification:
+        OIDC audience verification is mandatory and fails closed. If the
+        instance has no resolvable expected audience we REJECT the token up
+        front (before any decode), and the JWT is always decoded with
+        ``verify_aud=True``. Previously an instance configured WITHOUT an
+        ``oidc_audience`` accepted ANY validly-signed token from its issuer,
+        enabling cross-tenant ingest/tamper.
+
+        BREAKING CHANGE: an instance without an ``oidc_audience`` configured
+        will now return 403 on ingest until an audience is set. CI pipelines
+        must request the OIDC token with a matching audience, e.g. GitLab:
+            id_tokens:
+              ID_TOKEN:
+                aud: <the instance's oidc_audience>
+        and GitHub Actions: ``with: { audience: <oidc_audience> }`` on the
+        token request.
     """
     try:
+        # Fail closed: an instance with no expected audience must NEVER accept a
+        # token, regardless of how valid its signature is.
+        if not audience:
+            logger.error(
+                "%s OIDC token rejected: no expected audience configured for this instance. "
+                "Set 'oidc_audience' on the instance and request the CI token with a matching "
+                "'aud' claim. (fail-closed, Finding 7 / W1.1)",
+                provider_name,
+            )
+            return None
+
         headers = jwt.get_unverified_header(token)
         kid = headers.get("kid")
         if not kid:
@@ -93,15 +123,17 @@ async def validate_oidc_token(
         if not key:
             return None
 
-        jwt_options = {"verify_aud": bool(audience)}
-
+        # Audience verification is always enforced (never optional).
+        # require_aud=True is critical: python-jose only *verifies* an 'aud'
+        # claim that is present, so without require_aud a token with NO 'aud'
+        # claim would slip through verify_aud. Requiring it closes that gap.
         payload = jwt.decode(
             token,
             key,
             algorithms=["RS256"],
             issuer=issuer,
-            audience=audience if audience else None,
-            options=jwt_options,
+            audience=audience,
+            options={"verify_aud": True, "require_aud": True},
         )
         return payload_model(**payload)
 

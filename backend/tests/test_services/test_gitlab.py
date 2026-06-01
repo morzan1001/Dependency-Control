@@ -100,7 +100,9 @@ class TestGitLabServiceOIDC:
                     assert call_kwargs["issuer"] == "https://gitlab-a.com"
                     assert call_kwargs["audience"] == "https://app.example.com"
 
-    def test_audience_none_when_not_configured(self):
+    def test_rejected_when_no_audience_configured(self):
+        """SECURITY (Finding 7 / W1.1): an instance without a configured
+        oidc_audience must reject any token (fail closed), never decode it."""
         instance = GitLabInstance(
             name="No Audience",
             url="https://gitlab.com",
@@ -117,10 +119,11 @@ class TestGitLabServiceOIDC:
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
                     mock_decode.return_value = {"project_id": "123", "project_path": "g/p"}
 
-                    asyncio.run(service.validate_oidc_token("fake.jwt.token"))
+                    result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
 
-                    call_kwargs = mock_decode.call_args.kwargs
-                    assert call_kwargs["audience"] is None
+                    # Token rejected, and decode is never attempted.
+                    assert result is None
+                    mock_decode.assert_not_called()
 
     def test_missing_kid_returns_none(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -162,7 +165,9 @@ class TestGitLabServiceOIDC:
             name="Trailing Slash",
             url="https://gitlab.com/",
             access_token="token",
-            oidc_audience=None,
+            # oidc_audience must be set, otherwise validation fails closed
+            # before decode (Finding 7 / W1.1). This test is about issuer norm.
+            oidc_audience="https://app.example.com",
             created_by="test",
         )
         service = GitLabService(instance)
