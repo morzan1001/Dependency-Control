@@ -811,6 +811,24 @@ async def _send_integrations_and_notifications(
     await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
 
 
+async def _project_has_active_waivers(project_id: str, db: Database) -> bool:
+    """Cheap existence check: does the project (or a global waiver) have an active waiver?
+    Used to skip the post-analysis recalc when there is nothing to re-anchor/lapse."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    query = {
+        "$and": [
+            {"$or": [{"project_id": project_id}, {"project_id": None}]},
+            {"$or": [
+                {"expiration_date": {"$exists": False}},
+                {"expiration_date": None},
+                {"expiration_date": {"$gt": now}},
+            ]},
+        ]
+    }
+    return (await db.waivers.count_documents(query, limit=1)) > 0
+
+
 def _release_memory_to_os() -> None:
     """Force gc and release glibc heap pages back to OS (Linux-only)."""
     import gc
@@ -975,18 +993,22 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         project_repo,
     )
 
+    # Authoritative waiver re-apply + re-anchor + lapsed-flag computation. Runs BEFORE
+    # notifications so webhooks/integrations report post-re-anchor stats. Skipped when the
+    # project has no active waivers (nothing to re-anchor/lapse — avoids a redundant full
+    # re-apply + stats recompute on every scan).
+    notify_stats = stats
+    if project_id and await _project_has_active_waivers(project_id, db):
+        from app.services.stats import recalculate_project_stats
+        recalced = await recalculate_project_stats(project_id, db)
+        if recalced is not None:
+            notify_stats = recalced
+
     await _send_integrations_and_notifications(
-        project_id, scan_id, scan_doc, stats, aggregated_findings, results_summary, db
+        project_id, scan_id, scan_doc, notify_stats, aggregated_findings, results_summary, db
     )
 
     del aggregated_findings
-
-    # Authoritative waiver re-apply + re-anchor + lapsed-flag computation.
-    # The engine's _apply_waivers above is a best-effort pass; recalculate_project_stats
-    # is the single source of truth for signature-based matching (Pass-1 + Pass-2 re-anchor).
-    if project_id:
-        from app.services.stats import recalculate_project_stats
-        await recalculate_project_stats(project_id, db)
 
     _release_memory_to_os()
 
