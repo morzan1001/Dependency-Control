@@ -41,11 +41,98 @@ async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             await projects_collection.drop_index(idx_name)
 
 
+_SYNCED_TEAM_NAME_PREFIX = "GitLab Group: "
+
+
+async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) -> None:
+    """One-time, idempotent backfill of GitLab IDs onto legacy synced teams (Finding 8).
+
+    Legacy synced teams (name ``"GitLab Group: {path}"``) predate the
+    (gitlab_instance_id, gitlab_group_id) composite key and have neither field set.
+    Now that the unsafe name-based match has been removed from sync_team_from_gitlab,
+    the next OIDC sync would no longer re-match these teams by name — it would create
+    a brand-new team and orphan the legacy one.
+
+    We can only stamp fields that are UNAMBIGUOUSLY resolvable from local data:
+
+    * ``gitlab_instance_id`` is derivable when every project linked to the team
+      (via ``team_id``) shares exactly one non-null GitLab instance. If the linked
+      projects span multiple instances — or none carry an instance — the team is
+      ambiguous and is left untouched with a warning.
+    * ``gitlab_group_id`` is the group's *numeric* id, which is NOT stored on any
+      local document (projects only store ``gitlab_project_id``). It can never be
+      synthesized safely here, so it is intentionally left for the next live re-sync
+      (which knows the real group id) to complete via the defensive stamp in
+      ``_upsert_team_with_members``.
+
+    Idempotent: teams that already carry a ``gitlab_instance_id`` are skipped, so
+    repeated startups are no-ops.
+    """
+    teams = database["teams"]
+    projects = database["projects"]
+
+    cursor = teams.find(
+        {"name": {"$regex": f"^{_SYNCED_TEAM_NAME_PREFIX}"}},
+        {"_id": 1, "name": 1, "gitlab_instance_id": 1, "gitlab_group_id": 1},
+    )
+    legacy_teams = await cursor.to_list(None)
+
+    stamped = 0
+    skipped = 0
+    for team in legacy_teams:
+        # Idempotency: anything already tagged with an instance is left alone.
+        if team.get("gitlab_instance_id"):
+            continue
+
+        team_id = team["_id"]
+        linked = await projects.find(
+            {"team_id": team_id}, {"gitlab_instance_id": 1}
+        ).to_list(None)
+        instance_ids = {
+            p.get("gitlab_instance_id") for p in linked if p.get("gitlab_instance_id")
+        }
+
+        if len(instance_ids) != 1:
+            skipped += 1
+            logger.warning(
+                "Backfill: legacy synced team %s (%r) is ambiguous — linked projects "
+                "resolve to %d distinct GitLab instances (%s). Leaving it untouched; it "
+                "will be re-tagged on the next live sync or must be reconciled manually.",
+                team_id,
+                team.get("name"),
+                len(instance_ids),
+                sorted(instance_ids) or "none",
+            )
+            continue
+
+        (instance_id,) = tuple(instance_ids)
+        await teams.update_one({"_id": team_id}, {"$set": {"gitlab_instance_id": instance_id}})
+        stamped += 1
+        logger.info(
+            "Backfill: stamped gitlab_instance_id=%s onto legacy synced team %s (%r). "
+            "gitlab_group_id remains unset and will be filled by the next live sync.",
+            instance_id,
+            team_id,
+            team.get("name"),
+        )
+
+    if legacy_teams:
+        logger.info(
+            "Backfill complete: %d legacy synced team(s) stamped with an instance id, "
+            "%d left for live re-sync.",
+            stamped,
+            skipped,
+        )
+
+
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     """Create indexes for all collections."""
     logger.info("Creating database indexes...")
 
     await _migrate_project_indexes(database)
+    # Reconcile legacy synced teams BEFORE creating the unique team index, so the
+    # index build does not trip over partially-tagged data.
+    await _backfill_synced_team_gitlab_ids(database)
 
     # Users
     await database["users"].create_index("username", unique=True)
@@ -59,6 +146,19 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     # Teams
     await database["teams"].create_index("members.user_id")
+    # A synced team is uniquely identified by its (GitLab instance, group). The
+    # partial filter scopes uniqueness to teams that carry BOTH fields, so manual
+    # teams (where both are null/absent) are excluded and never collide on null —
+    # MongoDB sparse compound indexes still collide on explicit null, so a
+    # partialFilterExpression on type is required here (Finding 8).
+    await database["teams"].create_index(
+        [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_group_id", pymongo.ASCENDING)],
+        unique=True,
+        partialFilterExpression={
+            "gitlab_instance_id": {MONGO_TYPE: "string"},
+            "gitlab_group_id": {MONGO_TYPE: "int"},
+        },
+    )
 
     # Scans
     await database["scans"].create_index("pipeline_id")
