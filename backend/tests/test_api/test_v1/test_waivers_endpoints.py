@@ -397,6 +397,48 @@ class TestCreateWaiverValidatesFindingMatch:
         mock_repo.create.assert_called_once()
 
 
+class TestGetWaiver:
+    def test_get_waiver_returns_waiver_for_authorized_user(self, admin_user):
+        from app.api.v1.endpoints.waivers import get_waiver
+
+        waiver = _make_waiver(id="waiver-42", project_id="proj-1", reason="Known issue")
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=waiver)
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+                result = asyncio.run(
+                    get_waiver(
+                        waiver_id="waiver-42",
+                        current_user=admin_user,
+                        db=MagicMock(),
+                    )
+                )
+
+        assert result.id == "waiver-42"
+        assert result.reason == "Known issue"
+        mock_repo.get_by_id.assert_called_once_with("waiver-42")
+
+    def test_get_waiver_returns_404_when_not_found(self, admin_user):
+        from app.api.v1.endpoints.waivers import get_waiver
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=None)
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(
+                    get_waiver(
+                        waiver_id="nonexistent",
+                        current_user=admin_user,
+                        db=MagicMock(),
+                    )
+                )
+
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.detail == "Waiver not found"
+
+
 class TestListWaivers:
     def test_admin_sees_all_waivers(self, admin_user):
         waiver_docs = [

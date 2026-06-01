@@ -228,6 +228,38 @@ async def list_waivers(
     return build_pagination_response(items, total, skip, limit)
 
 
+@router.get("/{waiver_id}", response_model=WaiverResponse, responses=RESP_AUTH_404)
+async def get_waiver(
+    waiver_id: str,
+    db: DatabaseDep,
+    current_user: CurrentUserDep,
+) -> Waiver:
+    """
+    Retrieve a single waiver by ID.
+
+    For project waivers: requires viewer role on the project or waiver:read permission.
+    For global waivers: requires waiver:read or waiver:manage permission.
+    """
+    has_read_all = has_permission(current_user.permissions, Permissions.WAIVER_READ_ALL)
+    has_read_own = has_permission(current_user.permissions, Permissions.WAIVER_READ)
+
+    if not (has_read_all or has_read_own):
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
+
+    waiver_repo = WaiverRepository(db)
+    waiver = await waiver_repo.get_by_id(waiver_id)
+    if not waiver:
+        raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
+
+    if waiver.project_id:
+        await check_project_access(waiver.project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
+    else:
+        if not (has_read_all or has_permission(current_user.permissions, Permissions.WAIVER_MANAGE)):
+            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
+
+    return waiver
+
+
 @router.patch("/{waiver_id}", response_model=WaiverResponse, responses=RESP_AUTH_404)
 async def update_waiver(
     waiver_id: str,
