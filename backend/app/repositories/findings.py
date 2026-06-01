@@ -75,6 +75,36 @@ class FindingRepository(BaseRepository[FindingRecord]):
         result = await self.collection.bulk_write(operations)
         return result.upserted_count + result.modified_count
 
+    _LOCATION_TYPES = ("sast", "iac", "secret", "crypto_key_management")
+
+    async def find_location_findings(self, scan_id: str) -> List[Dict[str, Any]]:
+        """Raw docs for location-based findings of a scan (waiver-matchable)."""
+        cursor = self.collection.find(
+            {"scan_id": scan_id, "type": {"$in": list(self._LOCATION_TYPES)}},
+            {"_id": 1, "finding_id": 1, "type": 1, "component": 1, "match": 1},
+        )
+        return await cursor.to_list(None)
+
+    async def set_waived(self, scan_id: str, finding_ids: List[str], reason: Optional[str]) -> int:
+        if not finding_ids:
+            return 0
+        result = await self.collection.update_many(
+            {"scan_id": scan_id, "_id": {"$in": finding_ids}},
+            {"$set": {"waived": True, "waiver_reason": reason}},
+        )
+        return result.modified_count
+
+    async def set_lapsed(self, scan_id: str, mapping: Dict[str, str]) -> int:
+        ops = [
+            UpdateOne({"scan_id": scan_id, "_id": fid},
+                      {"$set": {"waiver_lapsed": True, "lapsed_waiver_id": wid}})
+            for fid, wid in mapping.items()
+        ]
+        if not ops:
+            return 0
+        result = await self.collection.bulk_write(ops)
+        return result.modified_count
+
     async def get_severity_distribution(
         self,
         scan_ids: List[str],

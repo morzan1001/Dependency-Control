@@ -153,6 +153,47 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver])
             )
 
 
+async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id: str, waivers: List) -> None:
+    """Apply non-vulnerability waivers to a scan's location-based findings via signature matching.
+
+    Persists re-anchored waiver signatures and marks lapsed findings. Vulnerability-id waivers
+    are handled separately by the caller via apply_vulnerability_waiver.
+    """
+    from app.models.match_signature import MatchSignature
+    from app.services.waivers.matching import MatchFinding, apply_waivers_to_findings
+
+    docs = await finding_repo.find_location_findings(scan_id)
+    findings = [
+        MatchFinding(id=d["_id"], sig=MatchSignature(**d["match"]) if d.get("match") else None)
+        for d in docs
+    ]
+
+    # Hydrate waiver .match into MatchSignature objects (waivers may arrive as Waiver models already).
+    enriched = []
+    for w in waivers:
+        m = getattr(w, "match", None)
+        if isinstance(m, dict):
+            w.match = MatchSignature(**m)
+        enriched.append(w)
+
+    app = apply_waivers_to_findings(findings, enriched)
+
+    # Group waive writes by reason for fewer queries.
+    reason_by_waiver = {w.id: getattr(w, "reason", None) for w in enriched}
+    by_reason: Dict[Optional[str], List[str]] = {}
+    for fid, wid in app.waived.items():
+        by_reason.setdefault(reason_by_waiver.get(wid), []).append(fid)
+    for reason, fids in by_reason.items():
+        await finding_repo.set_waived(scan_id, fids, reason)
+
+    if app.lapsed:
+        await finding_repo.set_lapsed(scan_id, app.lapsed)
+
+    # Persist re-anchored signatures + walked last_line (only when changed).
+    for wid, new_sig in app.reanchored.items():
+        await waiver_repo.update(wid, {"match": new_sig.model_dump()})
+
+
 def _build_stats_pipeline(scan_id: str) -> List[Dict[str, Any]]:
     """Build the MongoDB aggregation pipeline for stats calculation."""
     return [
@@ -255,12 +296,28 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     try:
         logger.info(f"Recalculating stats for project {project_id} (scan {scan_id}) with lock {lock_name}")
 
-        # 1. Reset waivers for this scan
-        await finding_repo.update_many({"scan_id": scan_id}, {"waived": False, "waiver_reason": None})
+        # 1. Reset waivers AND lapsed flags for this scan
+        await finding_repo.update_many(
+            {"scan_id": scan_id},
+            {"waived": False, "waiver_reason": None, "waiver_lapsed": False, "lapsed_waiver_id": None},
+        )
 
-        # 2. Fetch and apply active waivers
+        # 2. Fetch active waivers, apply vulnerability-id ones, then signature-match the rest
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
-        await _apply_waivers(finding_repo, scan_id, waivers)
+        for waiver in waivers:
+            if waiver.vulnerability_id:
+                await finding_repo.apply_vulnerability_waiver(
+                    scan_id=scan_id, vulnerability_id=waiver.vulnerability_id,
+                    waived=True, waiver_reason=waiver.reason,
+                )
+        non_vuln = [w for w in waivers if not w.vulnerability_id]
+        from app.repositories.findings import FindingRepository as _FR
+        # Legacy path: non-location typed waivers (license/eol/etc.) have no match signature.
+        legacy = [w for w in non_vuln if w.finding_type and w.finding_type not in _FR._LOCATION_TYPES]
+        await _apply_waivers(finding_repo, scan_id, legacy)
+        # Signature-match path: location-typed waivers and untyped waivers.
+        loc_waivers = [w for w in non_vuln if not w.finding_type or w.finding_type in _FR._LOCATION_TYPES]
+        await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
 
         # 3. Calculate stats (read from PRIMARY for consistency after waiver updates)
         from pymongo import ReadPreference
