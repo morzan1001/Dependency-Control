@@ -12,6 +12,7 @@ from pymongo import UpdateOne
 
 from prometheus_client import Counter, Histogram
 
+from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
 from app.models.waiver import Waiver
 from app.repositories import (
@@ -655,8 +656,28 @@ async def _aggregate_external_results(
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
     for res in external_results:
         if res.analyzer_name not in analyzers:
-            aggregator.aggregate(res.analyzer_name, res.result)
-            results_summary.append(f"{res.analyzer_name}: Success")
+            try:
+                aggregator.aggregate(res.analyzer_name, res.result)
+                results_summary.append(f"{res.analyzer_name}: Success")
+            except Exception as exc:
+                logger.warning(
+                    "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",
+                    res.analyzer_name,
+                    scan_id,
+                    exc,
+                )
+                aggregator.add_finding(
+                    Finding(
+                        id=f"SCAN-ERROR-{res.analyzer_name}",
+                        type=FindingType.SYSTEM_WARNING,
+                        severity=Severity.HIGH,
+                        component="Scanner System",
+                        version="",
+                        description=f"External result for '{res.analyzer_name}' could not be aggregated: {exc}",
+                        scanners=[res.analyzer_name],
+                        details={"error_details": str(exc)},
+                    )
+                )
     del external_results
 
 
