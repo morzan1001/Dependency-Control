@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, cast
 from app.core.constants import (
     HIGH_RISK_SCORE_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
+    SEVERITY_CALCULATED_RISK_SCORES,
     sort_by_severity,
 )
 from app.core.epss import bucket_epss
@@ -282,14 +283,19 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 # up here so the group stage can gate counts on it (B9).
                 "reachability_confidence": {"$ifNull": ["$details.reachability.confidence_score", None]},
                 "risk_score": {"$ifNull": ["$details.risk_score", None]},
-                # Calculate default CVSS-based score if none provided
+                "adjusted_risk_score": {"$ifNull": ["$details.adjusted_risk_score", None]},
+                # 0-100 fallback for findings without enrichment. Derived from the
+                # SAME CVSS contribution calculate_risk_score uses —
+                # (representative_cvss/10)*40 — so enriched (details.risk_score)
+                # and non-enriched findings sit on one comparable 0-100 scale.
                 "calculated_score": {
                     "$switch": {
                         "branches": [
-                            {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 10.0},
-                            {"case": {"$eq": ["$severity", "HIGH"]}, "then": 7.5},
-                            {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 4.0},
-                            {"case": {"$eq": ["$severity", "LOW"]}, "then": 1.0},
+                            {
+                                "case": {"$eq": ["$severity", sev]},
+                                "then": SEVERITY_CALCULATED_RISK_SCORES[sev],
+                            }
+                            for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
                         ],
                         "default": 0.0,
                     }
@@ -307,12 +313,21 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
                 "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
                 "total": {"$sum": 1},
-                # Traditional risk score (use average, not sum)
-                "avg_risk_score": {"$avg": {"$ifNull": ["$cvss_score", "$calculated_score"]}},
-                "max_risk_score": {"$max": {"$ifNull": ["$cvss_score", "$calculated_score"]}},
-                # Adjusted risk scores (including enrichment data)
-                "avg_adjusted_risk_score": {"$avg": {"$ifNull": ["$risk_score", "$calculated_score"]}},
-                "max_adjusted_risk_score": {"$max": {"$ifNull": ["$risk_score", "$calculated_score"]}},
+                # Base risk score (0-100): average of the per-finding composite
+                # details.risk_score, with a 0-100 calculated fallback for
+                # findings lacking enrichment. NOTE: no longer averages the raw
+                # cvss_score (0-10) — that was the scale inconsistency (W5/F12).
+                "avg_risk_score": {"$avg": {"$ifNull": ["$risk_score", "$calculated_score"]}},
+                "max_risk_score": {"$max": {"$ifNull": ["$risk_score", "$calculated_score"]}},
+                # Adjusted risk score (0-100): reachability-adjusted per-finding
+                # details.adjusted_risk_score, falling back to the base
+                # details.risk_score, then to the 0-100 calculated fallback.
+                "avg_adjusted_risk_score": {
+                    "$avg": {"$ifNull": ["$adjusted_risk_score", {"$ifNull": ["$risk_score", "$calculated_score"]}]}
+                },
+                "max_adjusted_risk_score": {
+                    "$max": {"$ifNull": ["$adjusted_risk_score", {"$ifNull": ["$risk_score", "$calculated_score"]}]}
+                },
                 # KEV statistics
                 "kev_count": {"$sum": {"$cond": [{"$eq": ["$is_kev", True]}, 1, 0]}},
                 "kev_ransomware_count": {"$sum": {"$cond": [{"$eq": ["$kev_ransomware", True]}, 1, 0]}},

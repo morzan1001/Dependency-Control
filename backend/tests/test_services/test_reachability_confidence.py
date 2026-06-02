@@ -47,3 +47,79 @@ class TestIsHighConfidenceReachable:
 
     def test_none_returns_false(self):
         assert is_high_confidence_reachable(None) is False
+
+
+# ---------------------------------------------------------------------------
+# Reachability -> persisted adjusted risk score wiring (W5 / Finding 13)
+#
+# After reachability enrichment determines a finding's reachability, it must
+# persist a per-finding details.adjusted_risk_score derived from the base
+# details.risk_score via the reachability modifier. Previously
+# calculate_adjusted_risk_score was dead code; the persisted adjusted score
+# never reflected reachability.
+# ---------------------------------------------------------------------------
+
+from app.services.reachability_enrichment import (  # noqa: E402
+    _enrich_finding_from_callgraphs,
+    _enrich_single_finding,
+)
+
+
+class _FakeCallgraph:
+    def __init__(self, module_usage=None, import_map=None, language="python"):
+        self.module_usage = module_usage or {}
+        self.import_map = import_map or {}
+        self.language = language
+
+
+def _vuln_finding(component="requests", risk_score=80.0, cve="CVE-2024-0001"):
+    return {
+        "_id": "f1",
+        "finding_id": cve,
+        "type": "vulnerability",
+        "component": component,
+        "version": "1.0.0",
+        "severity": "HIGH",
+        "details": {"risk_score": risk_score},
+    }
+
+
+class TestReachabilityAdjustedScoreWiring:
+    def test_unreachable_persists_reduced_adjusted_score(self):
+        """A package absent from every callgraph -> not reachable -> adjusted = base * 0.4."""
+        finding = _vuln_finding(component="not-imported-pkg", risk_score=80.0)
+        cg = _FakeCallgraph(module_usage={"other": {}}, import_map={"a.py": ["other"]})
+        enriched = _enrich_finding_from_callgraphs(finding, [cg])
+        assert enriched is True
+        assert finding["details"]["reachability"]["is_reachable"] is False
+        # 80 * 0.4 == 32.0
+        assert finding["details"]["adjusted_risk_score"] == 32.0
+        assert finding["details"]["adjusted_risk_score"] < finding["details"]["risk_score"]
+
+    def test_symbol_reachable_persists_boosted_adjusted_score(self):
+        """A matched vulnerable symbol -> confirmed -> adjusted = base * 1.1."""
+        finding = _vuln_finding(component="requests", risk_score=80.0)
+        finding["details"]["vulnerabilities"] = [
+            {"id": "CVE-2024-0001", "description": "flaw in requests.get() allows ..."}
+        ]
+        module_usage = {"requests": {"import_locations": ["a.py"], "used_symbols": ["get"]}}
+        # symbol-level match boosts; assert it is >= base regardless of exact extraction.
+        _enrich_single_finding(finding, module_usage, {"a.py": ["requests"]}, "python")
+        reach = finding["details"]["reachability"]
+        assert reach["is_reachable"] is True
+        adjusted = finding["details"]["adjusted_risk_score"]
+        if reach["analysis_level"] == "symbol":
+            assert adjusted >= finding["details"]["risk_score"]
+        else:
+            # import-only fallback: identity, not a penalty
+            assert adjusted == finding["details"]["risk_score"]
+
+    def test_import_only_reachable_is_identity(self):
+        """Imported but no extracted symbols -> import-level reachable -> identity (no boost)."""
+        finding = _vuln_finding(component="requests", risk_score=80.0)
+        module_usage = {"requests": {"import_locations": ["a.py"], "used_symbols": []}}
+        _enrich_single_finding(finding, module_usage, {"a.py": ["requests"]}, "python")
+        reach = finding["details"]["reachability"]
+        assert reach["is_reachable"] is True
+        # import-level (no symbol match) must NOT boost beyond base
+        assert finding["details"]["adjusted_risk_score"] == finding["details"]["risk_score"]

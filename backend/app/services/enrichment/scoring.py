@@ -86,3 +86,36 @@ def calculate_adjusted_risk_score(
     if reachability_level == "confirmed":
         return min(base_risk_score * 1.1, 100.0)
     return base_risk_score
+
+
+def map_reachability_level_to_modifier(
+    analysis_level: Optional[str],
+    is_reachable: Optional[bool],
+) -> Optional[str]:
+    """Translate the reachability-enrichment vocabulary into the modifier vocabulary.
+
+    The reachability enrichment records ``analysis_level`` as one of
+    ``none`` / ``import`` / ``symbol`` (see ``REACHABILITY_LEVEL_*``) plus an
+    ``is_reachable`` boolean, whereas the scoring modifier
+    (:func:`calculate_adjusted_risk_score`) speaks ``unreachable`` /
+    ``confirmed`` / identity. This bridges the two safely:
+
+    - A definitively NOT-reachable verdict (``is_reachable is False``) →
+      ``"unreachable"`` (the x0.4 de-prioritisation).
+    - A symbol-level reachable hit (``is_reachable is True`` and
+      ``analysis_level == "symbol"``) → ``"confirmed"`` (the x1.1 boost). This
+      is the only signal strong enough to boost: a matched vulnerable symbol.
+    - Anything weaker — import-only reachable, ``none``, ``unknown`` — maps to
+      identity (``None``) so it neither boosts nor penalises.
+
+    The modifier vocabulary (``confirmed`` / ``unreachable``) is passed through
+    unchanged, so callers that already speak it keep working.
+    """
+    # Already in modifier vocabulary — pass through.
+    if analysis_level in ("confirmed", "unreachable"):
+        return analysis_level
+    if is_reachable is False:
+        return "unreachable"
+    if is_reachable is True and analysis_level == "symbol":
+        return "confirmed"
+    return None

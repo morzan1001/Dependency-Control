@@ -2,11 +2,16 @@
 
 from datetime import datetime, timezone
 
+import pytest
+
 from app.services.analysis.stats import (
     _format_datetime,
     build_epss_kev_summary,
     build_reachability_summary,
+    calculate_comprehensive_stats,
 )
+
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 # ---------------------------------------------------------------------------
@@ -589,3 +594,165 @@ class TestBuildReachabilitySummaryLimits:
         """The enriched_count argument is passed through as analyzed."""
         result = build_reachability_summary([], [_make_callgraph()], 42)
         assert result["analyzed"] == 42
+
+
+# ---------------------------------------------------------------------------
+# calculate_comprehensive_stats — canonical 0-100 risk scale (W5)
+#
+# Both risk_score (base) and adjusted_risk_score (reachability-adjusted) must
+# live on a single 0-100 scale derived from the same composite as
+# calculate_risk_score. The old pipeline averaged the raw cvss_score (0-10) for
+# risk_score and mixed details.risk_score (0-100) with a 0-10 calculated
+# fallback for the adjusted score — producing ~10 instead of ~40 for an
+# all-critical project. These tests pin the corrected scale.
+# ---------------------------------------------------------------------------
+
+_W5_SCAN = "scan-w5"
+
+
+def _w5_finding(
+    _id,
+    severity,
+    *,
+    risk_score=None,
+    adjusted_risk_score=None,
+    reachable=None,
+    reachability_level="unknown",
+    waived=False,
+):
+    details = {}
+    if risk_score is not None:
+        details["risk_score"] = risk_score
+    if adjusted_risk_score is not None:
+        details["adjusted_risk_score"] = adjusted_risk_score
+    doc = {
+        "_id": _id,
+        "finding_id": _id,
+        "scan_id": _W5_SCAN,
+        "type": "vulnerability",
+        "severity": severity,
+        "component": "pkg",
+        "version": "1.0.0",
+        "details": details,
+        "waived": waived,
+    }
+    if reachable is not None:
+        doc["reachable"] = reachable
+        doc["reachability_level"] = reachability_level
+    return doc
+
+
+async def _seed(findings):
+    db = FakeDatabase()
+    for f in findings:
+        await db.findings.insert_one(f)
+    return db
+
+
+class TestComprehensiveStatsScale:
+    @pytest.mark.asyncio
+    async def test_all_critical_risk_score_in_0_100_band(self):
+        """An all-CRITICAL project (cvss high, no KEV/EPSS) must yield a base
+        risk_score in the 0-100 band (~95 here), NOT ~10."""
+        findings = [_w5_finding(f"c{i}", "CRITICAL", risk_score=95.0) for i in range(3)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.risk_score == 95.0
+        assert stats.risk_score > 50.0  # decisively above the old 0-10 scale
+
+    @pytest.mark.asyncio
+    async def test_all_critical_no_enrichment_uses_0_100_fallback(self):
+        """A CRITICAL finding WITHOUT details.risk_score falls back to the
+        0-100 composite anchor (40), not the old 0-10 value (10)."""
+        findings = [_w5_finding("c1", "CRITICAL")]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.risk_score == 40.0
+        assert stats.adjusted_risk_score == 40.0
+
+    @pytest.mark.asyncio
+    async def test_fallback_anchors_match_composite_per_severity(self):
+        """Each severity's no-enrichment fallback equals (CVSS_SEVERITY_SCORES/10)*40."""
+        findings = [
+            _w5_finding("c", "CRITICAL"),
+            _w5_finding("h", "HIGH"),
+            _w5_finding("m", "MEDIUM"),
+            _w5_finding("l", "LOW"),
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        # avg of 40, 30, 16, 4 == 22.5
+        assert stats.risk_score == 22.5
+
+    @pytest.mark.asyncio
+    async def test_low_medium_project_is_not_anomalously_low_or_high(self):
+        """The original '661 findings / 0.0 risk' anomaly: a large low/medium
+        set must produce a modest-but-nonzero 0-100 score (avg of LOW=4 /
+        MEDIUM=16 anchors), never 0.0."""
+        findings = [_w5_finding(f"l{i}", "LOW") for i in range(400)]
+        findings += [_w5_finding(f"m{i}", "MEDIUM") for i in range(261)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        expected = round((400 * 4 + 261 * 16) / 661, 1)
+        assert stats.risk_score == expected
+        assert stats.risk_score > 0.0
+
+    @pytest.mark.asyncio
+    async def test_base_and_adjusted_same_scale(self):
+        """risk_score and adjusted_risk_score share the same 0-100 scale: when
+        adjusted equals base (no reachability adjustment) they are equal."""
+        findings = [_w5_finding("c1", "CRITICAL", risk_score=90.0, adjusted_risk_score=90.0)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.risk_score == 90.0
+        assert stats.adjusted_risk_score == 90.0
+
+    @pytest.mark.asyncio
+    async def test_fully_unreachable_adjusted_below_base(self):
+        """A fully-unreachable set: adjusted_risk_score (x0.4) < base risk_score."""
+        findings = [
+            _w5_finding(
+                "c1",
+                "CRITICAL",
+                risk_score=90.0,
+                adjusted_risk_score=36.0,  # 90 * 0.4
+                reachable=False,
+                reachability_level="unreachable",
+            )
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.adjusted_risk_score < stats.risk_score
+        assert stats.adjusted_risk_score == 36.0
+
+    @pytest.mark.asyncio
+    async def test_confirmed_reachable_adjusted_at_least_base(self):
+        """A confirmed-reachable set: adjusted_risk_score (x1.1, capped) >= base."""
+        findings = [
+            _w5_finding(
+                "c1",
+                "CRITICAL",
+                risk_score=80.0,
+                adjusted_risk_score=88.0,  # 80 * 1.1
+                reachable=True,
+                reachability_level="confirmed",
+            )
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.adjusted_risk_score >= stats.risk_score
+        assert stats.adjusted_risk_score == 88.0
+
+    @pytest.mark.asyncio
+    async def test_adjusted_falls_back_to_base_then_calculated(self):
+        """adjusted_risk_score falls back to details.risk_score when no
+        details.adjusted_risk_score, and to the 0-100 calculated anchor when
+        neither is present."""
+        findings = [
+            _w5_finding("a", "CRITICAL", risk_score=90.0),  # no adjusted -> uses risk_score
+            _w5_finding("b", "HIGH"),  # nothing -> calculated anchor 30
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        # adjusted avg = (90 + 30) / 2 == 60.0
+        assert stats.adjusted_risk_score == 60.0

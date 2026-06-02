@@ -29,6 +29,7 @@ from app.api.v1.helpers import (
     resolve_sbom_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
+from app.core.constants import SEVERITY_CALCULATED_RISK_SCORES
 from app.core.permissions import Permissions, has_permission
 from app.core.worker import worker_manager
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
@@ -100,22 +101,63 @@ async def get_dashboard_stats(
             "$project": {
                 "name": 1,
                 "stats": 1,
-                # Calculate risk if missing (fallback logic)
+                # Prefer the persisted 0-100 stats.risk_score. When absent, fall
+                # back to the SAME 0-100 definition as calculate_comprehensive_stats:
+                # a severity-weighted AVERAGE of the per-severity composite anchors
+                # (CRITICAL=40, HIGH=30, MEDIUM=16, LOW=4 — (cvss/10)*40), not the
+                # old 0-10 severity-weighted SUM. Divide by total finding count so
+                # the fallback stays on the per-finding 0-100 scale (W5/F12).
                 "calculated_risk": {
                     "$ifNull": [
                         "$stats.risk_score",
                         {
-                            "$add": [
-                                {
-                                    "$multiply": [
-                                        {"$ifNull": ["$stats.critical", 0]},
-                                        10,
+                            "$let": {
+                                "vars": {
+                                    "n": {
+                                        "$add": [
+                                            {"$ifNull": ["$stats.critical", 0]},
+                                            {"$ifNull": ["$stats.high", 0]},
+                                            {"$ifNull": ["$stats.medium", 0]},
+                                            {"$ifNull": ["$stats.low", 0]},
+                                        ]
+                                    },
+                                    "weighted": {
+                                        "$add": [
+                                            {
+                                                "$multiply": [
+                                                    {"$ifNull": ["$stats.critical", 0]},
+                                                    SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"],
+                                                ]
+                                            },
+                                            {
+                                                "$multiply": [
+                                                    {"$ifNull": ["$stats.high", 0]},
+                                                    SEVERITY_CALCULATED_RISK_SCORES["HIGH"],
+                                                ]
+                                            },
+                                            {
+                                                "$multiply": [
+                                                    {"$ifNull": ["$stats.medium", 0]},
+                                                    SEVERITY_CALCULATED_RISK_SCORES["MEDIUM"],
+                                                ]
+                                            },
+                                            {
+                                                "$multiply": [
+                                                    {"$ifNull": ["$stats.low", 0]},
+                                                    SEVERITY_CALCULATED_RISK_SCORES["LOW"],
+                                                ]
+                                            },
+                                        ]
+                                    },
+                                },
+                                "in": {
+                                    "$cond": [
+                                        {"$gt": ["$$n", 0]},
+                                        {"$divide": ["$$weighted", "$$n"]},
+                                        0,
                                     ]
                                 },
-                                {"$multiply": [{"$ifNull": ["$stats.high", 0]}, 7.5]},
-                                {"$multiply": [{"$ifNull": ["$stats.medium", 0]}, 4]},
-                                {"$multiply": [{"$ifNull": ["$stats.low", 0]}, 1]},
-                            ]
+                            }
                         },
                     ]
                 },

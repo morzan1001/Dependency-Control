@@ -60,8 +60,25 @@ class Stats(BaseModel):
     low: int = Field(0, description="Count of low severity findings")
     info: int = Field(0, description="Count of informational findings")
     unknown: int = Field(0, description="Count of findings with unknown severity")
-    risk_score: float = Field(0.0, description="Calculated risk score (0-100)")
-    adjusted_risk_score: float = Field(0.0, description="Risk score adjusted for exploitability and reachability")
+    risk_score: float = Field(
+        0.0,
+        description=(
+            "Base composite risk score on a 0-100 scale: the average of each "
+            "finding's details.risk_score (CVSS impact + EPSS likelihood + "
+            "KEV/ransomware), with a 0-100 per-severity fallback for findings "
+            "lacking enrichment. Does NOT include the reachability modifier."
+        ),
+    )
+    adjusted_risk_score: float = Field(
+        0.0,
+        description=(
+            "Reachability-adjusted risk score on the SAME 0-100 scale as "
+            "risk_score: the average of each finding's "
+            "details.adjusted_risk_score (base score scaled by the reachability "
+            "modifier — x0.4 unreachable, x1.1 confirmed-reachable), falling "
+            "back to the base risk_score then the 0-100 per-severity fallback."
+        ),
+    )
 
     threat_intel: Optional[ThreatIntelligenceStats] = Field(None, description="EPSS/KEV statistics")
     reachability: Optional[ReachabilityStats] = Field(None, description="Reachability analysis statistics")

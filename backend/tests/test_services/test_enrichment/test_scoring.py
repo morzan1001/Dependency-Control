@@ -4,6 +4,7 @@ from app.services.enrichment.scoring import (
     calculate_exploit_maturity,
     calculate_risk_score,
     calculate_adjusted_risk_score,
+    map_reachability_level_to_modifier,
 )
 
 
@@ -129,6 +130,37 @@ class TestCalculateRiskScore:
     def test_full_score_worst_case(self):
         score = calculate_risk_score(10.0, 0.95, True, True, reachability_level="confirmed")
         assert score >= 80.0  # Should be very high
+
+
+class TestMapReachabilityLevelToModifier:
+    """The reachability enrichment vocabulary (none/import/symbol + is_reachable)
+    must map onto the modifier vocabulary (unreachable/confirmed/None) that the
+    scoring functions expect. Only an unambiguous high-confidence reachable hit
+    becomes 'confirmed'; a definitively-not-reachable verdict becomes
+    'unreachable'; everything else stays identity (None)."""
+
+    def test_not_reachable_maps_to_unreachable(self):
+        assert map_reachability_level_to_modifier("import", is_reachable=False) == "unreachable"
+
+    def test_symbol_level_reachable_maps_to_confirmed(self):
+        assert map_reachability_level_to_modifier("symbol", is_reachable=True) == "confirmed"
+
+    def test_import_only_reachable_is_identity(self):
+        # Import-only is a weaker signal; must NOT boost as if confirmed.
+        assert map_reachability_level_to_modifier("import", is_reachable=True) is None
+
+    def test_none_level_reachable_is_identity(self):
+        assert map_reachability_level_to_modifier("none", is_reachable=True) is None
+
+    def test_unknown_is_identity(self):
+        assert map_reachability_level_to_modifier("unknown", is_reachable=None) is None
+
+    def test_confirmed_passthrough(self):
+        # If callers already speak the modifier vocabulary it is preserved.
+        assert map_reachability_level_to_modifier("confirmed", is_reachable=True) == "confirmed"
+
+    def test_unreachable_passthrough(self):
+        assert map_reachability_level_to_modifier("unreachable", is_reachable=False) == "unreachable"
 
 
 class TestCalculateAdjustedRiskScore:

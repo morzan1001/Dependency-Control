@@ -923,6 +923,18 @@ CVSS_SEVERITY_SCORES: Dict[str, float] = {
     "UNKNOWN": 0.0,
 }
 
+# Per-severity fallback risk score (0-100) for findings WITHOUT EPSS/KEV
+# enrichment. Derived from the SAME CVSS contribution that
+# ``calculate_risk_score`` uses — ``(representative_cvss / 10) * 40`` — so that
+# enriched (details.risk_score) and non-enriched (fallback) findings are on one
+# comparable 0-100 scale. This deliberately is NOT a severity-dominant scale
+# (e.g. CRITICAL=90); keeping it at the composite's CVSS anchor prevents
+# non-enriched findings from outranking enriched ones.
+SEVERITY_CALCULATED_RISK_SCORES: Dict[str, float] = {
+    sev: round((cvss / 10.0) * 40.0, 1) for sev, cvss in CVSS_SEVERITY_SCORES.items()
+}
+# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, INFO/UNKNOWN=0.0
+
 # GitLab JWKS cache TTLs (in seconds)
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)

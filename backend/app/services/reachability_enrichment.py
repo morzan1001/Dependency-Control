@@ -15,7 +15,7 @@ information, helping teams prioritize truly exploitable issues.
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Mapping, Optional, TypedDict
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -30,9 +30,41 @@ from app.core.constants import (
     REACHABILITY_LEVEL_SYMBOL,
     sort_by_severity,
 )
+from app.services.enrichment.scoring import (
+    calculate_adjusted_risk_score,
+    map_reachability_level_to_modifier,
+)
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_adjusted_risk_score(finding: Dict[str, Any], reachability: Mapping[str, Any]) -> None:
+    """Persist a reachability-adjusted risk score on the finding (W5 / Finding 13).
+
+    Takes the per-finding base composite ``details.risk_score`` and applies the
+    reachability modifier, mapping the enrichment vocabulary
+    (``none``/``import``/``symbol`` + ``is_reachable``) onto the modifier
+    vocabulary (``confirmed``/``unreachable``/identity). Only a symbol-level
+    reachable hit boosts (x1.1); a not-reachable verdict de-prioritises (x0.4);
+    everything weaker is identity. No base risk_score -> nothing to adjust.
+    """
+    details = finding.setdefault("details", {})
+    base = details.get("risk_score")
+    if base is None:
+        return
+    modifier_level = map_reachability_level_to_modifier(
+        reachability.get("analysis_level"),
+        reachability.get("is_reachable"),
+    )
+    details["adjusted_risk_score"] = round(
+        calculate_adjusted_risk_score(
+            float(base),
+            is_reachable=reachability.get("is_reachable"),
+            reachability_level=modifier_level,
+        ),
+        1,
+    )
 
 
 def is_high_confidence_reachable(reachability_data: Optional[Dict[str, Any]]) -> bool:
@@ -122,6 +154,7 @@ def _enrich_single_finding(
     if "details" not in finding:
         finding["details"] = {}
     finding["details"]["reachability"] = reachability
+    _apply_adjusted_risk_score(finding, reachability)
     return True
 
 
@@ -164,7 +197,7 @@ def _enrich_finding_from_callgraphs(
     languages = [cg.language or "unknown" for cg in callgraphs]
     if "details" not in finding:
         finding["details"] = {}
-    finding["details"]["reachability"] = {
+    reachability = {
         "is_reachable": False,
         "confidence_score": REACHABILITY_CONFIDENCE_NOT_USED,
         "analysis_level": REACHABILITY_LEVEL_IMPORT,
@@ -172,6 +205,8 @@ def _enrich_finding_from_callgraphs(
         "import_locations": [],
         "message": f"Package '{component}' is not imported in any analyzed source file ({', '.join(languages)}).",
     }
+    finding["details"]["reachability"] = reachability
+    _apply_adjusted_risk_score(finding, reachability)
     return True
 
 
@@ -525,17 +560,21 @@ async def run_pending_reachability_for_scan(
 
         # Update findings in database with reachability data
         for finding_dict in findings_dicts:
-            reachability_data = finding_dict.get("details", {}).get("reachability")
+            details = finding_dict.get("details", {})
+            reachability_data = details.get("reachability")
             if reachability_data is not None:
-                await finding_repo.update(
-                    finding_dict["_id"],
-                    {
-                        "reachable": reachability_data.get("is_reachable"),
-                        "reachability_level": reachability_data.get("analysis_level"),
-                        "reachable_functions": reachability_data.get("matched_symbols", []),
-                        "details.reachability": reachability_data,
-                    },
-                )
+                update_fields: Dict[str, Any] = {
+                    "reachable": reachability_data.get("is_reachable"),
+                    "reachability_level": reachability_data.get("analysis_level"),
+                    "reachable_functions": reachability_data.get("matched_symbols", []),
+                    "details.reachability": reachability_data,
+                }
+                # Persist the reachability-adjusted risk score (W5 / Finding 13)
+                # when enrichment computed one (i.e. the finding had a base
+                # details.risk_score to adjust).
+                if "adjusted_risk_score" in details:
+                    update_fields["details.adjusted_risk_score"] = details["adjusted_risk_score"]
+                await finding_repo.update(finding_dict["_id"], update_fields)
 
         # Store reachability summary in analysis_results for raw data view
         callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
