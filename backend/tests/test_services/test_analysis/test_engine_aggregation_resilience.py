@@ -1,9 +1,11 @@
-"""Finding 6: _aggregate_external_results must skip malformed results and keep the rest."""
+"""Finding 6 / M2: _aggregate_external_results must skip malformed results and keep the rest,
+and must emit a SYSTEM_WARNING finding when a result fails to aggregate."""
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
+from app.models.finding import FindingType
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _aggregate_external_results
 
@@ -86,6 +88,18 @@ class TestAggregateExternalResultsResilience:
         )
         # Scan must not have completely failed
         assert len(findings) >= 1
+
+        # M2: a SYSTEM_WARNING finding must have been emitted for the failed result,
+        # providing a user-visible signal that a scanner result was dropped.
+        warning_findings = [f for f in findings if f.type == FindingType.SYSTEM_WARNING]
+        assert len(warning_findings) >= 1, (
+            "Expected at least one SYSTEM_WARNING finding when a result fails to aggregate; "
+            f"got finding types: {[f.type for f in findings]}"
+        )
+        assert any("bad_analyzer" in f.description for f in warning_findings), (
+            f"Expected SYSTEM_WARNING to mention the failed analyzer; "
+            f"got descriptions: {[f.description for f in warning_findings]}"
+        )
 
     def test_results_summary_still_populated_after_bad_result(self, monkeypatch):
         """A skipped malformed result must not prevent good results from being logged."""
