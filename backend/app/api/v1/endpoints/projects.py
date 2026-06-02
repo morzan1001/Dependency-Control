@@ -664,7 +664,9 @@ async def update_project(
     update_data = dict(project_in.model_dump(exclude_unset=True))
     # A team transfer/assignment via the API is a deliberate manual action, so stamp
     # provenance — this prevents GitLab sync from reverting it (Finding 18).
-    if "team_id" in update_data:
+    # Only stamp when the team actually changes; echoing the current team_id on an
+    # unrelated edit must NOT flip a sync-assigned project to "manual" (W9).
+    if "team_id" in update_data and update_data["team_id"] != project.team_id:
         update_data["team_source"] = "manual"
     await _assert_gitlab_mr_token_present(project, update_data, db)
 

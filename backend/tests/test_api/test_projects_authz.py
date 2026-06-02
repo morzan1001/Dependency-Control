@@ -245,3 +245,117 @@ class TestDeleteProjectRoutesThroughGate:
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(delete_project("proj-1", user, MagicMock()))
         assert exc_info.value.status_code == 403
+
+
+class TestUpdateProjectTeamSourceProvenance:
+    """W9: stamping team_source='manual' must only happen when team_id actually changes.
+
+    A frontend that echoes back the current (sync-assigned) team_id on any
+    unrelated edit must NOT flip provenance to 'manual' and opt the project out
+    of GitLab-sync-managed assignment.
+    """
+
+    def _build_update_project_mocks(self, project: "Project"):
+        """Return a context-manager stack that patches update_project's collaborators."""
+        project_repo = MagicMock()
+        project_repo.update = AsyncMock(return_value=None)
+        project_repo.get_by_id = AsyncMock(return_value=project)
+
+        team_repo = MagicMock()
+        team_repo.is_member = AsyncMock(return_value=True)
+
+        system_settings = MagicMock()
+        system_settings.retention_mode = None
+        system_settings.rescan_mode = None
+
+        return project_repo, team_repo, system_settings
+
+    def _run_update(self, project, project_in, user):
+        """Drive update_project with all external collaborators mocked out."""
+        from app.api.v1.endpoints.projects import update_project
+
+        project_repo, team_repo, system_settings = self._build_update_project_mocks(project)
+
+        with (
+            patch(f"{ENDPOINTS}.ProjectRepository", return_value=project_repo),
+            patch(f"{ENDPOINTS}.TeamRepository", return_value=team_repo),
+            patch(f"{ENDPOINTS}._load_project_for_update", new_callable=AsyncMock, return_value=project),
+            patch(f"{ENDPOINTS}._assert_can_transfer_team", new_callable=AsyncMock),
+            patch(f"{ENDPOINTS}._assert_gitlab_mr_token_present", new_callable=AsyncMock),
+            patch(f"{ENDPOINTS}.deps.get_system_settings", new_callable=AsyncMock, return_value=system_settings),
+            patch(f"{ENDPOINTS}.apply_system_settings_enforcement", side_effect=lambda d, *_: d),
+            patch(f"{ENDPOINTS}._audit_license_policy_change", new_callable=AsyncMock),
+        ):
+            asyncio.run(update_project("proj-1", project_in, user, MagicMock()))
+
+        return project_repo.update
+
+    def test_same_team_id_does_not_stamp_manual(self):
+        """PATCHing with the SAME team_id as the current project must leave team_source unchanged (W9)."""
+        from app.schemas.project import ProjectUpdate
+
+        # A gitlab-synced project has team_source="gitlab"
+        project = Project(
+            id="proj-1",
+            name="Test",
+            owner_id="owner-x",
+            members=[],
+            team_id="team-abc",
+            team_source="gitlab",
+        )
+        user = _update_user()
+        # Frontend echoes back the same team_id it already has
+        project_in = ProjectUpdate(name="Renamed", team_id="team-abc")
+
+        mock_update = self._run_update(project, project_in, user)
+
+        # update must have been called
+        mock_update.assert_awaited_once()
+        call_kwargs = mock_update.call_args[0][1]  # second positional arg is the update dict
+        assert "team_source" not in call_kwargs, (
+            "team_source must NOT be written when team_id is unchanged"
+        )
+
+    def test_different_team_id_stamps_manual(self):
+        """PATCHing with a DIFFERENT team_id must set team_source='manual' (W9)."""
+        from app.schemas.project import ProjectUpdate
+
+        project = Project(
+            id="proj-1",
+            name="Test",
+            owner_id="owner-x",
+            members=[],
+            team_id="team-abc",
+            team_source="gitlab",
+        )
+        user = _update_user()
+        project_in = ProjectUpdate(team_id="team-xyz")
+
+        mock_update = self._run_update(project, project_in, user)
+
+        mock_update.assert_awaited_once()
+        call_kwargs = mock_update.call_args[0][1]
+        assert call_kwargs.get("team_source") == "manual", (
+            "team_source must be set to 'manual' when team_id changes"
+        )
+
+    def test_no_team_id_in_payload_does_not_stamp_manual(self):
+        """PATCHing with no team_id field at all must not touch team_source (W9)."""
+        from app.schemas.project import ProjectUpdate
+
+        project = Project(
+            id="proj-1",
+            name="Test",
+            owner_id="owner-x",
+            members=[],
+            team_id="team-abc",
+            team_source="gitlab",
+        )
+        user = _update_user()
+        project_in = ProjectUpdate(name="Only a rename")
+
+        mock_update = self._run_update(project, project_in, user)
+
+        mock_update.assert_awaited_once()
+        call_kwargs = mock_update.call_args[0][1]
+        assert "team_source" not in call_kwargs
