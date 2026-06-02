@@ -2,8 +2,9 @@
 
 import pytest
 
-from app.core.permissions import ALL_PERMISSIONS, PRESET_USER, PRESET_VIEWER
+from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
+from tests.helpers.permission_presets import PRESET_USER, PRESET_VIEWER
 
 
 @pytest.fixture

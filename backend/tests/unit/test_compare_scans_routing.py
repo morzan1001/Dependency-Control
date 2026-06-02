@@ -11,10 +11,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.permissions import PRESET_ADMIN
 from app.models.user import User
 from app.schemas.scan_delta import DeltaCategory, ScanDeltaResponse, ScanDeltaTotals
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.permission_presets import PRESET_ADMIN
 
 
 @pytest.fixture

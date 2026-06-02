@@ -71,9 +71,9 @@ async def test_mcp_get_scan_delta(db):
     Task 10), the registry routes through ``compute_crypto_delta_envelope`` and
     returns ``ScanDeltaResponse.model_dump(mode="json")``.
     """
-    from app.core.permissions import PRESET_ADMIN
     from app.models.user import User
     from app.services.chat.tools import ChatToolRegistry
+    from tests.helpers.permission_presets import PRESET_ADMIN
 
     db.projects._docs["p"] = {"_id": "p", "name": "test-project", "team_id": None}
     await db["scans"].insert_many(

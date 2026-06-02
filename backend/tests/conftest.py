@@ -92,21 +92,21 @@ def sample_purls():
 
 @pytest.fixture
 def admin_permissions():
-    from app.core.permissions import PRESET_ADMIN
+    from tests.helpers.permission_presets import PRESET_ADMIN
 
     return PRESET_ADMIN.copy()
 
 
 @pytest.fixture
 def user_permissions():
-    from app.core.permissions import PRESET_USER
+    from tests.helpers.permission_presets import PRESET_USER
 
     return PRESET_USER.copy()
 
 
 @pytest.fixture
 def viewer_permissions():
-    from app.core.permissions import PRESET_VIEWER
+    from tests.helpers.permission_presets import PRESET_VIEWER
 
     return PRESET_VIEWER.copy()
 

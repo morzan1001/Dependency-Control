@@ -1,7 +1,8 @@
 """Tests for chat tool definitions and authorization."""
 
-from app.core.permissions import Permissions, PRESET_USER, PRESET_ADMIN
+from app.core.permissions import Permissions
 from app.services.chat.tools import ChatToolRegistry, get_tool_definitions
+from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 
 
 def test_tool_definitions_valid_json_schema():

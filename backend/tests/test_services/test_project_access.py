@@ -164,7 +164,7 @@ class TestRegressions:
     """Existing behaviour that must keep working."""
 
     def test_real_admin_manages_any_project(self):
-        from app.core.permissions import PRESET_ADMIN
+        from tests.helpers.permission_presets import PRESET_ADMIN
 
         user = _user("admin-1", PRESET_ADMIN)
         project = _project(members=[])

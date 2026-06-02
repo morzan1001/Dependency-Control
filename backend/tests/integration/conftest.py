@@ -148,7 +148,8 @@ def member_auth_headers(_project):
 @pytest.fixture
 def regular_user_no_access():
     """Create a user who is NOT a project member."""
-    from app.core.permissions import PRESET_USER
+    from tests.helpers.permission_presets import PRESET_USER
+
     from app.models.user import User
 
     return User(
@@ -166,7 +167,7 @@ def admin_auth_headers():
     from jose import jwt
 
     from app.core.config import settings
-    from app.core.permissions import PRESET_ADMIN
+    from tests.helpers.permission_presets import PRESET_ADMIN
 
     payload = {
         "sub": "admin-user",
@@ -185,8 +186,9 @@ async def owner_auth_headers_proj(client, db):
     from jose import jwt
 
     from app.core.config import settings
-    from app.core.permissions import PRESET_USER, Permissions
+    from app.core.permissions import Permissions
     from app.models.project import Project, ProjectMember
+    from tests.helpers.permission_presets import PRESET_USER
 
     username = "ownerp"
     permissions = list(PRESET_USER) + [Permissions.PROJECT_READ]
@@ -216,8 +218,9 @@ async def owner_auth_headers_proj_p2(client, db):
     from jose import jwt
 
     from app.core.config import settings
-    from app.core.permissions import PRESET_USER, Permissions
+    from app.core.permissions import Permissions
     from app.models.project import Project, ProjectMember
+    from tests.helpers.permission_presets import PRESET_USER
 
     username = "ownerp2"
     permissions = list(PRESET_USER) + [Permissions.PROJECT_READ]

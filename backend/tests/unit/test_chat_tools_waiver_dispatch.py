@@ -11,9 +11,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core.permissions import PRESET_ADMIN
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.permission_presets import PRESET_ADMIN
 
 
 @pytest.fixture
