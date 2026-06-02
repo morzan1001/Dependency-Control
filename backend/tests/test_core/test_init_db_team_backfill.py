@@ -18,10 +18,12 @@ idempotent and must never touch already-tagged teams.
 import asyncio
 
 import pytest
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from app.core.init_db import (
     _backfill_synced_team_gitlab_ids,
     _backfill_member_and_team_provenance,
+    create_indexes,
 )
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -152,14 +154,24 @@ class TestBackfillSyncedTeamIds:
 
 
 class TestBackfillProvenance:
-    """W9 / Findings 16 + 18: one-time, idempotent provenance backfill.
+    """W9 / Finding 16 (corrected): one-time, idempotent provenance backfill.
 
-    * Members of teams that carry a gitlab_group_id are stamped source="gitlab".
-    * Projects whose team_id references a gitlab-synced team get team_source="gitlab".
-    Both stamps are conservative (only unambiguous cases) and idempotent.
+    The backfill stamps Project.team_source="gitlab" for projects of synced teams,
+    but it MUST NOT stamp existing team members with source="gitlab". Stamping
+    pre-existing members as 'gitlab' is harmful: a manually-added member of a synced
+    team would then be in the gitlab-sourced subset that the next sync merge REPLACES,
+    silently removing them (reintroducing Finding 16 for existing data). Leaving
+    members unstamped lets them default to 'manual' on read, which the merge PRESERVES.
     """
 
-    def test_stamps_gitlab_source_on_synced_team_members(self):
+    def test_does_not_stamp_gitlab_source_on_existing_synced_team_members(self):
+        """Existing members of a synced team must NOT be tagged source='gitlab'.
+
+        If they were tagged 'gitlab', the next sync merge (which replaces the
+        gitlab-sourced subset) would remove any member GitLab no longer reports —
+        including manually-added members. Leaving them unstamped means they default
+        to 'manual' and the merge preserves them.
+        """
         db = FakeDatabase()
         _seed_team(
             db,
@@ -173,7 +185,10 @@ class TestBackfillProvenance:
         asyncio.run(_backfill_member_and_team_provenance(db))
 
         members = db.teams._docs["t-synced"]["members"]
-        assert all(m["source"] == "gitlab" for m in members)
+        # No member may be stamped 'gitlab' by the backfill.
+        assert all(m.get("source") != "gitlab" for m in members), (
+            f"Backfill must not mass-stamp members as gitlab; got {members}"
+        )
 
     def test_does_not_touch_manual_team_members(self):
         db = FakeDatabase()
@@ -205,8 +220,9 @@ class TestBackfillProvenance:
         members = {m["user_id"]: m for m in db.teams._docs["t-mixed"]["members"]}
         # A pre-existing manual member must NOT be flipped to gitlab.
         assert members["manual-u"]["source"] == "manual"
-        # A legacy (unstamped) member of a synced team becomes gitlab.
-        assert members["legacy-u"]["source"] == "gitlab"
+        # A legacy (unstamped) member is intentionally left unstamped so it defaults
+        # to 'manual' on read and survives the next sync merge.
+        assert members["legacy-u"].get("source") != "gitlab"
 
     def test_stamps_team_source_gitlab_on_projects_of_synced_team(self):
         db = FakeDatabase()
@@ -262,27 +278,91 @@ class TestBackfillProvenance:
             db, "t-bad", "GitLab Group: bad", gitlab_instance_id="inst-a", gitlab_group_id=1,
             members=[{"user_id": "u1"}],
         )
+        _seed_project(db, "p-bad", "t-bad", gitlab_instance_id="inst-a", gitlab_project_id=1)
         _seed_team(
             db, "t-good", "GitLab Group: good", gitlab_instance_id="inst-a", gitlab_group_id=2,
             members=[{"user_id": "u2"}],
         )
+        _seed_project(db, "p-good", "t-good", gitlab_instance_id="inst-a", gitlab_project_id=2)
 
-        original_update_one = db.teams.update_one
+        original_update_many = db.projects.update_many
 
-        async def failing_update_one(query, update, **kwargs):
-            if query.get("_id") == "t-bad":
+        async def failing_update_many(query, update, **kwargs):
+            if query.get("team_id") == "t-bad":
                 raise RuntimeError("boom")
-            return await original_update_one(query, update, **kwargs)
+            return await original_update_many(query, update, **kwargs)
 
-        db.teams.update_one = failing_update_one  # type: ignore[method-assign]
+        db.projects.update_many = failing_update_many  # type: ignore[method-assign]
 
         with caplog.at_level("ERROR", logger="app.core.init_db"):
             asyncio.run(_backfill_member_and_team_provenance(db))  # must NOT raise
 
-        # The good team must still have been stamped despite the bad team failing.
-        good_members = db.teams._docs["t-good"]["members"]
-        assert all(m["source"] == "gitlab" for m in good_members)
+        # The good team's project must still have been stamped despite the bad team failing.
+        assert db.projects._docs["p-good"]["team_source"] == "gitlab"
         assert any("t-bad" in r.message for r in caplog.records)
+
+
+class TestTeamsUniqueIndexGuard:
+    """Fix 2 (availability): the teams (gitlab_instance_id, gitlab_group_id) unique
+    index build must degrade gracefully if an undetected duplicate exists at startup.
+
+    create_indexes runs at pod startup; an unhandled DuplicateKeyError / OperationFailure
+    from that ONE index build would propagate and crash the pod into CrashLoopBackOff.
+    The guard must catch it, log, skip that index, and let startup continue.
+    """
+
+    @staticmethod
+    def _wrap_teams_index_to_raise(db, exc):
+        """Make the teams collection's unique compound index build raise *exc*,
+        while leaving every other index (and collection) working normally."""
+        teams = db["teams"]
+        original_create_index = teams.create_index
+
+        async def create_index(keys, **kwargs):
+            # The guarded index is the unique compound (instance, group) key.
+            if (
+                isinstance(keys, list)
+                and [k[0] for k in keys] == ["gitlab_instance_id", "gitlab_group_id"]
+                and kwargs.get("unique")
+            ):
+                raise exc
+            return await original_create_index(keys, **kwargs)
+
+        teams.create_index = create_index  # type: ignore[method-assign]
+
+    def test_duplicate_key_error_does_not_propagate(self, caplog):
+        db = FakeDatabase()
+        self._wrap_teams_index_to_raise(
+            db, DuplicateKeyError("E11000 duplicate key error", details={"keyValue": {"gitlab_group_id": 42}})
+        )
+
+        with caplog.at_level("ERROR", logger="app.core.init_db"):
+            # Must complete without raising — graceful degradation, not CrashLoopBackOff.
+            asyncio.run(create_indexes(db))
+
+        assert any("teams" in r.message.lower() or "index" in r.message.lower() for r in caplog.records), (
+            f"Skipped teams unique index must be logged at ERROR. Got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_operation_failure_does_not_propagate(self):
+        db = FakeDatabase()
+        self._wrap_teams_index_to_raise(db, OperationFailure("index build failed"))
+
+        # Must complete without raising.
+        asyncio.run(create_indexes(db))
+
+    def test_unrelated_index_failures_still_propagate(self):
+        """The guard must be narrow: a failure on a DIFFERENT index must NOT be swallowed."""
+        db = FakeDatabase()
+        users = db["users"]
+
+        async def failing_create_index(keys, **kwargs):
+            raise OperationFailure("unrelated users index failure")
+
+        users.create_index = failing_create_index  # type: ignore[method-assign]
+
+        with pytest.raises(OperationFailure):
+            asyncio.run(create_indexes(db))
 
 
 if __name__ == "__main__":

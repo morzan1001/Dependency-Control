@@ -140,35 +140,23 @@ async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) 
         )
 
 
-async def _stamp_team_member_provenance(teams: Any, team: dict) -> bool:
-    """Stamp source="gitlab" on members of one synced team that lack a source tag.
-
-    Returns True if a write was issued. Existing source tags (e.g. a manually-added
-    member explicitly marked "manual") are preserved (Finding 16).
-    """
-    members = team.get("members") or []
-    needs_stamp = any("source" not in m for m in members)
-    if not needs_stamp:
-        return False
-    stamped_members = [
-        m if m.get("source") else {**m, "source": "gitlab"} for m in members
-    ]
-    await teams.update_one({"_id": team["_id"]}, {"$set": {"members": stamped_members}})
-    return True
-
-
 async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
-    """One-time, idempotent provenance backfill for W9 (Findings 16 + 18).
+    """One-time, idempotent provenance backfill for W9 (Finding 18; corrected Finding 16).
 
-    * TeamMember.source: members of teams that carry a ``gitlab_group_id`` (i.e. teams
-      created/managed by GitLab sync) are stamped ``source="gitlab"``. Members already
-      carrying a source (e.g. an explicitly "manual" member) are left untouched, so
-      manually-added members survive the next merge-sync.
     * Project.team_source: projects whose ``team_id`` references a gitlab-synced team
       are stamped ``team_source="gitlab"``. Conservative: only projects with no existing
       ``team_source`` are touched, so a deliberate "manual" stamp is never overwritten.
 
-    Idempotent (skips already-tagged members/projects) with per-team error isolation,
+    Members are INTENTIONALLY left unstamped. Stamping every existing member of a synced
+    team with ``source="gitlab"`` is harmful: a manually-added member of a synced team
+    would then sit inside the gitlab-sourced subset that the next sync's merge REPLACES,
+    so the merge would silently REMOVE them whenever GitLab no longer reports them —
+    reintroducing Finding 16 for already-existing data. By leaving members unstamped they
+    default to ``source="manual"`` on read, which the merge PRESERVES. Going forward, live
+    syncs correctly tag the actual gitlab-reported members as ``source="gitlab"``; only
+    those tagged-at-sync members are eligible for removal by a later merge.
+
+    Idempotent (only stamps projects lacking team_source) with per-team error isolation,
     mirroring ``_backfill_synced_team_gitlab_ids``.
     """
     teams = database["teams"]
@@ -178,11 +166,10 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
     # both manual teams (field absent) and teams with an explicit null.
     cursor = teams.find(
         {"gitlab_group_id": {"$ne": None}},
-        {"_id": 1, "members": 1, "gitlab_group_id": 1},
+        {"_id": 1, "gitlab_group_id": 1},
     )
     synced_teams = await cursor.to_list(None)
 
-    members_stamped = 0
     projects_stamped = 0
     failed = 0
     for team in synced_teams:
@@ -194,8 +181,6 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
             # Defensive: never treat a team without a real gitlab_group_id as synced.
             if not team.get("gitlab_group_id"):
                 continue
-            if await _stamp_team_member_provenance(teams, team):
-                members_stamped += 1
 
             # Stamp team_source on the synced team's projects, but ONLY where it is
             # unset (absent or null). Projects already stamped "manual" or "gitlab" are
@@ -217,10 +202,11 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
 
     if synced_teams:
         logger.info(
-            "Provenance backfill complete: %d synced team(s) had member sources stamped, "
-            "%d project(s) stamped team_source=gitlab, %d team(s) failed and skipped.",
-            members_stamped,
+            "Provenance backfill complete: %d project(s) stamped team_source=gitlab "
+            "across %d synced team(s), %d team(s) failed and skipped. "
+            "(Members intentionally left unstamped so manually-added members survive merges.)",
             projects_stamped,
+            len(synced_teams),
             failed,
         )
 
@@ -254,14 +240,29 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # teams (where both are null/absent) are excluded and never collide on null —
     # MongoDB sparse compound indexes still collide on explicit null, so a
     # partialFilterExpression on type is required here (Finding 8).
-    await database["teams"].create_index(
-        [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_group_id", pymongo.ASCENDING)],
-        unique=True,
-        partialFilterExpression={
-            "gitlab_instance_id": {MONGO_TYPE: "string"},
-            "gitlab_group_id": {MONGO_TYPE: "int"},
-        },
-    )
+    # Guard ONLY this unique index build: if an undetected duplicate
+    # (gitlab_instance_id, gitlab_group_id) pair somehow exists at startup, an
+    # unhandled DuplicateKeyError/OperationFailure here would propagate through
+    # create_indexes and crash the pod into CrashLoopBackOff. Belt-and-suspenders:
+    # log the offending key and SKIP this index so startup degrades gracefully
+    # instead of crashing. Deliberately narrow — only this index is guarded.
+    try:
+        await database["teams"].create_index(
+            [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_group_id", pymongo.ASCENDING)],
+            unique=True,
+            partialFilterExpression={
+                "gitlab_instance_id": {MONGO_TYPE: "string"},
+                "gitlab_group_id": {MONGO_TYPE: "int"},
+            },
+        )
+    except (pymongo.errors.DuplicateKeyError, pymongo.errors.OperationFailure) as exc:
+        key_info = getattr(exc, "details", None) or str(exc)
+        logger.error(
+            "Skipping unique teams (gitlab_instance_id, gitlab_group_id) index: build "
+            "failed (likely a pre-existing duplicate). Startup continues without it; "
+            "reconcile the duplicate and re-run. Offending key/error: %s",
+            key_info,
+        )
 
     # Scans
     await database["scans"].create_index("pipeline_id")

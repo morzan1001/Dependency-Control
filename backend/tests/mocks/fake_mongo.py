@@ -650,6 +650,13 @@ class FakeCollection:
     async def create_index(self, *args, **kwargs):
         return None
 
+    async def index_information(self):
+        # No pre-existing indexes in the in-process fake.
+        return {}
+
+    async def drop_index(self, *args, **kwargs):
+        return None
+
     # -- reads ------------------------------------------------------------
 
     async def find_one(self, query, projection=None):
