@@ -9,3 +9,4 @@ __pycache__
 .vscode/
 htmlcov/
 values-cluster.yaml
+docs/
