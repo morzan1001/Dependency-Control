@@ -61,17 +61,22 @@ class DistributedLocksRepository:
 
         return result is not None
 
-    async def release_lock(self, lock_name: str) -> bool:
+    async def release_lock(self, lock_name: str, holder_id: str) -> bool:
         """
-        Release a distributed lock.
+        Release a distributed lock — only the holder that owns it may release it.
+
+        Scoping the delete to ``holder`` prevents a pod from deleting a lock that
+        another pod has since acquired (e.g. after a TTL expiry and takeover).
 
         Args:
             lock_name: Name of the lock to release
+            holder_id: Identifier of the pod/process that acquired the lock
 
         Returns:
-            True if lock was released, False if lock didn't exist
+            True if this holder's lock was released, False if it didn't exist or
+            is now held by a different holder
         """
-        result = await self.collection.delete_one({"_id": lock_name})
+        result = await self.collection.delete_one({"_id": lock_name, "holder": holder_id})
         return result.deleted_count > 0
 
     async def get_lock_info(self, lock_name: str) -> Optional[dict]:

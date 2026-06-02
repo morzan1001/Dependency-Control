@@ -315,7 +315,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
 
     finally:
         if lock_acquired:
-            await lock_repo.release_lock(lock_name)
+            await lock_repo.release_lock(lock_name, holder_id)
             logger.debug(f"Released lock {lock_name} for project {project_id}")
 
 

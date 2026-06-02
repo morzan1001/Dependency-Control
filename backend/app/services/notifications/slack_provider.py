@@ -48,16 +48,23 @@ class SlackProvider(NotificationProvider):
         from app.repositories.distributed_locks import DistributedLocksRepository
 
         locks_repo = DistributedLocksRepository(db)
-        holder_id = f"slack-provider-{id(self)}"
 
-        return await locks_repo.acquire_lock(lock_name, holder_id, ttl_seconds)
+        return await locks_repo.acquire_lock(lock_name, self._lock_holder_id, ttl_seconds)
+
+    @property
+    def _lock_holder_id(self) -> str:
+        """Stable per-instance holder id so release is scoped to the holder that acquired."""
+        return f"slack-provider-{id(self)}"
 
     async def _release_distributed_lock(self, db: Any, lock_name: str) -> None:
-        """Release a distributed lock using DistributedLocksRepository."""
+        """Release a distributed lock using DistributedLocksRepository.
+
+        Scoped to this provider's holder id — never releases a lock another holder owns.
+        """
         from app.repositories.distributed_locks import DistributedLocksRepository
 
         locks_repo = DistributedLocksRepository(db)
-        await locks_repo.release_lock(lock_name)
+        await locks_repo.release_lock(lock_name, self._lock_holder_id)
 
     async def _refresh_token(self, system_settings: SystemSettings) -> Optional[str]:
         """

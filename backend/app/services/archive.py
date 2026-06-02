@@ -390,7 +390,7 @@ async def archive_scan(
         )
         return metadata
     finally:
-        await lock_repo.release_lock(lock_name)
+        await lock_repo.release_lock(lock_name, holder)
 
 
 # ---------------------------------------------------------------------------
@@ -729,4 +729,4 @@ async def restore_scan(
             return None
         return await _run_restore_pipeline(db, repo, metadata, scan_id)
     finally:
-        await lock_repo.release_lock(lock_name)
+        await lock_repo.release_lock(lock_name, holder)

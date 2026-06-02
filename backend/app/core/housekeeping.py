@@ -262,7 +262,7 @@ async def _create_rescan_for_project(
         await worker_manager.add_job(new_scan.id)
         logger.info(f"Rescan {new_scan.id} created for project {project.name}")
     finally:
-        await lock_repo.release_lock(lock_name)
+        await lock_repo.release_lock(lock_name, holder_id)
 
 
 async def _process_project_rescan(
