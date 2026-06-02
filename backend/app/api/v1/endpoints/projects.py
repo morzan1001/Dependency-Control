@@ -1344,7 +1344,10 @@ async def read_scan_findings(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0)] = 0,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    # Cap at 500 (not 100): the frontend FindingsTable.tsx requests up to limit=200
+    # (deep-link + per-component drilldowns); 500 covers that with headroom. The other
+    # listing endpoints stay at le=100 since the frontend never requests >100 from them.
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
     sort_by: str = "severity",  # severity, type, component
     sort_order: str = "desc",  # asc, desc
     type: Optional[str] = None,

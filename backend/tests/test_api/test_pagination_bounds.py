@@ -203,6 +203,20 @@ class TestReadScanFindingsPaginationBounds:
         if le is not None:
             assert default <= le
 
+    def test_limit_cap_covers_frontend_request_of_200(self, endpoint):
+        """The findings cap must comfortably cover what FindingsTable.tsx sends.
+
+        The frontend ``scanApi.getFindings`` is invoked with ``limit: 200`` in
+        FindingsTable.tsx (deep-link + per-component drilldowns). A cap of 100
+        would 422 those calls. We require >= 500 to leave headroom (W3 regression).
+        """
+        cap = _bound(endpoint, "limit", "le")
+        assert cap is not None, "limit must have an le= upper cap"
+        assert cap >= 500, (
+            f"read_scan_findings limit cap is {cap}; frontend requests up to 200 "
+            "and the agreed cap is 500 — a cap below 500 regresses FindingsTable."
+        )
+
 
 # ---------------------------------------------------------------------------
 # HTTP-level validation tests via FastAPI TestClient
@@ -324,3 +338,31 @@ class TestHTTP422OnOutOfBoundsParams:
     def test_read_scan_findings_skip_negative_returns_422(self, test_client):
         r = test_client.get("/projects/scans/scan-1/findings", params={"skip": -1})
         assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
+
+    # --- read_scan_findings: cap must cover the frontend's limit=200 (W3 regression) ---
+
+    def _patched_findings_call(self, test_client, limit):
+        """Fire a findings request with handler internals stubbed so only Query
+        validation decides 422-vs-not. Returns the response."""
+        with patch(f"{ENDPOINTS}._resolve_scan_for_findings", new_callable=AsyncMock), \
+             patch(f"{ENDPOINTS}.FindingRepository") as mock_repo_cls, \
+             patch(f"{ENDPOINTS}.build_pagination_response", return_value={"items": [], "total": 0, "page": 1, "pages": 0, "size": limit}):
+            mock_repo = MagicMock()
+            mock_repo.aggregate = AsyncMock(return_value=[{"data": [], "total": [{"count": 0}]}])
+            mock_repo_cls.return_value = mock_repo
+            return test_client.get("/projects/scans/scan-1/findings", params={"limit": limit})
+
+    def test_read_scan_findings_limit_200_accepted(self, test_client):
+        """FindingsTable.tsx sends limit=200; it must NOT 422."""
+        r = self._patched_findings_call(test_client, 200)
+        assert r.status_code != 422, f"limit=200 must be accepted, got {r.status_code}: {r.text}"
+
+    def test_read_scan_findings_limit_500_accepted(self, test_client):
+        """The cap is 500; the boundary value must be accepted."""
+        r = self._patched_findings_call(test_client, 500)
+        assert r.status_code != 422, f"limit=500 must be accepted, got {r.status_code}: {r.text}"
+
+    def test_read_scan_findings_limit_501_returns_422(self, test_client):
+        """One past the cap must be rejected."""
+        r = test_client.get("/projects/scans/scan-1/findings", params={"limit": 501})
+        assert r.status_code == 422, f"Expected 422 for limit=501, got {r.status_code}: {r.text}"
