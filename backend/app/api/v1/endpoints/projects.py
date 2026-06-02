@@ -266,12 +266,8 @@ async def rotate_api_key(
     """
     project_repo = ProjectRepository(db)
 
-    if has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
-        project = await project_repo.get_by_id(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-    else:
-        await check_project_access(project_id, current_user, db, required_role="admin")
+    # Single gate: project:update holders pass via the write-superuser branch.
+    await check_project_access(project_id, current_user, db, required_role="admin")
 
     # Generate new key
     api_key, api_key_hash = generate_project_api_key(project_id)
@@ -528,14 +524,12 @@ async def _load_project_for_update(
     project_id: str,
     current_user: User,
     db: Any,
-    project_repo: ProjectRepository,
 ) -> Project:
-    """Load the project for an update request and verify the caller can edit it."""
-    if has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
-        project = await project_repo.get_by_id(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-        return project
+    """Load the project for an update request and verify the caller can edit it.
+
+    Routes through the single gate; project:update holders pass via the
+    write-superuser branch (no inline bypass needed).
+    """
     return await check_project_access(project_id, current_user, db, required_role="admin")
 
 
@@ -619,7 +613,7 @@ async def update_project(
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    project = await _load_project_for_update(project_id, current_user, db, project_repo)
+    project = await _load_project_for_update(project_id, current_user, db)
     await _assert_can_transfer_team(project, project_in, current_user, team_repo)
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
@@ -1605,19 +1599,13 @@ async def delete_project(
 ) -> None:
     """
     Delete a project and all associated data (scans, results).
-    Requires 'project:delete' permission or being a project admin.
+
+    Authorization is delegated entirely to the single gate at admin level:
+    project admins (direct or team-derived) pass, and global write superusers
+    (project:update / project:delete) pass via the write-superuser branch.
+    project:read_all alone is read-only and does NOT grant delete.
     """
-    project = await check_project_access(project_id, current_user, db, required_role="admin")
-
-    # Additional check: Only global admin or project admin can delete
-    has_delete_perm = has_permission(current_user.permissions, Permissions.PROJECT_DELETE)
-    is_admin = any(m.user_id == str(current_user.id) and m.role == "admin" for m in project.members)
-
-    if not (has_delete_perm or is_admin):
-        raise HTTPException(
-            status_code=403,
-            detail="Only project admin or system administrator can delete a project",
-        )
+    await check_project_access(project_id, current_user, db, required_role="admin")
 
     project_repo = ProjectRepository(db)
     scan_repo = ScanRepository(db)
