@@ -26,7 +26,7 @@ Supported aggregation stages
 
 Supported aggregation expression operators (in ``$project`` / accumulator args)
 ------------------------------------------------------------------------------
-- ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``
+- ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``
 - Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
 - Logical: ``$and``, ``$or``
 - ``$$REMOVE`` (field is omitted; mirrors Mongo's $push semantics)
@@ -195,6 +195,9 @@ def _eval_expr(doc: dict, expr):
         return val if val is not None else _eval_expr(doc, fallback)
     if "$toDouble" in expr:
         return _to_number(_eval_expr(doc, expr["$toDouble"]))
+    if "$toLower" in expr:
+        val = _eval_expr(doc, expr["$toLower"])
+        return str(val).lower() if val is not None else None
     if "$cond" in expr:
         cond = expr["$cond"]
         if isinstance(cond, list):
@@ -324,9 +327,13 @@ def _run_group(docs: list, group_spec: dict) -> list:
                 if is_new:
                     grp[acc_name] = val
             elif op == "$addToSet":
-                bucket = grp.setdefault(acc_name, set())
-                if val is not None:
-                    bucket.add(val)
+                # Real $addToSet dedupes by full value equality and accepts
+                # documents (unhashable in Python). Back it with a list +
+                # membership check so dict elements (e.g. slimmed details) work,
+                # falling back from a set only when needed.
+                bucket = grp.setdefault(acc_name, [])
+                if val is not None and val not in bucket:
+                    bucket.append(val)
             elif op == "$avg":
                 # Track running (sum, count) over non-null numeric values; finalized below.
                 num = _to_number(val)

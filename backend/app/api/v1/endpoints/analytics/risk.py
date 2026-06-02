@@ -21,7 +21,6 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.core.constants import ANALYTICS_GROUP_ARRAY_CAP
 from app.core.permissions import Permissions
 from app.repositories import (
     DependencyRepository,
@@ -117,9 +116,20 @@ async def get_impact_analysis(
                 "project_ids": {"$addToSet": "$project_id"},
                 "total_findings": {"$sum": 1},
                 **_severity_count_accumulators(),
-                "finding_ids": {"$push": "$finding_id"},
+                # $addToSet (not $push) so the CVE/finding ids collapse to the
+                # DISTINCT set per (component, version). The same CVEs repeat
+                # across projects, so this is naturally bounded by the real
+                # number of distinct CVEs — without arbitrarily dropping a
+                # high-EPSS/KEV CVE the way a post-$group $slice cap would (and
+                # thereby changing enrichment output).
+                "finding_ids": {"$addToSet": "$finding_id"},
                 "first_seen": {"$min": "$created_at"},
-                "details_list": {"$push": "$details"},
+                # Likewise dedupe the slimmed fix-version details: identical
+                # {fixed_version, vulnerabilities} shapes collapse, so the array
+                # is bounded by the number of distinct fix-version shapes rather
+                # than one entry per finding. extract_fix_versions still sees
+                # every distinct fix version.
+                "details_list": {"$addToSet": "$details"},
             }
         },
         {
@@ -129,10 +139,9 @@ async def get_impact_analysis(
                 "project_ids": 1,
                 "total_findings": 1,
                 **{bucket: 1 for bucket in _SEVERITY_BUCKETS},
-                # Bound the pushed arrays so the per-group working set stays small.
-                "finding_ids": {"$slice": ["$finding_ids", ANALYTICS_GROUP_ARRAY_CAP]},
+                "finding_ids": 1,
                 "first_seen": 1,
-                "details_list": {"$slice": ["$details_list", ANALYTICS_GROUP_ARRAY_CAP]},
+                "details_list": 1,
                 "affected_projects": {"$size": "$project_ids"},
             }
         },
@@ -330,20 +339,13 @@ async def get_vulnerability_hotspots(
                 "finding_count": {"$sum": 1},
                 **_severity_count_accumulators(),
                 "first_seen": {"$min": "$created_at"},
-                "finding_ids": {"$push": "$finding_id"},
-                "details_list": {"$push": "$details"},
-            }
-        },
-        # Bound the pushed arrays. ``_id`` is preserved so the $sort below can
-        # still order by ``_id.component`` and ``_build_hotspot`` can read it.
-        {
-            "$project": {
-                "project_ids": 1,
-                "finding_count": 1,
-                **{bucket: 1 for bucket in _SEVERITY_BUCKETS},
-                "first_seen": 1,
-                "finding_ids": {"$slice": ["$finding_ids", ANALYTICS_GROUP_ARRAY_CAP]},
-                "details_list": {"$slice": ["$details_list", ANALYTICS_GROUP_ARRAY_CAP]},
+                # Dedupe CVE/finding ids and slimmed fix-version details with
+                # $addToSet (see /impact): both collapse to the DISTINCT set per
+                # (component, version), naturally bounding the per-group arrays
+                # by the real number of distinct CVEs / fix-version shapes while
+                # preserving full enrichment input (no CVE arbitrarily dropped).
+                "finding_ids": {"$addToSet": "$finding_id"},
+                "details_list": {"$addToSet": "$details"},
             }
         },
         {"$sort": {mongo_sort_field: sort_direction}},

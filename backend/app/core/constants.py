@@ -413,13 +413,17 @@ EXPLOIT_MATURITY_BOOST: Dict[str, float] = {
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
 
-# Per-group array cap for analytics $group stages (impact/hotspots). These
-# pipelines $group over up to ANALYTICS_MAX_QUERY_LIMIT findings, so any array
-# accumulated per group (finding ids, slimmed fix-version details) is
-# $slice-bounded to this many elements to keep the mongod working set small.
-# Downstream only the first handful are ever surfaced (top CVEs / fix versions),
-# so this cap does not change the API output for realistic data.
-ANALYTICS_GROUP_ARRAY_CAP: int = 100
+# NOTE: the /impact and /hotspots $group stages do NOT cap their per-group
+# arrays with a post-$group $slice. A $slice after $group can't shrink an
+# accumulator Mongo has already materialized, and capping enrichment-input
+# arrays in MATCH order would silently drop high-EPSS/KEV CVEs and change the
+# enrichment output. Those pipelines instead keep the mongod working set small
+# by (1) $project-slimming the per-finding $details blob to only the
+# fix-version fields BEFORE the $group, (2) replacing raw severity arrays with
+# scalar $sum/$cond counts, (3) accumulating CVE/finding ids and slimmed
+# details with $addToSet so they collapse to the DISTINCT set per
+# (component, version), and (4) allowDiskUse=True for spill. See
+# app/api/v1/endpoints/analytics/risk.py.
 
 # Permission required to query analytics at global scope (all projects)
 PERMISSION_ANALYTICS_GLOBAL: str = "analytics:global"
