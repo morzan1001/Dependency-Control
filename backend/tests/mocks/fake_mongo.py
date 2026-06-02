@@ -18,11 +18,18 @@ Supported update operators
 
 Supported aggregation stages
 ----------------------------
-- ``$match``, ``$sort``, ``$group``, ``$limit``, ``$unwind``
-- ``$group`` accumulators: ``$sum``, ``$first``, ``$min``, ``$max``,
+- ``$match``, ``$sort``, ``$group``, ``$project``, ``$limit``, ``$unwind``
+- ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$min``, ``$max``,
   ``$addToSet``, ``$push``
 - ``$dateTrunc`` in ``$group._id`` is accepted but not bucket-rounded
   (returns the raw date value), so trend endpoints emit a single bucket.
+
+Supported aggregation expression operators (in ``$project`` / accumulator args)
+------------------------------------------------------------------------------
+- ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``
+- Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
+- Logical: ``$and``, ``$or``
+- ``$$REMOVE`` (field is omitted; mirrors Mongo's $push semantics)
 """
 
 from __future__ import annotations
@@ -148,17 +155,120 @@ def _match_all(docs: list, query: dict) -> list:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_field(doc: dict, expr):
-    """Resolve a $field reference, dotted path, $dateTrunc, or literal value."""
-    if isinstance(expr, str) and expr.startswith("$"):
-        return _resolve_dotted(doc, expr[1:])
-    if isinstance(expr, dict):
-        if "$dateTrunc" in expr:
-            # Bucket rounding intentionally skipped — return raw date value.
-            return _resolve_field(doc, expr["$dateTrunc"].get("date"))
-        if "$first" in expr:
-            return _resolve_field(doc, expr["$first"])
+_REMOVE = object()  # sentinel: field omitted from the output document
+
+
+def _to_number(value):
+    """Best-effort numeric coercion for $toDouble / arithmetic; None stays None."""
+    if value is None or isinstance(value, bool):
+        return None if value is None else value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _eval_expr(doc: dict, expr):
+    """Evaluate a MongoDB aggregation expression against a single document.
+
+    Handles the operator subset used by the stats pipelines: $ifNull, $cond,
+    $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or),
+    $toDouble, and the $$REMOVE / $field / dotted-path / literal cases.
+    """
+    if isinstance(expr, str):
+        if expr == "$$REMOVE":
+            return _REMOVE
+        if expr.startswith("$"):
+            return _resolve_dotted(doc, expr[1:])
+        return expr
+    if not isinstance(expr, dict):
+        return expr
+
+    if "$dateTrunc" in expr:
+        # Bucket rounding intentionally skipped — return raw date value.
+        return _eval_expr(doc, expr["$dateTrunc"].get("date"))
+    if "$first" in expr:
+        return _eval_expr(doc, expr["$first"])
+    if "$ifNull" in expr:
+        primary, fallback = expr["$ifNull"]
+        val = _eval_expr(doc, primary)
+        return val if val is not None else _eval_expr(doc, fallback)
+    if "$toDouble" in expr:
+        return _to_number(_eval_expr(doc, expr["$toDouble"]))
+    if "$cond" in expr:
+        cond = expr["$cond"]
+        if isinstance(cond, list):
+            if_expr, then_expr, else_expr = cond
+        else:
+            if_expr, then_expr, else_expr = cond["if"], cond["then"], cond["else"]
+        branch = then_expr if _eval_bool(doc, if_expr) else else_expr
+        return _eval_expr(doc, branch)
+    if "$switch" in expr:
+        switch = expr["$switch"]
+        for branch in switch.get("branches", []):
+            if _eval_bool(doc, branch["case"]):
+                return _eval_expr(doc, branch["then"])
+        return _eval_expr(doc, switch.get("default"))
+
+    for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or"):
+        if op in expr:
+            return _eval_bool(doc, expr)
     return expr
+
+
+def _eval_bool(doc: dict, expr) -> bool:
+    """Evaluate a boolean aggregation expression."""
+    if isinstance(expr, bool):
+        return expr
+    if not isinstance(expr, dict):
+        return bool(_eval_expr(doc, expr))
+    if "$and" in expr:
+        return all(_eval_bool(doc, sub) for sub in expr["$and"])
+    if "$or" in expr:
+        return any(_eval_bool(doc, sub) for sub in expr["$or"])
+    for op, cmp_fn in (
+        ("$eq", lambda a, b: a == b),
+        ("$ne", lambda a, b: a != b),
+    ):
+        if op in expr:
+            a, b = (_eval_expr(doc, e) for e in expr[op])
+            return cmp_fn(a, b)
+    for op, cmp_fn in _CMP.items():
+        if op in expr:
+            a, b = (_eval_expr(doc, e) for e in expr[op])
+            if a is None or b is None:
+                return False
+            try:
+                return cmp_fn(a, b)
+            except TypeError:
+                return False
+    return bool(_eval_expr(doc, expr))
+
+
+def _run_project(docs: list, project_spec: dict) -> list:
+    """Apply a $project stage, evaluating each field expression per document."""
+    out = []
+    for doc in docs:
+        projected: dict = {}
+        if "_id" not in project_spec:
+            projected["_id"] = doc.get("_id")
+        for field, spec in project_spec.items():
+            if spec in (1, True):
+                if field in doc:
+                    projected[field] = doc[field]
+                continue
+            if spec in (0, False):
+                continue
+            val = _eval_expr(doc, spec)
+            if val is not _REMOVE:
+                projected[field] = val
+        out.append(projected)
+    return out
+
+
+def _resolve_field(doc: dict, expr):
+    """Resolve a $field reference, dotted path, aggregation expression, or literal."""
+    return _eval_expr(doc, expr)
 
 
 def _resolve_group_key(doc: dict, id_spec):
@@ -217,8 +327,18 @@ def _run_group(docs: list, group_spec: dict) -> list:
                 bucket = grp.setdefault(acc_name, set())
                 if val is not None:
                     bucket.add(val)
+            elif op == "$avg":
+                # Track running (sum, count) over non-null numeric values; finalized below.
+                num = _to_number(val)
+                acc = grp.setdefault("__avg__", {})
+                total, count = acc.get(acc_name, (0.0, 0))
+                if num is not None:
+                    acc[acc_name] = (total + num, count + 1)
+                else:
+                    acc.setdefault(acc_name, (total, count))
             elif op == "$push":
-                grp.setdefault(acc_name, []).append(val)
+                if val is not _REMOVE:
+                    grp.setdefault(acc_name, []).append(val)
             elif op == "$min":
                 cur = grp.get(acc_name)
                 if val is not None and (cur is None or val < cur):
@@ -236,11 +356,14 @@ def _run_group(docs: list, group_spec: dict) -> list:
     for hashable in key_order:
         state = groups[hashable]
         key_val = state.pop("_id_val")
+        avg_acc = state.pop("__avg__", {})
         if isinstance(key_val, tuple):
             key_val = dict(key_val)
         row = {"_id": key_val}
         for k, v in state.items():
             row[k] = list(v) if isinstance(v, set) else v
+        for acc_name, (total, count) in avg_acc.items():
+            row[acc_name] = (total / count) if count else None
         result.append(row)
     return result
 
@@ -259,6 +382,8 @@ def _run_pipeline(docs: list, pipeline: list) -> list:
                 )
         elif "$group" in stage:
             results = _run_group(results, stage["$group"])
+        elif "$project" in stage:
+            results = _run_project(results, stage["$project"])
         elif "$limit" in stage:
             results = results[: stage["$limit"]]
         elif "$unwind" in stage:
@@ -275,7 +400,7 @@ def _run_pipeline(docs: list, pipeline: list) -> list:
                 elif values is not None:
                     unwound.append(d)
             results = unwound
-        # $project, $addFields, $facet, $lookup intentionally skipped.
+        # $addFields, $facet, $lookup intentionally skipped.
     return results
 
 
@@ -300,6 +425,9 @@ class _AsyncIter:
         item = self._items[self._idx]
         self._idx += 1
         return item
+
+    async def to_list(self, length=None):
+        return self._items if length is None else self._items[:length]
 
 
 class _FakeCursor:
@@ -413,10 +541,38 @@ class FakeCollection:
         result.modified_count = modified
         return result
 
-    async def find_one_and_update(self, query, update, return_document: bool = False, **_kwargs):
+    async def update_many(self, query, update, array_filters=None, upsert: bool = False):
+        matched = [k for k, doc in self._docs.items() if _match_doc(doc, query)]
+        for k in matched:
+            self._apply_update(self._docs[k], update)
+        if not matched and upsert:
+            doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
+            self._apply_update(doc, update, skip_set_on_insert=True)
+            key = doc.get("_id") or str(len(self._docs))
+            doc["_id"] = key
+            self._docs[key] = doc
+        result = MagicMock()
+        result.modified_count = len(matched)
+        result.matched_count = len(matched)
+        return result
+
+    def with_options(self, **_kwargs) -> "FakeCollection":
+        # Read-preference / write-concern variations are no-ops in-process.
+        return self
+
+    async def find_one_and_update(
+        self, query, update, return_document: bool = False, upsert: bool = False, **_kwargs
+    ):
         matched = _matched_key(self._docs, query)
         if matched is None:
-            return None
+            if not upsert:
+                return None
+            doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
+            self._apply_update(doc, update, skip_set_on_insert=True)
+            key = doc.get("_id") or str(len(self._docs))
+            doc["_id"] = key
+            self._docs[key] = doc
+            return doc if return_document else None
         before = dict(self._docs[matched])
         self._apply_update(self._docs[matched], update)
         return self._docs[matched] if return_document else before

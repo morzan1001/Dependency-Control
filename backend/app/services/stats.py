@@ -5,15 +5,11 @@ from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import CVSS_SEVERITY_SCORES
 from app.models.stats import Stats
 from app.models.waiver import Waiver
+from app.services.analysis.stats import calculate_comprehensive_stats
 
 logger = logging.getLogger(__name__)
-
-# MongoDB aggregation field references / operators
-MONGO_SEVERITY = "$severity"
-MONGO_COND = "$cond"
 
 # Waiver field mapping: waiver field -> finding query field
 _WAIVER_FIELD_MAP = {
@@ -221,56 +217,6 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
         await waiver_repo.update(wid, {"match": new_sig.model_dump()})
 
 
-def _build_stats_pipeline(scan_id: str) -> List[Dict[str, Any]]:
-    """Build the MongoDB aggregation pipeline for stats calculation."""
-    return [
-        {"$match": {"scan_id": scan_id, "waived": False}},
-        {
-            "$project": {
-                "severity": 1,
-                "cvss_score": "$details.cvss_score",
-                "calculated_score": {
-                    "$switch": {
-                        "branches": [
-                            {"case": {"$eq": [MONGO_SEVERITY, sev]}, "then": CVSS_SEVERITY_SCORES[sev]}
-                            for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
-                        ],
-                        "default": CVSS_SEVERITY_SCORES["UNKNOWN"],
-                    }
-                },
-            }
-        },
-        {
-            "$group": {
-                "_id": None,
-                "critical": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "CRITICAL"]}, 1, 0]}},
-                "high": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "HIGH"]}, 1, 0]}},
-                "medium": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "MEDIUM"]}, 1, 0]}},
-                "low": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "LOW"]}, 1, 0]}},
-                "info": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "INFO"]}, 1, 0]}},
-                "unknown": {"$sum": {MONGO_COND: [{"$eq": [MONGO_SEVERITY, "UNKNOWN"]}, 1, 0]}},
-                "risk_score": {"$sum": {"$toDouble": {"$ifNull": ["$cvss_score", "$calculated_score"]}}},
-            }
-        },
-    ]
-
-
-def _stats_from_result(stats_result: List[Dict[str, Any]]) -> Stats:
-    """Create a Stats object from an aggregation result."""
-    stats = Stats()
-    if not stats_result:
-        return stats
-    res = stats_result[0]
-    stats.critical = res.get("critical", 0)
-    stats.high = res.get("high", 0)
-    stats.medium = res.get("medium", 0)
-    stats.low = res.get("low", 0)
-    stats.info = res.get("info", 0)
-    stats.unknown = res.get("unknown", 0)
-    stats.risk_score = round(res.get("risk_score", 0.0), 1)
-    return stats
-
-
 async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Optional[Stats]:
     """
     Recalculates statistics for a project based on its latest scan and active waivers.
@@ -343,15 +289,16 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         await _apply_waivers(finding_repo, scan_id, legacy)
         await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
 
-        # 3. Calculate stats (read from PRIMARY for consistency after waiver updates)
-        from pymongo import ReadPreference
-
-        pipeline = _build_stats_pipeline(scan_id)
-        findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-        stats_result = await findings_primary.aggregate(pipeline).to_list(1)
-        stats = _stats_from_result(stats_result)
+        # 3. Compute the authoritative full Stats (severity counts, avg risk_score,
+        #    adjusted_risk_score, threat_intel, reachability, prioritized) from the
+        #    single canonical pipeline. This replaces the old partial $sum pipeline
+        #    so recalc no longer clobbers the comprehensive stats. calculate_comprehensive_stats
+        #    reads from PRIMARY for read-after-write consistency.
+        stats = await calculate_comprehensive_stats(db, scan_id)
 
         # 4. Calculate ignored count (read from PRIMARY after waiver writes)
+        from pymongo import ReadPreference
+
         findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
 
