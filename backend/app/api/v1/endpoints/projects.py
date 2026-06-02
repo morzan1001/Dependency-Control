@@ -277,6 +277,8 @@ async def create_project(
         id=project_id,
         name=project_in.name,
         team_id=project_in.team_id,
+        # A team chosen by the creating user is a manual assignment (Finding 18).
+        team_source="manual" if project_in.team_id else None,
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
         retention_days=(project_in.retention_days if project_in.retention_days is not None else 90),
@@ -660,6 +662,10 @@ async def update_project(
     await _assert_can_transfer_team(project, project_in, current_user, team_repo)
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
+    # A team transfer/assignment via the API is a deliberate manual action, so stamp
+    # provenance — this prevents GitLab sync from reverting it (Finding 18).
+    if "team_id" in update_data:
+        update_data["team_source"] = "manual"
     await _assert_gitlab_mr_token_present(project, update_data, db)
 
     # Apply system settings enforcement

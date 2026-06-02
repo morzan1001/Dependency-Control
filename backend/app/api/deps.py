@@ -217,13 +217,22 @@ async def _resolve_initial_member_id(
 async def _should_overwrite_team_id_from_sync(
     project_team_id: Optional[str],
     team_repo: TeamRepository,
+    team_source: Optional[str] = None,
 ) -> bool:
     """Decide whether a GitLab sync may overwrite project.team_id.
 
-    True when the project has no team yet, the referenced team no longer exists,
-    or the current team itself came from GitLab sync (has gitlab_group_id).
-    False only when the current team was assigned manually — preserving user intent.
+    Provenance gate (Finding 18): when ``team_source == "manual"`` the assignment was
+    made deliberately by a user and must NEVER be reverted by sync — even when the
+    target team is itself GitLab-synced (the old team-based inference wrongly reverted
+    a manual reassignment to another synced team).
+
+    For legacy projects (``team_source`` is None/unknown) we fall back to the prior
+    behaviour: overwrite when the project has no team, the referenced team no longer
+    exists, or the current team itself came from GitLab sync (has gitlab_group_id);
+    preserve only a manual (non-synced) team.
     """
+    if team_source == "manual":
+        return False
     if not project_team_id:
         return True
     current_team = await team_repo.get_raw_by_id(project_team_id)
@@ -253,8 +262,10 @@ async def _gitlab_team_sync_update(
     if not team_id or project.team_id == team_id:
         return {}
     team_repo = TeamRepository(db)
-    if await _should_overwrite_team_id_from_sync(project.team_id, team_repo):
-        return {"team_id": team_id}
+    if await _should_overwrite_team_id_from_sync(project.team_id, team_repo, project.team_source):
+        # Stamp gitlab provenance so a later manual reassignment is distinguishable
+        # and not reverted on the next sync (Finding 18).
+        return {"team_id": team_id, "team_source": "gitlab"}
     logger.info(
         f"Keeping manual team assignment for project {project.id} ({gitlab_project_path}); "
         f"GitLab sync would have set team_id={team_id}."
@@ -356,6 +367,7 @@ async def _handle_gitlab_oidc(
         )
         if team_id:
             new_project.team_id = team_id
+            new_project.team_source = "gitlab"  # provenance for the sync-set team (Finding 18)
 
     project, created = await project_repo.find_or_create_by_gitlab_key(instance_id, gitlab_project_id, new_project)
     if created:
