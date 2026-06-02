@@ -23,6 +23,7 @@ from app.api.v1.helpers import (
     generate_project_api_key,
     get_category_type_filter,
     get_sort_field,
+    is_write_superuser,
     load_from_gridfs,
     parse_sort_direction,
     resolve_sbom_refs,
@@ -542,7 +543,7 @@ async def _assert_can_transfer_team(
     """Block team transfers unless the actor is a global admin or member of the target team."""
     if not project_in.team_id or project_in.team_id == project.team_id:
         return
-    if has_permission(current_user.permissions, Permissions.PROJECT_UPDATE):
+    if is_write_superuser(current_user):
         return
     is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
     if not is_member:

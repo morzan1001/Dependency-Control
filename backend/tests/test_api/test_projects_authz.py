@@ -50,6 +50,11 @@ def _update_user():
     return _user("pu-1", [Permissions.PROJECT_READ, Permissions.PROJECT_UPDATE])
 
 
+def _delete_only_user():
+    """Non-member who holds ONLY project:delete (a write superuser too)."""
+    return _user("pd-1", [Permissions.PROJECT_DELETE])
+
+
 def _plain_member():
     """Non-member with only project:read (no write superuser)."""
     return _user("nm-1", [Permissions.PROJECT_READ])
@@ -138,6 +143,25 @@ class TestTransferTeamSuperuser:
         team_repo.is_member = AsyncMock(return_value=False)
 
         # Should NOT raise — project:update bypasses target-team membership.
+        asyncio.run(_assert_can_transfer_team(project, project_in, user, team_repo))
+        team_repo.is_member.assert_not_called()
+
+    def test_delete_only_holder_can_transfer_without_target_membership(self):
+        """A non-member with ONLY project:delete is a write superuser too, so it
+        must be allowed to transfer the team — parity with the gate's
+        ``_WRITE_SUPERUSER_PERMISSIONS`` set (PROJECT_UPDATE *and* PROJECT_DELETE).
+        """
+        from app.api.v1.endpoints.projects import _assert_can_transfer_team
+        from app.schemas.project import ProjectUpdate
+
+        user = _delete_only_user()
+        project = _project(team_id="old-team")
+        project_in = ProjectUpdate(team_id="new-team")
+
+        team_repo = MagicMock()
+        team_repo.is_member = AsyncMock(return_value=False)
+
+        # Should NOT raise — project:delete is part of the write-superuser set.
         asyncio.run(_assert_can_transfer_team(project, project_in, user, team_repo))
         team_repo.is_member.assert_not_called()
 

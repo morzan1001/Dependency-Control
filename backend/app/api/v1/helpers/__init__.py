@@ -66,6 +66,7 @@ from app.api.v1.helpers.projects import (
     build_user_project_query,
     check_project_access,
     generate_project_api_key,
+    is_write_superuser,
 )
 from app.api.v1.helpers.sorting import (
     SORT_FIELDS,
@@ -160,6 +161,7 @@ __all__ = [
     "build_user_project_query",
     "check_project_access",
     "generate_project_api_key",
+    "is_write_superuser",
     # Sorting helpers
     "SORT_FIELDS",
     "get_sort_field",

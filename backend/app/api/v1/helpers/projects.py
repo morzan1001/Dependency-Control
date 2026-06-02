@@ -68,6 +68,11 @@ _WRITE_ROLES = frozenset({PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN})
 _WRITE_SUPERUSER_PERMISSIONS = [Permissions.PROJECT_UPDATE, Permissions.PROJECT_DELETE]
 
 
+def is_write_superuser(user: User) -> bool:
+    """True if the user is a global write superuser (manage any project)."""
+    return has_permission(user.permissions, _WRITE_SUPERUSER_PERMISSIONS)
+
+
 def _is_write_request(required_role: Optional[str]) -> bool:
     """Return True when ``required_role`` denotes a write (editor/admin) request."""
     return required_role in _WRITE_ROLES
@@ -108,8 +113,8 @@ async def _team_derived_role(
     if not team:
         return None
     for tm in team.get("members", []):
-        if tm["user_id"] == user_id:
-            return PROJECT_ROLE_ADMIN if tm["role"] == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
+        if tm.get("user_id") == user_id:
+            return PROJECT_ROLE_ADMIN if tm.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
     return None
 
 
@@ -183,7 +188,7 @@ async def check_project_access(
     # WRITE superuser ("manage any project"): project:update / project:delete
     # bypass membership for ANY request (write implies read), applied uniformly
     # across all write paths.
-    if has_permission(user.permissions, _WRITE_SUPERUSER_PERMISSIONS):
+    if is_write_superuser(user):
         return project
 
     # READ-ONLY superuser: read_all grants READ access only. It must NOT satisfy

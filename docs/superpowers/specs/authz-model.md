@@ -21,10 +21,16 @@ Every project access decision flows through one function:
 check_project_access(project_id, user, db, required_role=None) -> Project   # or raises 403/404
 ```
 
-There is **no** inline `project:update` bypass scattered across endpoints any
-more. The write paths (`rotate_api_key`, `update_project` via
-`_load_project_for_update`, `delete_project`, and team transfer via
-`_assert_can_transfer_team`) all defer to this gate at `required_role="admin"`.
+There is **no** ad-hoc, divergent `project:update`-only bypass scattered across
+endpoints any more. Every write path honours the SAME write-superuser rule
+(`project:update` / `project:delete`, see `_WRITE_SUPERUSER_PERMISSIONS`):
+
+- `rotate_api_key`, `update_project` (via `_load_project_for_update`), and
+  `delete_project` defer to the gate at `required_role="admin"`.
+- team transfer (`_assert_can_transfer_team`) applies the same write-superuser
+  rule via the shared `is_write_superuser` helper, then additionally requires
+  target-team membership — logic the gate cannot express, since it concerns the
+  *destination* team rather than the project being accessed.
 
 ## Two layers
 
