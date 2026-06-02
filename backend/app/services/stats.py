@@ -165,13 +165,30 @@ def _is_signature_waiver(waiver: Any) -> bool:
     return waiver.finding_type in FindingRepository._LOCATION_TYPES
 
 
+def _safe_match_signature(raw: dict, context: str) -> Optional[Any]:
+    """Build a MatchSignature from a stored dict, returning None (and logging) if malformed.
+
+    Legacy data can carry a `match` sub-document that no longer satisfies the current
+    schema. Skipping the malformed one keeps the recalc reset+reapply from aborting and
+    leaving findings transiently un-waived (Finding 4).
+    """
+    from pydantic import ValidationError
+
+    from app.models.match_signature import MatchSignature
+
+    try:
+        return MatchSignature(**raw)
+    except ValidationError:
+        logger.warning("Skipping malformed match signature (%s)", context)
+        return None
+
+
 async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id: str, waivers: List) -> None:
     """Apply non-vulnerability waivers to a scan's location-based findings via signature matching.
 
     Persists re-anchored waiver signatures and marks lapsed findings. Vulnerability-id waivers
     are handled separately by the caller via apply_vulnerability_waiver.
     """
-    from app.models.match_signature import MatchSignature
     from app.services.waivers.matching import MatchFinding, apply_waivers_to_findings
 
     docs = await finding_repo.find_location_findings(scan_id)
@@ -183,20 +200,29 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
         if getattr(w, "match", None) is None:
             legacy_doc = docs_by_legacy_id.get(getattr(w, "finding_id", None))
             if legacy_doc and legacy_doc.get("match"):
-                w.match = MatchSignature(**legacy_doc["match"])
-                await waiver_repo.update(w.id, {"match": legacy_doc["match"]})
+                sig = _safe_match_signature(legacy_doc["match"], f"back-fill waiver {getattr(w, 'id', '?')}")
+                if sig is not None:
+                    w.match = sig
+                    await waiver_repo.update(w.id, {"match": legacy_doc["match"]})
 
-    findings = [
-        MatchFinding(id=d["_id"], sig=MatchSignature(**d["match"]) if d.get("match") else None)
-        for d in docs
-    ]
+    findings = []
+    for d in docs:
+        sig = None
+        if d.get("match"):
+            sig = _safe_match_signature(d["match"], f"finding {d['_id']}")
+            if sig is None:
+                continue  # malformed stored signature — skip rather than abort the batch
+        findings.append(MatchFinding(id=d["_id"], sig=sig))
 
     # Hydrate waiver .match into MatchSignature objects (waivers may arrive as Waiver models already).
     enriched = []
     for w in waivers:
         m = getattr(w, "match", None)
         if isinstance(m, dict):
-            w.match = MatchSignature(**m)
+            sig = _safe_match_signature(m, f"waiver {getattr(w, 'id', '?')}")
+            if sig is None:
+                continue  # malformed stored waiver signature — skip; others still applied
+            w.match = sig
         enriched.append(w)
 
     app = apply_waivers_to_findings(findings, enriched)
