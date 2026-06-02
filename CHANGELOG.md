@@ -1,4 +1,30 @@
-# Release 1.7.3
+# Release 1.7.4
+
+## 🚀 Features
+
+- feat(iac): persist KICS similarity_id in finding details for waiver anchoring (#0)
+- feat(models): add MatchSignature and finding/waiver match + lapsed fields (#0)
+- feat(waivers): add compute_match_signature for location-based findings (#0)
+- feat(aggregation): attach MatchSignature to every finding in get_findings (#0)
+- feat(waivers): add Pass-1 strong-exact waiver match predicate (#0)
+- feat(waivers): add two-pass waiver-to-finding orchestrator with re-anchoring (#0)
+- feat(waivers): lazy back-fill MatchSignature for legacy finding-scope waivers (#0)
+- feat(waivers): snapshot finding MatchSignature into waiver at creation (#0)
+- feat(waivers): strong-exact signature match in ingest + engine apply paths (#0)
+- feat(api): add GET /waivers/{id} endpoint for single waiver lookup (#0)
+- feat(ui): show lapsed-waiver badge and re-waive (prefill) for shifted findings (#0)
+- feat(permissions): add chat + mcp to USER preset (analytics stays own-projects-only) (#0)
+
+## 🐛 Fixes
+
+- fix(ingest): keep OpenGrep extra.fingerprint and extra.lines through validation (#0)
+- fix(waivers): route untyped non-location waivers to legacy path (avoid silent drop) (#0)
+- fix(waivers): keep file/rule-scope waivers on legacy path (signature path is finding-scope only) (#0)
+- fix(chat): get_waiver_status reads authoritative finding waived/lapsed flags (#0)
+
+
+
+# Release 1.7.4
 
 
 
