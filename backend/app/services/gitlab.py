@@ -533,19 +533,31 @@ class GitLabService:
         return team_members
 
     def _synthesize_member_email(self, member: GitLabMember) -> Optional[str]:
-        """Build a deterministic, non-routable synthetic email for an email-less member.
+        """Build a deterministic, non-deliverable synthetic email for an email-less member.
 
         The local ``User`` model requires a valid ``EmailStr`` (it is not nullable), so an
         email-less GitLab member that has a username is given a synthetic, instance-scoped
         address rather than being dropped (Finding 16). Returns None when no username is
         available to key the account on.
+
+        The address uses a ``users.noreply.`` subdomain prefix (mirroring the GitHub
+        no-reply convention) so it is provably non-deliverable and will never collide with
+        a real user registration — even when the GitLab instance is hosted on a public
+        domain such as ``gitlab.com``.  The value is deterministic (same username +
+        instance → same address), passes ``EmailStr`` validation, and is not used for
+        delivery or lookup.
+
+        Note: the RFC 6761 ``.invalid`` TLD would be the clearest marker, but the
+        ``email-validator`` library (used by pydantic ``EmailStr``) rejects it as a
+        special-use name, so the no-reply subdomain approach is used instead.
         """
         if not member.username:
             return None
-        # Instance host keeps the synthetic address unique across GitLab instances and
-        # clearly signals it is not a real, deliverable mailbox.
+        # Strip the scheme and any path component to get the bare hostname, then prepend
+        # a "users.noreply." subdomain so the address is provably non-deliverable and
+        # cannot collide with a real User.email even on public GitLab instances.
         host = self.base_url.split("://", 1)[-1].split("/", 1)[0] or "gitlab.local"
-        return f"{member.username}@{host}"
+        return f"{member.username}@users.noreply.{host}"
 
     async def _find_or_create_user(
         self,

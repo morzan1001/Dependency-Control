@@ -998,8 +998,20 @@ class TestTeamSyncEmaillessMembers:
         users_coll.insert_one.assert_called_once()
         created_user = users_coll.insert_one.call_args[0][0]
         assert created_user["username"] == "ghost"
-        # Synthetic email must be a valid, instance-scoped, non-real address.
-        assert created_user["email"].startswith("ghost@")
+        # Synthetic email must be a valid, instance-scoped, non-deliverable address.
+        # It must use the "users.noreply." subdomain prefix (mirroring the GitHub
+        # no-reply convention) to prevent collisions with real User.email values on
+        # public GitLab instances (e.g. gitlab.com).
+        synth_email = created_user["email"]
+        assert synth_email.startswith("ghost@users.noreply."), (
+            f"synthetic email must be keyed as ghost@users.noreply.<host>; got {synth_email!r}"
+        )
+        # Determinism: calling the helper twice with the same inputs yields the same value.
+        service2 = GitLabService(gitlab_instance_a)
+        member = GitLabMember(username="ghost", email=None, access_level=30)
+        assert service2._synthesize_member_email(member) == synth_email, (
+            "_synthesize_member_email must be deterministic for the same username+instance"
+        )
         teams_coll.insert_one.assert_called_once()
         team_doc = teams_coll.insert_one.call_args[0][0]
         assert any(m["source"] == "gitlab" for m in team_doc["members"])
