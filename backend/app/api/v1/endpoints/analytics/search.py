@@ -164,9 +164,11 @@ async def search_dependencies_advanced(
         vuln_pipeline: List[Dict[str, Any]] = [
             {
                 "$match": {
+                    "scan_id": {"$in": scan_ids},
                     "project_id": {"$in": [k[0] for k in dep_keys]},
                     "component": {"$in": component_names},
                     "type": "vulnerability",
+                    "waived": {"$ne": True},
                 }
             },
             {"$group": {"_id": {"project_id": "$project_id", "component": "$component"}}},

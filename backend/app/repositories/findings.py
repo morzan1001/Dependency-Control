@@ -126,13 +126,21 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     async def get_vuln_counts_by_components(
         self,
+        scan_ids: List[str],
         project_ids: List[str],
         component_names: List[str],
     ) -> Dict[str, int]:
-        """Returns {component_name: non_waived_vulnerability_count} across `project_ids`."""
+        """Returns {component_name: non_waived_vulnerability_count} scoped to `scan_ids`.
+
+        Both ``scan_ids`` (active scan restriction) and ``project_ids`` are
+        applied so the result is limited to findings that belong to the
+        currently-active scans — historical findings from prior scans of the
+        same projects are excluded.
+        """
         pipeline: List[Dict[str, Any]] = [
             {
                 "$match": {
+                    "scan_id": {"$in": scan_ids},
                     "project_id": {"$in": project_ids},
                     "component": {"$in": component_names},
                     "type": "vulnerability",

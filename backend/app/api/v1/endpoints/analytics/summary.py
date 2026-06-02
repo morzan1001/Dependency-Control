@@ -151,7 +151,7 @@ async def get_top_dependencies(
     results = await dep_repo.aggregate(pipeline)
 
     component_names = [dep["name"] for dep in results]
-    vuln_count_map = await finding_repo.get_vuln_counts_by_components(project_ids, component_names)
+    vuln_count_map = await finding_repo.get_vuln_counts_by_components(scan_ids, project_ids, component_names)
 
     enriched = []
     for dep in results:
